@@ -34,6 +34,10 @@ public struct ImageViewerView: NSViewRepresentable {
         context.coordinator.sync()
     }
 
+    public static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
     @MainActor
     public final class Coordinator {
         let controller: ImageViewerController
@@ -50,15 +54,25 @@ public struct ImageViewerView: NSViewRepresentable {
             self.canvas = canvas
             self.scrollView = scrollView
             controller.rectProvider = { [weak self] rect in
-                guard let self, let canvas = self.canvas, let scrollView = self.scrollView else { return nil }
-                return canvas.convert(rect, to: scrollView)
+                guard let self, let canvas = self.canvas else { return nil }
+                return canvas.topLeftWindowRect(rect)
             }
+            controller.onHighlightsChange = { [weak canvas] in canvas?.needsDisplay = true }
             observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scrollView, queue: .main) { [weak canvas] _ in
                 MainActor.assumeIsolated { canvas?.needsDisplay = true }
             }
         }
 
+        func detach() {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+        }
+
         func sync() {
+            // Touch the drawn state so SwiftUI tracks it; the canvas reads it again in draw().
+            _ = controller.highlights.count
+            _ = controller.selection
+            _ = controller.selectedNoteID
             canvas?.needsDisplay = true
             if appliedZoom != controller.pendingZoomVersion, let command = controller.pendingZoom {
                 appliedZoom = controller.pendingZoomVersion

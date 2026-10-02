@@ -39,8 +39,8 @@ public enum CSVParser {
         return counts.max { $0.1 < $1.1 }.flatMap { $0.1 > 0 ? $0.0 : nil } ?? ","
     }
 
-    /// Parses every record, with the first record as the header when `hasHeader` is true.
     // swiftlint:disable:next cyclomatic_complexity function_body_length
+    /// Parses every record, with the first record as the header when `hasHeader` is true.
     public static func parse(_ text: String, delimiter: Character, hasHeader: Bool = true) -> CSVTable {
         var records: [CSVRow] = []
         var fields: [String] = []

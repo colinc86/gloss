@@ -32,8 +32,14 @@ public final class ImageViewerController {
     public let image: DecodedImage
     /// Rectangle being drawn or just drawn, in pixel space; nil when nothing is selected.
     public var selection: CGRect?
-    public var highlights: [ImageHighlight] = []
-    public var selectedNoteID: NoteID?
+    public var highlights: [ImageHighlight] = [] {
+        didSet { onHighlightsChange() }
+    }
+    public var selectedNoteID: NoteID? {
+        didSet { onHighlightsChange() }
+    }
+    /// Set by the view; redraws the canvas.
+    @ObservationIgnored public var onHighlightsChange: () -> Void = {}
     public var pendingZoom: ZoomCommand?
     public var pendingZoomVersion = 0
     @ObservationIgnored public var onNoteClick: (NoteID) -> Void = { _ in }

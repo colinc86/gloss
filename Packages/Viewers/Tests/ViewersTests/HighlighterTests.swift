@@ -41,7 +41,7 @@ struct HighlighterTests {
     @Test func incrementalEditMatchesFreshParse() throws {
         var text = "func a() {}\nfunc b() {}\n"
         let highlighter = try #require(Highlighter(languageName: "swift", text: text))
-        var generator = SystemRandomNumberGenerator()
+        var generator = SeededGenerator(seed: 42)
         for _ in 0..<30 {
             let oldIndex = LineIndex(text)
             let location = Int.random(in: 0...text.utf16.count, using: &generator)
@@ -87,5 +87,17 @@ struct HighlighterTests {
     @Test func themeFallsBackToPrefix() {
         #expect(SyntaxTheme.color(forCapture: "function.call.weird") != nil)
         #expect(SyntaxTheme.color(forCapture: "nonexistent") == nil)
+    }
+}
+
+/// Deterministic generator so a failing edit sequence can be reproduced.
+struct SeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed &* 0x9E3779B97F4A7C15 | 1 }
+    mutating func next() -> UInt64 {
+        state ^= state << 13
+        state ^= state >> 7
+        state ^= state << 17
+        return state
     }
 }

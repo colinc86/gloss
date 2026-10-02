@@ -26,9 +26,15 @@ struct LocalAttachmentStager: AttachmentStager {
 }
 
 enum AttachmentCache {
-    /// `~/Library/Application Support/Gloss/attachments/`
+    /// Staged copies per send: `~/Library/Application Support/Gloss/attachments/<send-id>/`. Safe to clear.
     nonisolated static var root: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Gloss/attachments", isDirectory: true)
+    }
+
+    /// Crops and page renders that notes reference: `.../Gloss/note-attachments/`. Kept until the note goes.
+    nonisolated static var notesRoot: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Gloss/note-attachments", isDirectory: true)
     }
 }

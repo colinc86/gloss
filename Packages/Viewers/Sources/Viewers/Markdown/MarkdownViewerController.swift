@@ -24,6 +24,8 @@ public final class MarkdownViewerController {
     public var pendingRenderedScrollVersion = 0
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
 
+    @ObservationIgnored private var renderedContentVersion = -1
+
     public init(source: TextEditorController) {
         self.source = source
         rebuildNow()
@@ -32,6 +34,11 @@ public final class MarkdownViewerController {
             previous()
             self?.scheduleRebuild()
         }
+    }
+
+    /// Re-renders immediately when the source was replaced wholesale (reload, merge).
+    public func syncWithSourceIfReplaced() {
+        if renderedContentVersion != source.contentVersion { rebuildNow() }
     }
 
     public func toggle() {
@@ -49,6 +56,7 @@ public final class MarkdownViewerController {
     }
 
     public func rebuildNow() {
+        renderedContentVersion = source.contentVersion
         let output = MarkdownRenderer.render(source.text)
         rendered = output.text
         map = output.map

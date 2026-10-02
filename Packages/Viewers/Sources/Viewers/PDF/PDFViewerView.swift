@@ -155,9 +155,10 @@ public struct PDFViewerView: NSViewRepresentable {
                     MainActor.assumeIsolated { self?.container?.overlay.needsDisplay = true }
                 })
             }
+            controller.onHighlightsChange = { [weak self] in self?.sync() }
             controller.rectProvider = { [weak self] page, bounds in
                 guard let self, let container = self.container, let pdfPage = self.controller.document.page(at: page) else { return nil }
-                return container.convert(container.pdfView.convert(bounds, from: pdfPage), from: container.pdfView)
+                return container.pdfView.topLeftWindowRect(container.pdfView.convert(bounds, from: pdfPage))
             }
         }
 
@@ -168,6 +169,8 @@ public struct PDFViewerView: NSViewRepresentable {
 
         func sync() {
             guard let container else { return }
+            _ = controller.region?.bounds
+            _ = controller.selectedNoteID
             container.overlay.needsDisplay = true
             applyTextHighlights()
             if appliedScroll != controller.pendingScrollVersion, let target = controller.pendingScroll {

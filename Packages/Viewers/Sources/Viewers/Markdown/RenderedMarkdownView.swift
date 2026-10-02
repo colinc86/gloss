@@ -51,8 +51,12 @@ public struct RenderedMarkdownView: NSViewRepresentable {
     public final class Coordinator: NSObject, NSTextViewDelegate {
         let controller: MarkdownViewerController
         private weak var textView: NSTextView?
+        private weak var backdrop: HighlightBackdropView?
         private var appliedVersion = -1
         private var appliedScrollVersion = 0
+        private var isSyncing = false
+        private var highlightToken: UUID?
+        private var scrollObserver: (any NSObjectProtocol)?
 
         init(controller: MarkdownViewerController) {
             self.controller = controller
@@ -60,19 +64,36 @@ public struct RenderedMarkdownView: NSViewRepresentable {
 
         func attach(textView: NSTextView) {
             self.textView = textView
-            textView.textLayoutManager?.renderingAttributesValidator = { [weak self] layoutManager, fragment in
-                MainActor.assumeIsolated { self?.validate(layoutManager, fragment) }
+            backdrop = HighlightBackdropView.install(in: textView)
+            if let clip = textView.enclosingScrollView?.contentView {
+                clip.postsBoundsChangedNotifications = true
+                scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak backdrop = self.backdrop] _ in
+                    MainActor.assumeIsolated { backdrop?.needsDisplay = true }
+                }
             }
             controller.renderedRectProvider = { [weak self] range in self?.rect(for: range) }
+            highlightToken = controller.source.addHighlightObserver { [weak self] in self?.invalidateHighlights() }
+        }
+
+        private func invalidateHighlights() {
+            backdrop?.entries = controller.renderedHighlights().filter { !$0.isInvalidated }.map {
+                HighlightBackdropView.Entry(range: $0.range, color: $0.state == .orphaned ? Theme.color(for: $0.color) : Theme.highlightBackground(for: $0.highlight), orphaned: $0.state == .orphaned)
+            }
         }
 
         func detach() {
-            textView?.textLayoutManager?.renderingAttributesValidator = nil
+            if let highlightToken { controller.source.removeHighlightObserver(highlightToken) }
+            if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
             textView?.delegate = nil
         }
 
         func sync() {
             guard let textView else { return }
+            // Read the highlight version here so SwiftUI re-runs this update when notes change;
+            // the rendering validator alone runs outside SwiftUI's dependency tracking.
+            _ = controller.source.highlightsVersion
+            isSyncing = true
+            defer { isSyncing = false }
             if appliedVersion != controller.renderedVersion {
                 appliedVersion = controller.renderedVersion
                 let selection = textView.selectedRange()
@@ -86,30 +107,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 textView.setSelectedRange(range)
                 textView.window?.makeFirstResponder(textView)
             }
-            if let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager {
-                layoutManager.invalidateRenderingAttributes(for: contentManager.documentRange)
-                textView.needsDisplay = true
-            }
-        }
-
-        private func validate(_ layoutManager: NSTextLayoutManager, _ fragment: NSTextLayoutFragment) {
-            guard let contentManager = layoutManager.textContentManager else { return }
-            let documentStart = contentManager.documentRange.location
-            let fragmentStart = contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)
-            let fragmentEnd = contentManager.offset(from: documentStart, to: fragment.rangeInElement.endLocation)
-            for highlight in controller.renderedHighlights() where !highlight.isInvalidated {
-                let start = max(highlight.range.location, fragmentStart)
-                let end = min(highlight.range.location + highlight.range.length, fragmentEnd)
-                guard start < end,
-                      let from = contentManager.location(documentStart, offsetBy: start),
-                      let to = contentManager.location(documentStart, offsetBy: end),
-                      let range = NSTextRange(location: from, end: to) else { continue }
-                if highlight.state == .orphaned {
-                    layoutManager.addRenderingAttribute(.underlineStyle, value: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue, for: range)
-                } else {
-                    layoutManager.addRenderingAttribute(.backgroundColor, value: Theme.highlightBackground(for: highlight.highlight), for: range)
-                }
-            }
+            invalidateHighlights()
         }
 
         func rect(for range: NSRange) -> CGRect? {
@@ -127,11 +125,12 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             guard var rect = union else { return nil }
             if rect.width < 2 { rect.size.width = 2 }
             rect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
-            return textView.convert(rect, to: container)
+            _ = container
+            return textView.topLeftWindowRect(rect)
         }
 
         public func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView else { return }
+            guard let textView, !isSyncing else { return }
             controller.renderedSelection = textView.selectedRange()
         }
     }

@@ -174,10 +174,13 @@ public struct MarkdownRenderer {
             // One span per code line, so a note on code inside markdown is line-precise.
             let lines = codeBlock.code.split(separator: "\n", omittingEmptySubsequences: false)
             if let range = codeBlock.range {
-                let fenceLine = range.lowerBound.line
+                // Fenced blocks start on the fence line; indented blocks start on the first code line.
+                let firstSourceLine = source.line(range.lowerBound.line, index: table.index)?.trimmingCharacters(in: .whitespaces) ?? ""
+                let isFenced = firstSourceLine.hasPrefix("```") || firstSourceLine.hasPrefix("~~~")
+                let firstCodeLine = range.lowerBound.line + (isFenced ? 1 : 0)
                 for (offset, line) in lines.enumerated() {
                     if offset == lines.count - 1 && line.isEmpty { break }
-                    let lineNumber = fenceLine + 1 + offset
+                    let lineNumber = firstCodeLine + offset
                     let sourceRange = table.index.contentRange(ofLine: lineNumber)
                     let exact = sourceNS.substring(with: sourceRange) == String(line)
                     append(String(line), source: sourceRange, exact: exact)

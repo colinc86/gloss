@@ -1,3 +1,4 @@
+import AppKit
 import Core
 import OSLog
 import SwiftUI
@@ -5,12 +6,14 @@ import SwiftUI
 @main
 struct GlossApp: App {
     @State private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
+    @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
 
     init() {
         let options = AppLaunchOptions(arguments: CommandLine.arguments)
         Log.app.info("Launch options: \(String(describing: options), privacy: .public)")
-        _model = State(initialValue: AppModel(launchOptions: options))
+        let model = AppModel(launchOptions: options)
+        _model = State(initialValue: model)
+        AppDelegate.model = model
     }
 
     var body: some Scene {
@@ -19,7 +22,10 @@ struct GlossApp: App {
                 .environment(model)
                 .task { await model.start() }
                 .onOpenURL { url in Task { await URLRouter.handle(url, model: model) } }
+                // The open window takes gloss:// URLs; without this SwiftUI opens a new window per URL.
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
+        .handlesExternalEvents(matching: ["*"])
         .defaultSize(width: 1200, height: 800)
         .commands {
             AppCommands(model: model)
@@ -89,5 +95,18 @@ struct AppCommands: Commands {
                 .keyboardShortcut("m", modifiers: [.command, .shift])
                 .disabled(model.activeSession?.markdown == nil)
         }
+    }
+}
+
+/// Closes sessions and the database when the app quits.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var model: AppModel?
+
+    func applicationWillTerminate(_ notification: Notification) {
+        AppDelegate.model?.shutDown()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 }

@@ -3,7 +3,8 @@ import Foundation
 
 /// What the note popover edits: a new note at `anchor`, or an existing one.
 struct NoteEditorState: Identifiable {
-    var id: String { existingID?.rawValue ?? "new" }
+    /// A fresh id per editor so replacing one new-note state with another re-presents the popover.
+    var id = UUID()
     var existingID: NoteID?
     var anchor: Anchor
     var body: String

@@ -40,11 +40,12 @@ public final class SourceTextView: NSTextView {
         maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textContainer?.widthTracksTextView = true
         textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        NotificationCenter.default.addObserver(
-            forName: NSTextView.willSwitchToNSLayoutManagerNotification, object: self, queue: .main
-        ) { _ in
-            Self.log.fault("SourceTextView fell back to TextKit 1; highlights will stop working")
-        }
+        // Selector observers are unregistered automatically when the view is deallocated.
+        NotificationCenter.default.addObserver(self, selector: #selector(didSwitchToTextKit1), name: NSTextView.willSwitchToNSLayoutManagerNotification, object: self)
+    }
+
+    @objc private func didSwitchToTextKit1(_ notification: Notification) {
+        Self.log.fault("SourceTextView fell back to TextKit 1; highlights will stop working")
     }
 
     /// Replaces the whole content without touching the undo stack and clears it.

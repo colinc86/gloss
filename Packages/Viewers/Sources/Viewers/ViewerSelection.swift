@@ -40,3 +40,14 @@ public struct NoteHighlight: Identifiable, Equatable, Sendable {
         self.needsReview = needsReview
     }
 }
+
+import AppKit
+
+extension NSView {
+    /// A rect of this view in window coordinates with a top-left origin, which SwiftUI's `.global` space uses.
+    public func topLeftWindowRect(_ rect: CGRect) -> CGRect? {
+        guard let window, let content = window.contentView else { return nil }
+        let inWindow = convert(rect, to: nil)
+        return CGRect(x: inWindow.minX, y: content.bounds.height - inWindow.maxY, width: inWindow.width, height: inWindow.height)
+    }
+}

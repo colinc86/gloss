@@ -18,7 +18,8 @@ struct MediaNotesTests {
 
     func makeSession(path: String) throws -> (DocumentSession, NoteStore) {
         let store = NoteStore(database: try AppDatabase.inMemory())
-        return (DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store), store)
+        let attachments = URL(fileURLWithPath: (path as NSString).deletingLastPathComponent).appendingPathComponent("attachments")
+        return (DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store, attachmentDirectory: attachments), store)
     }
 
     func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
@@ -56,7 +57,7 @@ struct MediaNotesTests {
         #expect(FileManager.default.fileExists(atPath: attachments.first?.localPath ?? ""))
         await waitUntil { image.highlights.count == 1 }
         #expect(image.highlights.first?.rect == CGRect(x: 5, y: 6, width: 10, height: 8))
-        try? FileManager.default.removeItem(atPath: attachments.first?.localPath ?? "")
+        #expect(attachments.first?.localPath.hasPrefix(directory) == true, "attachments stay inside the injected directory")
         session.close()
     }
 
@@ -89,7 +90,6 @@ struct MediaNotesTests {
         let attachments = try await store.attachments(for: note.id)
         #expect(attachments.first?.kind == .pageRender)
         #expect(attachments.first?.width == 200 && attachments.first?.height == 60, "2x render of a 100×30 pt region")
-        try? FileManager.default.removeItem(atPath: attachments.first?.localPath ?? "")
         session.close()
     }
 }

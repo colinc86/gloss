@@ -49,7 +49,7 @@ struct PDFViewerTests {
         #expect(whole.width == 600 && whole.height == 400)
         page.rotation = 90
         let rotated = try #require(controller.renderPNG(page: 0, bounds: nil))
-        #expect(rotated.width > 0 && rotated.height > 0)
+        #expect(rotated.width == 400 && rotated.height == 600, "a rotated page renders with swapped dimensions")
     }
 
     @Test func selectionAnchorPrefersRegion() {

@@ -20,7 +20,7 @@ struct ViewerPane: View {
                 ConflictSheet(session: session, conflict: conflict)
             }
         }
-        .alert("Error", isPresented: Binding(get: { session.lastError != nil }, set: { _ in })) {
+        .alert("Error", isPresented: Binding(get: { session.lastError != nil }, set: { if !$0 { session.lastError = nil } })) {
             Button("OK") {}
         } message: {
             Text(session.lastError ?? "")
@@ -40,68 +40,29 @@ struct ViewerPane: View {
                     TextEditorView(controller: controller)
                 }
             }
-                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
-                    NotePopover(
-                        state: state,
-                        onSave: { edited in Task { await session.commitNote(edited) } },
-                        onDelete: { id in Task { await session.deleteNote(id) } },
-                        onCancel: { session.noteEditor = nil }
-                    )
-                }
+                .notePopover(session: session)
         case .image(let controller):
             ImageViewerPane(controller: controller)
-                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
-                    NotePopover(
-                        state: state,
-                        onSave: { edited in Task { await session.commitNote(edited) } },
-                        onDelete: { id in Task { await session.deleteNote(id) } },
-                        onCancel: { session.noteEditor = nil }
-                    )
-                }
+                .id(ObjectIdentifier(controller))
+                .notePopover(session: session)
         case .pdf(let controller):
             PDFViewerPane(controller: controller)
-                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
-                    NotePopover(
-                        state: state,
-                        onSave: { edited in Task { await session.commitNote(edited) } },
-                        onDelete: { id in Task { await session.deleteNote(id) } },
-                        onCancel: { session.noteEditor = nil }
-                    )
-                }
+                .id(ObjectIdentifier(controller))
+                .notePopover(session: session)
         case .csv(let controller):
             CSVGridPane(controller: controller)
-                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
-                    NotePopover(
-                        state: state,
-                        onSave: { edited in Task { await session.commitNote(edited) } },
-                        onDelete: { id in Task { await session.deleteNote(id) } },
-                        onCancel: { session.noteEditor = nil }
-                    )
-                }
+                .id(ObjectIdentifier(controller))
+                .notePopover(session: session)
         case .quickLook(let url):
             QuickLookView(url: url)
-                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 })) { state in
-                    NotePopover(
-                        state: state,
-                        onSave: { edited in Task { await session.commitNote(edited) } },
-                        onDelete: { id in Task { await session.deleteNote(id) } },
-                        onCancel: { session.noteEditor = nil }
-                    )
-                }
+                .notePopover(session: session)
         case .unsupported(let kind):
             ContentUnavailableView(
                 session.fileName,
                 systemImage: icon(for: kind),
                 description: Text("No viewer for this file on a remote host yet. Whole-file notes still work (⌘⇧N).")
             )
-            .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 })) { state in
-                NotePopover(
-                    state: state,
-                    onSave: { edited in Task { await session.commitNote(edited) } },
-                    onDelete: { id in Task { await session.deleteNote(id) } },
-                    onCancel: { session.noteEditor = nil }
-                )
-            }
+                .notePopover(session: session)
         case .failed(let message):
             ContentUnavailableView("Could not open \(session.fileName)", systemImage: "exclamationmark.triangle", description: Text(message))
         }
@@ -182,5 +143,35 @@ private struct StatusBar: View {
         .monospacedDigit()
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
+    }
+}
+
+/// Presents the note popover at `anchorRect`, which providers give in top-left window coordinates.
+private struct NotePopoverHost: ViewModifier {
+    let session: DocumentSession
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .global).origin
+                let rect = (session.noteEditor?.anchorRect ?? .zero).offsetBy(dx: -origin.x, dy: -origin.y)
+                Color.clear
+                    .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(rect)), arrowEdge: .bottom) { state in
+                        NotePopover(
+                            state: state,
+                            onSave: { edited in Task { await session.commitNote(edited) } },
+                            onDelete: { id in Task { await session.deleteNote(id) } },
+                            onCancel: { session.noteEditor = nil }
+                        )
+                    }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+extension View {
+    func notePopover(session: DocumentSession) -> some View {
+        modifier(NotePopoverHost(session: session))
     }
 }

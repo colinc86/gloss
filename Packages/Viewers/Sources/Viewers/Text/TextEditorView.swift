@@ -44,11 +44,13 @@ public struct TextEditorView: NSViewRepresentable {
         let controller: TextEditorController
         private weak var textView: SourceTextView?
         private weak var gutter: LineNumberGutterView?
+        private weak var backdrop: HighlightBackdropView?
         private var observers: [any NSObjectProtocol] = []
         private var loadedContentVersion = -1
         private var appliedHighlightsVersion = -1
         private var appliedScrollVersion = 0
         private var isApplyingContent = false
+        private var highlightToken: UUID?
 
         init(controller: TextEditorController) {
             self.controller = controller
@@ -57,6 +59,7 @@ public struct TextEditorView: NSViewRepresentable {
         func attach(textView: SourceTextView, gutter: LineNumberGutterView, scrollView: NSScrollView) {
             self.textView = textView
             self.gutter = gutter
+            backdrop = HighlightBackdropView.install(in: textView)
             textView.delegate = self
             textView.textStorage?.delegate = self
             textView.structuralExpansion = { [controller] range in controller.structuralExpansion(of: range) }
@@ -70,21 +73,27 @@ public struct TextEditorView: NSViewRepresentable {
                 if let range, let from = contentManager.location(contentManager.documentRange.location, offsetBy: range.location),
                    let to = contentManager.location(contentManager.documentRange.location, offsetBy: range.location + range.length),
                    let textRange = NSTextRange(location: from, end: to) {
-                    layoutManager.invalidateRenderingAttributes(for: textRange)
+                    Coordinator.revalidate(layoutManager, range: textRange)
                 } else {
-                    layoutManager.invalidateRenderingAttributes(for: contentManager.documentRange)
+                    Coordinator.revalidate(layoutManager, range: contentManager.documentRange)
                 }
+                textView.needsLayout = true
                 textView.needsDisplay = true
             }
+            highlightToken = controller.addHighlightObserver { [weak self] in self?.invalidateHighlights() }
             scrollView.contentView.postsBoundsChangedNotifications = true
             observers.append(NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main
-            ) { [weak gutter] _ in
-                MainActor.assumeIsolated { gutter?.needsDisplay = true }
+            ) { [weak gutter, weak backdrop] _ in
+                MainActor.assumeIsolated {
+                    gutter?.needsDisplay = true
+                    backdrop?.needsDisplay = true
+                }
             })
         }
 
         func detach() {
+            if let highlightToken { controller.removeHighlightObserver(highlightToken) }
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
             observers = []
             textView?.textLayoutManager?.renderingAttributesValidator = nil
@@ -120,8 +129,7 @@ public struct TextEditorView: NSViewRepresentable {
 
         /// Union of the selection segments for `range`, converted to the container view's coordinates.
         func rect(for range: NSRange) -> CGRect? {
-            guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager,
-                  let container = textView.enclosingScrollView?.superview else { return nil }
+            guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager else { return nil }
             let documentStart = contentManager.documentRange.location
             guard let from = contentManager.location(documentStart, offsetBy: range.location),
                   let to = contentManager.location(documentStart, offsetBy: range.location + range.length),
@@ -134,15 +142,22 @@ public struct TextEditorView: NSViewRepresentable {
             guard var rect = union else { return nil }
             if rect.width < 2 { rect.size.width = 2 }
             rect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
-            return textView.convert(rect, to: container)
+            return textView.topLeftWindowRect(rect)
         }
 
         private func invalidateHighlights() {
             appliedHighlightsVersion = controller.highlightsVersion
-            guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager else { return }
-            layoutManager.invalidateRenderingAttributes(for: contentManager.documentRange)
-            textView.needsDisplay = true
+            backdrop?.entries = controller.highlights.filter { !$0.isInvalidated }.map {
+                HighlightBackdropView.Entry(range: $0.range, color: $0.state == .orphaned ? Theme.color(for: $0.color) : Theme.highlightBackground(for: $0.highlight), orphaned: $0.state == .orphaned)
+            }
             gutter?.needsDisplay = true
+        }
+
+        /// The validator only runs when a fragment is laid out, so invalidating rendering attributes alone leaves
+        /// fragments that are already on screen unchanged; invalidating their layout makes TextKit ask again.
+        static func revalidate(_ layoutManager: NSTextLayoutManager, range: NSTextRange) {
+            layoutManager.invalidateRenderingAttributes(for: range)
+            layoutManager.invalidateLayout(for: range)
         }
 
         // MARK: Rendering attributes (note highlights)
@@ -165,20 +180,6 @@ public struct TextEditorView: NSViewRepresentable {
                     layoutManager.addRenderingAttribute(.foregroundColor, value: color, for: range)
                 }
             }
-            for highlight in controller.highlights where !highlight.isInvalidated {
-                let start = max(highlight.range.location, fragmentStart)
-                let end = min(highlight.range.location + highlight.range.length, fragmentEnd)
-                guard start < end,
-                      let from = contentManager.location(documentStart, offsetBy: start),
-                      let to = contentManager.location(documentStart, offsetBy: end),
-                      let range = NSTextRange(location: from, end: to) else { continue }
-                if highlight.state == .orphaned {
-                    layoutManager.addRenderingAttribute(.underlineStyle, value: NSUnderlineStyle.patternDash.rawValue | NSUnderlineStyle.single.rawValue, for: range)
-                    layoutManager.addRenderingAttribute(.underlineColor, value: Theme.color(for: highlight.color), for: range)
-                } else {
-                    layoutManager.addRenderingAttribute(.backgroundColor, value: Theme.highlightBackground(for: highlight.highlight), for: range)
-                }
-            }
         }
 
         // MARK: NSTextViewDelegate
@@ -188,10 +189,11 @@ public struct TextEditorView: NSViewRepresentable {
             controller.viewDidChangeText(textView.string)
             gutter?.updateWidth()
             gutter?.needsDisplay = true
+            backdrop?.needsDisplay = true
         }
 
         public func textViewDidChangeSelection(_ notification: Notification) {
-            guard let textView else { return }
+            guard let textView, !isApplyingContent else { return }
             controller.selection = textView.selectedRange()
             controller.onSelectionChange(textView.selectedRange())
             gutter?.needsDisplay = true

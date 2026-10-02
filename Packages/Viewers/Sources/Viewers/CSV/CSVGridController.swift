@@ -10,7 +10,10 @@ public final class CSVGridController {
     public let lineIndex: LineIndex
     public var selectedRows: IndexSet = []
     /// Lines (1-based) covered by text notes, with their colors, for row tinting.
-    public var highlights: [TextHighlight] = []
+    public var highlights: [TextHighlight] = [] {
+        didSet { onHighlightsChange() }
+    }
+    @ObservationIgnored public var onHighlightsChange: () -> Void = {}
     @ObservationIgnored public var rectProvider: (IndexSet) -> CGRect? = { _ in nil }
 
     public init(text: String, fileName: String) {

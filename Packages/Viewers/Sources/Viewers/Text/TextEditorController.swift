@@ -14,9 +14,25 @@ public final class TextEditorController {
     public var selection = NSRange(location: 0, length: 0)
     public private(set) var lineIndex: LineIndex
     public var highlights: [TextHighlight] = [] {
-        didSet { highlightsVersion += 1 }
+        didSet {
+            highlightsVersion += 1
+            for observer in highlightObservers.values { observer() }
+        }
     }
     public private(set) var highlightsVersion = 0
+    /// Views register here to redraw when highlights change; SwiftUI does not track reads inside AppKit updates.
+    @ObservationIgnored private var highlightObservers: [UUID: () -> Void] = [:]
+
+    @discardableResult
+    public func addHighlightObserver(_ observer: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        highlightObservers[token] = observer
+        return token
+    }
+
+    public func removeHighlightObserver(_ token: UUID) {
+        highlightObservers[token] = nil
+    }
     /// Where to scroll next; the view consumes it.
     public var pendingScroll: NSRange?
     public var pendingScrollVersion = 0
@@ -59,14 +75,18 @@ public final class TextEditorController {
 
     /// Called by the view after the user edited (public so tests can drive the controller without a view).
     public func viewDidChangeText(_ newText: String) {
-        text = newText
-        lineIndex = LineIndex(newText)
+        if text != newText {
+            text = newText
+            lineIndex = LineIndex(newText)
+        }
         onTextChange()
     }
 
     public func viewDidProcessEdit(edit: NSRange, replacementLength: Int, newText: String) {
         let oldIndex = lineIndex
         let newIndex = LineIndex(newText)
+        text = newText
+        lineIndex = newIndex
         highlighter?.apply(edit: edit, replacementLength: replacementLength, newText: newText, oldIndex: oldIndex, newIndex: newIndex)
         highlights = highlights.compactMap { highlight in
             var updated = highlight

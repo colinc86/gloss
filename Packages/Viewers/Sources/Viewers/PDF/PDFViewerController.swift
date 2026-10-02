@@ -32,8 +32,14 @@ public final class PDFViewerController {
     public var region: (page: Int, bounds: CGRect)?
     /// Current text selection: first page index, bounds on that page, and the text.
     public var textSelection: (page: Int, bounds: CGRect, text: String)?
-    public var highlights: [PDFHighlight] = []
-    public var selectedNoteID: NoteID?
+    public var highlights: [PDFHighlight] = [] {
+        didSet { onHighlightsChange() }
+    }
+    public var selectedNoteID: NoteID? {
+        didSet { onHighlightsChange() }
+    }
+    /// Set by the view; redraws the overlay and text highlights.
+    @ObservationIgnored public var onHighlightsChange: () -> Void = {}
     public var currentPage = 0
     public var pendingScroll: (page: Int, bounds: CGRect?)?
     public var pendingScrollVersion = 0
@@ -74,13 +80,16 @@ public final class PDFViewerController {
     }
 
     /// Renders a page region (or the whole page) at 2x as PNG, for the packet attachment.
+    /// `bounds` are in page space (what selections and `PDFView.convert(_:to:)` give); `draw(with:to:)` applies the
+    /// page rotation and moves the box origin to zero, and `transform(for:)` maps page space into that drawn space.
     public func renderPNG(page index: Int, bounds: CGRect?, scale: CGFloat = 2) -> (data: Data, width: Int, height: Int)? {
         guard let page = document.page(at: index) else { return nil }
         let box = page.bounds(for: .cropBox)
         let region = (bounds ?? box).intersection(box)
         guard !region.isEmpty else { return nil }
-        let width = Int((region.width * scale).rounded())
-        let height = Int((region.height * scale).rounded())
+        let drawn = region.applying(page.transform(for: .cropBox)).standardized
+        let width = Int((drawn.width * scale).rounded())
+        let height = Int((drawn.height * scale).rounded())
         guard width > 0, height > 0, let context = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
@@ -88,7 +97,7 @@ public final class PDFViewerController {
         context.setFillColor(CGColor(gray: 1, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         context.scaleBy(x: scale, y: scale)
-        context.translateBy(x: -region.minX, y: -region.minY)
+        context.translateBy(x: -drawn.minX, y: -drawn.minY)
         page.draw(with: .cropBox, to: context)
         guard let image = context.makeImage(), let data = ImageDecoder.pngData(image) else { return nil }
         return (data, width, height)

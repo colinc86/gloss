@@ -41,7 +41,8 @@ final class AppModel {
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
         fileSystems[.local] = LocalFileSystem()
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
-        send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.textController?.text }
+        // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
+        send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
         notesPanel.start()
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
@@ -51,6 +52,7 @@ final class AppModel {
         let key = "\(hostID.rawValue):\(path)"
         if let existing = sessions[key] {
             activeSession = existing
+            trimSessions()
             return
         }
         guard let fileSystem = fileSystems[hostID] else { return }
@@ -58,6 +60,24 @@ final class AppModel {
         sessions[key] = session
         activeSession = session
         Task { await session.open() }
+        trimSessions()
+    }
+
+    /// Keeps a handful of recent clean sessions open; closes the rest so watchers and observations do not pile up.
+    static let maximumOpenSessions = 8
+    @ObservationIgnored private var activationOrder: [String] = []
+
+    private func trimSessions() {
+        if let active = activeSession {
+            activationOrder.removeAll { $0 == active.id }
+            activationOrder.append(active.id)
+        }
+        while sessions.count > Self.maximumOpenSessions {
+            guard let victim = activationOrder.first(where: { id in sessions[id].map { $0 !== activeSession && !$0.isDirty } ?? false }) else { break }
+            activationOrder.removeAll { $0 == victim }
+            sessions[victim]?.close()
+            sessions[victim] = nil
+        }
     }
 
     /// Opens a document and scrolls its text view to a 1-based line once it has loaded.
@@ -108,8 +128,12 @@ final class AppModel {
         fileSystems[hostID]
     }
 
-    /// Applies `--root` and `--open`, or reopens the most recent root.
+    @ObservationIgnored private var started = false
+
+    /// Applies `--root` and `--open`, or reopens the most recent root. Runs once even if several windows appear.
     func start() async {
+        guard !started else { return }
+        started = true
         await settings.load()
         explorer.showDotfiles = settings.showDotfilesByDefault
         if let root = launchOptions.root {
@@ -150,7 +174,7 @@ final class AppModel {
         guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
         Task {
             // The session may still be opening.
-            for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            for _ in 0..<50 where !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
             session.reveal(note)
         }
     }

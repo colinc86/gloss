@@ -36,10 +36,14 @@ public struct RenderedSourceMap: Sendable {
     /// widened to the enclosing block when the selection touches generated text only.
     public func sourceRange(forRendered rendered: NSRange) -> Mapping? {
         let renderedEnd = rendered.location + rendered.length
-        let touched = spans.filter { span in
+        var touched = spans.filter { span in
             let spanEnd = span.rendered.location + span.rendered.length
-            return rendered.length == 0 ? (span.rendered.location <= rendered.location && rendered.location <= spanEnd)
+            return rendered.length == 0 ? (span.rendered.location <= rendered.location && rendered.location < spanEnd)
                                         : (span.rendered.location < renderedEnd && rendered.location < spanEnd)
+        }
+        if rendered.length == 0, touched.isEmpty {
+            // A caret at the very end of a run belongs to that run, not to the next one.
+            touched = spans.filter { $0.rendered.location + $0.rendered.length == rendered.location }.suffix(1).map { $0 }
         }
         if touched.isEmpty {
             guard let block = blocks.first(where: { NSIntersectionRange($0.rendered, rendered).length > 0 || ($0.rendered.location <= rendered.location && rendered.location <= $0.rendered.location + $0.rendered.length) }) else { return nil }

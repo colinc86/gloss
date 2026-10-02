@@ -61,7 +61,7 @@ final class DocumentSession: Identifiable {
     var banner: Banner?
     var conflict: ConflictState?
     private(set) var isSaving = false
-    private(set) var lastError: String?
+    var lastError: String?
 
     @ObservationIgnored private var watcher: Task<Void, Never>?
     @ObservationIgnored private var notesObservation: Task<Void, Never>?
@@ -79,13 +79,22 @@ final class DocumentSession: Identifiable {
     var reanchoringNoteID: NoteID?
     var lastUsedColor: NoteColor = .yellow
 
-    init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore) {
+    /// Where crops and page renders for this session's notes are written.
+    let attachmentDirectory: URL
+
+    init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot) {
         self.id = "\(hostID.rawValue):\(path)"
         self.hostID = hostID
         self.path = path
         self.kind = DocumentKindDetector.kind(forPath: path)
         self.fileSystem = fileSystem
         self.noteStore = noteStore
+        self.attachmentDirectory = attachmentDirectory
+    }
+
+    var isLoaded: Bool {
+        if case .loading = state { return false }
+        return true
     }
 
     var fileName: String { PathUtilities.name(of: path) }
@@ -148,6 +157,7 @@ final class DocumentSession: Identifiable {
             }
             guard kind == .text || kind == .code || kind == .markdown || kind == .csv else {
                 document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: attributes.fingerprint)
+                fingerprintAtOpen = attributes.fingerprint
                 state = hostID == .local ? .quickLook(URL(fileURLWithPath: path)) : .unsupported(kind)
                 startWatching()
                 observeNotes()
@@ -208,6 +218,7 @@ final class DocumentSession: Identifiable {
             fingerprintAtOpen = fingerprint
             baseText = text
             controller.replaceAll(with: text)
+            markdown?.syncWithSourceIfReplaced()
             isDirty = false
             banner = nil
             conflict = nil
@@ -272,6 +283,7 @@ final class DocumentSession: Identifiable {
         baseText = conflict.theirsText
         fingerprintAtOpen = conflict.theirsFingerprint
         controller.replaceAll(with: text)
+        markdown?.syncWithSourceIfReplaced()
         liveRanges = [:]
         invalidatedNotes = []
         do { try await write(text) } catch { lastError = "Save failed: \(error)" }
@@ -295,17 +307,20 @@ final class DocumentSession: Identifiable {
 
     private func write(_ text: String) async throws {
         let data = usedLatin1 ? (text.data(using: .isoLatin1) ?? Data(text.utf8)) : Data(text.utf8)
+        // Snapshot the anchors that belong to this text; typing during a slow save must not leak into them.
+        let rangesSnapshot = liveRanges
+        let invalidatedSnapshot = invalidatedNotes
         let attributes = try await fileSystem.writeAtomically(data, to: path, preservingModeFrom: attributesAtOpen)
         let fingerprint = Fingerprint(mtime: attributes.mtime, size: attributes.size, hash: data.sha256Hex)
         fingerprintAtOpen = fingerprint
         attributesAtOpen = attributes
         baseText = text
-        isDirty = false
+        isDirty = textController.map { $0.text != text } ?? false
         banner = nil
         if let document {
             try await noteStore.updateFingerprint(document.id, fingerprint)
         }
-        await persistLiveAnchors(in: text, hash: fingerprint.hash ?? "")
+        await persistLiveAnchors(rangesSnapshot, invalidated: invalidatedSnapshot, in: text, hash: fingerprint.hash ?? "")
     }
 
     // MARK: Watching
@@ -500,13 +515,13 @@ final class DocumentSession: Identifiable {
     }
 
     /// Writes shifted anchors back and orphans notes whose text was replaced.
-    private func persistLiveAnchors(in text: String, hash: String) async {
-        guard !liveRanges.isEmpty else { return }
+    private func persistLiveAnchors(_ ranges: [NoteID: NSRange], invalidated: Set<NoteID>, in text: String, hash: String) async {
+        guard !ranges.isEmpty else { return }
         let index = LineIndex(text)
         for note in notes {
-            guard case .text = note.anchor, let range = liveRanges[note.id] else { continue }
+            guard case .text = note.anchor, let range = ranges[note.id] else { continue }
             do {
-                if invalidatedNotes.contains(note.id) {
+                if invalidated.contains(note.id) {
                     if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
                 } else {
                     let anchor = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
@@ -516,8 +531,10 @@ final class DocumentSession: Identifiable {
                 Log.notes.error("persisting anchor for \(note.id.rawValue, privacy: .public) failed: \(error, privacy: .public)")
             }
         }
-        liveRanges = [:]
-        invalidatedNotes = []
+        if !isDirty {
+            liveRanges = [:]
+            invalidatedNotes = []
+        }
     }
 
     /// Re-anchors every text note against new content (reload after an external change).
@@ -676,7 +693,7 @@ final class DocumentSession: Identifiable {
     /// Renders the page region (or the whole page for a text selection) at 2x and records it on the note.
     private func savePageRender(of anchor: PDFAnchor, from pdf: PDFViewerController, for noteID: NoteID) async throws {
         guard let rendered = pdf.renderPNG(page: anchor.page, bounds: anchor.bounds?.cgRect) else { return }
-        let directory = AttachmentCache.root.appendingPathComponent("notes", isDirectory: true)
+        let directory = attachmentDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let base = (fileName as NSString).deletingPathExtension
         let url = directory.appendingPathComponent("\(base)-page\(anchor.page + 1)-\(noteID.rawValue.suffix(6)).png")
@@ -688,7 +705,7 @@ final class DocumentSession: Identifiable {
     private func saveCrop(of anchor: ImageAnchor, from image: ImageViewerController, for noteID: NoteID) async throws {
         let rect = CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h)
         guard let crop = ImageDecoder.crop(image.image, to: rect), let png = ImageDecoder.pngData(crop) else { return }
-        let directory = AttachmentCache.root.appendingPathComponent("notes", isDirectory: true)
+        let directory = attachmentDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let base = (fileName as NSString).deletingPathExtension
         let url = directory.appendingPathComponent("\(base)-region-\(noteID.rawValue.suffix(6)).png")

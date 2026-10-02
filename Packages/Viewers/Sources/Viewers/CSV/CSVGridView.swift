@@ -38,10 +38,13 @@ public struct CSVGridView: NSViewRepresentable {
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
-        controller.rectProvider = { [weak table, weak scroll] rows in
-            guard let table, let scroll, let first = rows.min(), let last = rows.max() else { return nil }
-            let rect = table.rect(ofRow: first).union(table.rect(ofRow: last))
-            return table.convert(rect, to: scroll)
+        controller.onHighlightsChange = { [weak table, weak coordinator = context.coordinator] in
+            guard let table, let coordinator else { return }
+            table.enumerateAvailableRowViews { rowView, row in rowView.backgroundColor = coordinator.rowColor(row) ?? .clear }
+        }
+        controller.rectProvider = { [weak table] rows in
+            guard let table, let first = rows.min(), let last = rows.max() else { return nil }
+            return table.topLeftWindowRect(table.rect(ofRow: first).union(table.rect(ofRow: last)))
         }
         return scroll
     }
