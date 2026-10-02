@@ -124,7 +124,13 @@ struct SSHConnectionTests {
             #expect(events.contains { if case .waitingForAgent = $0 { return true } else { return false } }, "\(events)")
             #expect(events.contains { if case .failed(_, .agentUnresponsive) = $0 { return true } else { return false } })
             await manager.disconnectAll()
-            #expect(pgrepMasters() == 0, "the stalled master was terminated")
+            // A master blocked in an agent request ignores SIGTERM; the SIGKILL follow-up comes two seconds later.
+            var remaining = pgrepMasters()
+            for _ in 0..<12 where remaining > 0 {
+                try await Task.sleep(for: .milliseconds(250))
+                remaining = pgrepMasters()
+            }
+            #expect(remaining == 0, "the stalled master was terminated")
         }
     }
 

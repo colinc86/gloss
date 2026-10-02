@@ -32,23 +32,37 @@ public enum ChildProcessError: Error, Sendable, Equatable {
 
 /// A child process with its output as async streams and its exit code as an awaitable value.
 /// Both pipes are always drained, so a chatty child never blocks on a full pipe.
+///
+/// Children are spawned with `posix_spawn` and *disclaim responsibility*: each child is its own "responsible
+/// process" for macOS attribution purposes. Without that, a key agent such as 1Password attributes every `ssh`
+/// request to this app, asks for approval once per build signature, and silently refuses after a prompt dies
+/// (for example when the app is stopped in Xcode). Attributed to `/usr/bin/ssh` itself, one approval holds across
+/// every rebuild of the app.
 public final class ChildProcess: Sendable {
     public let stdout: AsyncStream<Data>
     public let stderr: AsyncStream<Data>
     public let processIdentifier: Int32
 
     private let exitBox: ExitBox
-    private let state: Mutex<State>
+    private let state: StateBox
     private let queue: DispatchQueue
+    private let exitSource: any DispatchSourceProcess
 
     /// A child that exits before reading its stdin would otherwise kill the app with SIGPIPE; ignoring it makes
     /// the write fail with EPIPE instead, which the callers handle. Done once, before the first launch.
     private static let ignoreSIGPIPE: Void = { signal(SIGPIPE, SIG_IGN) }()
 
     private struct State {
-        var process: Process?
+        var running = true
         var stdinHandle: FileHandle?
         var stdinClosed = false
+    }
+
+    /// Reference wrapper so the exit handler and the SIGKILL follow-up can share the state (`Mutex` cannot be copied).
+    private final class StateBox: Sendable {
+        let mutex: Mutex<State>
+        init(_ state: State) { mutex = Mutex(state) }
+        func withLock<T: Sendable>(_ body: (inout State) throws -> T) rethrows -> T { try mutex.withLock { try body(&$0) } }
     }
 
     public static func launch(_ spec: ChildProcessSpec) throws -> ChildProcess {
@@ -57,27 +71,6 @@ public final class ChildProcess: Sendable {
 
     private init(_ spec: ChildProcessSpec) throws {
         _ = Self.ignoreSIGPIPE
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: spec.executable)
-        process.arguments = spec.arguments
-        if !spec.extraEnvironment.isEmpty {
-            process.environment = ProcessInfo.processInfo.environment.merging(spec.extraEnvironment) { _, new in new }
-        }
-        if let directory = spec.workingDirectory { process.currentDirectoryURL = URL(fileURLWithPath: directory) }
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        var stdinHandle: FileHandle?
-        switch spec.stdin {
-        case .null:
-            process.standardInput = FileHandle.nullDevice
-        case .pipe:
-            let inPipe = Pipe()
-            process.standardInput = inPipe
-            stdinHandle = inPipe.fileHandleForWriting
-        }
-
         let queue = DispatchQueue(label: "com.cnc.Gloss.child.\(spec.executable.split(separator: "/").last ?? "")")
         self.queue = queue
         var stdoutContinuation: AsyncStream<Data>.Continuation?
@@ -86,23 +79,100 @@ public final class ChildProcess: Sendable {
         stderr = AsyncStream { stderrContinuation = $0 }
         guard let stdoutContinuation, let stderrContinuation else { throw ChildProcessError.launchFailed("stream setup") }
 
-        let exitBox = ExitBox()
-        self.exitBox = exitBox
-        process.terminationHandler = { finished in
-            exitBox.finish(finished.terminationStatus)
-        }
+        // Pipes: the child's ends are passed through dup2; the parent's ends are close-on-exec.
+        var outPipe: [Int32] = [-1, -1], errPipe: [Int32] = [-1, -1], inPipe: [Int32] = [-1, -1]
+        guard pipe(&outPipe) == 0, pipe(&errPipe) == 0 else { throw ChildProcessError.launchFailed("pipe: \(errno)") }
+        if spec.stdin == .pipe { guard pipe(&inPipe) == 0 else { throw ChildProcessError.launchFailed("pipe: \(errno)") } }
+        for fd in [outPipe[0], errPipe[0], inPipe[1]] where fd >= 0 { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
 
-        do {
-            try process.run()
-        } catch {
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        if spec.stdin == .pipe {
+            posix_spawn_file_actions_adddup2(&actions, inPipe[0], 0)
+        } else {
+            posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        }
+        posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1)
+        posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2)
+        if let directory = spec.workingDirectory { posix_spawn_file_actions_addchdir_np(&actions, directory) }
+
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        // Close every descriptor the child did not get through dup2 above, and give it default signal handling.
+        var defaultSignals = sigset_t()
+        sigemptyset(&defaultSignals)
+        sigaddset(&defaultSignals, SIGPIPE)
+        posix_spawnattr_setsigdefault(&attributes, &defaultSignals)
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF))
+        Self.disclaimResponsibility(&attributes)
+
+        let environment = ProcessInfo.processInfo.environment.merging(spec.extraEnvironment) { _, new in new }
+        let argv = [spec.executable] + spec.arguments
+        var pid: pid_t = 0
+        let status = Self.withCStrings(argv) { argvPointer in
+            Self.withCStrings(environment.map { "\($0.key)=\($0.value)" }) { envPointer in
+                posix_spawn(&pid, spec.executable, &actions, &attributes, argvPointer, envPointer)
+            }
+        }
+        // The child's ends are the child's now; keep only the parent's ends.
+        close(outPipe[1])
+        close(errPipe[1])
+        if inPipe[0] >= 0 { close(inPipe[0]) }
+        guard status == 0 else {
+            close(outPipe[0])
+            close(errPipe[0])
+            if inPipe[1] >= 0 { close(inPipe[1]) }
             stdoutContinuation.finish()
             stderrContinuation.finish()
-            throw ChildProcessError.launchFailed("\(error)")
+            throw ChildProcessError.launchFailed("\(spec.executable): \(String(cString: strerror(status)))")
         }
-        processIdentifier = process.processIdentifier
-        state = Mutex(State(process: process, stdinHandle: stdinHandle))
-        Self.pump(outPipe.fileHandleForReading, queue: queue, into: stdoutContinuation)
-        Self.pump(errPipe.fileHandleForReading, queue: queue, into: stderrContinuation)
+
+        processIdentifier = pid
+        let stdinHandle = inPipe[1] >= 0 ? FileHandle(fileDescriptor: inPipe[1], closeOnDealloc: true) : nil
+        let state = StateBox(State(stdinHandle: stdinHandle))
+        self.state = state
+        let exitBox = ExitBox()
+        self.exitBox = exitBox
+        // Exit is observed through a dispatch source; the status is reaped there so the pid is never reused
+        // before the handlers have run.
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: queue)
+        exitSource = source
+        source.setEventHandler {
+            var rawStatus: Int32 = 0
+            while waitpid(pid, &rawStatus, 0) < 0 && errno == EINTR {}
+            let code: Int32
+            if (rawStatus & 0x7f) == 0 {   // WIFEXITED
+                code = (rawStatus >> 8) & 0xff
+            } else {   // signalled: report the signal number, as Foundation's Process does
+                code = rawStatus & 0x7f
+            }
+            state.withLock { $0.running = false }
+            exitBox.finish(code)
+            source.cancel()
+        }
+        source.resume()
+        Self.pump(FileHandle(fileDescriptor: outPipe[0], closeOnDealloc: true), queue: queue, into: stdoutContinuation)
+        Self.pump(FileHandle(fileDescriptor: errPipe[0], closeOnDealloc: true), queue: queue, into: stderrContinuation)
+    }
+
+    /// `responsibility_spawnattrs_setdisclaim` is not in the public headers but has shipped in libSystem since
+    /// macOS 10.14 and is what browsers use for their helpers. Absent symbol: children stay attributed to the app.
+    private static let disclaimFunction: (@convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32).self)
+    }()
+
+    private static func disclaimResponsibility(_ attributes: inout posix_spawnattr_t?) {
+        _ = disclaimFunction?(&attributes, 1)
+    }
+
+    private static func withCStrings<T>(_ strings: [String], _ body: (UnsafePointer<UnsafeMutablePointer<CChar>?>) -> T) -> T {
+        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { strdup($0) }
+        pointers.append(nil)
+        defer { for pointer in pointers { free(pointer) } }
+        return pointers.withUnsafeBufferPointer { body($0.baseAddress!) }
     }
 
     /// Reads a pipe through DispatchIO on the private queue; only the Sendable continuation is captured.
@@ -129,7 +199,7 @@ public final class ChildProcess: Sendable {
     }
 
     public var isRunning: Bool {
-        state.withLock { $0.process?.isRunning ?? false }
+        state.withLock { $0.running }
     }
 
     /// Writes to stdin (only with `.pipe`) through DispatchIO on the private queue, so a slow reader parks the
@@ -160,20 +230,19 @@ public final class ChildProcess: Sendable {
 
     /// SIGTERM, then SIGKILL two seconds later if still running.
     public func terminate() {
-        let process = state.withLock { $0.process }
-        guard let process, process.isRunning else { return }
-        process.terminate()
-        let pid = process.processIdentifier
+        guard isRunning else { return }
+        let pid = processIdentifier
+        let state = state
+        Darwin.kill(pid, SIGTERM)
         queue.asyncAfter(deadline: .now() + 2) {
             // Not `self`: the owner may have dropped this object by then, and the follow-up must still fire.
-            // The pid is reaped only by `Process`, so it cannot have been reused while the handler holds `process`.
-            if process.isRunning { Darwin.kill(pid, SIGKILL) }
+            // The pid is reaped only by this object's exit source, so it cannot have been reused while `running`.
+            if state.withLock({ $0.running }) { Darwin.kill(pid, SIGKILL) }
         }
     }
 
     public func kill() {
-        let pid = state.withLock { $0.process?.isRunning == true ? $0.process?.processIdentifier : nil }
-        if let pid { Darwin.kill(pid, SIGKILL) }
+        if isRunning { Darwin.kill(processIdentifier, SIGKILL) }
     }
 
     /// Collects all of stdout as data.
