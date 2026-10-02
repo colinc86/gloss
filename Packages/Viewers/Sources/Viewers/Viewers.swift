@@ -1,6 +1,6 @@
 import Core
 
-/// Placeholder so the module builds before the first viewer lands (step 7).
+/// Module marker; keeps the placeholder test meaningful.
 public enum ViewersModule {
     public static let name = "Viewers"
 }
