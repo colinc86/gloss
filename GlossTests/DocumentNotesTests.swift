@@ -1,0 +1,96 @@
+import Core
+import Foundation
+import Testing
+import Viewers
+@testable import Gloss
+
+@MainActor
+struct DocumentNotesTests {
+    func makeFile(_ content: String) throws -> (String, String) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-notes-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let path = "\(directory)/doc.md"
+        try content.write(toFile: path, atomically: true, encoding: .utf8)
+        return (directory, path)
+    }
+
+    func makeSession(path: String) throws -> (DocumentSession, NoteStore) {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        return (DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store), store)
+    }
+
+    func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+        for _ in 0..<100 {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    @Test func createsANoteFromTheSelectionAndShowsIt() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        session.markdown?.mode = .source   // a markdown file opens rendered; the note comes from the source selection here
+        controller.selection = controller.lineIndex.contentRange(ofLine: 2)
+        session.beginNote()
+        var editor = try #require(session.noteEditor)
+        #expect(editor.anchor.summary == "Line 2")
+        editor.body = "Rename this"
+        editor.color = .green
+        await session.commitNote(editor)
+        await waitUntil { session.notes.count == 1 }
+        let note = try #require(session.notes.first)
+        #expect(note.body == "Rename this")
+        #expect(note.color == .green)
+        await waitUntil { controller.highlights.count == 1 }
+        #expect(controller.highlights.first?.range == controller.lineIndex.contentRange(ofLine: 2))
+        #expect(try await store.notes(for: note.documentID).count == 1)
+        session.close()
+    }
+
+    @Test func liveShiftPersistsOnSave() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        let document = try #require(session.document)
+        _ = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 4), text: "two", before: "one", after: "three", hash: nil)), body: "b", color: .blue)
+        await waitUntil { controller.highlights.count == 1 }
+        // Simulate typing a new first line: the storage delegate path reports the edit, then the text change.
+        let newText = "zero\none\ntwo\nthree\n"
+        controller.viewDidProcessEdit(edit: NSRange(location: 0, length: 0), replacementLength: 5, newText: newText)
+        controller.viewDidChangeText(newText)
+        #expect(controller.highlights.first?.range == NSRange(location: 9, length: 3))
+        await session.save()
+        let saved = try #require(try await store.notes(for: document.id).first)
+        guard case .text(let anchor) = saved.anchor else { Issue.record("expected text anchor"); return }
+        #expect(anchor.start.line == 3)
+        #expect(anchor.text == "two")
+        #expect(anchor.hash == Data(newText.utf8).sha256Hex)
+        session.close()
+    }
+
+    @Test func reloadReanchorsAndOrphans() async throws {
+        let (directory, path) = try makeFile("alpha\nbeta\ngamma\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        let document = try #require(session.document)
+        let kept = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 5), text: "beta", before: "alpha", after: "gamma", hash: "old")), body: "k", color: .blue)
+        let lost = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 3, col: 6), text: "gamma", before: "alpha\nbeta", after: "", hash: "old")), body: "l", color: .pink)
+        await waitUntil { controller.highlights.count == 2 }
+        try await Task.sleep(for: .milliseconds(5))
+        try "intro\nalpha\nbeta\nomega\n".write(toFile: path, atomically: true, encoding: .utf8)
+        await session.handleExternalChange()
+        await waitUntil { session.notes.first { $0.id == lost.id }?.state == .orphaned }
+        let keptNow = try #require(try await store.note(kept.id))
+        guard case .text(let anchor) = keptNow.anchor else { Issue.record("expected text"); return }
+        #expect(anchor.start.line == 3, "beta moved down one line")
+        #expect(try await store.note(lost.id)?.state == .orphaned)
+        session.close()
+    }
+}

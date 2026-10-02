@@ -33,13 +33,55 @@ struct ViewerPane: View {
         case .loading:
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         case .text(let controller):
-            TextEditorView(controller: controller)
+            Group {
+                if let markdown = session.markdown {
+                    MarkdownViewerView(controller: markdown)
+                } else {
+                    TextEditorView(controller: controller)
+                }
+            }
+                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
+                    NotePopover(
+                        state: state,
+                        onSave: { edited in Task { await session.commitNote(edited) } },
+                        onDelete: { id in Task { await session.deleteNote(id) } },
+                        onCancel: { session.noteEditor = nil }
+                    )
+                }
+        case .image(let controller):
+            ImageViewerPane(controller: controller)
+                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
+                    NotePopover(
+                        state: state,
+                        onSave: { edited in Task { await session.commitNote(edited) } },
+                        onDelete: { id in Task { await session.deleteNote(id) } },
+                        onCancel: { session.noteEditor = nil }
+                    )
+                }
+        case .pdf(let controller):
+            PDFViewerPane(controller: controller)
+                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
+                    NotePopover(
+                        state: state,
+                        onSave: { edited in Task { await session.commitNote(edited) } },
+                        onDelete: { id in Task { await session.deleteNote(id) } },
+                        onCancel: { session.noteEditor = nil }
+                    )
+                }
         case .unsupported(let kind):
             ContentUnavailableView(
                 session.fileName,
                 systemImage: icon(for: kind),
                 description: Text("The \(kind.rawValue) viewer arrives in a later step.")
             )
+            .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 })) { state in
+                NotePopover(
+                    state: state,
+                    onSave: { edited in Task { await session.commitNote(edited) } },
+                    onDelete: { id in Task { await session.deleteNote(id) } },
+                    onCancel: { session.noteEditor = nil }
+                )
+            }
         case .failed(let message):
             ContentUnavailableView("Could not open \(session.fileName)", systemImage: "exclamationmark.triangle", description: Text(message))
         }

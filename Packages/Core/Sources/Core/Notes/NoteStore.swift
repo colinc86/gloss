@@ -275,28 +275,41 @@ public struct NoteStore: Sendable {
     }
 
     /// Observes the notes of one document, emitting the full sorted list on every change.
-    public func observeNotes(for documentID: DocumentID) -> AsyncValueObservation<[Note]> {
-        ValueObservation
-            .tracking { db in
-                Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0) })
-            }
-            .values(in: queue)
+    public func observeNotes(for documentID: DocumentID) -> AsyncThrowingStream<[Note], any Error> {
+        Self.stream(ValueObservation.tracking { db in
+            Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0) })
+        }, in: queue)
     }
 
     /// Observes every document that has notes, for the notes panel.
-    public func observeDocumentsWithNotes() -> AsyncValueObservation<[DocumentNotes]> {
-        ValueObservation
-            .tracking { db in
-                let documents = try DocumentRecord
-                    .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id)")
-                    .order(Column("host_id"), Column("path"))
-                    .fetchAll(db)
-                return try documents.map { record in
-                    let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0) }
-                    return DocumentNotes(document: Document(record: record), notes: Self.sorted(notes))
+    public func observeDocumentsWithNotes() -> AsyncThrowingStream<[DocumentNotes], any Error> {
+        Self.stream(ValueObservation.tracking { db in
+            let documents = try DocumentRecord
+                .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id)")
+                .order(Column("host_id"), Column("path"))
+                .fetchAll(db)
+            return try documents.map { record in
+                let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0) }
+                return DocumentNotes(document: Document(record: record), notes: Self.sorted(notes))
+            }
+        }, in: queue)
+    }
+
+    /// Bridges a GRDB observation to a plain stream so callers need no GRDB import.
+    private static func stream<T: Sendable>(_ observation: ValueObservation<ValueReducers.Fetch<T>>, in queue: DatabaseQueue) -> AsyncThrowingStream<T, any Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await value in observation.values(in: queue) {
+                        continuation.yield(value)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
             }
-            .values(in: queue)
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     // MARK: Attachments

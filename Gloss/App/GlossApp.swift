@@ -49,6 +49,29 @@ struct AppCommands: Commands {
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(model.activeSession?.textController == nil)
         }
+        CommandMenu("Notes") {
+            Button("New Note from Selection") { model.activeSession?.beginNote() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(model.activeSession == nil)
+            Button("Send Drafts in Document") { Task { await model.sendAllDrafts(scope: .activeDocument) } }
+                .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(model.send.lastTarget == nil)
+            Button("Send All Drafts") { Task { await model.sendAllDrafts(scope: .all) } }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .disabled(model.send.lastTarget == nil)
+            Button("Copy Packet for Document") { Task { await model.copyPacket(scope: .activeDocument) } }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+            Divider()
+            Button("Resolve Selected Note") {
+                guard let id = model.notesPanel.selectedNoteID else { return }
+                Task { await model.notesPanel.resolve(id) }
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(model.notesPanel.selectedNoteID == nil)
+            Divider()
+            Toggle("Show Notes Panel", isOn: Binding(get: { model.showNotesPanel }, set: { model.showNotesPanel = $0 }))
+                .keyboardShortcut("n", modifiers: [.command, .option])
+        }
         CommandGroup(after: .toolbar) {
             Toggle("Show Hidden Files", isOn: Binding(
                 get: { model.explorer.showDotfiles },
@@ -57,6 +80,9 @@ struct AppCommands: Commands {
             .keyboardShortcut(".", modifiers: [.command, .shift])
             Button("Refresh Explorer") { model.explorer.refreshAll() }
                 .keyboardShortcut("r", modifiers: [.command])
+            Button("Toggle Rendered / Source") { model.activeSession?.toggleMarkdownMode() }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+                .disabled(model.activeSession?.markdown == nil)
         }
     }
 }

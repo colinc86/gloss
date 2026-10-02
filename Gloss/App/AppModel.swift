@@ -2,6 +2,7 @@ import Core
 import Foundation
 import Observation
 import OSLog
+import Viewers
 
 /// Root object for the app: owns the database, the file systems per host, and the explorer.
 @MainActor
@@ -11,7 +12,10 @@ final class AppModel {
     let noteStore: NoteStore
     private(set) var fileSystems: [HostID: any FileSystemProvider] = [:]
     let explorer: ExplorerModel
+    let notesPanel: NotesPanelModel
+    let send: SendCoordinator
     let launchOptions: AppLaunchOptions
+    var showNotesPanel = true
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
     private(set) var sessions: [String: DocumentSession] = [:]
@@ -31,7 +35,12 @@ final class AppModel {
         let store = NoteStore(database: database)
         noteStore = store
         explorer = ExplorerModel(noteStore: store)
+        notesPanel = NotesPanelModel(noteStore: store)
+        send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
         fileSystems[.local] = LocalFileSystem()
+        send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
+        send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.textController?.text }
+        notesPanel.start()
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
     }
@@ -71,7 +80,50 @@ final class AppModel {
         }
     }
 
+    enum SendScope {
+        case activeDocument
+        case all
+    }
+
+    func send(noteIDs: [NoteID]) async {
+        guard let target = send.lastTarget else { return }
+        await send.send(noteIDs: noteIDs, to: target)
+    }
+
+    func sendAllDrafts(scope: SendScope) async {
+        let ids = await send.draftNoteIDs(documentID: scope == .all ? nil : activeSession?.document?.id)
+        guard !ids.isEmpty else { return }
+        await send(noteIDs: ids)
+    }
+
+    func copyPacket(scope: SendScope) async {
+        let ids = await send.draftNoteIDs(documentID: scope == .all ? nil : activeSession?.document?.id)
+        guard !ids.isEmpty else { return }
+        await send.send(noteIDs: ids, to: ClipboardTransport.target)
+    }
+
+    /// Opens the note's document and scrolls to it.
+    func reveal(note: Note, in document: Core.Document) {
+        openDocument(hostID: document.hostID, path: document.path)
+        guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
+        Task {
+            // The session may still be opening.
+            for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            session.reveal(note)
+        }
+    }
+
+    func edit(note: Note, in document: Core.Document) {
+        openDocument(hostID: document.hostID, path: document.path)
+        guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
+        Task {
+            for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            session.editNote(note)
+        }
+    }
+
     func shutDown() {
+        notesPanel.stop()
         explorer.stopWatching()
         for session in sessions.values { session.close() }
         do {

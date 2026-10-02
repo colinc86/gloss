@@ -60,6 +60,7 @@ public struct TextEditorView: NSViewRepresentable {
             textView.delegate = self
             textView.textStorage?.delegate = self
             textView.structuralExpansion = { [controller] range in controller.structuralExpansion(of: range) }
+            controller.rectProvider = { [weak self] range in self?.rect(for: range) }
             textView.textLayoutManager?.renderingAttributesValidator = { [weak self] layoutManager, fragment in
                 MainActor.assumeIsolated { self?.validateRenderingAttributes(layoutManager, fragment) }
             }
@@ -115,6 +116,25 @@ public struct TextEditorView: NSViewRepresentable {
                 textView.setSelectedRange(range.length > 0 ? range : clamped)
                 textView.window?.makeFirstResponder(textView)
             }
+        }
+
+        /// Union of the selection segments for `range`, converted to the container view's coordinates.
+        func rect(for range: NSRange) -> CGRect? {
+            guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager,
+                  let container = textView.enclosingScrollView?.superview else { return nil }
+            let documentStart = contentManager.documentRange.location
+            guard let from = contentManager.location(documentStart, offsetBy: range.location),
+                  let to = contentManager.location(documentStart, offsetBy: range.location + range.length),
+                  let textRange = NSTextRange(location: from, end: to) else { return nil }
+            var union: CGRect?
+            layoutManager.enumerateTextSegments(in: textRange, type: .selection, options: [.rangeNotRequired]) { _, frame, _, _ in
+                union = union.map { $0.union(frame) } ?? frame
+                return true
+            }
+            guard var rect = union else { return nil }
+            if rect.width < 2 { rect.size.width = 2 }
+            rect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
+            return textView.convert(rect, to: container)
         }
 
         private func invalidateHighlights() {

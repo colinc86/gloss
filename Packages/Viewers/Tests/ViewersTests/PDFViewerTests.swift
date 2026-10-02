@@ -1,0 +1,77 @@
+import AppKit
+import Core
+import Foundation
+import PDFKit
+import Testing
+@testable import Viewers
+
+struct PDFViewerTests {
+    /// Two-page PDF with a line of text on each page.
+    func makePDF() -> PDFDocument {
+        let data = NSMutableData()
+        let consumer = CGDataConsumer(data: data)!
+        var box = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let context = CGContext(consumer: consumer, mediaBox: &box, nil)!
+        for text in ["Section 4 is here", "Appendix B"] {
+            context.beginPDFPage(nil)
+            let attributed = NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 18), .foregroundColor: NSColor.black])
+            let line = CTLineCreateWithAttributedString(attributed)
+            context.textPosition = CGPoint(x: 20, y: 100)
+            CTLineDraw(line, context)
+            context.endPDFPage()
+        }
+        context.closePDF()
+        return PDFDocument(data: data as Data)!
+    }
+
+    @Test func textSourceFindsTextAcrossPages() {
+        let source = PDFDocumentTextSource(document: makePDF())
+        #expect(source.pageCount == 2)
+        #expect(source.text(ofPage: 0)?.contains("Section 4") == true)
+        let hits = source.find("Appendix B")
+        #expect(hits.map(\.page) == [1])
+        #expect(hits.first!.bounds.w > 0)
+    }
+
+    @Test func rendersRegionAtTwoX() throws {
+        let controller = PDFViewerController(document: makePDF())
+        let page = controller.document.page(at: 0)!
+        let region = CGRect(x: 10, y: 80, width: 150, height: 50)
+        let rendered = try #require(controller.renderPNG(page: 0, bounds: region))
+        #expect(rendered.width == 300 && rendered.height == 100)
+        let image = NSBitmapImageRep(data: rendered.data)!
+        var dark = 0
+        for y in stride(from: 0, to: image.pixelsHigh, by: 2) {
+            for x in stride(from: 0, to: image.pixelsWide, by: 2) where (image.colorAt(x: x, y: y)?.brightnessComponent ?? 1) < 0.5 { dark += 1 }
+        }
+        #expect(dark > 20, "the rendered region should contain the text's dark pixels")
+        let whole = try #require(controller.renderPNG(page: 1, bounds: nil))
+        #expect(whole.width == 600 && whole.height == 400)
+        page.rotation = 90
+        let rotated = try #require(controller.renderPNG(page: 0, bounds: nil))
+        #expect(rotated.width > 0 && rotated.height > 0)
+    }
+
+    @Test func selectionAnchorPrefersRegion() {
+        let controller = PDFViewerController(document: makePDF())
+        controller.textSelection = (1, CGRect(x: 1, y: 2, width: 3, height: 4), "Appendix B")
+        var anchor = controller.selectionAnchor!
+        #expect(anchor.page == 1 && anchor.bounds == nil && anchor.text == "Appendix B" && anchor.pageCount == 2)
+        controller.region = (0, CGRect(x: 10, y: 80, width: 150, height: 50))
+        anchor = controller.selectionAnchor!
+        #expect(anchor.page == 0)
+        #expect(anchor.bounds?.w == 150)
+        #expect(anchor.text?.contains("Section 4") == true, "the region's text comes along when it covers text")
+        controller.clearSelection()
+        #expect(controller.selectionAnchor == nil)
+    }
+
+    @Test func reanchorsThroughTheDocumentSource() {
+        let document = makePDF()
+        let anchor = PDFAnchor(page: 0, bounds: nil, text: "Appendix B", pageCount: 2)
+        guard case .moved(.pdf(let moved)) = ReAnchorer.pdf(anchor, in: PDFDocumentTextSource(document: document)) else {
+            Issue.record("expected the text to be found on page 2"); return
+        }
+        #expect(moved.page == 1)
+    }
+}

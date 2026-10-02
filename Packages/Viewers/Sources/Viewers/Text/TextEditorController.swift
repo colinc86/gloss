@@ -24,6 +24,12 @@ public final class TextEditorController {
     @ObservationIgnored public private(set) var highlighter: Highlighter?
     /// Set by the view; invalidates rendering attributes for a range (nil = everything).
     @ObservationIgnored public var onRenderingInvalidation: (NSRange?) -> Void = { _ in }
+    /// Set by the view; the on-screen rectangle of a range in the editor container's coordinates.
+    @ObservationIgnored public var rectProvider: (NSRange) -> CGRect? = { _ in nil }
+
+    public func rect(for range: NSRange) -> CGRect? {
+        rectProvider(range)
+    }
 
     /// Called after the text storage processed an edit, in pre-edit coordinates.
     public var onEdit: (_ edit: NSRange, _ replacementLength: Int) -> Void = { _, _ in }
@@ -51,14 +57,14 @@ public final class TextEditorController {
         highlighter?.enclosingNodeRange(of: range)
     }
 
-    /// Called by the view after the user edited.
-    func viewDidChangeText(_ newText: String) {
+    /// Called by the view after the user edited (public so tests can drive the controller without a view).
+    public func viewDidChangeText(_ newText: String) {
         text = newText
         lineIndex = LineIndex(newText)
         onTextChange()
     }
 
-    func viewDidProcessEdit(edit: NSRange, replacementLength: Int, newText: String) {
+    public func viewDidProcessEdit(edit: NSRange, replacementLength: Int, newText: String) {
         let oldIndex = lineIndex
         let newIndex = LineIndex(newText)
         highlighter?.apply(edit: edit, replacementLength: replacementLength, newText: newText, oldIndex: oldIndex, newIndex: newIndex)
