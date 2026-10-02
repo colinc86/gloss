@@ -67,7 +67,12 @@ final class AppModel {
             trimSessions()
             return
         }
-        guard let fileSystem = fileSystems[hostID] else { return }
+        guard let fileSystem = fileSystems[hostID] else {
+            Task {
+                if await ensureConnected(hostID) { openDocument(hostID: hostID, path: path) }
+            }
+            return
+        }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
         sessions[key] = session
         activeSession = session
@@ -104,15 +109,22 @@ final class AppModel {
         }
     }
 
+    /// Connects a remote host when its file system is not registered yet.
+    func ensureConnected(_ hostID: HostID) async -> Bool {
+        if fileSystems[hostID] != nil { return true }
+        return await hosts.connect(hostID) != nil
+    }
+
     /// Makes sure a root containing `path` is open, opening the parent directory when none is.
     func openRootIfNeeded(hostID: HostID, containing path: String) async {
+        guard await ensureConnected(hostID) else { return }
         if explorer.tabs.contains(where: { $0.hostID == hostID && path.hasPrefix($0.path.hasSuffix("/") ? $0.path : $0.path + "/") }) { return }
         await explorer.openRoot(hostID: hostID, path: PathUtilities.parent(of: path))
     }
 
     /// Creates a note from a URL or plugin: on `line` of the file, or on the whole file.
     func createNote(hostID: HostID, path: String, line: Int?, body: String) async {
-        guard let fileSystem = fileSystems[hostID] else { return }
+        guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { return }
         do {
             var anchor = Anchor.wholeFile
             if let line, let data = try? await fileSystem.read(path), let text = String(data: data, encoding: .utf8) {
