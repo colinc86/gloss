@@ -1,25 +1,23 @@
 import SwiftUI
 
 struct ContentView: View {
-    let launchOptions: AppLaunchOptions
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         NavigationSplitView {
-            List {
-                if let root = launchOptions.root {
-                    Label(root, systemImage: "folder")
-                } else {
-                    Text("No root open")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 280)
+            ExplorerSidebar()
+                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 600)
         } detail: {
-            ContentUnavailableView(
-                "Select a file",
-                systemImage: "doc.text.magnifyingglass",
-                description: Text("Choose a file in the explorer to view it here.")
-            )
+            if let session = model.activeSession {
+                ViewerPane(session: session)
+                    .id(session.id)
+            } else {
+                ContentUnavailableView(
+                    "Select a file",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Choose a file in the explorer to view it here.")
+                )
+            }
         }
     }
 }

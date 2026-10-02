@@ -2,7 +2,7 @@ import OSLog
 
 /// Loggers for the app target. Filter with
 /// `log stream --predicate 'subsystem == "com.cnc.Gloss"' --level debug`.
-enum Log {
+nonisolated enum Log {
     static let subsystem = "com.cnc.Gloss"
 
     static let app = Logger(subsystem: subsystem, category: "app")
