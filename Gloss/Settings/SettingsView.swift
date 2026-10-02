@@ -44,6 +44,9 @@ struct SettingsView: View {
             }
             .tabItem { Label("Agents", systemImage: "paperplane") }
 
+            HostsSettings()
+                .tabItem { Label("Hosts", systemImage: "network") }
+
             HooksSettings()
                 .tabItem { Label("Hooks", systemImage: "link") }
 
@@ -74,6 +77,134 @@ private struct MCPSnippetRow: View {
                 .help("Copy")
             }
         }
+    }
+}
+
+/// The hosts the explorer offers: app-added ones with their ssh options, plus the `~/.ssh/config` aliases when
+/// imports are on. Nothing here is hard-wired to a machine.
+private struct HostsSettings: View {
+    @Environment(AppModel.self) private var model
+    @State private var editing: HostDraft?
+
+    var body: some View {
+        @Bindable var hosts = model.hosts
+        Form {
+            Section {
+                ForEach(model.hosts.entries.filter { $0.kind == .ssh }) { entry in
+                    LabeledContent(entry.name) {
+                        HStack(spacing: 8) {
+                            Text(describe(entry)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            if entry.origin == .manual {
+                                Button("Edit") { editing = HostDraft(entry: entry) }
+                                Button("Remove", role: .destructive) { Task { try? await model.hosts.remove(entry.id) } }
+                            }
+                        }
+                    }
+                }
+                Button("Add Host…") { editing = HostDraft() }
+            } header: {
+                Text("Hosts")
+            } footer: {
+                Text("A host is any machine `ssh` can reach. Added hosts store the host name, user, port, and key here; everything else (ProxyJump, agents, options) still comes from your ssh config.")
+            }
+            Section {
+                Toggle("Also list the Host aliases in ~/.ssh/config", isOn: $hosts.importsSSHConfig)
+            }
+        }
+        .formStyle(.grouped)
+        .sheet(item: $editing) { draft in
+            HostEditor(draft: draft) { name, options in
+                Task { try? await model.hosts.save(id: draft.hostID, name: name, options: options) }
+            }
+        }
+    }
+
+    private func describe(_ entry: HostsModel.Entry) -> String {
+        switch entry.origin {
+        case .sshConfig: return "from ~/.ssh/config"
+        case .manual:
+            let options = entry.options ?? HostOptions()
+            var parts: [String] = []
+            if !options.user.isEmpty || !options.hostName.isEmpty { parts.append((options.user.isEmpty ? "" : options.user + "@") + options.hostName) }
+            if let port = options.port { parts.append("port \(port)") }
+            if !options.identityFile.isEmpty { parts.append(PathUtilities.name(of: options.identityFile)) }
+            return parts.isEmpty ? "ssh defaults" : parts.joined(separator: " · ")
+        case .local: return ""
+        }
+    }
+}
+
+struct HostDraft: Identifiable {
+    var hostID: HostID?
+    var name = ""
+    var options = HostOptions()
+    /// `.sheet(item:)` needs an id; a new host has none yet.
+    var id: String { hostID?.rawValue ?? "new" }
+
+    init() {}
+
+    init(entry: HostsModel.Entry) {
+        hostID = entry.id
+        name = entry.name
+        options = entry.options ?? HostOptions()
+    }
+}
+
+private struct HostEditor: View {
+    let draft: HostDraft
+    let save: (String, HostOptions) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var hostName = ""
+    @State private var user = ""
+    @State private var port = ""
+    @State private var identityFile = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(draft.hostID == nil ? "Add Host" : "Edit Host").font(.headline)
+            Form {
+                TextField("Name", text: $name, prompt: Text("workbox"))
+                TextField("Host name or IP", text: $hostName, prompt: Text("leave empty to use ssh config for the name"))
+                TextField("User", text: $user, prompt: Text("optional"))
+                TextField("Port", text: $port, prompt: Text("22"))
+                HStack {
+                    TextField("Identity file", text: $identityFile, prompt: Text("optional; else keys from your agent"))
+                    Button("Choose…") { chooseKey() }
+                }
+            }
+            .formStyle(.columns)
+            Text("The name is what the sidebar shows and what `ssh` is given as the destination, so a name that is also an alias in ~/.ssh/config inherits that alias's settings.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    save(name.trimmingCharacters(in: .whitespaces), HostOptions(hostName: hostName.trimmingCharacters(in: .whitespaces), user: user.trimmingCharacters(in: .whitespaces), port: Int(port.trimmingCharacters(in: .whitespaces)), identityFile: identityFile.trimmingCharacters(in: .whitespaces)))
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || name == "local")
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+        .onAppear {
+            name = draft.name
+            hostName = draft.options.hostName
+            user = draft.options.user
+            port = draft.options.port.map(String.init) ?? ""
+            identityFile = draft.options.identityFile
+        }
+    }
+
+    private func chooseKey() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: NSHomeDirectory() + "/.ssh")
+        panel.showsHiddenFiles = true
+        if panel.runModal() == .OK, let url = panel.url { identityFile = url.path }
     }
 }
 

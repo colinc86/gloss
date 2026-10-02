@@ -55,6 +55,41 @@ struct SSHConnectionTests {
         }
     }
 
+    @Test func buildsHostOptionArguments() {
+        #expect(SSHConnection.arguments(hostName: "", user: "", port: nil, identityFile: "").isEmpty)
+        #expect(SSHConnection.arguments(hostName: "10.0.0.5", user: "me", port: 2222, identityFile: "/k/id") ==
+            ["-o", "HostName=10.0.0.5", "-o", "User=me", "-o", "Port=2222", "-o", "IdentityFile=/k/id", "-o", "IdentitiesOnly=yes"])
+        let stderr = "debug1: Connecting to box [10.0.0.5] port 22.\ndebug1: Connection established.\ndebug1: Authenticating to box:22 as 'me'\ndebug1: Offering public key: /k/id ED25519 SHA256:abc agent\n"
+        #expect(SSHConnection.stage(from: stderr) == "Offering key /k/id…")
+        #expect(SSHConnection.stage(from: "debug1: Connecting to box [10.0.0.5] port 22.\n") == "Connecting to box…")
+        let connection = SSHConnection(hostID: .local, alias: "x", controlDirectory: "/tmp", sshPath: "/usr/bin/ssh", events: AsyncStream<SSHConnectionEvent> { _ in }.makeContinuationForTest())
+        #expect(connection.classify(stderr: stderr + "me@box: Permission denied (publickey).\n", status: 255) == .authenticationFailed("me@box: Permission denied (publickey)."), "verbose lines are dropped from the error text")
+    }
+
+    /// App-managed host options reach ssh, and the verbose stages come back as progress events.
+    @Test(.enabled(if: TestGates.loopback))
+    func honoursHostOptionsAndReportsStages() async throws {
+        try await TestGates.withManager { manager, _ in
+            let user = NSUserName()
+            let collector = Task { () -> [SSHConnectionEvent] in
+                var seen: [SSHConnectionEvent] = []
+                for await event in manager.events {
+                    seen.append(event)
+                    if case .connected = event { break }
+                }
+                return seen
+            }
+            let options = SSHConnection.arguments(hostName: "localhost", user: user, port: 22, identityFile: "")   // localhost keeps the known_hosts entry valid
+            let connection = try await manager.connection(for: HostID.new(), alias: "localhost", options: options)
+            #expect(await connection.state == .connected)
+            let who = try await connection.exec("id -un")
+            #expect(who.stdoutText.trimmingCharacters(in: .whitespacesAndNewlines) == user)
+            let events = await collector.value
+            #expect(events.contains { if case .progress = $0 { return true } else { return false } }, "ssh's verbose stages were reported: \(events)")
+            #expect(!events.contains { if case .waitingForAgent = $0 { return true } else { return false } }, "a fast key exchange never claims an agent wait")
+        }
+    }
+
     @Test func classifiesFailures() {
         let connection = SSHConnection(hostID: .local, alias: "x", controlDirectory: "/tmp", sshPath: "/usr/bin/ssh", events: AsyncStream<SSHConnectionEvent> { _ in }.makeContinuationForTest())
         #expect(connection.classify(stderr: "Host key verification failed.", status: 255) == .hostKeyProblem(fingerprint: nil, offerAcceptNew: true))

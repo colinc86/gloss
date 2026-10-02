@@ -30,6 +30,8 @@ final class PIDBox: Sendable {
 
 public enum SSHConnectionEvent: Sendable, Equatable {
     case connecting(HostID)
+    /// A stage from ssh's own verbose output, e.g. "Connecting to host", "Authenticating as colin".
+    case progress(HostID, String)
     case connected(HostID)
     case waitingForAgent(HostID)
     case reconnecting(HostID, attempt: Int)
@@ -100,6 +102,8 @@ public actor SSHConnection {
 
     public let hostID: HostID
     public let alias: String
+    /// Extra `-o` options for app-managed hosts (HostName, User, Port, IdentityFile); empty for config aliases.
+    public let options: [String]
     public nonisolated let controlPath: String
     private let sshPath: String
     private let events: AsyncStream<SSHConnectionEvent>.Continuation
@@ -123,9 +127,10 @@ public actor SSHConnection {
         acceptNewHostKey = accept
     }
 
-    init(hostID: HostID, alias: String, controlDirectory: String, sshPath: String, events: AsyncStream<SSHConnectionEvent>.Continuation) {
+    init(hostID: HostID, alias: String, options: [String] = [], controlDirectory: String, sshPath: String, events: AsyncStream<SSHConnectionEvent>.Continuation) {
         self.hostID = hostID
         self.alias = alias
+        self.options = options
         // ssh binds the socket through "<path>.<16 random chars>", so the whole name must stay well under 104 bytes;
         // a short per-host id does what %C (40 hex chars) cannot.
         self.controlPath = (controlDirectory as NSString).appendingPathComponent(String(hostID.rawValue.suffix(10)).lowercased())
@@ -136,7 +141,7 @@ public actor SSHConnection {
     // MARK: argv
 
     private var clientPrefix: [String] {
-        ["-o", "ControlPath=\(controlPath)", "-o", "ControlMaster=no", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"]
+        ["-o", "ControlPath=\(controlPath)", "-o", "ControlMaster=no", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"] + options
     }
 
     nonisolated func masterArguments(acceptNew: Bool) -> [String] {
@@ -149,9 +154,19 @@ public actor SSHConnection {
             "-o", "StreamLocalBindUnlink=yes",
             "-o", "ExitOnForwardFailure=yes",
             "-o", "StrictHostKeyChecking=\(acceptNew ? "accept-new" : "yes")",
-            "-o", "LogLevel=ERROR",
-            "-N", "--", alias,
-        ]
+            // VERBOSE is ssh's -v: the stages it prints are what the UI reports while connecting.
+            "-o", "LogLevel=VERBOSE",
+        ] + options + ["-N", "--", alias]
+    }
+
+    /// The ssh `-o` arguments for app-managed host options; empty fields are left to ssh's config and defaults.
+    public nonisolated static func arguments(hostName: String, user: String, port: Int?, identityFile: String) -> [String] {
+        var result: [String] = []
+        if !hostName.isEmpty { result += ["-o", "HostName=\(hostName)"] }
+        if !user.isEmpty { result += ["-o", "User=\(user)"] }
+        if let port { result += ["-o", "Port=\(port)"] }
+        if !identityFile.isEmpty { result += ["-o", "IdentityFile=\(identityFile)", "-o", "IdentitiesOnly=yes"] }
+        return result
     }
 
     // MARK: Lifecycle
@@ -209,7 +224,16 @@ public actor SSHConnection {
         }
         let deadline = ContinuousClock.now + Self.connectBudget
         var announcedAgentWait = false
+        var lastStage: String?
+        var offeringSince: ContinuousClock.Instant?
         while ContinuousClock.now < deadline {
+            // Report ssh's own stages; the key-agent wait is announced only once a key has been offered and
+            // nothing came back for a while, which is the only evidence we have of an agent prompt.
+            if let stage = Self.stage(from: masterStderr), stage != lastStage {
+                lastStage = stage
+                events.yield(.progress(hostID, stage))
+                offeringSince = stage.hasPrefix("Offering") || stage.hasPrefix("Trying") ? ContinuousClock.now : nil
+            }
             if Task.isCancelled {
                 process.terminate()
                 state = .disconnected
@@ -231,7 +255,7 @@ public actor SSHConnection {
                 events.yield(.failed(hostID, failure))
                 throw failure
             }
-            if !announcedAgentWait, ContinuousClock.now > deadline - Self.connectBudget + .seconds(3) {
+            if !announcedAgentWait, let offeringSince, ContinuousClock.now > offeringSince + .seconds(2) {
                 announcedAgentWait = true
                 events.yield(.waitingForAgent(hostID))
             }
@@ -246,11 +270,28 @@ public actor SSHConnection {
 
     private func appendStderr(_ text: String) {
         masterStderr += text
-        if masterStderr.count > 8192 { masterStderr = String(masterStderr.suffix(8192)) }
+        if masterStderr.count > 32_768 { masterStderr = String(masterStderr.suffix(32_768)) }
+    }
+
+    /// The last meaningful `debug1:` line, shortened for display.
+    nonisolated static func stage(from stderr: String) -> String? {
+        let lines = stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        for line in lines.reversed() where line.hasPrefix("debug1: ") {
+            let body = String(line.dropFirst("debug1: ".count))
+            if body.hasPrefix("Connecting to") { return "Connecting to " + (body.split(separator: " ").dropFirst(2).first.map(String.init) ?? "host") + "…" }
+            if body.hasPrefix("Connection established") { return "Connected, negotiating…" }
+            if body.hasPrefix("Authenticating to") { return "Authenticating" + (body.range(of: " as ").map { " as " + body[$0.upperBound...].replacingOccurrences(of: "'", with: "") } ?? "") + "…" }
+            if body.hasPrefix("Offering public key") { return "Offering key " + (body.split(separator: " ").dropFirst(3).first.map(String.init) ?? "") + "…" }
+            if body.hasPrefix("Trying private key") { return "Trying key " + (body.split(separator: " ").dropFirst(3).first.map(String.init) ?? "") + "…" }
+            if body.hasPrefix("Server accepts key") || body.hasPrefix("Authentication succeeded") { return "Key accepted, opening session…" }
+            if body.hasPrefix("Entering interactive session") { return "Session open…" }
+        }
+        return nil
     }
 
     nonisolated func classify(stderr: String, status: Int32) -> SSHError {
-        let text = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Drop the verbose stages so the error text is only what ssh actually complained about.
+        let text = stderr.split(separator: "\n").filter { !$0.hasPrefix("debug") }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         if text.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") { return .hostKeyChanged(text) }
         if text.contains("Host key verification failed") || text.contains("No ED25519 host key is known") || text.contains("host key is known") {
             let fingerprint = text.components(separatedBy: .newlines).first { $0.contains("SHA256:") }
@@ -497,8 +538,8 @@ public actor SSHConnectionManager {
     }
 
     /// The connection object for a host, created on first use and connected when `connect` is true.
-    public func connection(for hostID: HostID, alias: String, connect: Bool = true) async throws -> SSHConnection {
-        let connection = connections[hostID] ?? SSHConnection(hostID: hostID, alias: alias, controlDirectory: controlDirectory, sshPath: sshPath, events: continuation)
+    public func connection(for hostID: HostID, alias: String, options: [String] = [], connect: Bool = true) async throws -> SSHConnection {
+        let connection = connections[hostID] ?? SSHConnection(hostID: hostID, alias: alias, options: options, controlDirectory: controlDirectory, sshPath: sshPath, events: continuation)
         connections[hostID] = connection
         registry.withLock { $0[hostID] = connection }
         if connect { try await connection.connect() }

@@ -26,15 +26,37 @@ public struct NoteStore: Sendable {
     }
 
     /// Returns the host named `name`, creating it when missing.
-    public func upsertHost(name: String, kind: HostKind) async throws -> Host {
+    public func upsertHost(name: String, kind: HostKind, origin: HostOrigin = .sshConfig) async throws -> Host {
         try await queue.write { db in
             if let existing = try HostRecord.filter(Column("name") == name).fetchOne(db) {
                 return Host(record: existing)
             }
-            let record = HostRecord(id: HostID.new().rawValue, name: name, kind: kind.rawValue, lastConnectedAt: nil)
+            let record = HostRecord(id: HostID.new().rawValue, name: name, kind: kind.rawValue, lastConnectedAt: nil, origin: origin.rawValue, optionsJson: nil)
             try record.insert(db)
             return Host(record: try Self.refetch(record, db))
         }
+    }
+
+    /// Adds or updates an app-managed host. The name must be unique; notes keep following the host id.
+    public func saveHost(id: HostID?, name: String, options: HostOptions) async throws -> Host {
+        try await queue.write { db in
+            let json = String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
+            if let id, var record = try HostRecord.fetchOne(db, key: id.rawValue) {
+                record.name = name
+                record.origin = HostOrigin.manual.rawValue
+                record.optionsJson = json
+                try record.update(db)
+                return Host(record: try Self.refetch(record, db))
+            }
+            let record = HostRecord(id: HostID.new().rawValue, name: name, kind: HostKind.ssh.rawValue, lastConnectedAt: nil, origin: HostOrigin.manual.rawValue, optionsJson: json)
+            try record.insert(db)
+            return Host(record: try Self.refetch(record, db))
+        }
+    }
+
+    /// Removes a host and, through the foreign keys, its roots, documents, and notes.
+    public func deleteHost(_ id: HostID) async throws {
+        _ = try await queue.write { db in try HostRecord.deleteOne(db, key: id.rawValue) }
     }
 
     public func markHostConnected(_ id: HostID, at date: Date = Date()) async throws {
@@ -492,7 +514,8 @@ private struct NoteWithDocument: Decodable, FetchableRecord {
 
 extension Host {
     init(record: HostRecord) {
-        self.init(id: HostID(rawValue: record.id), name: record.name, kind: HostKind(rawValue: record.kind) ?? .ssh, lastConnectedAt: record.lastConnectedAt)
+        let options = record.optionsJson.flatMap { try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) }
+        self.init(id: HostID(rawValue: record.id), name: record.name, kind: HostKind(rawValue: record.kind) ?? .ssh, lastConnectedAt: record.lastConnectedAt, origin: HostOrigin(rawValue: record.origin) ?? .sshConfig, options: options)
     }
 }
 

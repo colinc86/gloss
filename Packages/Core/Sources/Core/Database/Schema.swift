@@ -94,6 +94,12 @@ public enum Schema {
                 INSERT INTO host (id, name, kind, last_connected_at) VALUES ('h_local', 'local', 'local', NULL);
                 """)
         }
+        migrator.registerMigration("v2-host-options") { db in
+            // Hosts come from ~/.ssh/config or are added in the app; app-added ones carry their ssh options.
+            try db.execute(sql: "ALTER TABLE host ADD COLUMN origin TEXT NOT NULL DEFAULT 'ssh_config'")
+            try db.execute(sql: "ALTER TABLE host ADD COLUMN options_json TEXT")
+            try db.execute(sql: "UPDATE host SET origin = 'local' WHERE kind = 'local'")
+        }
         return migrator
     }
 }

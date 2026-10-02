@@ -5,17 +5,48 @@ public enum HostKind: String, Codable, Sendable, CaseIterable {
     case ssh
 }
 
+/// Where a host entry came from.
+public enum HostOrigin: String, Codable, Sendable {
+    case local
+    /// A `Host` alias read from `~/.ssh/config`; ssh resolves everything about it.
+    case sshConfig = "ssh_config"
+    /// Added in the app; `HostOptions` say how to reach it.
+    case manual
+}
+
+/// Connection details for an app-added host, passed to ssh as `-o` options. Empty fields fall back to ssh's own
+/// defaults and config, so an alias that also exists in `~/.ssh/config` keeps working.
+public struct HostOptions: Codable, Sendable, Hashable {
+    public var hostName: String = ""
+    public var user: String = ""
+    public var port: Int?
+    public var identityFile: String = ""
+
+    public init(hostName: String = "", user: String = "", port: Int? = nil, identityFile: String = "") {
+        self.hostName = hostName
+        self.user = user
+        self.port = port
+        self.identityFile = identityFile
+    }
+
+    public var isEmpty: Bool { hostName.isEmpty && user.isEmpty && port == nil && identityFile.isEmpty }
+}
+
 public struct Host: Identifiable, Hashable, Codable, Sendable {
     public var id: HostID
-    /// `local` or the ssh config alias.
+    /// `local` or the ssh destination (an alias from `~/.ssh/config`, or whatever the user named it in the app).
     public var name: String
     public var kind: HostKind
     public var lastConnectedAt: Date?
+    public var origin: HostOrigin = .sshConfig
+    public var options: HostOptions?
 
-    public init(id: HostID, name: String, kind: HostKind, lastConnectedAt: Date? = nil) {
+    public init(id: HostID, name: String, kind: HostKind, lastConnectedAt: Date? = nil, origin: HostOrigin = .sshConfig, options: HostOptions? = nil) {
         self.id = id
         self.name = name
         self.kind = kind
+        self.origin = origin
+        self.options = options
         self.lastConnectedAt = lastConnectedAt
     }
 

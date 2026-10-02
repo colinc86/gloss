@@ -6,7 +6,7 @@ import Testing
 struct SchemaTests {
     /// Column name → declared type, for every table in docs/PRODUCT.md. A schema drift fails here.
     static let expected: [String: [(String, String)]] = [
-        "host": [("id", "TEXT"), ("name", "TEXT"), ("kind", "TEXT"), ("last_connected_at", "DATETIME")],
+        "host": [("id", "TEXT"), ("name", "TEXT"), ("kind", "TEXT"), ("last_connected_at", "DATETIME"), ("origin", "TEXT"), ("options_json", "TEXT")],
         "root": [("id", "TEXT"), ("host_id", "TEXT"), ("path", "TEXT"), ("last_opened_at", "DATETIME"), ("pinned", "BOOLEAN")],
         "document": [("id", "TEXT"), ("host_id", "TEXT"), ("path", "TEXT"), ("kind", "TEXT"), ("last_hash", "TEXT"), ("last_mtime", "DATETIME"), ("last_size", "INTEGER")],
         "note": [("id", "TEXT"), ("document_id", "TEXT"), ("anchor_json", "TEXT"), ("anchor_type", "TEXT"), ("body", "TEXT"), ("state", "TEXT"), ("created_at", "DATETIME"), ("updated_at", "DATETIME"), ("color", "TEXT"), ("resolve_outcome", "TEXT"), ("resolve_message", "TEXT")],

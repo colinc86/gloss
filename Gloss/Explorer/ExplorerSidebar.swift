@@ -94,7 +94,7 @@ struct ExplorerSidebar: View {
             Divider()
             Button("Open Folder on \(hostName(pickedHost))…") { openFolder() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
-            Text("Hosts are the aliases in ~/.ssh/config")
+            SettingsLink { Text("Manage Hosts…") }
         } label: {
             Label(pickedHost == .local ? "local" : hostName(pickedHost), systemImage: pickedHost == .local ? "desktopcomputer" : statusIcon(pickedHost))
                 .labelStyle(.titleAndIcon)
@@ -128,8 +128,8 @@ struct ExplorerSidebar: View {
         if pickedHost != .local {
             switch model.hosts.status(for: pickedHost) {
             case .idle: text = "Not connected"
-            case .connecting: text = "Connecting to \(hostName(pickedHost))…"; busy = true
-            case .waitingForAgent: text = "Waiting for the SSH agent (approve in 1Password)…"; busy = true
+            case .connecting: text = model.hosts.progress[pickedHost] ?? "Connecting to \(hostName(pickedHost))…"; busy = true
+            case .waitingForAgent: text = "Waiting for your SSH key agent to approve the key…"; busy = true
             case .connected: text = model.hosts.warnings[pickedHost]
             case .reconnecting(let attempt): text = "Reconnecting (attempt \(attempt))…"; busy = true
             case .failed(let message): text = message; failed = true

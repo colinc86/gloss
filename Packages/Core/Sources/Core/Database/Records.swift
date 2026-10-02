@@ -16,6 +16,8 @@ public struct HostRecord: SnakeCaseRecord, Identifiable {
     public var name: String
     public var kind: String
     public var lastConnectedAt: Date?
+    public var origin: String = "ssh_config"
+    public var optionsJson: String?
 }
 
 public struct RootRecord: SnakeCaseRecord, Identifiable {

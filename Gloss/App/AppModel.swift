@@ -264,7 +264,7 @@ final class AppModel {
         started = true
         await settings.load()
         send.stagedFileExpiryDays = settings.stagedFileExpiryDays
-        await hosts.refresh()
+        await hosts.load()
         explorer.showDotfiles = settings.showDotfilesByDefault
         let launchHost = launchOptions.host == "local" ? HostID.local : hosts.entries.first { $0.name == launchOptions.host }?.id
         if let launchHost, launchHost != .local {

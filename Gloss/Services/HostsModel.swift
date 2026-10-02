@@ -5,8 +5,8 @@ import Observation
 import OSLog
 import Remote
 
-/// The hosts the explorer can show: `local` plus every concrete alias in ssh config. Connects on demand and
-/// registers an SFTP file system with the app when a host comes up.
+/// The hosts the explorer can show: `local`, hosts added in Settings, and (when enabled) every concrete alias in
+/// `~/.ssh/config`. Connects on demand and registers an SFTP file system with the app when a host comes up.
 @MainActor
 @Observable
 final class HostsModel {
@@ -14,6 +14,13 @@ final class HostsModel {
         var id: HostID
         var name: String
         var kind: HostKind
+        var origin: HostOrigin = .sshConfig
+        var options: HostOptions?
+
+        var sshArguments: [String] {
+            guard let options else { return [] }
+            return SSHConnection.arguments(hostName: options.hostName, user: options.user, port: options.port, identityFile: options.identityFile)
+        }
     }
 
     enum Status: Equatable {
@@ -27,8 +34,20 @@ final class HostsModel {
 
     private let noteStore: NoteStore
     let manager: SSHConnectionManager
-    private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local)]
+    private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local, origin: .local)]
     private(set) var status: [HostID: Status] = [:]
+    /// The latest stage ssh reported while connecting, e.g. "Authenticating as colin…".
+    private(set) var progress: [HostID: String] = [:]
+    /// Whether `~/.ssh/config` aliases are listed (Settings → Hosts).
+    var importsSSHConfig = true {
+        didSet {
+            importsSSHConfigStored = importsSSHConfig
+            Task {
+                try? await noteStore.setSetting("hosts.importSSHConfig", importsSSHConfig ? "1" : "0")
+                await refresh()
+            }
+        }
+    }
     private(set) var pendingHostKey: (hostID: HostID, fingerprint: String?)?
     @ObservationIgnored var onFileSystemReady: (HostID, SFTPFileSystem, SSHConnection) -> Void = { _, _, _ in }
     /// Called when the user disconnects a host, so the app drops its file system and transports forget the host.
@@ -52,16 +71,56 @@ final class HostsModel {
         }
     }
 
-    /// Merges ssh config aliases into the host table and the picker.
+    /// Rebuilds the list: app-added hosts always, `~/.ssh/config` aliases when imports are on (each alias becomes a
+    /// host row once so notes can refer to it), and config-origin rows that have dropped out of the config only
+    /// while they still hold documents.
     func refresh() async {
-        let aliases = SSHConfig.hostAliases()
-        var list = [Entry(id: .local, name: "local", kind: .local)]
-        for alias in aliases {
-            if let host = try? await noteStore.upsertHost(name: alias.alias, kind: .ssh) {
-                list.append(Entry(id: host.id, name: host.name, kind: .ssh))
+        var aliases: Set<String> = []
+        if importsSSHConfigStored {
+            for alias in SSHConfig.hostAliases() {
+                aliases.insert(alias.alias)
+                _ = try? await noteStore.upsertHost(name: alias.alias, kind: .ssh, origin: .sshConfig)
             }
         }
-        entries = list
+        var list = [Entry(id: .local, name: "local", kind: .local, origin: .local)]
+        let documents = (try? await noteStore.documentsWithNotes()) ?? []
+        for host in (try? await noteStore.hosts()) ?? [] where host.kind == .ssh {
+            switch host.origin {
+            case .manual:
+                list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .manual, options: host.options))
+            case .sshConfig:
+                let stillListed = importsSSHConfigStored && aliases.contains(host.name)
+                let hasNotes = documents.contains { $0.document.hostID == host.id }
+                if stillListed || hasNotes { list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .sshConfig)) }
+            case .local:
+                continue
+            }
+        }
+        entries = list.sorted { lhs, rhs in lhs.kind == .local ? true : rhs.kind == .local ? false : lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending }
+    }
+
+    /// Mirror of the setting that `refresh` reads, so the didSet above does not loop.
+    @ObservationIgnored private var importsSSHConfigStored = true
+
+    func load() async {
+        if let stored = try? await noteStore.setting("hosts.importSSHConfig") {
+            importsSSHConfigStored = stored != "0"
+            if importsSSHConfig != importsSSHConfigStored { importsSSHConfig = importsSSHConfigStored }
+        }
+        await refresh()
+    }
+
+    /// Adds or edits an app-managed host.
+    func save(id: HostID?, name: String, options: HostOptions) async throws {
+        _ = try await noteStore.saveHost(id: id, name: name, options: options)
+        await refresh()
+    }
+
+    /// Removes an app-managed host, its notes included, after disconnecting it.
+    func remove(_ hostID: HostID) async throws {
+        await disconnect(hostID)
+        try await noteStore.deleteHost(hostID)
+        await refresh()
     }
 
     func entry(for hostID: HostID) -> Entry? {
@@ -83,7 +142,7 @@ final class HostsModel {
     func connect(_ hostID: HostID) async -> String? {
         guard let entry = entry(for: hostID), entry.kind == .ssh else { return nil }
         do {
-            let connection = try await manager.connection(for: hostID, alias: entry.name)
+            let connection = try await manager.connection(for: hostID, alias: entry.name, options: entry.sshArguments)
             let fileSystem = fileSystems[hostID] ?? SFTPFileSystem(hostID: hostID, connection: connection)
             fileSystems[hostID] = fileSystem
             try? await noteStore.markHostConnected(hostID)
@@ -135,9 +194,10 @@ final class HostsModel {
 
     private func apply(_ event: SSHConnectionEvent) {
         switch event {
-        case .connecting(let host): status[host] = .connecting
+        case .connecting(let host): status[host] = .connecting; progress[host] = nil
+        case .progress(let host, let stage): progress[host] = stage
         case .waitingForAgent(let host): status[host] = .waitingForAgent
-        case .connected(let host): status[host] = .connected
+        case .connected(let host): status[host] = .connected; progress[host] = nil
         case .reconnecting(let host, let attempt): status[host] = .reconnecting(attempt)
         case .disconnected(let host, _): status[host] = .idle
         case .failed(let host, let error): status[host] = .failed(describe(error))
@@ -148,7 +208,7 @@ final class HostsModel {
         switch error {
         case .hostKeyProblem: "Host key not known"
         case .hostKeyChanged: "Host key changed; check known_hosts"
-        case .authenticationFailed: "Authentication failed (is the key in your agent?)"
+        case .authenticationFailed: "Authentication failed: no key was accepted. Check the key, your agent, or the user name."
         case .unreachable: "Host unreachable"
         case .timedOut: "Timed out waiting for ssh"
         case .notConnected: "Not connected"

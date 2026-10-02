@@ -17,7 +17,7 @@ The app is for one person working across a local Mac and several remote hosts, w
 
 | Concept | What it is | Example |
 | --- | --- | --- |
-| Host | A machine the app can read files from: the local Mac or an SSH host from your ssh config | `local`, `workbox` |
+| Host | A machine the app can read files from: the local Mac, an SSH host imported from `~/.ssh/config`, or one added in Settings → Hosts | `local`, `workbox` |
 | Root | A directory on a host that the explorer is showing | `workbox:/home/colin/proj` |
 | Document | One file opened in the viewer, identified by host and absolute path | `workbox:/home/colin/proj/PLAN.md` |
 | Anchor | A typed description of a subset of a document | lines 40 to 52; a rectangle in pixel space; page 3 region |
@@ -130,7 +130,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 | --- | --- | --- |
 | Language and UI | Swift 6, SwiftUI shell, AppKit for outline view, text editor, PDF, image canvas | Native feel, performance, system integration |
 | Deployment target | macOS 26 | Other machines still on 26 |
-| Remote connection | System `ssh` with a ControlMaster socket per host under `$TMPDIR/gl/<short host id>` (ssh's bind-time suffix rules out `%C`); the master runs without BatchMode so the 1Password agent can prompt | Inherits ssh config, keys, agent, ProxyJump. Pure-Swift SSH libraries lack config and agent support |
+| Remote connection | System `ssh` with a ControlMaster socket per host under `$TMPDIR/gl/<short host id>` (ssh's bind-time suffix rules out `%C`); the master runs without BatchMode so a key agent can prompt; the UI reports ssh's own verbose stages while connecting | Inherits ssh config, keys, agent, ProxyJump. Pure-Swift SSH libraries lack config and agent support |
 | Remote file access | SFTP v3 spoken by the app over the `sftp` subsystem | Exact protocol with stat, rename, atomic save; no remote shell assumptions |
 | Remote commands | Exec channel on the same connection | Search, git status, tmux, Herdr CLI, staging |
 | Forwarding | OpenSSH forwarding on the control connection | Remote Herdr socket to a local path, local MCP port to the host |
@@ -150,7 +150,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 
 | Table | Key columns | Purpose |
 | --- | --- | --- |
-| `host` | `id`, `name`, `kind` (local or ssh), `last_connected_at` | Hosts used |
+| `host` | `id`, `name`, `kind` (local or ssh), `last_connected_at`, `origin` (local, ssh_config, manual), `options_json` (HostName, User, Port, IdentityFile for app-added hosts) | Hosts used |
 | `root` | `id`, `host_id`, `path`, `last_opened_at`, `pinned` | Recent and pinned roots |
 | `document` | `id`, `host_id`, `path`, `kind`, `last_hash`, `last_mtime`, `last_size` | File identity and conflict fingerprint |
 | `note` | `id`, `document_id`, `anchor_json`, `anchor_type`, `body`, `state`, `created_at`, `updated_at`, `color` | Note with typed anchor and state |
