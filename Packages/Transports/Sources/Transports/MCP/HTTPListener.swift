@@ -114,7 +114,9 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
             headers[name] = headers[name].map { $0 + ", " + value } ?? value
         }
         let body: Data? = request.body.readableBytes > 0 ? Data(request.body.getBytes(at: 0, length: request.body.readableBytes) ?? []) : nil
-        let components = URLComponents(string: request.head.uri)
+        var components = URLComponents(string: request.head.uri)
+        // curl --data-urlencode and HTML forms encode spaces as "+", which RFC 3986 query parsing keeps literal.
+        if let query = components?.percentEncodedQuery { components?.percentEncodedQuery = query.replacingOccurrences(of: "+", with: "%20") }
         let path = components?.path ?? String(request.head.uri.split(separator: "?").first ?? Substring(request.head.uri))
         var query: [String: String] = [:]
         for item in components?.queryItems ?? [] { query[item.name] = item.value ?? "" }

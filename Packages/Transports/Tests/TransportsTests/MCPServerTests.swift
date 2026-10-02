@@ -122,6 +122,12 @@ struct MCPServerTests {
             let hook = try JSONSerialization.jsonObject(with: hookData) as? [String: Any]
             let context = ((hook?["hookSpecificOutput"] as? [String: Any])?["additionalContext"] as? String) ?? ""
             #expect(!context.isEmpty && context.count <= 10_000 && (hook?["hookSpecificOutput"] as? [String: Any])?["hookEventName"] as? String == "UserPromptSubmit")
+            // curl sends "+" for spaces; the path prefix must still match.
+            let plusURL = URL(string: "http://127.0.0.1:\(port)/hook/claude?cwd=%2Ftmp%2Fdemo+dir&host=local")!
+            let plusDocument = try await store.upsertDocument(hostID: .local, path: "/tmp/demo dir/notes.md", kind: .markdown, fingerprint: Fingerprint())
+            _ = try await store.createNote(documentID: plusDocument.id, anchor: .wholeFile, body: "space case", color: .yellow)
+            let (plusData, plusResponse) = try await URLSession.shared.data(from: plusURL)
+            #expect((plusResponse as? HTTPURLResponse)?.statusCode == 200 && String(decoding: plusData, as: UTF8.self).contains("demo dir/notes.md"), "status \((plusResponse as? HTTPURLResponse)?.statusCode ?? 0) body: \(String(decoding: plusData, as: UTF8.self))")
             let (emptyData, emptyHook) = try await URLSession.shared.data(from: base.appendingPathComponent("hook/codex").appending(queryItems: [URLQueryItem(name: "cwd", value: "/nowhere")]))
             #expect((emptyHook as? HTTPURLResponse)?.statusCode == 200 && emptyData.isEmpty, "no notes: empty body so the hook script prints nothing")
 

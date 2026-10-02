@@ -23,6 +23,15 @@ struct OpenCodeTransportTests {
         let log = RequestLog()
         let listener = try await HTTPListener.start(port: 0) { request, _ in
             await log.record(request)
+            // Messages: every recorded prompt is echoed back as a user message, as OpenCode does.
+            if request.method == "GET", request.path?.hasSuffix("/message") == true {
+                let prompts = await log.requests.filter { $0.method == "POST" && $0.path?.hasSuffix("/prompt_async") == true }
+                let messages: [[String: Any]] = prompts.compactMap { prompt in
+                    guard let body = prompt.body, let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return nil }
+                    return ["info": ["id": "msg", "role": "user"], "parts": object["parts"] ?? []]
+                }
+                return .data(try! JSONSerialization.data(withJSONObject: messages), headers: ["Content-Type": "application/json"])
+            }
             switch (request.method, request.path ?? "") {
             case ("GET", "/session"):
                 let json = try! JSONSerialization.data(withJSONObject: [["id": "ses_1", "title": "Fix tests", "directory": "/repo"], ["id": "ses_2", "title": "", "directory": "/other"]])
@@ -45,14 +54,15 @@ struct OpenCodeTransportTests {
         let packet = PacketBuilder.build([PacketNote(noteID: NoteID.new(), agentPath: "/tmp/a.md", source: .markdown, anchor: .wholeFile, comment: "hello")])
         let receipt = try await transport.deliver(packet, attachments: [], to: targets[0])
         #expect(receipt.detail == "session ses_1")
-        let prompt = try #require(await log.requests.last)
+        let prompt = try #require(await log.requests.last { $0.method == "POST" })
         #expect(prompt.path == "/session/ses_1/prompt_async" && prompt.header("Authorization") == "Basic " + Data("opencode:pw".utf8).base64EncodedString())
         let sent = try JSONSerialization.jsonObject(with: try #require(prompt.body)) as? [String: Any]
         #expect(((sent?["parts"] as? [[String: Any]])?.first?["text"] as? String) == packet.text)
 
         let fresh = try await transport.deliver(packet, attachments: [], to: targets[2])
         #expect(fresh.detail == "new session ses_new")
-        #expect(await log.requests.map { $0.path ?? "" }.suffix(2) == ["/session", "/session/ses_new/prompt_async"])
+        #expect(await log.requests.filter { $0.method == "POST" }.map { $0.path ?? "" }.suffix(2) == ["/session", "/session/ses_new/prompt_async"])
+        #expect(await log.requests.last?.path == "/session/ses_new/message", "delivery is confirmed by reading the messages back")
 
         let dead = OpenCodeTransport(servers: { [OpenCodeServer(baseURL: URL(string: "http://127.0.0.1:1")!)] })
         #expect(try await dead.discoverTargets().isEmpty)

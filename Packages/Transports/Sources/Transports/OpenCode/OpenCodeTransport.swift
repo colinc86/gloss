@@ -94,7 +94,27 @@ public actor OpenCodeTransport: Transport {
             if response.statusCode == 404 { throw DeliveryError.targetUnavailable("session \(sessionID) not found") }
             throw DeliveryError.failed("OpenCode answered \(response.statusCode): \(String(decoding: data.prefix(200), as: UTF8.self))")
         }
+        // 204 means accepted, not stored: a part OpenCode cannot decode makes it drop the whole prompt silently.
+        guard await promptWasRecorded(packet.text, sessionID: sessionID, on: server) else {
+            throw DeliveryError.failed("OpenCode accepted the prompt but did not record it (an attachment it could not decode?)")
+        }
         return DeliveryReceipt(detail: identity.sessionID.isEmpty ? "new session \(sessionID)" : "session \(sessionID)")
+    }
+
+    /// `GET /session/<id>/message`: the newest user message must carry our text. Polled briefly, since the write
+    /// happens after the 204.
+    func promptWasRecorded(_ text: String, sessionID: String, on server: OpenCodeServer) async -> Bool {
+        for attempt in 0..<4 {
+            if attempt > 0 { try? await Task.sleep(for: .milliseconds(500)) }
+            guard let (data, response) = try? await send(makeRequest(server, path: "/session/\(sessionID)/message", method: "GET")), response.statusCode == 200,
+                  let messages = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { continue }
+            let recorded = messages.contains { message in
+                guard (message["info"] as? [String: Any])?["role"] as? String == "user" else { return false }
+                return (message["parts"] as? [[String: Any]])?.contains { $0["type"] as? String == "text" && $0["text"] as? String == text } == true
+            }
+            if recorded { return true }
+        }
+        return false
     }
 
     // MARK: Requests

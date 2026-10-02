@@ -183,7 +183,7 @@ public actor MCPServer {
         let text = (try? await dependencies.hookText(flavour, host, query["cwd"])) ?? ""
         guard !text.isEmpty else { return .ok(headers: ["Content-Length": "0"]) }
         let payload: [String: Any] = ["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": text]]
-        let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
+        let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])) ?? Data()
         return .data(data, headers: ["Content-Type": "application/json"])
     }
 

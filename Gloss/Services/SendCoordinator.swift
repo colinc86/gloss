@@ -132,10 +132,11 @@ final class SendCoordinator {
         return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged))
     }
 
-    /// `UserPromptSubmit` context for the pending notes under `cwd` on a host, fitted to the hook limit, with the
-    /// ids it covers.
+    /// `UserPromptSubmit` context for the draft notes under `cwd` on a host, fitted to the hook limit, with the ids
+    /// it covers. Drafts only: a note the hook already delivered stays reachable through MCP but is not injected
+    /// into every later prompt.
     func hookText(hostID: HostID?, cwd: String?) async throws -> (text: String, noteIDs: [NoteID]) {
-        let pending = try await noteStore.pendingNotes(hostID: hostID, pathPrefix: cwd)
+        let pending = try await noteStore.pendingNotes(hostID: hostID, pathPrefix: cwd).filter { $0.note.state == .draft }
         let (notes, attachments) = try await collect(noteIDs: pending.map(\.note.id))
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
         let text = PacketBuilder.hookText(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged))
