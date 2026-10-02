@@ -114,6 +114,8 @@ public enum PacketBuilder {
     /// The text for a `UserPromptSubmit` hook: the full packet when it fits in `limit` characters,
     /// otherwise one summary line per note plus the instruction to fetch full notes through MCP.
     public static func hookText(_ notes: [PacketNote], limit: Int = 10_000) -> String {
+        // Nothing pending: the hook must add no context at all, not an empty packet with a closing line.
+        if notes.isEmpty { return "" }
         let full = build(notes)
         if full.text.count <= limit { return full.text }
         var lines = [

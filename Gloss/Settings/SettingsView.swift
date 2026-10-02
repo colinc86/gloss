@@ -1,5 +1,7 @@
+import AppKit
 import Core
 import SwiftUI
+import Transports
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
@@ -28,17 +30,46 @@ struct SettingsView: View {
                     Text(model.send.lastTarget?.label ?? "none").foregroundStyle(.secondary)
                 }
                 TextField("MCP port", value: $settings.mcpPort, format: .number)
+                if let status = model.mcpStatus {
+                    Text(status).font(.caption).foregroundStyle(.red)
+                } else {
+                    Text("MCP server listening on 127.0.0.1:\(settings.mcpPort); a port change applies at the next launch.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                MCPSnippetRow(title: "Claude Code", text: MCPServer.snippets(port: settings.mcpPort).claudeCommand)
+                MCPSnippetRow(title: "Codex", text: MCPServer.snippets(port: settings.mcpPort).codexCommand)
+                MCPSnippetRow(title: "OpenCode (opencode.json)", text: MCPServer.snippets(port: settings.mcpPort).opencodeJSON)
                 TextField("OpenCode servers (comma separated)", text: $settings.opencodeServers)
-                Text("Herdr, MCP, hook, OpenCode, and tmux transports arrive in later phases; the clipboard works now.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
             .tabItem { Label("Agents", systemImage: "paperplane") }
 
             AttachmentsSettings(settings: settings)
                 .tabItem { Label("Attachments", systemImage: "photo.on.rectangle") }
         }
-        .frame(width: 520, height: 300)
+        .frame(width: 560, height: 340)
         .padding()
+    }
+}
+
+/// One copyable registration line for an agent.
+private struct MCPSnippetRow: View {
+    let title: String
+    let text: String
+
+    var body: some View {
+        LabeledContent(title) {
+            HStack(spacing: 4) {
+                Text(text).font(.caption.monospaced()).textSelection(.enabled).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy")
+            }
+        }
     }
 }
 

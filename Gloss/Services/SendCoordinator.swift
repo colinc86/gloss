@@ -121,9 +121,23 @@ final class SendCoordinator {
 
     /// Builds the packet text for the clipboard without recording a send.
     func packetText(noteIDs: [NoteID]) async throws -> String {
+        try await packet(noteIDs: noteIDs).text
+    }
+
+    /// The packet for these notes with attachments at their local paths (MCP and hook readers run on this Mac
+    /// or read the crops as resources).
+    func packet(noteIDs: [NoteID]) async throws -> Packet {
         let (notes, attachments) = try await collect(noteIDs: noteIDs)
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
-        return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged)).text
+        return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged))
+    }
+
+    /// `UserPromptSubmit` context for the pending notes under `cwd` on a host, fitted to the hook limit.
+    func hookText(hostID: HostID?, cwd: String?) async throws -> String {
+        let pending = try await noteStore.pendingNotes(hostID: hostID, pathPrefix: cwd)
+        let (notes, attachments) = try await collect(noteIDs: pending.map(\.note.id))
+        let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
+        return PacketBuilder.hookText(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged))
     }
 
     func draftNoteIDs(documentID: DocumentID?) async -> [NoteID] {

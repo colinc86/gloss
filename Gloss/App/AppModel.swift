@@ -24,6 +24,8 @@ final class AppModel {
     /// The same connections, readable by the transports without touching the main actor.
     let connectionRegistry = ConnectionRegistry()
     let herdrTransport: HerdrTransport
+    private(set) var mcpServer: MCPServer?
+    private(set) var mcpStatus: String?
     /// Follow mode: the explorer opens the directory of whichever Herdr agent pane has focus.
     var followHerdr = false {
         didSet { followHerdr ? startFollowing() : stopFollowing() }
@@ -68,7 +70,10 @@ final class AppModel {
             self.fileSystems[hostID] = fileSystem
             self.connections[hostID] = connection
             let alias = self.hosts.entry(for: hostID)?.name ?? hostID.rawValue
-            Task { await self.connectionRegistry.register(connection, alias: alias, for: hostID) }
+            Task {
+                await self.connectionRegistry.register(connection, alias: alias, for: hostID)
+                await self.forwardMCPPort(to: connection, alias: alias)
+            }
             let stager = RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem, noteStore: self.noteStore)
             self.send.register(stager: stager, for: hostID)
             // Expired staging directories are swept once per host per launch, not on every host click.
@@ -231,6 +236,62 @@ final class AppModel {
         if let open = launchOptions.open {
             openDocument(hostID: .local, path: open)
         }
+        await startMCPServer()
+    }
+
+    // MARK: MCP
+
+    private func startMCPServer() async {
+        let store = noteStore
+        let send = send
+        let dependencies = MCPDependencies(
+            noteStore: store,
+            packet: { ids in try await send.packet(noteIDs: ids) },
+            hookText: { host, cwd in
+                let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
+                if host != "local", hostID == nil { return "" }
+                return try await send.hookText(hostID: hostID, cwd: cwd)
+            },
+            createDraft: { host, path, cwd, line, text in
+                let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
+                guard let hostID else { throw DeliveryError.targetUnavailable("unknown host \(host)") }
+                guard let documentPath = path ?? cwd.map({ PathUtilities.join($0, ".gloss-inbox.md") }) else {
+                    throw DeliveryError.failed("path or cwd is required")
+                }
+                return try await AppModel.createPluginDraft(store: store, hostID: hostID, path: documentPath, line: line, text: text)
+            },
+            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        )
+        let server = MCPServer(dependencies: dependencies, port: settings.mcpPort)
+        do {
+            try await server.start()
+            mcpServer = server
+            mcpStatus = nil
+            for (hostID, connection) in connections {
+                await forwardMCPPort(to: connection, alias: hosts.entry(for: hostID)?.name ?? hostID.rawValue)
+            }
+        } catch {
+            mcpStatus = "MCP server could not bind port \(settings.mcpPort): \(error)"
+            Log.transport.error("MCP server failed to start: \(error, privacy: .public)")
+        }
+    }
+
+    /// Makes `http://127.0.0.1:<port>/mcp` reachable on the host through the control connection.
+    private func forwardMCPPort(to connection: SSHConnection, alias: String) async {
+        guard let port = await mcpServer?.port else { return }
+        do {
+            _ = try await connection.forwardRemotePort(UInt16(port))
+        } catch {
+            Log.transport.error("Reverse forward of the MCP port to \(alias, privacy: .public) failed: \(error, privacy: .public)")
+            mcpStatus = "\(alias): port \(port) is busy there; agents on that host cannot reach the MCP server"
+        }
+    }
+
+    /// A draft created by the Herdr plugin: whole-file unless a line is given.
+    nonisolated static func createPluginDraft(store: NoteStore, hostID: HostID, path: String, line: Int?, text: String) async throws -> NoteID {
+        let kind = DocumentKindDetector.kind(forPath: path)
+        let document = try await store.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: Fingerprint())
+        return try await store.createNote(documentID: document.id, anchor: .wholeFile, body: text, color: .yellow).id
     }
 
     enum SendScope {
@@ -301,7 +362,11 @@ final class AppModel {
         for session in sessions.values { session.close() }
         let hosts = hosts
         // `withDeadline` returns at the deadline even if a disconnect hangs; the kill below covers that case.
-        _ = await withDeadline(.seconds(6)) { await hosts.disconnectAll() }
+        let server = mcpServer
+        _ = await withDeadline(.seconds(6)) {
+            await server?.stop()
+            await hosts.disconnectAll()
+        }
         hosts.killMasters()
         closeDatabase()
     }
