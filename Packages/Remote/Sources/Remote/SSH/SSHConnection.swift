@@ -108,6 +108,8 @@ public actor SSHConnection {
     public let alias: String
     /// Extra `-o` options for app-managed hosts (HostName, User, Port, IdentityFile); empty for config aliases.
     public let options: [String]
+    /// Silence tolerated from the key agent before the connect fails; the manager's value, short in tests.
+    let agentBudget: Duration
     public nonisolated let controlPath: String
     private let sshPath: String
     private let events: AsyncStream<SSHConnectionEvent>.Continuation
@@ -135,10 +137,11 @@ public actor SSHConnection {
         acceptNewHostKey = accept
     }
 
-    init(hostID: HostID, alias: String, options: [String] = [], controlDirectory: String, sshPath: String, events: AsyncStream<SSHConnectionEvent>.Continuation) {
+    init(hostID: HostID, alias: String, options: [String] = [], controlDirectory: String, sshPath: String, agentBudget: Duration = SSHConnection.agentBudget, events: AsyncStream<SSHConnectionEvent>.Continuation) {
         self.hostID = hostID
         self.alias = alias
         self.options = options
+        self.agentBudget = agentBudget
         // ssh binds the socket through "<path>.<16 random chars>", so the whole name must stay well under 104 bytes;
         // a short per-host id does what %C (40 hex chars) cannot.
         self.controlPath = (controlDirectory as NSString).appendingPathComponent(String(hostID.rawValue.suffix(10)).lowercased())
@@ -241,10 +244,10 @@ public actor SSHConnection {
             if let stage = Self.stage(from: accumulator.text), stage != lastStage {
                 lastStage = stage
                 events.yield(.progress(hostID, stage))
-                let waitsOnAgent = stage.hasPrefix("Offering") || stage.hasPrefix("Trying") || stage.hasPrefix("Key accepted")
+                let waitsOnAgent = stage.hasPrefix("Asking") || stage.hasPrefix("Offering") || stage.hasPrefix("Trying") || stage.hasPrefix("Key accepted")
                 offeringSince = waitsOnAgent ? ContinuousClock.now : nil
             }
-            if let offeringSince, ContinuousClock.now > offeringSince + Self.agentBudget {
+            if let offeringSince, ContinuousClock.now > offeringSince + agentBudget {
                 // The agent never answered: fail with a specific message instead of spinning out the whole budget.
                 process.terminate()
                 state = .failed(.agentUnresponsive)
@@ -296,6 +299,7 @@ public actor SSHConnection {
             let body = String(line.dropFirst("debug1: ".count))
             if body.hasPrefix("Connecting to") { return "Connecting to " + (body.split(separator: " ").dropFirst(2).first.map(String.init) ?? "host") + "…" }
             if body.hasPrefix("Connection established") { return "Connected, negotiating…" }
+            if body.hasPrefix("Next authentication method: publickey") { return "Asking the key agent for keys…" }
             if body.hasPrefix("Authenticating to") { return "Authenticating" + (body.range(of: " as ").map { " as " + body[$0.upperBound...].replacingOccurrences(of: "'", with: "") } ?? "") + "…" }
             if body.hasPrefix("Offering public key") { return "Offering key " + (body.split(separator: " ").dropFirst(3).first.map(String.init) ?? "") + "…" }
             if body.hasPrefix("Trying private key") { return "Trying key " + (body.split(separator: " ").dropFirst(3).first.map(String.init) ?? "") + "…" }
@@ -536,6 +540,7 @@ public actor SSHConnectionManager {
     private var connections: [HostID: SSHConnection] = [:]
     private let controlDirectory: String
     private let sshPath: String
+    private let agentBudget: Duration
     private nonisolated let registry = Mutex<[HostID: SSHConnection]>([:])
 
     /// `$TMPDIR/gl` keeps the socket path short: Application Support would exceed the 104-byte limit.
@@ -544,9 +549,10 @@ public actor SSHConnectionManager {
         (NSTemporaryDirectory() as NSString).appendingPathComponent("gl")
     }
 
-    public init(controlDirectory: String = SSHConnectionManager.defaultControlDirectory, sshPath: String = "/usr/bin/ssh") {
+    public init(controlDirectory: String = SSHConnectionManager.defaultControlDirectory, sshPath: String = "/usr/bin/ssh", agentBudget: Duration = SSHConnection.agentBudget) {
         self.controlDirectory = controlDirectory
         self.sshPath = sshPath
+        self.agentBudget = agentBudget
         var continuation: AsyncStream<SSHConnectionEvent>.Continuation!
         events = AsyncStream { continuation = $0 }
         self.continuation = continuation
@@ -555,7 +561,7 @@ public actor SSHConnectionManager {
 
     /// The connection object for a host, created on first use and connected when `connect` is true.
     public func connection(for hostID: HostID, alias: String, options: [String] = [], connect: Bool = true) async throws -> SSHConnection {
-        let connection = connections[hostID] ?? SSHConnection(hostID: hostID, alias: alias, options: options, controlDirectory: controlDirectory, sshPath: sshPath, events: continuation)
+        let connection = connections[hostID] ?? SSHConnection(hostID: hostID, alias: alias, options: options, controlDirectory: controlDirectory, sshPath: sshPath, agentBudget: agentBudget, events: continuation)
         connections[hostID] = connection
         registry.withLock { $0[hostID] = connection }
         if connect { try await connection.connect() }

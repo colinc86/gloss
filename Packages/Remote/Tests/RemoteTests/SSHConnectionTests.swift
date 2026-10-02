@@ -93,6 +93,41 @@ struct SSHConnectionTests {
         }
     }
 
+    /// A key agent that accepts the connection and never answers: the connect reports the agent wait and fails
+    /// with the agent-specific error instead of spinning out the whole budget.
+    @Test(.enabled(if: TestGates.loopback))
+    func failsWhenTheKeyAgentStaysSilent() async throws {
+        try await TestGates.serialized {
+            let control = TestGates.temporaryControlDirectory()
+            defer { try? FileManager.default.removeItem(atPath: control) }
+            let socket = "\(control)/agent.sock"
+            // -d: never read stdin, so nc keeps the accepted connection open without replying.
+            let fakeAgent = try ChildProcess.launch(ChildProcessSpec(executable: "/usr/bin/nc", arguments: ["-dlU", socket]))
+            defer { fakeAgent.terminate() }
+            try await Task.sleep(for: .milliseconds(400))
+            let manager = SSHConnectionManager(controlDirectory: control, agentBudget: .seconds(3))
+            let collector = Task { () -> [SSHConnectionEvent] in
+                var seen: [SSHConnectionEvent] = []
+                for await event in manager.events {
+                    seen.append(event)
+                    if case .failed = event { break }
+                }
+                return seen
+            }
+            do {
+                _ = try await manager.connection(for: HostID.new(), alias: "localhost", options: ["-o", "IdentityAgent=\(socket)", "-o", "IdentitiesOnly=no"])
+                Issue.record("connected through a silent agent")
+            } catch let error as SSHError {
+                #expect(error == .agentUnresponsive, "\(error)")
+            }
+            let events = await collector.value
+            #expect(events.contains { if case .waitingForAgent = $0 { return true } else { return false } }, "\(events)")
+            #expect(events.contains { if case .failed(_, .agentUnresponsive) = $0 { return true } else { return false } })
+            await manager.disconnectAll()
+            #expect(pgrepMasters() == 0, "the stalled master was terminated")
+        }
+    }
+
     @Test func classifiesFailures() {
         let connection = SSHConnection(hostID: .local, alias: "x", controlDirectory: "/tmp", sshPath: "/usr/bin/ssh", events: AsyncStream<SSHConnectionEvent> { _ in }.makeContinuationForTest())
         #expect(connection.classify(stderr: "Host key verification failed.", status: 255) == .hostKeyProblem(fingerprint: nil, offerAcceptNew: true))
@@ -112,4 +147,18 @@ extension AsyncStream {
         _ = AsyncStream<Element> { continuation = $0 }
         return continuation
     }
+}
+
+
+/// Count of live ControlMaster processes, for teardown assertions.
+func pgrepMasters() -> Int {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    process.arguments = ["-f", "^/usr/bin/ssh -o ControlMaster=yes"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    try? process.run()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(decoding: data, as: UTF8.self).split(separator: "\n").count
 }
