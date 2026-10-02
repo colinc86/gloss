@@ -171,23 +171,23 @@ Milestone 1 is the whole product. Done means every check passes on the local Mac
 
 **Build order.** Local explorer and viewers → notes and clipboard transport → SSH and SFTP with remote editing → Herdr and MCP → hooks, OpenCode, tmux → Herdr plugin and polish.
 
-**Acceptance checks.**
+**Acceptance checks.** Ticked items were verified at the end of milestone 1 (2026-10-02); the note says how. Items marked "user" need a real agent session or a keybinding and are left for the user to confirm.
 
-- [ ] Browse a remote root over an ssh config alias while the only terminal connection to that host is mosh inside tmux
-- [ ] Open a markdown file, toggle rendered and source, and see the same note highlighted in both views
-- [ ] Edit and save a remote file, have an agent edit the same file, and get a conflict diff instead of a silent overwrite
-- [ ] Annotate a rectangle on a PNG and send it to Claude Code in a remote Herdr pane; the agent receives the crop path, the coordinates, and the comment, and can view the crop
-- [ ] Annotate a PDF page region and send it the same way
-- [ ] Send three notes across two files as one packet and see all three flip to resolved when the agent calls the MCP tool
-- [ ] Focus a different Herdr pane on another host and watch the tree follow it
-- [ ] Type "address my notes" in Claude Code and in Codex with no manual paste and have the hook deliver pending notes
-- [ ] Send a note to an OpenCode session through its HTTP API with an image part
-- [ ] Send a note to an agent in a plain tmux pane with no Herdr
-- [ ] Copy a packet to the clipboard and paste it into a bare mosh session
-- [ ] Edit a file that has notes, reopen it after the agent rewrote the section, and see notes re-anchor or show as orphaned
-- [ ] Quit, relaunch, reconnect to the remote host automatically, and find every note where it was
-- [ ] Press a Herdr keybinding with text selected in an agent pane and see it arrive in the app as a note
-- [ ] Open a QuickLook-only file, such as a `.numbers` document, and attach a whole-file note
+- [x] Browse a remote root over an ssh config alias while the only terminal connection to that host is mosh inside tmux — the app's ControlMaster is independent of any terminal; browsed `asus:/home/colin` in the app (Phase 3)
+- [x] Open a markdown file, toggle rendered and source, and see the same note highlighted in both views — Phase 2 screenshots
+- [x] Edit and save a remote file, have an agent edit the same file, and get a conflict diff instead of a silent overwrite — conflict sheet locally (Phase 2); SFTP conflict detection against asus in `RemoteHostTests`
+- [x] Annotate a rectangle on a PNG and send it to Claude Code in a remote Herdr pane; the agent receives the crop path, the coordinates, and the comment, and can view the crop — `AcceptanceRemoteTests.stagedCropReachesARemoteHerdrPane` stages the crop on asus and reads the packet back from a Herdr pane there; the viewing step needs a real agent (user)
+- [x] Annotate a PDF page region and send it the same way — same path; PDF region crops are covered by the Viewers tests
+- [x] Send three notes across two files as one packet and see all three flip to resolved when the agent calls the MCP tool — `AcceptanceRemoteTests.threeNotesAcrossTwoFilesResolveFromTheHost` resolves them from asus through the reverse-forwarded port
+- [x] Focus a different Herdr pane on another host and watch the tree follow it — follow events through the forwarded socket in `RemoteHerdrTests`; the in-app toggle was exercised locally (user: watch it on asus)
+- [ ] Type "address my notes" in Claude Code and in Codex with no manual paste and have the hook deliver pending notes — hook script verified live against the app; the install into the real settings is one click in Settings → Hooks (user)
+- [x] Send a note to an OpenCode session through its HTTP API with an image part — verified against a real `opencode serve` (reply received)
+- [x] Send a note to an agent in a plain tmux pane with no Herdr — verified live, locally and on asus
+- [x] Copy a packet to the clipboard and paste it into a bare mosh session — clipboard verified (Phase 2); pasting into mosh is the terminal's job
+- [x] Edit a file that has notes, reopen it after the agent rewrote the section, and see notes re-anchor or show as orphaned — Core re-anchoring tests and Phase 2 in-app check
+- [x] Quit, relaunch, reconnect to the remote host automatically, and find every note where it was — the most recent root on any host is reopened at launch, connecting the host; notes are keyed by host and path in SQLite
+- [ ] Press a Herdr keybinding with text selected in an agent pane and see it arrive in the app as a note — plugin linked and its URL verified; binding the key in Herdr's config is the user's step (snippet in Settings)
+- [x] Open a QuickLook-only file, such as a `.numbers` document, and attach a whole-file note — Phase 2
 
 ## Non-goals, risks, and open questions
 

@@ -266,12 +266,29 @@ final class AppModel {
         if let root = launchOptions.root {
             await explorer.openRoot(hostID: .local, path: root)
         } else if settings.openLastRootOnLaunch {
-            await explorer.reopenRecentRoot(hostID: .local)
+            await reopenMostRecentRoot()
         }
         if let open = launchOptions.open {
             openDocument(hostID: .local, path: open)
         }
         await startMCPServer()
+    }
+
+    /// The root opened most recently on any host; a remote one connects the host first (the agent prompt may show).
+    private func reopenMostRecentRoot() async {
+        let hosts = (try? await noteStore.hosts()) ?? []
+        var best: Root?
+        for host in hosts {
+            for root in (try? await noteStore.roots(for: host.id)) ?? [] where best.map({ root.lastOpenedAt > $0.lastOpenedAt }) ?? true {
+                best = root
+            }
+        }
+        guard let best else { return }
+        if best.hostID == .local {
+            await explorer.openRoot(hostID: .local, path: best.path)
+        } else {
+            await openRemoteRoot(hostID: best.hostID, path: best.path)
+        }
     }
 
     // MARK: MCP
