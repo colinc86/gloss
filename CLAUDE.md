@@ -22,7 +22,7 @@ Native macOS app: file explorer on the left, viewer on the right, annotate any r
 ## Layout
 
 - `Gloss/` app target. `Packages/Core`, `Packages/Remote`, `Packages/Transports`, `Packages/Viewers` as local Swift packages once they exist, each with its own tests.
-- `docs/` product and design notes. `build/` is derived data, gitignored.
+- `docs/` product and design notes. Builds use Xcode's default DerivedData (never `-derivedDataPath`), so the app Xcode runs and the app scripts launch are the same copy.
 - `.claude/skills/` holds the verified protocol references; read the relevant one before touching that area.
 
 ## Build and test

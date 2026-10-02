@@ -12,15 +12,22 @@ Scheme and project names contain spaces; always quote them.
 ```
 xcodebuild -project "Gloss.xcodeproj" -scheme "Gloss" \
   -configuration Debug -destination 'platform=macOS' \
-  -derivedDataPath build/DerivedData build 2>&1 | grep -E 'error:|warning: .*Gloss|BUILD' 
+  build 2>&1 | grep -E 'error:|warning: .*Gloss|BUILD' 
 ```
 
-The built app lands at `build/DerivedData/Build/Products/Debug/Gloss.app`. `build/` is gitignored.
+The build uses Xcode's default DerivedData, the same location Xcode's ⌘R uses, so there is exactly one copy of the
+app registered with Launch Services (two copies made `gloss://` links land in a stale build once). Find it with:
+
+```
+APP=$(ls -d ~/Library/Developer/Xcode/DerivedData/Gloss-*/Build/Products/Debug/"Gloss.app" | head -1)
+```
+
+Never pass `-derivedDataPath`.
 
 ## Launch
 
 ```
-APP="build/DerivedData/Build/Products/Debug/Gloss.app"
+APP=$(ls -d ~/Library/Developer/Xcode/DerivedData/Gloss-*/Build/Products/Debug/"Gloss.app" | head -1)
 pkill -x "Gloss" 2>/dev/null
 open -n "$APP" --args --root "$PWD" --host local
 sleep 2
@@ -48,7 +55,7 @@ If the window-id lookup fails, fall back to `screencapture -x /tmp/gloss-shot.pn
 
 ```
 xcodebuild -project "Gloss.xcodeproj" -scheme "Gloss" \
-  -destination 'platform=macOS' -derivedDataPath build/DerivedData test 2>&1 | grep -E 'Test Case.*(failed|passed)|error:|\*\* TEST'
+  -destination 'platform=macOS' test 2>&1 | grep -E 'Test Case.*(failed|passed)|error:|\*\* TEST'
 ```
 
 Swift package tests for `Packages/*` run faster with `swift test --package-path Packages/<Name>`.
