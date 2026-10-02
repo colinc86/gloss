@@ -32,11 +32,11 @@ public enum ULID {
     public static func generate(now: Date = Date()) -> String {
         let milliseconds = UInt64(max(0, (now.timeIntervalSince1970 * 1000).rounded()))
         let value: UInt128 = state.withLock { state in
-            if milliseconds != state.lastTime {
+            if milliseconds > state.lastTime {
                 state.lastTime = milliseconds
                 state.lastRandom = randomBits()
             } else {
-                // Same millisecond: keep ids monotonic by bumping the random part.
+                // Same or earlier millisecond: never let ids go backwards; bump the random part.
                 state.lastRandom &+= 1
                 if state.lastRandom > randomMask {
                     state.lastTime += 1

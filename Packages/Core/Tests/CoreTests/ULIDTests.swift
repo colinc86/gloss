@@ -27,10 +27,18 @@ struct ULIDTests {
     }
 
     @Test func roundTripsTimestamp() throws {
-        let date = Date(timeIntervalSince1970: 1_727_740_800.123)
-        let id = ULID.generate(now: date)
+        // Built directly rather than through generate(now:), which never moves the process clock backwards.
+        let id = ULID.encode(UInt128(1_727_740_800_123) << 80 | 42)
         let decoded = try #require(ULID.timestamp(of: id))
         #expect(abs(decoded.timeIntervalSince1970 - 1_727_740_800.123) < 0.001)
+        #expect(ULID.decode(id) == UInt128(1_727_740_800_123) << 80 | 42)
+    }
+
+    @Test func generateNeverGoesBackwards() {
+        // One second ahead, so the shared clock state is not left far in the future for later tests.
+        let later = ULID.generate(now: Date(timeIntervalSinceNow: 1))
+        let earlierClock = ULID.generate(now: Date(timeIntervalSinceNow: -3600))
+        #expect(earlierClock > later)
     }
 
     @Test func rejectsMalformed() {
@@ -59,6 +67,8 @@ struct TypedIDTests {
         #expect(NoteID(validating: "n_01ARZ3NDEKTSV4RRFFQ69G5FAV") != nil)
         #expect(NoteID(validating: "d_01ARZ3NDEKTSV4RRFFQ69G5FAV") == nil)
         #expect(NoteID(validating: "n_nope") == nil)
+        #expect(HostID(validating: "h_local") == HostID.local)
+        #expect(HostID(validating: "h_nope") == nil)
         #expect(DocumentID(validating: "d_01ARZ3NDEKTSV4RRFFQ69G5FAV") != nil)
     }
 

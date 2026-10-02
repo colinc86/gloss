@@ -50,6 +50,15 @@ public struct HostID: PrefixedIdentifier {
 
     /// The local Mac. Seeded by the first database migration.
     public static let local = HostID(rawValue: "h_local")
+
+    public init?(validating string: String) {
+        if string == HostID.local.rawValue {
+            self.init(rawValue: string)
+            return
+        }
+        guard string.hasPrefix(Self.prefix), ULID.isValid(String(string.dropFirst(Self.prefix.count))) else { return nil }
+        self.init(rawValue: string)
+    }
 }
 
 public struct RootID: PrefixedIdentifier {

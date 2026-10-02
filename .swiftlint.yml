@@ -3,6 +3,10 @@ included:
   - Packages
 excluded:
   - build
+  - Packages/Core/.build
+  - Packages/Viewers/.build
+  - Packages/Remote/.build
+  - Packages/Transports/.build
 disabled_rules:
   - line_length
   - todo
