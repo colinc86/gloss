@@ -10,6 +10,7 @@
 		CC00000000000000000000A1 /* Core in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A1 /* Core */; };
 		CC00000000000000000000A2 /* Viewers in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A2 /* Viewers */; };
 		CC00000000000000000000A3 /* Remote in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A3 /* Remote */; };
+		CC00000000000000000000A4 /* Transports in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A4 /* Transports */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +61,7 @@
 				CC00000000000000000000A1 /* Core in Frameworks */,
 				CC00000000000000000000A2 /* Viewers in Frameworks */,
 				CC00000000000000000000A3 /* Remote in Frameworks */,
+				CC00000000000000000000A4 /* Transports in Frameworks */,
 			);
 		};
 		3B84F6AE306F03BF003DBBFF /* Frameworks */ = {
@@ -109,6 +111,7 @@
 				BB00000000000000000000A1 /* Core */,
 				BB00000000000000000000A2 /* Viewers */,
 				BB00000000000000000000A3 /* Remote */,
+				BB00000000000000000000A4 /* Transports */,
 			);
 			productName = "Gloss";
 			productReference = 3B84F6A2306F03BD003DBBFF /* Gloss.app */;
@@ -167,6 +170,7 @@
 				AA00000000000000000000A1 /* XCLocalSwiftPackageReference "Packages/Core" */,
 				AA00000000000000000000A2 /* XCLocalSwiftPackageReference "Packages/Viewers" */,
 				AA00000000000000000000A3 /* XCLocalSwiftPackageReference "Packages/Remote" */,
+				AA00000000000000000000A4 /* XCLocalSwiftPackageReference "Packages/Transports" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B84F6A3306F03BD003DBBFF /* Products */;
@@ -479,6 +483,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/Remote;
 		};
+		AA00000000000000000000A4 /* XCLocalSwiftPackageReference "Packages/Transports" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Transports;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -493,6 +501,10 @@
 		BB00000000000000000000A3 /* Remote */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Remote;
+		};
+		BB00000000000000000000A4 /* Transports */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Transports;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -31,6 +31,8 @@ final class HostsModel {
     private(set) var status: [HostID: Status] = [:]
     private(set) var pendingHostKey: (hostID: HostID, fingerprint: String?)?
     @ObservationIgnored var onFileSystemReady: (HostID, SFTPFileSystem, SSHConnection) -> Void = { _, _, _ in }
+    /// Called when the user disconnects a host, so the app drops its file system and transports forget the host.
+    @ObservationIgnored var onDisconnected: (HostID) -> Void = { _ in }
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var fileSystems: [HostID: SFTPFileSystem] = [:]
@@ -106,6 +108,7 @@ final class HostsModel {
         fileSystems[hostID] = nil
         await manager.disconnect(hostID)
         status[hostID] = .idle
+        onDisconnected(hostID)
     }
 
     func disconnectAll() async {

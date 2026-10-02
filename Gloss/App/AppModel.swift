@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import OSLog
 import Remote
+import Transports
 import Viewers
 
 /// Root object for the app: owns the database, the file systems per host, and the explorer.
@@ -20,6 +21,8 @@ final class AppModel {
     let launchOptions: AppLaunchOptions
     /// Live ssh connections by host, for transports and search.
     private(set) var connections: [HostID: SSHConnection] = [:]
+    /// The same connections, readable by the transports without touching the main actor.
+    let connectionRegistry = ConnectionRegistry()
     var showNotesPanel = true
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
@@ -48,16 +51,25 @@ final class AppModel {
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
         send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
+        send.register(TmuxTransport(registry: connectionRegistry))
         notesPanel.start()
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
             guard let self else { return }
             let firstRegistration = self.fileSystems[hostID] == nil
             self.fileSystems[hostID] = fileSystem
             self.connections[hostID] = connection
+            let alias = self.hosts.entry(for: hostID)?.name ?? hostID.rawValue
+            Task { await self.connectionRegistry.register(connection, alias: alias, for: hostID) }
             let stager = RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem, noteStore: self.noteStore)
             self.send.register(stager: stager, for: hostID)
             // Expired staging directories are swept once per host per launch, not on every host click.
             if firstRegistration { Task { await stager.cleanupExpired() } }
+        }
+        hosts.onDisconnected = { [weak self] hostID in
+            guard let self else { return }
+            self.connections[hostID] = nil
+            self.fileSystems[hostID] = nil
+            Task { await self.connectionRegistry.remove(hostID) }
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
