@@ -18,6 +18,7 @@ final class AppModel {
     let send: SendCoordinator
     let settings: SettingsStore
     let hosts: HostsModel
+    let hooks = HooksModel()
     let launchOptions: AppLaunchOptions
     /// Live ssh connections by host, for transports and search.
     private(set) var connections: [HostID: SSHConnection] = [:]
@@ -26,6 +27,8 @@ final class AppModel {
     let herdrTransport: HerdrTransport
     private(set) var mcpServer: MCPServer?
     private(set) var mcpStatus: String?
+    /// Remote home directories, learned from the probe when a host connects (hook installs need them).
+    private(set) var hostHomes: [HostID: String] = [:]
     /// Follow mode: the explorer opens the directory of whichever Herdr agent pane has focus.
     var followHerdr = false {
         didSet { followHerdr ? startFollowing() : stopFollowing() }
@@ -63,6 +66,9 @@ final class AppModel {
         send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
         send.register(herdrTransport)
         send.register(TmuxTransport(registry: connectionRegistry))
+        let settings = settings
+        send.register(OpenCodeTransport(servers: { await MainActor.run { OpenCodeServer.parse(settings.opencodeServers) } }))
+        hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
             guard let self else { return }
@@ -72,6 +78,7 @@ final class AppModel {
             let alias = self.hosts.entry(for: hostID)?.name ?? hostID.rawValue
             Task {
                 await self.connectionRegistry.register(connection, alias: alias, for: hostID)
+                if let tools = try? await connection.tools(), !tools.home.isEmpty { self.hostHomes[hostID] = tools.home }
                 await self.forwardMCPPort(to: connection, alias: alias)
                 if self.followHerdr { self.startFollowing() }
             }
@@ -256,10 +263,16 @@ final class AppModel {
         let dependencies = MCPDependencies(
             noteStore: store,
             packet: { ids in try await send.packet(noteIDs: ids) },
-            hookText: { host, cwd in
+            hookText: { flavour, host, cwd in
                 let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
                 if host != "local", hostID == nil { return "" }
-                return try await send.hookText(hostID: hostID, cwd: cwd)
+                let (text, noteIDs) = try await send.hookText(hostID: hostID, cwd: cwd)
+                // Drained notes count as sent through that hook; the agent resolves them over MCP afterwards.
+                if !noteIDs.isEmpty {
+                    let transport = flavour == "codex" ? TransportKind.codexHook : .claudeHook
+                    _ = try? await store.recordSend(transport: transport.rawValue, targetJSON: "{\"cwd\":\"\(cwd ?? "")\"}", packetText: text, noteIDs: noteIDs, outcome: .delivered)
+                }
+                return text
             },
             createDraft: { host, path, cwd, text in
                 let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
@@ -282,6 +295,19 @@ final class AppModel {
         } catch {
             mcpStatus = "MCP server could not bind port \(settings.mcpPort): \(error)"
             Log.transport.error("MCP server failed to start: \(error, privacy: .public)")
+        }
+    }
+
+    /// The hook installer for a host: local files and shell, or the host's SFTP file system and exec channel.
+    func makeHookInstaller(for hostID: HostID) -> HookInstaller? {
+        let port = settings.mcpPort
+        if hostID == .local {
+            return HookInstaller(fileSystem: LocalFileSystem(), home: NSHomeDirectory(), port: port) { try await LocalShell.run($0) }
+        }
+        guard let fileSystem = fileSystems[hostID], let connection = connections[hostID], let alias = hosts.entry(for: hostID)?.name else { return nil }
+        guard let home = hostHomes[hostID] else { return nil }
+        return HookInstaller(fileSystem: fileSystem, home: home, hostAlias: alias, port: port) { line in
+            try await connection.exec("export PATH=\"$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH\"; " + line, timeout: .seconds(60))
         }
     }
 

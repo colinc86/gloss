@@ -44,10 +44,13 @@ struct SettingsView: View {
             }
             .tabItem { Label("Agents", systemImage: "paperplane") }
 
+            HooksSettings()
+                .tabItem { Label("Hooks", systemImage: "link") }
+
             AttachmentsSettings(settings: settings)
                 .tabItem { Label("Attachments", systemImage: "photo.on.rectangle") }
         }
-        .frame(width: 560, height: 340)
+        .frame(width: 560, height: 360)
         .padding()
     }
 }
@@ -70,6 +73,62 @@ private struct MCPSnippetRow: View {
                 .buttonStyle(.borderless)
                 .help("Copy")
             }
+        }
+    }
+}
+
+/// Install, update, or remove the UserPromptSubmit hooks and MCP registrations, here and on connected hosts.
+private struct HooksSettings: View {
+    @Environment(AppModel.self) private var model
+
+    private var hostIDs: [HostID] {
+        [HostID.local] + model.connections.keys.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    var body: some View {
+        Form {
+            ForEach(hostIDs, id: \.self) { hostID in
+                Section(hostID == .local ? "This Mac" : (model.hosts.entry(for: hostID)?.name ?? hostID.rawValue)) {
+                    ForEach(HookAgent.allCases) { agent in
+                        row(agent: agent, hostID: hostID)
+                    }
+                }
+            }
+            if let report = model.hooks.lastReport {
+                Text(report).font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = model.hooks.lastError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .formStyle(.grouped)
+        .task { await model.hooks.refresh(hosts: hostIDs) }
+    }
+
+    private func row(agent: HookAgent, hostID: HostID) -> some View {
+        let key = HooksModel.Key(hostID: hostID, agent: agent)
+        let status = model.hooks.status[key]
+        return LabeledContent(agent.displayName) {
+            HStack(spacing: 8) {
+                Text(describe(status)).foregroundStyle(.secondary).font(.caption)
+                Button(status == .installed ? "Reinstall" : "Install") {
+                    Task { await model.hooks.install(agent, on: hostID) }
+                }
+                Button("Remove") {
+                    Task { await model.hooks.uninstall(agent, on: hostID) }
+                }
+                .disabled(status == nil || status == .notInstalled)
+            }
+            .disabled(model.hooks.busy.contains(key))
+        }
+    }
+
+    private func describe(_ status: HookStatus?) -> String {
+        switch status {
+        case nil: "checking…"
+        case .notInstalled: "not installed"
+        case .installed: "installed"
+        case .outdated(let reason): "outdated: \(reason)"
         }
     }
 }

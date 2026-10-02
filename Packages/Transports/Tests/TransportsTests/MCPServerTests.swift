@@ -30,7 +30,7 @@ struct MCPServerTests {
                 }
                 return PacketBuilder.build(notes)
             },
-            hookText: { host, cwd in
+            hookText: { _, host, cwd in
                 let hostID = host == "local" ? HostID.local : nil
                 let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: cwd)
                 return PacketBuilder.hookText(pending.map { PacketNote(noteID: $0.note.id, agentPath: $0.document.path, source: .markdown, anchor: $0.note.anchor, comment: $0.note.body) })

@@ -22,6 +22,7 @@ let package = Package(
                 .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
+            resources: [.copy("Resources/HookScripts")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(name: "TransportsTests", dependencies: ["Transports"], swiftSettings: [.swiftLanguageMode(.v6)]),

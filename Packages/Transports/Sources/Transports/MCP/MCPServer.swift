@@ -7,13 +7,14 @@ import Synchronization
 public struct MCPDependencies: Sendable {
     public var noteStore: NoteStore
     public var packet: @Sendable ([NoteID]) async throws -> Packet
-    /// `UserPromptSubmit` context for notes under `cwd` on `host`, already fitted to the hook limit.
-    public var hookText: @Sendable (_ host: String, _ cwd: String?) async throws -> String
+    /// `UserPromptSubmit` context for notes under `cwd` on `host`, already fitted to the hook limit. `flavour` is
+    /// `claude` or `codex`, so the app can record which hook drained the notes.
+    public var hookText: @Sendable (_ flavour: String, _ host: String, _ cwd: String?) async throws -> String
     /// A whole-file draft note from the Herdr plugin on a host where `open` cannot reach the app.
     public var createDraft: @Sendable (_ host: String, _ path: String?, _ cwd: String?, _ text: String) async throws -> NoteID
     public var appVersion: String
 
-    public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
+    public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
         self.noteStore = noteStore
         self.packet = packet
         self.hookText = hookText
@@ -129,8 +130,10 @@ public actor MCPServer {
             return await handleMCP(request)
         case ("GET", "/health"):
             return .data(Data("ok\n".utf8), headers: ["Content-Type": "text/plain"])
-        case ("GET", "/hook/claude"), ("GET", "/hook/codex"):
-            return await handleHook(query: query)
+        case ("GET", "/hook/claude"):
+            return await handleHook(flavour: "claude", query: query)
+        case ("GET", "/hook/codex"):
+            return await handleHook(flavour: "codex", query: query)
         case ("POST", "/plugin/note"):
             return await handlePluginNote(request.body ?? Data())
         default:
@@ -175,9 +178,9 @@ public actor MCPServer {
         return object["method"] as? String == "initialize"
     }
 
-    private func handleHook(query: [String: String]) async -> HTTPResponse {
+    private func handleHook(flavour: String, query: [String: String]) async -> HTTPResponse {
         let host = query["host"].flatMap { $0.isEmpty ? nil : $0 } ?? "local"
-        let text = (try? await dependencies.hookText(host, query["cwd"])) ?? ""
+        let text = (try? await dependencies.hookText(flavour, host, query["cwd"])) ?? ""
         guard !text.isEmpty else { return .ok(headers: ["Content-Length": "0"]) }
         let payload: [String: Any] = ["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": text]]
         let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
