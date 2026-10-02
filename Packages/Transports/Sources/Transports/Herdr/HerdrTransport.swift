@@ -22,7 +22,8 @@ public actor HerdrTransport: Transport {
         self.herdrPath = herdrPath
     }
 
-    public static let execArgumentLimit = 120 * 1024
+    /// MAX_ARG_STRLEN on Linux is 131072; keep a margin for the login shell's own wrapping.
+    public static let execArgumentLimit = 124 * 1024
 
     public static func locateHerdr() -> String? {
         let candidates = ["/opt/homebrew/bin/herdr", "/usr/local/bin/herdr", (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/herdr")]
@@ -140,12 +141,17 @@ public actor HerdrTransport: Transport {
             case .socket(let path):
                 _ = try await HerdrClient(socketPath: path).prompt(target: identity.paneID, text: packet.text)
             case .exec:
-                // Linux limits one argv string to 128 KiB; the CLI takes the text as an argument.
-                guard packet.text.utf8.count < Self.execArgumentLimit else { throw DeliveryError.packetTooLarge(limit: Self.execArgumentLimit) }
                 guard let connection = await registry.connection(for: target.hostID) else { throw DeliveryError.targetUnavailable("host is not connected") }
-                let result = try await connection.exec("herdr agent prompt \(ShellQuote.single(identity.paneID)) \(ShellQuote.single(packet.text))", timeout: .seconds(30))
+                let script = "herdr agent prompt \(ShellQuote.single(identity.paneID)) \(ShellQuote.single(packet.text))"
+                // sshd hands the login shell one -c string: `sh -c '<script>'` with the script quoted again.
+                // Linux caps a single argv string at 128 KiB, so measure that final string, not the packet.
+                let commandLine = "sh -c " + ShellQuote.single(script)
+                guard commandLine.utf8.count < Self.execArgumentLimit else { throw DeliveryError.packetTooLarge(limit: Self.execArgumentLimit) }
+                let result = try await connection.exec(script, timeout: .seconds(30))
                 guard result.exitStatus == 0 else { throw Self.map(cliOutput: result.stdout, stderr: result.stderrText) }
             case .machine(let profile):
+                // The local CLI ships the text to the remote CLI as one argument; same limit applies there.
+                guard packet.text.utf8.count < Self.execArgumentLimit else { throw DeliveryError.packetTooLarge(limit: Self.execArgumentLimit) }
                 _ = try await runLocalHerdr(["--machine", profile, "agent", "prompt", identity.paneID, packet.text])
             }
         } catch let error as HerdrError {

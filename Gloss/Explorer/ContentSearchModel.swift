@@ -97,7 +97,7 @@ final class ContentSearchModel {
     }
 
     nonisolated private static func runGrep(pattern: String, root: String) async -> [SearchHit] {
-        guard let data = await output(of: "/usr/bin/grep", arguments: ["-rnI", "--exclude-dir=.git", "-e", pattern, "--", root]) else { return [] }
+        guard let data = await output(of: "/usr/bin/grep", arguments: ["-rnIs", "--exclude-dir=.git", "-e", pattern, "--", root]) else { return [] }
         return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
             let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
             guard parts.count == 3, let number = Int(parts[1]) else { return nil }

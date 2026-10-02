@@ -108,7 +108,6 @@ private struct BannerView: View {
         case .decodedAsLatin1: "This file is not valid UTF-8 and was decoded as Latin-1."
         case .readOnlyLargeFile: "Files over 2 MB open read-only."
         case .tooLarge: "Files over 50 MB are not shown in the text viewer."
-        case .nonAtomicSave: "This host cannot rename atomically; saves are not crash-safe."
         case .reanchoring: "Select the note's new range, then press ⌘⇧N to place it."
         }
     }

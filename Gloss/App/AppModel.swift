@@ -296,7 +296,7 @@ final class AppModel {
     private func startMCPServer() async {
         let store = noteStore
         let send = send
-        let dependencies = MCPDependencies(
+        var dependencies = MCPDependencies(
             noteStore: store,
             packet: { ids in try await send.packet(noteIDs: ids) },
             hookText: { flavour, host, cwd in
@@ -321,6 +321,17 @@ final class AppModel {
             },
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         )
+        dependencies.openDocument = { [weak self] host, path in
+            let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
+            guard let hostID else { throw DeliveryError.targetUnavailable("unknown host \(host)") }
+            await MainActor.run {
+                guard let self else { return }
+                Task {
+                    await self.openRootIfNeeded(hostID: hostID, containing: path)
+                    self.openDocument(hostID: hostID, path: path)
+                }
+            }
+        }
         let server = MCPServer(dependencies: dependencies, port: settings.mcpPort)
         do {
             try await server.start()

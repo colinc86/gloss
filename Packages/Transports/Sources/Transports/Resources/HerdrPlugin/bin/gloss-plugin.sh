@@ -51,14 +51,26 @@ open)
         url="gloss://open?host=$(encode "$host")&path=$(encode "$path")"
         [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$url"; exit 0; }
         open "$url" >/dev/null 2>&1
+        exit 0
     fi
+    port=""
+    for f in "$home/.config/gloss/mcp-port" "$home/Library/Application Support/Gloss/mcp-port"; do
+        [ -r "$f" ] && port=$(head -n 1 "$f" | tr -cd '0-9') && [ -n "$port" ] && break
+    done
+    [ -n "$port" ] || exit 0
+    body=$(python3 -c 'import json,sys; print(json.dumps({"host": sys.argv[1], "path": sys.argv[2]}))' "$host" "$path") || exit 0
+    [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$body"; exit 0; }
+    command -v curl >/dev/null 2>&1 || exit 0
+    curl -sf -m 3 -X POST -H 'Content-Type: application/json' --data-binary "$body" "http://127.0.0.1:$port/plugin/open" >/dev/null 2>&1
     exit 0
     ;;
 note)
     [ -n "$text" ] || exit 0
     if [ "$transport" = url ]; then
         if [ "$(printf '%s' "$text" | wc -c)" -gt 6000 ]; then
-            dir="${HERDR_PLUGIN_STATE_DIR:-${TMPDIR:-/tmp}}"
+            # The app only accepts selection files from its own inbox directory.
+            dir="$home/Library/Application Support/Gloss/inbox"
+            mkdir -p "$dir" 2>/dev/null || exit 0
             file="$dir/selection-$(date +%s)-$$.txt"
             printf '%s' "$text" > "$file" 2>/dev/null || exit 0
             url="gloss://note?host=$(encode "$host")&cwd=$(encode "$cwd")&pane=$(encode "$pane")&agent=$(encode "$agent")&file=$(encode "$file")"

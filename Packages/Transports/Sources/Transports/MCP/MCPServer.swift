@@ -12,6 +12,8 @@ public struct MCPDependencies: Sendable {
     public var hookText: @Sendable (_ flavour: String, _ host: String, _ cwd: String?) async throws -> String
     /// A whole-file draft note from the Herdr plugin on a host where `open` cannot reach the app.
     public var createDraft: @Sendable (_ host: String, _ path: String?, _ cwd: String?, _ text: String) async throws -> NoteID
+    /// Opens a file in the viewer, for the plugin's link handler on a host.
+    public var openDocument: @Sendable (_ host: String, _ path: String) async throws -> Void = { _, _ in }
     public var appVersion: String
 
     public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
@@ -136,6 +138,17 @@ public actor MCPServer {
             return await handleHook(flavour: "codex", query: query)
         case ("POST", "/plugin/note"):
             return await handlePluginNote(request.body ?? Data())
+        case ("POST", "/plugin/open"):
+            guard let object = try? JSONSerialization.jsonObject(with: request.body ?? Data()) as? [String: Any],
+                  let path = object["path"] as? String, path.hasPrefix("/") else {
+                return .error(statusCode: 400, MCPError.invalidParams("path is required"))
+            }
+            do {
+                try await dependencies.openDocument(object["host"] as? String ?? "local", path)
+                return .ok(headers: ["Content-Length": "0"])
+            } catch {
+                return .error(statusCode: 500, MCPError.internalError("\(error)"))
+            }
         default:
             return .error(statusCode: 404, MCPError.methodNotFound("no route for \(request.path ?? "/")"))
         }

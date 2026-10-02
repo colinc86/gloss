@@ -66,7 +66,9 @@ struct RemoteInstallTests {
             #expect(await installer.status(.claude) == .notInstalled)
             #expect((try? await fileSystem.stat(installer.scriptPath)) == nil)
         } catch {
-            _ = try? await connection.exec("rm -rf -- \(ShellQuote.single(home))")
+            // Unlink first (it only needs exec), then remove the host's plugin dirs and the temporary home.
+            _ = try? await installer.uninstall(.herdrPlugin)
+            _ = try? await connection.exec("rm -rf -- \"$HOME/.local/state/herdr/plugins/gloss\" \"$HOME/.config/herdr/plugins/config/gloss\" \(ShellQuote.single(home))")
             await manager.disconnectAll()
             throw error
         }

@@ -71,7 +71,7 @@ struct ExplorerSidebar: View {
 
     private var hostStatusMessage: String? {
         guard let tab = model.explorer.selectedTab, tab.hostID != .local else { return nil }
-        if let warning = model.hosts.warnings[tab.hostID] { return warning }
+        if let warning = model.hosts.warnings[tab.hostID], model.hosts.status(for: tab.hostID) == .connected { return warning }
         switch model.hosts.status(for: tab.hostID) {
         case .idle: return "Disconnected"
         case .connecting: return "Connecting…"

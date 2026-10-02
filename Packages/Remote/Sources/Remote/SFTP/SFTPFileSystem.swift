@@ -4,6 +4,23 @@ import OSLog
 
 /// Keeps one SFTP client per connection and reopens it when the channel drops.
 public actor SFTPChannel {
+    private var sweptDirectories: Set<String> = []
+
+    /// A connection drop mid-save leaves `.cc-<name>-<hex>.tmp` behind. Runs once per directory per channel, after
+    /// a save (not before, so a huge directory listing never delays the write), and only removes files older than a
+    /// week so a temp file kept as the sole copy after a failed fallback rename survives long enough to be noticed.
+    func sweepStaleTemporariesOnce(in directory: String, client: SFTPClient) async {
+        guard !sweptDirectories.contains(directory) else { return }
+        sweptDirectories.insert(directory)
+        guard let entries = try? await client.listDirectory(directory) else { return }
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        for entry in entries where entry.name.hasPrefix(".cc-") && entry.name.hasSuffix(".tmp") {
+            if let seconds = entry.attributes.mtime, Date(timeIntervalSince1970: TimeInterval(seconds)) < cutoff {
+                try? await client.remove(PathUtilities.join(directory, entry.name))
+            }
+        }
+    }
+
     private let connection: SSHConnection?
     private var client: SFTPClient?
     private var opening: Task<SFTPClient, any Error>?
@@ -119,7 +136,7 @@ public struct SFTPFileSystem: FileSystemProvider {
         let directory = PathUtilities.parent(of: target)
         let name = PathUtilities.name(of: target)
         let temporary = PathUtilities.join(directory, ".cc-\(name)-\(String(UInt32.random(in: 0...UInt32.max), radix: 16)).tmp")
-        await sweepStaleTemporaries(in: directory, client: client)
+        defer { Task { await channel.sweepStaleTemporariesOnce(in: directory, client: client) } }
         var originalRemoved = false
         do {
             let handle = try await client.open(temporary, flags: [.write, .create, .exclusive, .truncate], attributes: SFTPAttributes(permissions: mode))
@@ -147,17 +164,6 @@ public struct SFTPFileSystem: FileSystemProvider {
             if originalRemoved { throw Self.map(status, path: temporary) }
             try? await client.remove(temporary)
             throw Self.map(status, path: path)
-        }
-    }
-
-    /// A connection drop mid-save leaves `.cc-<name>-<hex>.tmp` behind; remove ones older than a day.
-    private func sweepStaleTemporaries(in directory: String, client: SFTPClient) async {
-        guard let entries = try? await client.listDirectory(directory) else { return }
-        let cutoff = Date().addingTimeInterval(-24 * 3600)
-        for entry in entries where entry.name.hasPrefix(".cc-") && entry.name.hasSuffix(".tmp") {
-            if let seconds = entry.attributes.mtime, Date(timeIntervalSince1970: TimeInterval(seconds)) < cutoff {
-                try? await client.remove(PathUtilities.join(directory, entry.name))
-            }
         }
     }
 

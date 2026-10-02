@@ -39,8 +39,14 @@ struct HerdrPluginTests {
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///tmp/a%20b.md"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fa%20b.md")
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"docs/plan.md"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fx%2Fdocs%2Fplan.md")
         #expect(run("note", context: #"{"focused_pane_cwd":"/tmp/x"}"#).isEmpty, "no selection: nothing to send")
+        let long = String(repeating: "y", count: 7000)
+        let longURL = run("note", context: "{\"focused_pane_cwd\":\"/tmp/x\",\"selected_text\":\"\(long)\"}")
+        #expect(longURL.contains("&file=") && longURL.contains("Gloss%2Finbox%2Fselection-"), "long selections go through the app's inbox: \(longURL.prefix(160))")
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///srv/app.log"}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"]).isEmpty, "no port file: silent")
         try "47831\n".write(toFile: "\(home)/.config/gloss/mcp-port", atomically: true, encoding: .utf8)
         try "asus\n".write(toFile: "\(home)/.config/gloss/host", atomically: true, encoding: .utf8)
+        let openBody = run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///srv/app.log"}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
+        #expect((try? JSONSerialization.jsonObject(with: Data(openBody.utf8)) as? [String: String]) == ["host": "asus", "path": "/srv/app.log"])
         let body = run("note", context: #"{"focused_pane_cwd":"/home/colin","selected_text":"line1\nline2 \"q\""}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
         let object = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
         #expect(object?["host"] as? String == "asus" && object?["cwd"] as? String == "/home/colin" && object?["text"] as? String == "line1\nline2 \"q\"")
@@ -54,7 +60,7 @@ struct HerdrPluginTests {
         try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: home) }
         let commands = CommandLog()
-        let installer = HookInstaller(fileSystem: LocalFileSystem(), home: home, hostAlias: "asus", port: 47831) { line in
+        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "asus", port: 47831) { line in
             await commands.record(line)
             if line.hasPrefix("herdr plugin list") { return ExecResult(exitStatus: 0, stdout: Data(#"{"result":{"plugins":[{"plugin_id":"gloss"}]}}"#.utf8), stderr: Data()) }
             return ExecResult(exitStatus: line.contains("unlink") ? 1 : 0, stdout: Data(), stderr: Data())
@@ -82,9 +88,14 @@ struct HerdrPluginTests {
         let home = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-plugin-home-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: home) }
-        let installer = HookInstaller(fileSystem: LocalFileSystem(), home: home, port: 47831) { try await LocalShell.run($0) }
+        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, port: 47831) { try await LocalShell.run($0) }
         let before = try await LocalShell.run("herdr plugin list --json").stdoutText
         if before.contains("\"plugin_id\":\"gloss\"") { return }   // the user's real install; leave it alone
+        func removeHerdrDirectories() {
+            for leftover in [".local/state/herdr/plugins/gloss", ".config/herdr/plugins/config/gloss"] {
+                try? FileManager.default.removeItem(atPath: (NSHomeDirectory() as NSString).appendingPathComponent(leftover))
+            }
+        }
         do {
             let report = try await installer.install(.herdrPlugin)
             #expect(report.changedFiles.contains { $0.hasSuffix("herdr-plugin.toml") })
@@ -93,13 +104,12 @@ struct HerdrPluginTests {
             #expect(await installer.status(.herdrPlugin) == .installed)
         } catch {
             _ = try? await installer.uninstall(.herdrPlugin)
+            removeHerdrDirectories()
             throw error
         }
         _ = try await installer.uninstall(.herdrPlugin)
         let after = try await LocalShell.run("herdr plugin list --json").stdoutText
         #expect(!after.contains("\"plugin_id\":\"gloss\""))
-        for leftover in [".local/state/herdr/plugins/gloss", ".config/herdr/plugins/config/gloss"] {
-            try? FileManager.default.removeItem(atPath: (NSHomeDirectory() as NSString).appendingPathComponent(leftover))
-        }
+        removeHerdrDirectories()
     }
 }

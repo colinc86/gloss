@@ -89,7 +89,7 @@ struct HookInstallerTests {
         try Self.sampleSettings.write(toFile: "\(home)/.claude/settings.json", atomically: true, encoding: .utf8)
         try "model = \"gpt-5\"\n\n[features]\nhooks = false\n".write(toFile: "\(home)/.codex/config.toml", atomically: true, encoding: .utf8)
         let commands = CommandLog()
-        let installer = HookInstaller(fileSystem: LocalFileSystem(), home: home, port: 47831) { line in
+        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, port: 47831) { line in
             await commands.record(line)
             return ExecResult(exitStatus: line.contains("remove") ? 1 : 0, stdout: Data(), stderr: Data())
         }
@@ -141,7 +141,7 @@ struct HookInstallerTests {
         #expect(((final["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]])?.count == 1 && final["model"] as? String == "opus")
 
         // Remote flavour: GLOSS_HOST in the command and a port file the script can find.
-        let remote = HookInstaller(fileSystem: LocalFileSystem(), home: home, hostAlias: "asus", port: 47831) { _ in ExecResult(exitStatus: 0, stdout: Data(), stderr: Data()) }
+        let remote = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "asus", port: 47831) { _ in ExecResult(exitStatus: 0, stdout: Data(), stderr: Data()) }
         let report = try await remote.install(.claude)
         #expect(report.changedFiles.contains(remote.remotePortFilePath))
         let portFile = try String(contentsOfFile: remote.remotePortFilePath, encoding: .utf8)

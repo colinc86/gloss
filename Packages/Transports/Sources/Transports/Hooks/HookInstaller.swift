@@ -151,10 +151,17 @@ public struct HookInstaller: Sendable {
                 report.changedFiles.append(path)
             }
         }
-        if agent == .claude || agent == .codex, !(try await hookFileMentionsScript(claudeSettingsPath)), !(try await hookFileMentionsScript(codexHooksPath)) {
-            for path in [scriptPath] + (hostAlias != nil ? [remotePortFilePath] : []) where (try? await fileSystem.delete(path)) != nil {
-                report.changedFiles.append(path)
-            }
+        // The script is shared by both hooks and the port file by the hooks and the plugin: remove each only
+        // when nothing that reads it is left.
+        let claudeRemains = try await hookFileMentionsScript(claudeSettingsPath)
+        let codexRemains = try await hookFileMentionsScript(codexHooksPath)
+        let hooksRemain = claudeRemains || codexRemains
+        let pluginRemains = (try? await fileSystem.stat(PathUtilities.join(pluginDirectory, "herdr-plugin.toml"))) != nil
+        var orphaned: [String] = []
+        if agent != .opencode, !hooksRemain { orphaned.append(scriptPath) }
+        if agent != .opencode, !hooksRemain, !pluginRemains { orphaned.append(remotePortFilePath) }
+        for path in orphaned where (try? await fileSystem.delete(path)) != nil {
+            report.changedFiles.append(path)
         }
         return report
     }

@@ -26,7 +26,6 @@ final class DocumentSession: Identifiable {
         case decodedAsLatin1
         case readOnlyLargeFile
         case tooLarge
-        case nonAtomicSave
         case reanchoring
     }
 
