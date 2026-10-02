@@ -129,7 +129,7 @@ struct ExplorerSidebar: View {
             switch model.hosts.status(for: pickedHost) {
             case .idle: text = "Not connected"
             case .connecting: text = model.hosts.progress[pickedHost] ?? "Connecting to \(hostName(pickedHost))…"; busy = true
-            case .waitingForAgent: text = "Waiting for your SSH key agent to approve the key…"; busy = true
+            case .waitingForAgent: text = "Waiting for your SSH key agent to sign. If it asks for approval, its prompt may be behind other windows."; busy = true
             case .connected: text = model.hosts.warnings[pickedHost]
             case .reconnecting(let attempt): text = "Reconnecting (attempt \(attempt))…"; busy = true
             case .failed(let message): text = message; failed = true
@@ -143,10 +143,13 @@ struct ExplorerSidebar: View {
             HStack(spacing: 6) {
                 if busy { ProgressView().controlSize(.small) }
                 if failed { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange) }
-                Text(text).font(.caption).foregroundStyle(failed ? .primary : .secondary).lineLimit(2)
+                Text(text).font(.caption).foregroundStyle(failed ? .primary : .secondary).lineLimit(3)
                 Spacer(minLength: 0)
                 if failed || (pickedHost != .local && model.hosts.status(for: pickedHost) == .idle) {
                     Button("Connect") { Task { await model.openRemoteRoot(hostID: pickedHost) } }
+                        .controlSize(.small)
+                } else if busy, pickedHost != .local {
+                    Button("Cancel") { Task { await model.hosts.disconnect(pickedHost) } }
                         .controlSize(.small)
                 }
             }

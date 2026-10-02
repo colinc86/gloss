@@ -9,6 +9,8 @@ public enum SSHError: Error, Sendable, Equatable {
     case authenticationFailed(String)
     case unreachable(String)
     case timedOut
+    /// The key agent was asked to offer or sign with a key and never answered within `agentBudget`.
+    case agentUnresponsive
     case notConnected
     case commandFailed(status: Int32, stderr: String)
     case forwardFailed(String)
@@ -17,7 +19,7 @@ public enum SSHError: Error, Sendable, Equatable {
     /// Failures that retrying cannot fix without the user: the supervisor stops reconnecting on these.
     public var isTransient: Bool {
         switch self {
-        case .hostKeyProblem, .hostKeyChanged, .authenticationFailed: false
+        case .hostKeyProblem, .hostKeyChanged, .authenticationFailed, .agentUnresponsive: false
         default: true
         }
     }
@@ -99,6 +101,8 @@ public actor SSHConnection {
 
     private static let log = Logger(subsystem: "com.cnc.Gloss", category: "ssh")
     public static let connectBudget: Duration = .seconds(90)
+    /// How long a key agent may stay silent after a key was offered or accepted before the connect is failed.
+    public static let agentBudget: Duration = .seconds(45)
 
     public let hostID: HostID
     public let alias: String
@@ -232,12 +236,21 @@ public actor SSHConnection {
         var lastStage: String?
         var offeringSince: ContinuousClock.Instant?
         while ContinuousClock.now < deadline {
-            // Report ssh's own stages; the key-agent wait is announced only once a key has been offered and
-            // nothing came back for a while, which is the only evidence we have of an agent prompt.
+            // Report ssh's own stages. Two of them block on the key agent: offering a key and, after the server
+            // accepted it, asking the agent to sign. Silence in either is the only evidence of an agent prompt.
             if let stage = Self.stage(from: accumulator.text), stage != lastStage {
                 lastStage = stage
                 events.yield(.progress(hostID, stage))
-                offeringSince = stage.hasPrefix("Offering") || stage.hasPrefix("Trying") ? ContinuousClock.now : nil
+                let waitsOnAgent = stage.hasPrefix("Offering") || stage.hasPrefix("Trying") || stage.hasPrefix("Key accepted")
+                offeringSince = waitsOnAgent ? ContinuousClock.now : nil
+            }
+            if let offeringSince, ContinuousClock.now > offeringSince + Self.agentBudget {
+                // The agent never answered: fail with a specific message instead of spinning out the whole budget.
+                process.terminate()
+                state = .failed(.agentUnresponsive)
+                master = nil
+                events.yield(.failed(hostID, .agentUnresponsive))
+                throw SSHError.agentUnresponsive
             }
             if Task.isCancelled {
                 process.terminate()

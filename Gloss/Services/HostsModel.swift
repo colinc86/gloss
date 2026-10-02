@@ -211,6 +211,7 @@ final class HostsModel {
         case .authenticationFailed: "Authentication failed: no key was accepted. Check the key, your agent, or the user name."
         case .unreachable: "Host unreachable"
         case .timedOut: "Timed out waiting for ssh"
+        case .agentUnresponsive: "Your SSH key agent did not respond. If it shows an approval prompt, approve it (the prompt may be behind other windows). To skip the agent, add this host in Settings → Hosts with an identity file."
         case .notConnected: "Not connected"
         case .commandFailed(_, let stderr): stderr
         case .forwardFailed(let message): "Forward failed: \(message)"
