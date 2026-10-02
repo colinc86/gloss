@@ -23,6 +23,13 @@ final class AppModel {
     private(set) var connections: [HostID: SSHConnection] = [:]
     /// The same connections, readable by the transports without touching the main actor.
     let connectionRegistry = ConnectionRegistry()
+    let herdrTransport: HerdrTransport
+    /// Follow mode: the explorer opens the directory of whichever Herdr agent pane has focus.
+    var followHerdr = false {
+        didSet { followHerdr ? startFollowing() : stopFollowing() }
+    }
+    private(set) var followStatus: String?
+    @ObservationIgnored private var followTasks: [HostID: Task<Void, Never>] = [:]
     var showNotesPanel = true
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
@@ -47,10 +54,12 @@ final class AppModel {
         settings = SettingsStore(noteStore: store)
         hosts = HostsModel(noteStore: store)
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
+        herdrTransport = HerdrTransport(registry: connectionRegistry)
         fileSystems[.local] = LocalFileSystem()
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
         send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
+        send.register(herdrTransport)
         send.register(TmuxTransport(registry: connectionRegistry))
         notesPanel.start()
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
@@ -73,6 +82,41 @@ final class AppModel {
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+    }
+
+    // MARK: Follow mode
+
+    private func startFollowing() {
+        var hostIDs: [HostID] = [.local]
+        hostIDs += connections.keys.sorted { $0.rawValue < $1.rawValue }
+        for hostID in hostIDs where followTasks[hostID] == nil {
+            followTasks[hostID] = Task { [weak self] in
+                guard let self, let socket = await self.herdrTransport.socketPath(for: hostID) else { return }
+                let service = HerdrFollowService(hostID: hostID, socketPath: socket)
+                await service.start()
+                defer { Task { await service.stop() } }
+                for await event in service.events {
+                    if Task.isCancelled { return }
+                    await self.apply(event)
+                }
+            }
+        }
+        if followStatus == nil { followStatus = "Following Herdr…" }
+    }
+
+    private func stopFollowing() {
+        for task in followTasks.values { task.cancel() }
+        followTasks = [:]
+        followStatus = nil
+    }
+
+    private func apply(_ event: FollowEvent) async {
+        if let agent = event.agent {
+            followStatus = "\(agent) \(event.status ?? "") · \(event.paneID)"
+        }
+        guard let path = event.path, !path.isEmpty else { return }
+        if event.hostID != .local, fileSystems[event.hostID] == nil { return }
+        await explorer.openRoot(hostID: event.hostID, path: path)
     }
 
     func openDocument(hostID: HostID, path: String) {

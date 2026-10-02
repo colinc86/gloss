@@ -36,6 +36,12 @@ struct ExplorerSidebar: View {
             HStack(spacing: 6) {
                 HostPicker()
                 Spacer()
+                Toggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 })) {
+                    Image(systemName: "scope")
+                }
+                .toggleStyle(.button)
+                .buttonStyle(.borderless)
+                .help("Follow the focused Herdr agent pane")
                 Button {
                     explorer.chooseRootWithPanel(hostID: .local)
                 } label: {
@@ -43,6 +49,12 @@ struct ExplorerSidebar: View {
                 }
                 .help("Open Folder (⌘⇧O)")
                 .buttonStyle(.borderless)
+            }
+            if model.followHerdr, let status = model.followStatus {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             if let message = hostStatusMessage {
                 Text(message)

@@ -26,7 +26,7 @@ Every agent pane carries agent kind, status, cwd, and (for Claude Code and Codex
 | Discover targets | `agent.list` | `{}` or `{"workspace_id":"w1"}` | returns agent panes with kind and status |
 | Pane details | `pane.list`, `pane.get` | `{"pane_id":"w1:p1"}` | PaneInfo below |
 | Submit a prompt | `agent.prompt` | `{"target":"<pane_id or agent name>","text":"...","wait":{"until":"done","timeout_ms":30000}}` or `wait: null` | bracketed-paste aware, submits with Enter. USE THIS, not `pane.send_text` |
-| Run a shell command in a pane | `pane.run` | `{"pane_id":..,"command":"..."}` | bracketed-paste safe; submits atomically |
+| Run a shell command in a pane | CLI only: `herdr pane run <pane_id> "<cmd>"` | (0.9.3 has no `pane.run` socket method; use `pane.send_text` with a trailing `\n` over the socket) | |
 | Read output | `pane.read` | `{"pane_id":..,"source":"visible"|"recent"|"recent_unwrapped"|"detection","lines":80,"format":"text"|"ansi"}` | `visible` never scrolls the user's view; `recent` with lines > viewport can visibly scroll the pane |
 | Wait for state | `agent.wait` | `{"target":..,"until":"done"|"idle"|"blocked"}` | |
 | Process info | `pane.process_info` | `{"pane_id":..}` | shell pid, foreground pgid, argv, cwd |
@@ -61,6 +61,14 @@ Agent kinds include `claude`, `codex`, `opencode`, `gemini`, `cursor`, `copilot`
 - `recent_unwrapped` has no effect for Claude Code panes (alt-screen, hard wrapped).
 - Sending `ctrl+b` literally requires `ctrl+b ctrl+b`.
 - (0.9.3, verified 2026-10-01) `pane_focused` event data is `{type, pane_id, workspace_id}` with NO cwd; follow mode must call `pane.get` afterwards. `agent.prompt` returns `{"type":"agent_prompted","agent":AgentInfo}`; a pane waiting on a permission prompt answers with error code `agent_blocked`. `events.subscribe` can emit an `events_lost` error, after which the client must resnapshot and resubscribe. `agent.list` returns `{"type":"agent_list","agents":[AgentInfo]}` where AgentInfo adds `name`, `interactive_ready`, `launch_pending`.
+
+## Verified on 0.9.3 (2026-10-02, Gloss tests)
+
+- `agent.prompt` only accepts panes Herdr already detects as agent panes; otherwise `agent_not_found`. Detection is by the foreground process name against the agent manifests (a binary named `claude` in the foreground is enough; `herdr agent explain <pane>` shows the rule). `pane.report_agent` sent from outside the pane is accepted but the pane then answers `agent_not_ready` ("no longer the pane foreground process"), so only the agent's own process tree may report.
+- `pane.split {direction:"right"|"down", workspace_id?, cwd?, ratio?}` returns `{"type":"pane_info","pane":{...}}`; `pane.close {pane_id}` returns `{"type":"ok"}`. Type into a fresh pane only after a second or so: text sent while the shell is still starting is lost.
+- `events.subscribe` acks `{"type":"subscription_started"}`; subscription types verified: `pane.created|closed|updated|focused|moved|exited|agent_detected|output_matched|agent_status_changed|scroll_changed`, plus workspace/tab/worktree/layout events.
+- `herdr agent list` (no `--json` flag exists) prints the same envelope as the socket; `herdr --machine <profile> agent list` does the same for a remote profile.
+- Copying `/bin/cat` to another name is killed by the platform-binary check on macOS; a stand-in agent for tests must be compiled.
 
 ## CLI equivalents
 
