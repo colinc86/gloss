@@ -112,7 +112,11 @@ public actor SSHConnection {
     }
     /// Mirror of the master's pid readable without actor hops, for synchronous teardown at app exit.
     private nonisolated let masterPID = PIDBox()
-    private var masterStderr = ""
+    /// Everything the master wrote to stderr (verbose stages, then errors), filled by a detached reader so the
+    /// poll loop on this actor can never starve it.
+    private var masterStderr = StderrAccumulator()
+    /// What the master wrote so far, for diagnostics.
+    public var capturedStderr: String { masterStderr.text }
     public private(set) var state: State = .disconnected
     private var forwards: Set<SSHForward> = []
     private var supervisor: Task<Void, Never>?
@@ -154,8 +158,8 @@ public actor SSHConnection {
             "-o", "StreamLocalBindUnlink=yes",
             "-o", "ExitOnForwardFailure=yes",
             "-o", "StrictHostKeyChecking=\(acceptNew ? "accept-new" : "yes")",
-            // VERBOSE is ssh's -v: the stages it prints are what the UI reports while connecting.
-            "-o", "LogLevel=VERBOSE",
+            // DEBUG is ssh's -v: the debug1 stages it prints are what the UI reports while connecting.
+            "-o", "LogLevel=DEBUG",
         ] + options + ["-N", "--", alias]
     }
 
@@ -209,7 +213,8 @@ public actor SSHConnection {
             throw failure
         }
         master = process
-        masterStderr = ""
+        let accumulator = StderrAccumulator()
+        masterStderr = accumulator
         let pidBox = masterPID
         let pid = process.processIdentifier
         Task.detached {
@@ -217,9 +222,9 @@ public actor SSHConnection {
             _ = try? await process.exitCode
             pidBox.value.withLock { if $0 == pid { $0 = nil } }
         }
-        let stderrTask = Task { [weak self] in
+        let stderrTask = Task.detached {
             for await chunk in process.stderr {
-                await self?.appendStderr(String(decoding: chunk, as: UTF8.self))
+                accumulator.append(String(decoding: chunk, as: UTF8.self))
             }
         }
         let deadline = ContinuousClock.now + Self.connectBudget
@@ -229,7 +234,7 @@ public actor SSHConnection {
         while ContinuousClock.now < deadline {
             // Report ssh's own stages; the key-agent wait is announced only once a key has been offered and
             // nothing came back for a while, which is the only evidence we have of an agent prompt.
-            if let stage = Self.stage(from: masterStderr), stage != lastStage {
+            if let stage = Self.stage(from: accumulator.text), stage != lastStage {
                 lastStage = stage
                 events.yield(.progress(hostID, stage))
                 offeringSince = stage.hasPrefix("Offering") || stage.hasPrefix("Trying") ? ContinuousClock.now : nil
@@ -249,7 +254,7 @@ public actor SSHConnection {
                 let code = (try? await process.exitCode) ?? -1
                 // The exit message may still be in the pipe; a ProxyCommand child can hold stderr open, hence the bound.
                 _ = await withDeadline(.seconds(1)) { await stderrTask.value }
-                let failure = classify(stderr: masterStderr, status: code)
+                let failure = classify(stderr: accumulator.text, status: code)
                 state = .failed(failure)
                 master = nil
                 events.yield(.failed(hostID, failure))
@@ -268,15 +273,13 @@ public actor SSHConnection {
         throw SSHError.timedOut
     }
 
-    private func appendStderr(_ text: String) {
-        masterStderr += text
-        if masterStderr.count > 32_768 { masterStderr = String(masterStderr.suffix(32_768)) }
-    }
-
     /// The last meaningful `debug1:` line, shortened for display.
     nonisolated static func stage(from stderr: String) -> String? {
-        let lines = stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-        for line in lines.reversed() where line.hasPrefix("debug1: ") {
+        // ssh ends lines with "\r\n", which Swift treats as one Character: split on any newline, never on "\n".
+        let lines = stderr.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        for line in lines.reversed() {
+            if line.hasPrefix("Authenticated to") { return "Authenticated, opening session…" }
+            guard line.hasPrefix("debug1: ") else { continue }
             let body = String(line.dropFirst("debug1: ".count))
             if body.hasPrefix("Connecting to") { return "Connecting to " + (body.split(separator: " ").dropFirst(2).first.map(String.init) ?? "host") + "…" }
             if body.hasPrefix("Connection established") { return "Connected, negotiating…" }
@@ -291,7 +294,7 @@ public actor SSHConnection {
 
     nonisolated func classify(stderr: String, status: Int32) -> SSHError {
         // Drop the verbose stages so the error text is only what ssh actually complained about.
-        let text = stderr.split(separator: "\n").filter { !$0.hasPrefix("debug") }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = stderr.split(whereSeparator: \.isNewline).filter { !$0.hasPrefix("debug") }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         if text.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") { return .hostKeyChanged(text) }
         if text.contains("Host key verification failed") || text.contains("No ED25519 host key is known") || text.contains("host key is known") {
             let fingerprint = text.components(separatedBy: .newlines).first { $0.contains("SHA256:") }
@@ -570,5 +573,19 @@ public actor SSHConnectionManager {
     /// Called on wake: every connected host re-checks its master.
     public func recheckAll() async {
         for connection in connections.values { await connection.recheck() }
+    }
+}
+
+/// A bounded text buffer appended from a reader task and read from the actor; the last 32 KiB are kept.
+final class StderrAccumulator: Sendable {
+    private let storage = Mutex("")
+
+    var text: String { storage.withLock { $0 } }
+
+    func append(_ chunk: String) {
+        storage.withLock { buffer in
+            buffer += chunk
+            if buffer.count > 32_768 { buffer = String(buffer.suffix(32_768)) }
+        }
     }
 }

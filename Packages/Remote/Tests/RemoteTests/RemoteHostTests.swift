@@ -11,7 +11,17 @@ struct RemoteHostTests {
         let alias = try #require(TestGates.remoteHost)
         try await TestGates.withManager(serialized: false) { manager, _ in
             let host = HostID.new()
+            let collector = Task { () -> [SSHConnectionEvent] in
+                var seen: [SSHConnectionEvent] = []
+                for await event in manager.events {
+                    seen.append(event)
+                    if case .connected = event { break }
+                }
+                return seen
+            }
             let connection = try await manager.connection(for: host, alias: alias)
+            let stages = await collector.value.compactMap { event -> String? in if case .progress(_, let stage) = event { return stage } else { return nil } }
+            #expect(!stages.isEmpty, "ssh's stages were reported while connecting: \(stages)")
             let tools = try await connection.tools()
             #expect(!tools.home.isEmpty)
             let fs = SFTPFileSystem(hostID: host, connection: connection)
