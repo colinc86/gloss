@@ -22,6 +22,9 @@ final class AppModel {
     let launchOptions: AppLaunchOptions
     /// Live ssh connections by host, for transports and search.
     private(set) var connections: [HostID: SSHConnection] = [:]
+    /// The host the sidebar's host menu shows: whichever was picked or connected last, so a connect started from
+    /// a launch flag or a URL is visible in the status row too.
+    var pickedHost: HostID = .local
     /// The same connections, readable by the transports without touching the main actor.
     let connectionRegistry = ConnectionRegistry()
     let herdrTransport: HerdrTransport
@@ -263,7 +266,11 @@ final class AppModel {
         send.stagedFileExpiryDays = settings.stagedFileExpiryDays
         await hosts.refresh()
         explorer.showDotfiles = settings.showDotfilesByDefault
-        if let root = launchOptions.root {
+        let launchHost = launchOptions.host == "local" ? HostID.local : hosts.entries.first { $0.name == launchOptions.host }?.id
+        if let launchHost, launchHost != .local {
+            // `--host <alias>` connects first; `--root` names a directory there, else the home directory.
+            await openRemoteRoot(hostID: launchHost, path: launchOptions.root)
+        } else if let root = launchOptions.root {
             await explorer.openRoot(hostID: .local, path: root)
         } else if settings.openLastRootOnLaunch {
             await reopenMostRecentRoot()
@@ -272,6 +279,7 @@ final class AppModel {
             openDocument(hostID: .local, path: open)
         }
         await startMCPServer()
+        if launchOptions.follow { followHerdr = true }
     }
 
     /// The root opened most recently on any host; a remote one connects the host first (the agent prompt may show).
@@ -430,6 +438,7 @@ final class AppModel {
 
     /// Connects to a remote host and opens its home directory (or the given path) as a root.
     func openRemoteRoot(hostID: HostID, path: String? = nil) async {
+        pickedHost = hostID
         guard let home = await hosts.connect(hostID) else { return }
         await explorer.openRoot(hostID: hostID, path: path ?? home)
     }

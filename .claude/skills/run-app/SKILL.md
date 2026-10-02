@@ -26,7 +26,7 @@ open -n "$APP" --args --root "$PWD" --host local
 sleep 2
 ```
 
-Supported launch arguments (add to `AppLaunchOptions` when new ones are needed): `--root <path>`, `--host <alias|local>`, `--open <path>`, `--reset-db` (uses a throwaway database under `$TMPDIR`, never the real one).
+Supported launch arguments (add to `AppLaunchOptions` when new ones are needed): `--root <path>`, `--host <alias|local>`, `--open <path>`, `--reset-db` (uses a throwaway database under `$TMPDIR`, never the real one), `--follow` (start with Herdr follow mode on).
 
 ## Screenshot
 

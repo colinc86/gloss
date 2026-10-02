@@ -10,6 +10,8 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
     var open: String?
     /// `--reset-db`: use a throwaway database under `$TMPDIR` instead of the real one.
     var resetDatabase = false
+    /// `--follow`: start with Herdr follow mode on, so scripted runs can watch it.
+    var follow = false
 
     init() {}
 
@@ -20,6 +22,8 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
         while let argument = iterator.next() {
             if argument == "--reset-db" {
                 resetDatabase = true
+            } else if argument == "--follow" {
+                follow = true
             } else if let equals = argument.firstIndex(of: "="), argument.hasPrefix("--") {
                 apply(key: String(argument[..<equals]), value: String(argument[argument.index(after: equals)...]))
             } else if argument.hasPrefix("--") {
@@ -43,6 +47,7 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
         if let root { parts.append("root=\(root)") }
         if let open { parts.append("open=\(open)") }
         if resetDatabase { parts.append("reset-db") }
+        if follow { parts.append("follow") }
         return parts.joined(separator: " ")
     }
 }

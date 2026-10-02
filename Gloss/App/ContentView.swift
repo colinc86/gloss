@@ -1,3 +1,4 @@
+import Core
 import SwiftUI
 
 struct ContentView: View {
@@ -12,6 +13,8 @@ struct ContentView: View {
                 if let session = model.activeSession {
                     ViewerPane(session: session)
                         .id(session.id)
+                        .navigationTitle(session.fileName)
+                        .navigationSubtitle(session.hostID == .local ? "" : (model.hosts.entry(for: session.hostID)?.name ?? ""))
                 } else {
                     ContentUnavailableView(
                         "Select a file",

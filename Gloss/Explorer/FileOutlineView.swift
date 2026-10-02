@@ -142,11 +142,13 @@ struct FileOutlineView: NSViewRepresentable {
                 item(node.hostID == .local ? "Move to Trash" : "Delete…", #selector(menuDelete))
                 menu.addItem(.separator())
             }
+            if node.isDirectory { item("Open as Root", #selector(menuOpenAsRoot)) }
             if node.hostID == .local { item("Reveal in Finder", #selector(menuReveal)) }
             item("Copy Path", #selector(menuCopyPath))
             item("Copy Relative Path", #selector(menuCopyRelativePath))
         }
 
+        @objc private func menuOpenAsRoot() { if let node = clickedNode, node.isDirectory { Task { await model.openRoot(hostID: node.hostID, path: node.path) } } }
         @objc private func menuNewFile() { if let node = clickedNode, let directory = node.isDirectory ? node : node.parent { model.newFile(in: directory) } }
         @objc private func menuNewFolder() { if let node = clickedNode, let directory = node.isDirectory ? node : node.parent { model.newFolder(in: directory) } }
         @objc private func menuRename() { if let node = clickedNode { model.rename(node) } }

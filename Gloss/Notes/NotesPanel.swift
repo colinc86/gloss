@@ -12,6 +12,7 @@ struct NotesPanel: View {
             Divider()
             if panel.visibleGroups.isEmpty {
                 ContentUnavailableView("No notes", systemImage: "note.text", description: Text("Select text and press ⌘⇧N to add one."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $panel.selectedNoteID) {
                     ForEach(panel.visibleGroups) { group in
