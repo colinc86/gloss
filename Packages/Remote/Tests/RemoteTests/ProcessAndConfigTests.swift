@@ -17,7 +17,7 @@ struct ChildProcessTests {
         let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", "printf out; printf err >&2; exit 3"]))
         async let out = process.collectStdout()
         async let err = process.collectStderr()
-        #expect(await process.exitCode == 3)
+        #expect(try await process.exitCode == 3)
         #expect(String(decoding: await out, as: UTF8.self) == "out")
         #expect(String(decoding: await err, as: UTF8.self) == "err")
     }
@@ -27,14 +27,14 @@ struct ChildProcessTests {
         try await process.write(Data("hello stdin".utf8))
         process.closeStdin()
         #expect(String(decoding: await process.collectStdout(), as: UTF8.self) == "hello stdin")
-        #expect(await process.exitCode == 0)
+        #expect(try await process.exitCode == 0)
     }
 
     @Test func drainsLargeOutputWithoutBlocking() async throws {
         let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", "head -c 3000000 /dev/zero | tr '\\0' 'x'; head -c 300000 /dev/zero | tr '\\0' 'y' >&2"]))
         async let out = process.collectStdout()
         async let err = process.collectStderr()
-        #expect(await process.exitCode == 0)
+        #expect(try await process.exitCode == 0)
         #expect(await out.count == 3_000_000)
         #expect(await err.count == 300_000)
     }
@@ -42,7 +42,7 @@ struct ChildProcessTests {
     @Test func terminateStopsASleepingChild() async throws {
         let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sleep", arguments: ["30"]))
         process.terminate()
-        let code = await process.exitCode
+        let code = try await process.exitCode
         #expect(code != 0)
         #expect(!process.isRunning)
     }

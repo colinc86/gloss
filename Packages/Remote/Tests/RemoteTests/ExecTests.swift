@@ -20,10 +20,7 @@ struct RemoteSearchParsingTests {
 struct ExecIntegrationTests {
     @Test(.enabled(if: TestGates.loopback))
     func searchesAndStagesOverLoopback() async throws {
-        try await TestGates.serialized {
-            let control = TestGates.temporaryControlDirectory()
-            defer { try? FileManager.default.removeItem(atPath: control) }
-            let manager = SSHConnectionManager(controlDirectory: control)
+        try await TestGates.withManager { manager, control in
             let host = HostID.new()
             let connection = try await manager.connection(for: host, alias: "localhost")
             let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-exec-\(UUID().uuidString.prefix(8))")
@@ -58,7 +55,6 @@ struct ExecIntegrationTests {
             #expect(!FileManager.default.fileExists(atPath: remotePath), "expired staging directory is removed")
             #expect(try await store.expiredStagedFiles(now: Date().addingTimeInterval(8 * 24 * 3600)).isEmpty)
             await fileSystem.channel.close()
-            await manager.disconnectAll()
         }
     }
 }

@@ -37,9 +37,13 @@ public final class ChildProcess: Sendable {
     public let stderr: AsyncStream<Data>
     public let processIdentifier: Int32
 
-    private let exitTask: Task<Int32, Never>
+    private let exitBox: ExitBox
     private let state: Mutex<State>
     private let queue: DispatchQueue
+
+    /// A child that exits before reading its stdin would otherwise kill the app with SIGPIPE; ignoring it makes
+    /// the write fail with EPIPE instead, which the callers handle. Done once, before the first launch.
+    private static let ignoreSIGPIPE: Void = { signal(SIGPIPE, SIG_IGN) }()
 
     private struct State {
         var process: Process?
@@ -52,6 +56,7 @@ public final class ChildProcess: Sendable {
     }
 
     private init(_ spec: ChildProcessSpec) throws {
+        _ = Self.ignoreSIGPIPE
         let process = Process()
         process.executableURL = URL(fileURLWithPath: spec.executable)
         process.arguments = spec.arguments
@@ -82,10 +87,10 @@ public final class ChildProcess: Sendable {
         guard let stdoutContinuation, let stderrContinuation else { throw ChildProcessError.launchFailed("stream setup") }
 
         let exitBox = ExitBox()
+        self.exitBox = exitBox
         process.terminationHandler = { finished in
             exitBox.finish(finished.terminationStatus)
         }
-        exitTask = Task { await exitBox.value }
 
         do {
             try process.run()
@@ -117,23 +122,32 @@ public final class ChildProcess: Sendable {
         }
     }
 
-    /// Resolves when the process exits.
+    /// Resolves when the process exits. Throws `CancellationError` when the waiting task is cancelled,
+    /// so timeouts built on task groups actually fire while the child is still running.
     public var exitCode: Int32 {
-        get async { await exitTask.value }
+        get async throws { try await exitBox.value }
     }
 
     public var isRunning: Bool {
         state.withLock { $0.process?.isRunning ?? false }
     }
 
-    /// Writes to stdin (only with `.pipe`). Blocking I/O on a utility task.
+    /// Writes to stdin (only with `.pipe`) through DispatchIO on the private queue, so a slow reader parks the
+    /// write instead of a cooperative-pool thread. Fails with EPIPE (not SIGPIPE) when the child is gone.
     public func write(_ data: Data) async throws {
         let handle: FileHandle? = state.withLock { $0.stdinClosed ? nil : $0.stdinHandle }
         guard let handle else { throw ChildProcessError.stdinClosed }
-        let box = HandleBox(handle)
-        try await Task.detached(priority: .utility) {
-            try box.handle.write(contentsOf: data)
-        }.value
+        let descriptor = handle.fileDescriptor
+        let bytes = data.withUnsafeBytes { DispatchData(bytes: $0) }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            DispatchIO.write(toFileDescriptor: descriptor, data: bytes, runningHandlerOn: queue) { _, error in
+                if error == 0 {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: ChildProcessError.writeFailed(error))
+                }
+            }
+        }
     }
 
     public func closeStdin() {
@@ -149,8 +163,11 @@ public final class ChildProcess: Sendable {
         let process = state.withLock { $0.process }
         guard let process, process.isRunning else { return }
         process.terminate()
-        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.kill()
+        let pid = process.processIdentifier
+        queue.asyncAfter(deadline: .now() + 2) {
+            // Not `self`: the owner may have dropped this object by then, and the follow-up must still fire.
+            // The pid is reaped only by `Process`, so it cannot have been reused while the handler holds `process`.
+            if process.isRunning { Darwin.kill(pid, SIGKILL) }
         }
     }
 
@@ -173,35 +190,45 @@ public final class ChildProcess: Sendable {
     }
 }
 
-/// Carries a `FileHandle` into a detached task; handles are safe to use from one task at a time.
-private struct HandleBox: @unchecked Sendable {
-    let handle: FileHandle
-    init(_ handle: FileHandle) { self.handle = handle }
-}
-
-/// Bridges the termination handler to an awaitable value.
+/// Bridges the termination handler to an awaitable, cancellable value. Each waiter is resumed exactly once:
+/// by `finish`, or by cancellation, whichever removes it from the table first.
 private final class ExitBox: Sendable {
-    private let state = Mutex<(code: Int32?, waiters: [CheckedContinuation<Int32, Never>])>((nil, []))
+    private struct Table {
+        var code: Int32?
+        var nextID = 0
+        var waiters: [Int: CheckedContinuation<Int32, any Error>] = [:]
+    }
+
+    private let state = Mutex(Table())
 
     func finish(_ code: Int32) {
-        let waiters: [CheckedContinuation<Int32, Never>] = state.withLock { state in
-            state.code = code
-            let pending = state.waiters
-            state.waiters = []
+        let waiters: [CheckedContinuation<Int32, any Error>] = state.withLock { table in
+            table.code = code
+            let pending = Array(table.waiters.values)
+            table.waiters = [:]
             return pending
         }
         for waiter in waiters { waiter.resume(returning: code) }
     }
 
     var value: Int32 {
-        get async {
-            await withCheckedContinuation { continuation in
-                let immediate: Int32? = state.withLock { state in
-                    if let code = state.code { return code }
-                    state.waiters.append(continuation)
-                    return nil
+        get async throws {
+            let id = state.withLock { table in
+                table.nextID += 1
+                return table.nextID
+            }
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    let immediate: Int32? = state.withLock { table in
+                        if let code = table.code { return code }
+                        table.waiters[id] = continuation
+                        return nil
+                    }
+                    if let immediate { continuation.resume(returning: immediate) }
                 }
-                if let immediate { continuation.resume(returning: immediate) }
+            } onCancel: {
+                let waiter = state.withLock { $0.waiters.removeValue(forKey: id) }
+                waiter?.resume(throwing: CancellationError())
             }
         }
     }

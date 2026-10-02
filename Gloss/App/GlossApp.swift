@@ -102,8 +102,18 @@ struct AppCommands: Commands {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static var model: AppModel?
 
+    /// Quitting waits for the SSH masters to exit (bounded) so no `ssh` process outlives the app.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model = AppDelegate.model, !model.isShutDown else { return .terminateNow }
+        Task { @MainActor in
+            await model.shutDown()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        AppDelegate.model?.shutDown()
+        AppDelegate.model?.shutDownSynchronously()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

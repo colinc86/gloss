@@ -32,7 +32,7 @@ struct AppRoutingTests {
         #expect(model.activeSession?.notes.first?.body == "hello")
         await waitUntil { model.activeSession?.textController?.highlights.count == 1 }
         #expect(model.activeSession?.textController?.highlights.first?.range == NSRange(location: 0, length: 9))
-        model.shutDown()
+        await model.shutDown()
     }
 
     @Test func markdownNoteProjectsOntoTheRenderedText() async throws {
@@ -54,6 +54,6 @@ struct AppRoutingTests {
         if let range = rendered.first?.range {
             #expect((markdown.rendered.string as NSString).substring(with: range) == "Gloss is a native app.")
         }
-        model.shutDown()
+        await model.shutDown()
     }
 }

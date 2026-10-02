@@ -97,7 +97,7 @@ public enum SSHConfig {
     public static func resolve(_ alias: String, sshPath: String = "/usr/bin/ssh") async -> Resolved? {
         guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: sshPath, arguments: ["-G", "--", alias])) else { return nil }
         let output = String(decoding: await process.collectStdout(), as: UTF8.self)
-        guard await process.exitCode == 0 else { return nil }
+        guard (try? await process.exitCode) == 0 else { return nil }
         var values: [String: String] = [:]
         for line in output.split(separator: "\n") {
             let parts = line.split(separator: " ", maxSplits: 1)

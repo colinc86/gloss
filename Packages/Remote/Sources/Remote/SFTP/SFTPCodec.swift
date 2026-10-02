@@ -230,8 +230,9 @@ public enum SFTPCodec {
         let length = try reader.uint32()
         guard length <= maximumPacketLength else { throw SFTPCodecError.oversizedPacket(length) }
         guard buffer.count >= 4 + Int(length) else { return nil }
-        let payload = buffer.subdata(in: 4..<(4 + Int(length)))
-        buffer.removeSubrange(0..<(4 + Int(length)))
+        let start = buffer.startIndex
+        let payload = buffer.subdata(in: (start + 4)..<(start + 4 + Int(length)))
+        buffer.removeSubrange(start..<(start + 4 + Int(length)))
         return try decodePayload(payload)
     }
 

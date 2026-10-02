@@ -304,7 +304,7 @@ public actor SFTPClient {
             let offsets = (0..<count).map { offset + UInt64($0) * chunk }
             let pieces: [(UInt64, Data?)] = try await withThrowingTaskGroup(of: (UInt64, Data?).self) { group in
                 for start in offsets {
-                    group.addTask { (start, try await self.read(handle: handle, offset: start, length: UInt32(chunk))) }
+                    group.addTask { (start, try await self.readFully(handle: handle, offset: start, length: UInt32(chunk))) }
                 }
                 var collected: [(UInt64, Data?)] = []
                 for try await piece in group { collected.append(piece) }
@@ -328,6 +328,18 @@ public actor SFTPClient {
             if size == 0 && !reachedEOF, pieces.allSatisfy({ $0.1 == nil || $0.1!.isEmpty }) { reachedEOF = true }
         }
         return result
+    }
+
+    /// A server may answer a READ with fewer bytes than asked without being at EOF; keep reading until the piece is
+    /// full or the server reports EOF. Returns nil when nothing was readable at `offset`.
+    private func readFully(handle: Data, offset: UInt64, length: UInt32) async throws -> Data? {
+        var collected = Data()
+        while collected.count < Int(length) {
+            let remaining = length - UInt32(collected.count)
+            guard let data = try await read(handle: handle, offset: offset + UInt64(collected.count), length: remaining), !data.isEmpty else { break }
+            collected.append(data)
+        }
+        return collected.isEmpty ? nil : collected
     }
 
     /// Writes a whole file through an already opened handle, chunked to `maxWrite`, 8 writes in flight.

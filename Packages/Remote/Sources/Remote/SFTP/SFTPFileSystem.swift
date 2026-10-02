@@ -28,7 +28,7 @@ public actor SFTPChannel {
             do {
                 return try await SFTPClient.connect(transport: ChildProcessSFTPTransport(process: process))
             } catch SFTPClientError.connectionLost {
-                let status = await process.exitCode
+                let status = (try? await process.exitCode) ?? -1
                 let stderr = await stderrTask.value.trimmingCharacters(in: .whitespacesAndNewlines)
                 throw SFTPClientError.subsystemFailed("ssh exited \(status): \(stderr)")
             }
@@ -109,11 +109,17 @@ public struct SFTPFileSystem: FileSystemProvider {
 
     public func writeAtomically(_ data: Data, to path: String, preservingModeFrom original: FileAttributes?) async throws -> FileAttributes {
         let client = try await channel.client()
+        // Saving through a symlink replaces the target, not the link; dotfiles checkouts depend on that.
+        var target = path
+        if let link = try? await client.lstat(path), link.fileType == .symlink, let resolved = try? await client.realpath(path) {
+            target = resolved
+        }
         var mode = UInt32(original?.mode ?? 0o644)
-        if original == nil, let existing = try? await client.stat(path) { mode = UInt32(existing.mode) }
-        let directory = PathUtilities.parent(of: path)
-        let name = PathUtilities.name(of: path)
+        if original == nil, let existing = try? await client.stat(target) { mode = UInt32(existing.mode) }
+        let directory = PathUtilities.parent(of: target)
+        let name = PathUtilities.name(of: target)
         let temporary = PathUtilities.join(directory, ".cc-\(name)-\(String(UInt32.random(in: 0...UInt32.max), radix: 16)).tmp")
+        var originalRemoved = false
         do {
             let handle = try await client.open(temporary, flags: [.write, .create, .exclusive, .truncate], attributes: SFTPAttributes(permissions: mode))
             do {
@@ -127,14 +133,17 @@ public struct SFTPFileSystem: FileSystemProvider {
                 throw error
             }
             if await client.supportsPosixRename {
-                try await client.posixRename(temporary, to: path)
+                try await client.posixRename(temporary, to: target)
             } else {
                 onNonAtomicSave?()
-                try? await client.remove(path)
-                try await client.rename(temporary, to: path)
+                try? await client.remove(target)
+                originalRemoved = true
+                try await client.rename(temporary, to: target)
             }
-            return Self.attributes(try await client.stat(path))
+            return Self.attributes(try await client.stat(target))
         } catch let status as SFTPStatus {
+            // Once the original is gone the temp file is the only copy of the new bytes: leave it and name it.
+            if originalRemoved { throw Self.map(status, path: temporary) }
             try? await client.remove(temporary)
             throw Self.map(status, path: path)
         }

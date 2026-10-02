@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import Synchronization
 
 public struct RemoteSearchHit: Sendable, Hashable {
     public var path: String
@@ -21,11 +22,13 @@ public enum RemoteSearch {
     /// Streams hits as they arrive; cancelling the consumer terminates the remote command.
     public static func run(pattern: String, root: String, over connection: SSHConnection) -> AsyncThrowingStream<RemoteSearchHit, any Error> {
         AsyncThrowingStream { continuation in
+            let running = Mutex<ChildProcess?>(nil)
             let task = Task {
                 do {
                     let tools = try await connection.tools()
                     let process = try await connection.execStreaming(script(pattern: pattern, root: root, tools: tools))
-                    continuation.onTermination = { _ in process.terminate() }
+                    running.withLock { $0 = process }
+                    if Task.isCancelled { process.terminate() }
                     var pending = Data()
                     for await chunk in process.stdout {
                         pending.append(chunk)
@@ -41,7 +44,11 @@ public enum RemoteSearch {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { _ in task.cancel() }
+            // One handler for both phases: before the process exists it cancels the task, afterwards it also kills ssh.
+            continuation.onTermination = { _ in
+                task.cancel()
+                running.withLock { $0 }?.terminate()
+            }
         }
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Remote
 
 /// Environment checks evaluated once per run; gated tests skip when their resource is absent.
 enum TestGates {
@@ -6,7 +7,8 @@ enum TestGates {
     nonisolated(unsafe) static let loopback: Bool = {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=accept-new", "localhost", "true"]
+        // StrictHostKeyChecking=yes: the probe never writes to the developer's known_hosts; add localhost by hand once.
+        process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "StrictHostKeyChecking=yes", "localhost", "true"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { return false }
@@ -57,5 +59,23 @@ extension TestGates {
         await LoopbackSerializer.shared.acquire()
         defer { Task { await LoopbackSerializer.shared.release() } }
         return try await body()
+    }
+
+    /// A manager on a throwaway control directory. Every exit path, including a thrown `#require`, disconnects
+    /// the masters before the directory is removed, so a failing test leaves no `ssh -N` behind.
+    static func withManager<T>(serialized: Bool = true, _ body: (SSHConnectionManager, _ control: String) async throws -> T) async throws -> T {
+        if serialized { await LoopbackSerializer.shared.acquire() }
+        defer { if serialized { Task { await LoopbackSerializer.shared.release() } } }
+        let control = temporaryControlDirectory()
+        defer { try? FileManager.default.removeItem(atPath: control) }
+        let manager = SSHConnectionManager(controlDirectory: control)
+        do {
+            let value = try await body(manager, control)
+            await manager.disconnectAll()
+            return value
+        } catch {
+            await manager.disconnectAll()
+            throw error
+        }
     }
 }

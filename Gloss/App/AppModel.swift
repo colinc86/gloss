@@ -51,10 +51,13 @@ final class AppModel {
         notesPanel.start()
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
             guard let self else { return }
+            let firstRegistration = self.fileSystems[hostID] == nil
             self.fileSystems[hostID] = fileSystem
             self.connections[hostID] = connection
-            self.send.register(stager: RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem as! SFTPFileSystem, noteStore: self.noteStore), for: hostID)
-            Task { await RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem as! SFTPFileSystem, noteStore: self.noteStore).cleanupExpired() }
+            let stager = RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem, noteStore: self.noteStore)
+            self.send.register(stager: stager, for: hostID)
+            // Expired staging directories are swept once per host per launch, not on every host click.
+            if firstRegistration { Task { await stager.cleanupExpired() } }
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
@@ -127,7 +130,9 @@ final class AppModel {
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { return }
         do {
             var anchor = Anchor.wholeFile
-            if let line, let data = try? await fileSystem.read(path), let text = String(data: data, encoding: .utf8) {
+            let size = (try? await fileSystem.stat(path))?.size ?? 0
+            // The viewer refuses files above this size; downloading one just to place a line anchor would be worse.
+            if let line, size <= DocumentSession.refuseThreshold, let data = try? await fileSystem.read(path), let text = String(data: data, encoding: .utf8) {
                 let index = LineIndex(text)
                 let range = index.contentRange(ofLine: line)
                 anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: data.sha256Hex))
@@ -229,12 +234,34 @@ final class AppModel {
         await explorer.openRoot(hostID: hostID, path: path ?? home)
     }
 
-    func shutDown() {
+    private(set) var isShutDown = false
+
+    /// Stops watchers, disconnects every host (waiting up to six seconds for the masters to exit), and closes the database.
+    func shutDown() async {
+        guard !isShutDown else { return }
+        isShutDown = true
         notesPanel.stop()
         explorer.stopWatching()
-        let hosts = hosts
-        Task { await hosts.disconnectAll() }
         for session in sessions.values { session.close() }
+        let hosts = hosts
+        // `withDeadline` returns at the deadline even if a disconnect hangs; the kill below covers that case.
+        _ = await withDeadline(.seconds(6)) { await hosts.disconnectAll() }
+        hosts.killMasters()
+        closeDatabase()
+    }
+
+    /// Last resort when the app terminates without `shutDown` having run (crash reporter, force quit path): kills the masters outright.
+    func shutDownSynchronously() {
+        guard !isShutDown else { return }
+        isShutDown = true
+        notesPanel.stop()
+        explorer.stopWatching()
+        for session in sessions.values { session.close() }
+        hosts.killMasters()
+        closeDatabase()
+    }
+
+    private func closeDatabase() {
         do {
             try database.close()
         } catch {

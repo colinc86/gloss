@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import Synchronization
 import OSLog
 
 public enum SSHError: Error, Sendable, Equatable {
@@ -12,6 +13,19 @@ public enum SSHError: Error, Sendable, Equatable {
     case commandFailed(status: Int32, stderr: String)
     case forwardFailed(String)
     case other(String)
+
+    /// Failures that retrying cannot fix without the user: the supervisor stops reconnecting on these.
+    public var isTransient: Bool {
+        switch self {
+        case .hostKeyProblem, .hostKeyChanged, .authenticationFailed: false
+        default: true
+        }
+    }
+}
+
+/// Reference wrapper so the pid mirror can be shared with a detached task (`Mutex` itself cannot be copied).
+final class PIDBox: Sendable {
+    let value = Mutex<Int32?>(nil)
 }
 
 public enum SSHConnectionEvent: Sendable, Equatable {
@@ -89,11 +103,17 @@ public actor SSHConnection {
     public nonisolated let controlPath: String
     private let sshPath: String
     private let events: AsyncStream<SSHConnectionEvent>.Continuation
-    private var master: ChildProcess?
+    private var master: ChildProcess? {
+        didSet { masterPID.value.withLock { $0 = master?.processIdentifier } }
+    }
+    /// Mirror of the master's pid readable without actor hops, for synchronous teardown at app exit.
+    private nonisolated let masterPID = PIDBox()
     private var masterStderr = ""
     public private(set) var state: State = .disconnected
     private var forwards: Set<SSHForward> = []
     private var supervisor: Task<Void, Never>?
+    /// The launch in progress, shared by every concurrent `connect` and by the supervisor.
+    private var connecting: Task<Void, any Error>?
     private var toolsCache: RemoteTools?
     private var homeCache: String?
     /// After the user accepts a new host key once, the master is launched with accept-new for this host.
@@ -137,16 +157,29 @@ public actor SSHConnection {
     // MARK: Lifecycle
 
     /// Connects (or returns at once when already connected). Waits up to 90 s for the agent prompt.
+    /// Concurrent callers share one launch, so two clicks never start two masters.
     public func connect() async throws {
-        if state == .connected, await check() { return }
-        try await launchMaster()
-        startSupervisor()
+        let wasConnected = state == .connected
+        try await launchMasterOnce()
+        if !wasConnected || supervisor == nil { startSupervisor() }
+    }
+
+    /// Single-flight launch: the check and the launch run inside one task that later callers await.
+    private func launchMasterOnce() async throws {
+        if let connecting { return try await connecting.value }
+        let task = Task {
+            if self.state == .connected, await self.check() { return }
+            try await self.launchMaster()
+        }
+        connecting = task
+        defer { connecting = nil }
+        try await task.value
     }
 
     private func launchMaster() async throws {
         state = .connecting
         events.yield(.connecting(hostID))
-        removeStaleControlSocket()
+        await reclaimControlSocket()
         let spec = ChildProcessSpec(
             executable: sshPath, arguments: masterArguments(acceptNew: acceptNewHostKey),
             extraEnvironment: ["SSH_ASKPASS_REQUIRE": "never"], stdin: .null
@@ -162,6 +195,13 @@ public actor SSHConnection {
         }
         master = process
         masterStderr = ""
+        let pidBox = masterPID
+        let pid = process.processIdentifier
+        Task.detached {
+            // Drop the pid mirror once the process is reaped, so a later synchronous kill cannot hit a reused pid.
+            _ = try? await process.exitCode
+            pidBox.value.withLock { if $0 == pid { $0 = nil } }
+        }
         let stderrTask = Task { [weak self] in
             for await chunk in process.stderr {
                 await self?.appendStderr(String(decoding: chunk, as: UTF8.self))
@@ -170,14 +210,21 @@ public actor SSHConnection {
         let deadline = ContinuousClock.now + Self.connectBudget
         var announcedAgentWait = false
         while ContinuousClock.now < deadline {
+            if Task.isCancelled {
+                process.terminate()
+                state = .disconnected
+                master = nil
+                throw CancellationError()
+            }
             if await check() {
                 state = .connected
                 events.yield(.connected(hostID))
                 return
             }
             if !process.isRunning {
-                let code = await process.exitCode
-                stderrTask.cancel()
+                let code = (try? await process.exitCode) ?? -1
+                // The exit message may still be in the pipe; a ProxyCommand child can hold stderr open, hence the bound.
+                _ = await withDeadline(.seconds(1)) { await stderrTask.value }
                 let failure = classify(stderr: masterStderr, status: code)
                 state = .failed(failure)
                 master = nil
@@ -216,9 +263,14 @@ public actor SSHConnection {
         return .other(text.isEmpty ? "ssh exited with status \(status)" : text)
     }
 
-    private func removeStaleControlSocket() {
-        // The real socket path has %C expanded; let ssh tell us whether a master answers, else unlink nothing
-        // (we cannot know the expanded name without ssh), and rely on StreamLocalBindUnlink for forwards.
+    /// A socket left by a crashed run would make the new master log "ControlSocket already exists" and run as a
+    /// plain session. An orphan that still answers is told to exit; a dead socket file is unlinked.
+    private func reclaimControlSocket() async {
+        guard FileManager.default.fileExists(atPath: controlPath) else { return }
+        if await check() {
+            _ = try? await runClient(["-O", "exit"], timeout: .seconds(5))
+        }
+        try? FileManager.default.removeItem(atPath: controlPath)
     }
 
     /// `ssh -O check`: exit 0 when the master answers.
@@ -226,7 +278,7 @@ public actor SSHConnection {
         guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: sshPath, arguments: clientPrefix + ["-O", "check", "--", alias])) else { return false }
         _ = await process.collectStdout()
         _ = await process.collectStderr()
-        return await process.exitCode == 0
+        return (try? await process.exitCode) == 0
     }
 
     private func startSupervisor() {
@@ -243,9 +295,12 @@ public actor SSHConnection {
                 try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { return }
                 do {
-                    try await self.launchMaster()
+                    try await self.launchMasterOnce()
                     await self.restoreForwards()
                     attempt = 0
+                } catch let failure as SSHError where !failure.isTransient {
+                    // Wrong key or unknown host: retrying only re-spawns ssh; the user has to act first.
+                    return
                 } catch {
                     continue
                 }
@@ -257,7 +312,7 @@ public actor SSHConnection {
     private func waitForMasterExitOrCheckFailure() async -> Bool {
         guard let master else { return false }
         let exited = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { _ = await master.exitCode; return true }
+            group.addTask { (try? await master.exitCode) != nil }
             group.addTask { try? await Task.sleep(for: .seconds(20)); return false }
             let first = await group.next() ?? false
             group.cancelAll()
@@ -282,9 +337,15 @@ public actor SSHConnection {
         }
     }
 
+    /// Sends SIGTERM to the master without touching actor state. Used when the process is exiting and cannot await.
+    public nonisolated func killMasterNow() {
+        if let pid = masterPID.value.withLock({ $0 }) { Darwin.kill(pid, SIGTERM) }
+    }
+
     public func disconnect() async {
         supervisor?.cancel()
         supervisor = nil
+        connecting?.cancel()
         for forward in forwards { await cancel(forward) }
         _ = try? await runClient(["-O", "exit"], timeout: .seconds(5))
         master?.terminate()
@@ -330,7 +391,7 @@ public actor SSHConnection {
         async let out = process.collectStdout()
         async let err = process.collectStderr()
         let code = await withTaskGroup(of: Int32?.self) { group in
-            group.addTask { await process.exitCode }
+            group.addTask { try? await process.exitCode }
             group.addTask { try? await Task.sleep(for: timeout); return nil }
             let first = await group.next() ?? nil
             group.cancelAll()
@@ -418,6 +479,7 @@ public actor SSHConnectionManager {
     private var connections: [HostID: SSHConnection] = [:]
     private let controlDirectory: String
     private let sshPath: String
+    private nonisolated let registry = Mutex<[HostID: SSHConnection]>([:])
 
     /// `$TMPDIR/gl` keeps the socket path short: Application Support would exceed the 104-byte limit.
     /// Socket names are `<controlDirectory>/<10-char host id>`; ssh appends 17 characters while binding.
@@ -438,6 +500,7 @@ public actor SSHConnectionManager {
     public func connection(for hostID: HostID, alias: String, connect: Bool = true) async throws -> SSHConnection {
         let connection = connections[hostID] ?? SSHConnection(hostID: hostID, alias: alias, controlDirectory: controlDirectory, sshPath: sshPath, events: continuation)
         connections[hostID] = connection
+        registry.withLock { $0[hostID] = connection }
         if connect { try await connection.connect() }
         return connection
     }
@@ -449,11 +512,18 @@ public actor SSHConnectionManager {
     public func disconnect(_ hostID: HostID) async {
         await connections[hostID]?.disconnect()
         connections[hostID] = nil
+        registry.withLock { $0[hostID] = nil }
     }
 
     public func disconnectAll() async {
         for connection in connections.values { await connection.disconnect() }
         connections = [:]
+        registry.withLock { $0 = [:] }
+    }
+
+    /// Synchronous last resort at process exit: SIGTERM every master that is still registered.
+    public nonisolated func killMasters() {
+        for connection in registry.withLock({ Array($0.values) }) { connection.killMasterNow() }
     }
 
     /// Called on wake: every connected host re-checks its master.

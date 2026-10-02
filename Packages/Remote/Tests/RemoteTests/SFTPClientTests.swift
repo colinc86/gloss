@@ -90,10 +90,7 @@ struct SFTPClientTests {
 
     @Test(.enabled(if: TestGates.loopback))
     func loopbackSFTPEndToEnd() async throws {
-        try await TestGates.serialized {
-            let control = TestGates.temporaryControlDirectory()
-            defer { try? FileManager.default.removeItem(atPath: control) }
-            let manager = SSHConnectionManager(controlDirectory: control)
+        try await TestGates.withManager { manager, control in
             let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
             let fs = SFTPFileSystem(hostID: HostID.new(), connection: connection)
             let client = try await fs.channel.client()
@@ -123,7 +120,6 @@ struct SFTPClientTests {
             try await fs.delete("\(directory)/renamed.md")
             #expect(try await fs.list(directory).isEmpty)
             await fs.channel.close()
-            await manager.disconnectAll()
         }
     }
 }

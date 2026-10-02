@@ -30,8 +30,9 @@ final class HostsModel {
     private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local)]
     private(set) var status: [HostID: Status] = [:]
     private(set) var pendingHostKey: (hostID: HostID, fingerprint: String?)?
-    @ObservationIgnored var onFileSystemReady: (HostID, any FileSystemProvider, SSHConnection) -> Void = { _, _, _ in }
+    @ObservationIgnored var onFileSystemReady: (HostID, SFTPFileSystem, SSHConnection) -> Void = { _, _, _ in }
     @ObservationIgnored private var eventTask: Task<Void, Never>?
+    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var fileSystems: [HostID: SFTPFileSystem] = [:]
 
     init(noteStore: NoteStore, manager: SSHConnectionManager = SSHConnectionManager()) {
@@ -43,7 +44,8 @@ final class HostsModel {
                 self.apply(event)
             }
         }
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+        // Workspace notifications are posted on the workspace's own center, not the default one.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.wake() }
         }
     }
@@ -96,7 +98,6 @@ final class HostsModel {
         if let connection = try? await manager.connection(for: hostID, alias: entry.name, connect: false) {
             await connection.setAcceptNewHostKey(true)
         }
-        try? await noteStore.setSetting("ssh.acceptNew.\(entry.name)", "1")
         return await connect(hostID)
     }
 
@@ -111,6 +112,11 @@ final class HostsModel {
         for hostID in fileSystems.keys { await fileSystems[hostID]?.channel.close() }
         fileSystems = [:]
         await manager.disconnectAll()
+    }
+
+    /// Synchronous teardown for process exit; see `AppModel.shutDownSynchronously`.
+    func killMasters() {
+        manager.killMasters()
     }
 
     private func wake() {

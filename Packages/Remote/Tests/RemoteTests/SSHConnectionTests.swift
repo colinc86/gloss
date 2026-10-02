@@ -6,10 +6,7 @@ import Testing
 struct SSHConnectionTests {
     @Test(.enabled(if: TestGates.loopback))
     func masterConnectsExecsAndExitsCleanly() async throws {
-        try await TestGates.serialized {
-            let control = TestGates.temporaryControlDirectory()
-            defer { try? FileManager.default.removeItem(atPath: control) }
-            let manager = SSHConnectionManager(controlDirectory: control)
+        try await TestGates.withManager { manager, control in
             let host = HostID.new()
             let connection = try await manager.connection(for: host, alias: "localhost")
             #expect(await connection.state == .connected)
@@ -41,10 +38,7 @@ struct SSHConnectionTests {
 
     @Test(.enabled(if: TestGates.loopback))
     func forwardsAUnixSocketAndCancelsIt() async throws {
-        try await TestGates.serialized {
-            let control = TestGates.temporaryControlDirectory()
-            defer { try? FileManager.default.removeItem(atPath: control) }
-            let manager = SSHConnectionManager(controlDirectory: control)
+        try await TestGates.withManager { manager, control in
             let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
             let remoteSocket = "\(control)/remote.sock"
             let localSocket = "\(control)/local.sock"
@@ -57,8 +51,7 @@ struct SSHConnectionTests {
             await connection.cancel(forward)
             #expect(await connection.activeForwards.isEmpty)
             server.terminate()
-            _ = await server.exitCode
-            await manager.disconnectAll()
+            _ = try? await server.exitCode
         }
     }
 
