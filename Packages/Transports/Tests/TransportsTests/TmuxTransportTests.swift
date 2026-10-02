@@ -9,7 +9,7 @@ struct TmuxTransportTests {
         #expect(panes == [TmuxPane(target: "main:1.1", command: "node", path: "/Users/me/repo"), TmuxPane(target: "other:0.2", command: "zsh", path: "/tmp/with\ttab")])
         #expect(panes[0].looksLikeAgent && !panes[1].looksLikeAgent)
         let script = TmuxTransport.deliverScript(tmux: "tmux -L 'x'", target: "it's:1.1")
-        #expect(script == "b=\"cc-$$\"; tmux -L 'x' load-buffer -b \"$b\" - && tmux -L 'x' paste-buffer -p -d -b \"$b\" -t 'it'\\''s:1.1' && tmux -L 'x' send-keys -t 'it'\\''s:1.1' Enter")
+        #expect(script == "b=\"cc-$$\"; tmux -L 'x' load-buffer -b \"$b\" - && { tmux -L 'x' paste-buffer -p -d -b \"$b\" -t 'it'\\''s:1.1' || { tmux -L 'x' delete-buffer -b \"$b\" 2>/dev/null; false; }; } && tmux -L 'x' send-keys -t 'it'\\''s:1.1' Enter")
         let target = TmuxTransport.target(for: panes[0], hostID: .local, hostLabel: nil)
         #expect(TmuxTransport.pane(from: target) == panes[0])
         #expect(target.label == "main:1.1 · node")

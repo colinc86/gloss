@@ -55,10 +55,11 @@ public actor TmuxTransport: Transport {
         "\(tmux) list-panes -a -F \(ShellQuote.single(listFormat)) 2>/dev/null"
     }
 
-    /// `-d` deletes the buffer as part of the paste, so a failure after `load-buffer` cannot leave it behind.
+    /// `-d` deletes the buffer as part of the paste; when the paste itself fails (wrong target) the buffer is
+    /// deleted explicitly, so nothing is ever left on the user's tmux server.
     nonisolated static func deliverScript(tmux: String, target: String) -> String {
         let quoted = ShellQuote.single(target)
-        return "b=\"cc-$$\"; \(tmux) load-buffer -b \"$b\" - && \(tmux) paste-buffer -p -d -b \"$b\" -t \(quoted) && \(tmux) send-keys -t \(quoted) Enter"
+        return "b=\"cc-$$\"; \(tmux) load-buffer -b \"$b\" - && { \(tmux) paste-buffer -p -d -b \"$b\" -t \(quoted) || { \(tmux) delete-buffer -b \"$b\" 2>/dev/null; false; }; } && \(tmux) send-keys -t \(quoted) Enter"
     }
 
     nonisolated static func parsePanes(_ text: String) -> [TmuxPane] {
