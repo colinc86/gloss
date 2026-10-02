@@ -29,17 +29,18 @@ struct SettingsView: View {
                 LabeledContent("Last target") {
                     Text(model.send.lastTarget?.label ?? "none").foregroundStyle(.secondary)
                 }
-                TextField("MCP port", value: $settings.mcpPort, format: .number)
+                TextField("MCP port", value: $settings.mcpPort, format: .number.grouping(.never))
                 if let status = model.mcpStatus {
                     Text(status).font(.caption).foregroundStyle(.red)
                 } else {
-                    Text("MCP server listening on 127.0.0.1:\(settings.mcpPort); a port change applies at the next launch.")
+                    Text("Listening on 127.0.0.1:\(String(settings.mcpPort)). A port change applies after relaunch.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 MCPSnippetRow(title: "Claude Code", text: MCPServer.snippets(port: settings.mcpPort).claudeCommand)
                 MCPSnippetRow(title: "Codex", text: MCPServer.snippets(port: settings.mcpPort).codexCommand)
-                MCPSnippetRow(title: "OpenCode (opencode.json)", text: MCPServer.snippets(port: settings.mcpPort).opencodeJSON)
-                TextField("OpenCode servers (comma separated)", text: $settings.opencodeServers)
+                MCPSnippetRow(title: "OpenCode config", text: MCPServer.snippets(port: settings.mcpPort).opencodeJSON)
+                TextField("OpenCode servers", text: $settings.opencodeServers)
+                Text("Comma separated base URLs.").font(.caption).foregroundStyle(.secondary)
             }
             .tabItem { Label("Agents", systemImage: "paperplane") }
 
