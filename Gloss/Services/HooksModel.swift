@@ -40,7 +40,11 @@ final class HooksModel {
 
     private func perform(_ agent: HookAgent, on hostID: HostID, _ action: (HookInstaller) async throws -> HookInstallReport) async {
         let key = Key(hostID: hostID, agent: agent)
-        guard !busy.contains(key), let installer = await installerProvider(hostID) else { return }
+        guard !busy.contains(key) else { return }
+        guard let installer = await installerProvider(hostID) else {
+            lastError = "\(agent.displayName): the host is still being probed; try again in a moment"
+            return
+        }
         busy.insert(key)
         defer { busy.remove(key) }
         lastError = nil

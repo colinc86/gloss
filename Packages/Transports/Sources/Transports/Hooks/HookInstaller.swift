@@ -120,8 +120,9 @@ public struct HookInstaller: Sendable {
             try await mergeOpenCodeConfig(remove: true, report: &report)
         }
         if agent != .opencode, !(try await hookFileMentionsScript(claudeSettingsPath)), !(try await hookFileMentionsScript(codexHooksPath)) {
-            try? await fileSystem.delete(scriptPath)
-            report.changedFiles.append(scriptPath)
+            for path in [scriptPath] + (hostAlias != nil ? [remotePortFilePath] : []) where (try? await fileSystem.delete(path)) != nil {
+                report.changedFiles.append(path)
+            }
         }
         return report
     }
@@ -137,6 +138,9 @@ public struct HookInstaller: Sendable {
             if agent == .codex, let toml = try? await fileSystem.read(codexConfigPath), !Self.codexHooksEnabled(String(decoding: toml, as: UTF8.self)) {
                 return .outdated("[features] hooks is not enabled")
             }
+            if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != Data("\(port)\n".utf8) {
+                return .outdated("port file does not match port \(port)")
+            }
             return .installed
         case .opencode:
             guard let data = try? await fileSystem.read(opencodeConfigPath),
@@ -148,37 +152,51 @@ public struct HookInstaller: Sendable {
 
     // MARK: Steps
 
+    /// The file's bytes, or nil only when it does not exist. Any other failure aborts the install: merging into
+    /// `{}` because a read failed would replace the user's config with just our entry.
+    private func readIfPresent(_ path: String) async throws -> Data? {
+        do {
+            return try await fileSystem.read(path)
+        } catch FileSystemError.notFound {
+            return nil
+        }
+    }
+
     private func installScript(into report: inout HookInstallReport) async throws {
         let bundled = try Self.bundledScript()
         try await fileSystem.makeDirectory(PathUtilities.parent(of: scriptPath))
-        if let existing = try? await fileSystem.read(scriptPath), existing == bundled { return }
+        if hostAlias != nil {
+            // The port can change between installs while the script and the hook entry stay the same.
+            let portLine = Data("\(port)\n".utf8)
+            if try await readIfPresent(remotePortFilePath) != portLine {
+                try await fileSystem.makeDirectory(PathUtilities.parent(of: remotePortFilePath))
+                _ = try await fileSystem.writeAtomically(portLine, to: remotePortFilePath, preservingModeFrom: nil)
+                report.changedFiles.append(remotePortFilePath)
+            }
+        }
+        if try await readIfPresent(scriptPath) == bundled { return }
         let executable = FileAttributes(kind: .file, size: Int64(bundled.count), mtime: now(), mode: 0o755)
         _ = try await fileSystem.writeAtomically(bundled, to: scriptPath, preservingModeFrom: executable)
         report.changedFiles.append(scriptPath)
-        if hostAlias != nil {
-            try await fileSystem.makeDirectory(PathUtilities.parent(of: remotePortFilePath))
-            _ = try await fileSystem.writeAtomically(Data("\(port)\n".utf8), to: remotePortFilePath, preservingModeFrom: nil)
-            report.changedFiles.append(remotePortFilePath)
-        }
     }
 
     /// Rewrites `hooks.UserPromptSubmit` so exactly one entry is ours (`command` nil removes it).
     private func mergeHookFile(at path: String, command: String?, report: inout HookInstallReport) async throws {
-        let original = try? await fileSystem.read(path)
+        let original = try await readIfPresent(path)
         let merged = try Self.mergeHookEntry(into: original ?? Data("{}".utf8), command: command, path: path)
         if original == merged { return }
         try await writeWithBackup(merged, to: path, original: original, report: &report)
     }
 
     private func enableCodexHooks(report: inout HookInstallReport) async throws {
-        let original = (try? await fileSystem.read(codexConfigPath)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        let original = (try await readIfPresent(codexConfigPath)).map { String(decoding: $0, as: UTF8.self) } ?? ""
         let updated = Self.enableCodexHooks(in: original)
         if updated == original { return }
         try await writeWithBackup(Data(updated.utf8), to: codexConfigPath, original: Data(original.utf8), report: &report)
     }
 
     private func mergeOpenCodeConfig(remove: Bool = false, report: inout HookInstallReport) async throws {
-        let original = try? await fileSystem.read(opencodeConfigPath)
+        let original = try await readIfPresent(opencodeConfigPath)
         let merged = try Self.mergeOpenCode(into: original ?? Data("{}".utf8), url: remove ? nil : mcpURL, path: opencodeConfigPath)
         if original == merged { return }
         try await writeWithBackup(merged, to: opencodeConfigPath, original: original, report: &report)
@@ -197,7 +215,13 @@ public struct HookInstaller: Sendable {
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyyMMdd-HHmmss"
             formatter.locale = Locale(identifier: "en_US_POSIX")
-            let backup = "\(path).gloss-backup-\(formatter.string(from: now()))"
+            var backup = "\(path).gloss-backup-\(formatter.string(from: now()))"
+            // Two installs within one second must not overwrite the first backup.
+            var suffix = 1
+            while (try? await fileSystem.stat(backup)) != nil {
+                backup = "\(path).gloss-backup-\(formatter.string(from: now()))-\(suffix)"
+                suffix += 1
+            }
             _ = try await fileSystem.writeAtomically(original, to: backup, preservingModeFrom: attributes)
             report.backups.append(backup)
             await pruneBackups(of: path)
@@ -229,6 +253,16 @@ public struct HookInstaller: Sendable {
         return hooks.contains { ($0["command"] as? String)?.contains(scriptName) == true }
     }
 
+    /// Strips our handler from a group; nil when nothing else is left in it.
+    nonisolated static func withoutOurHandler(_ entry: Any) -> Any? {
+        guard var group = entry as? [String: Any], let hooks = group["hooks"] as? [[String: Any]] else { return entry }
+        let others = hooks.filter { ($0["command"] as? String)?.contains(scriptName) != true }
+        if others.count == hooks.count { return entry }
+        guard !others.isEmpty else { return nil }
+        group["hooks"] = others
+        return group
+    }
+
     public nonisolated static func hasOurEntry(in data: Data) -> Bool {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let submit = (object["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [Any] else { return false }
@@ -253,7 +287,7 @@ public struct HookInstaller: Sendable {
             throw HookInstallerError.unparsable(path: path, reason: "\(error)")
         }
         var hooks = object["hooks"] as? [String: Any] ?? [:]
-        var submit = (hooks["UserPromptSubmit"] as? [Any] ?? []).filter { !isOurs($0) }
+        var submit = (hooks["UserPromptSubmit"] as? [Any] ?? []).compactMap(withoutOurHandler)
         if let command {
             submit.append(["hooks": [["type": "command", "command": command, "timeout": 10]]])
         }
@@ -280,26 +314,33 @@ public struct HookInstaller: Sendable {
 
     /// Ensures `[features]\nhooks = true` without rewriting any other line.
     public nonisolated static func enableCodexHooks(in toml: String) -> String {
-        var lines = toml.components(separatedBy: "\n")
-        guard let header = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "[features]" }) else {
+        let newline = toml.contains("\r\n") ? "\r\n" : "\n"
+        var lines = toml.components(separatedBy: newline)
+        func stripped(_ line: String) -> String {
+            // The value without a trailing comment or line ending.
+            let code = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? line
+            return code.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let header = lines.firstIndex(where: { stripped($0) == "[features]" }) else {
             var out = toml
-            if !out.isEmpty, !out.hasSuffix("\n") { out += "\n" }
-            if !out.isEmpty { out += "\n" }
-            return out + "[features]\nhooks = true\n"
+            if !out.isEmpty, !out.hasSuffix(newline) { out += newline }
+            if !out.isEmpty { out += newline }
+            return out + "[features]\(newline)hooks = true\(newline)"
         }
         var index = header + 1
         while index < lines.count {
-            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("[") { break }
-            if trimmed.hasPrefix("hooks") && trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces).hasPrefix("=") {
-                if trimmed.hasSuffix("true") { return toml }
+            let code = stripped(lines[index])
+            if code.hasPrefix("[") { break }
+            if code.hasPrefix("hooks"), code.dropFirst(5).trimmingCharacters(in: .whitespaces).hasPrefix("=") {
+                let value = code.split(separator: "=", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+                if value == "true" { return toml }
                 lines[index] = "hooks = true"
-                return lines.joined(separator: "\n")
+                return lines.joined(separator: newline)
             }
             index += 1
         }
         lines.insert("hooks = true", at: header + 1)
-        return lines.joined(separator: "\n")
+        return lines.joined(separator: newline)
     }
 
     public nonisolated static func codexHooksEnabled(_ toml: String) -> Bool {
@@ -313,13 +354,19 @@ public struct HookInstaller: Sendable {
 
 /// Runs a shell line on this Mac with the agents' usual install locations on PATH.
 public enum LocalShell {
-    public static func run(_ line: String) async throws -> ExecResult {
-        let home = NSHomeDirectory()
-        let path = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"].joined(separator: ":")
-        let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", line], extraEnvironment: ["PATH": path]))
+    /// Shell prefix that puts the usual agent install locations (including nvm and volta) on PATH; shared with
+    /// the remote exec path.
+    public static let pathPrefix = "for d in \"$HOME/.local/bin\" \"$HOME/.npm-global/bin\" \"$HOME/.volta/bin\" /opt/homebrew/bin /usr/local/bin /home/linuxbrew/.linuxbrew/bin \"$HOME\"/.nvm/versions/node/*/bin; do [ -d \"$d\" ] && PATH=\"$d:$PATH\"; done; export PATH; "
+
+    /// Runs a shell line with a deadline, so a CLI that stops for an interactive prompt cannot wedge the UI.
+    public static func run(_ line: String, timeout: Duration = .seconds(60)) async throws -> ExecResult {
+        let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", pathPrefix + line], stdin: .null))
         async let out = process.collectStdout()
         async let err = process.collectStderr()
-        let code = try await process.exitCode
+        guard let code = await withDeadline(timeout, { try? await process.exitCode }) ?? nil else {
+            process.terminate()
+            throw SSHError.timedOut
+        }
         return ExecResult(exitStatus: code, stdout: await out, stderr: await err)
     }
 }

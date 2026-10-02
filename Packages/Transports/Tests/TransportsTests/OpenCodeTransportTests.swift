@@ -8,6 +8,7 @@ struct OpenCodeTransportTests {
     @Test func parsesServerListsAndBuildsBodies() {
         let servers = OpenCodeServer.parse("http://127.0.0.1:4096, user:secret@box.local:4097 ,, https://x.example/")
         #expect(servers.map(\.baseURL.absoluteString) == ["http://127.0.0.1:4096", "http://box.local:4097", "https://x.example"])
+        #expect(OpenCodeServer.parse("https://x.example/opencode/").first?.baseURL.absoluteString == "https://x.example/opencode")
         #expect(servers[1].username == "user" && servers[1].password == "secret" && servers[1].authorizationHeader == "Basic " + Data("user:secret".utf8).base64EncodedString())
         #expect(servers[0].authorizationHeader == nil)
         let packet = PacketBuilder.build([PacketNote(noteID: NoteID.new(), agentPath: "/tmp/a.md", source: .markdown, anchor: .wholeFile, comment: "c")])
@@ -39,7 +40,7 @@ struct OpenCodeTransportTests {
             case ("POST", "/session"):
                 return .data(try! JSONSerialization.data(withJSONObject: ["id": "ses_new"]), headers: ["Content-Type": "application/json"])
             case ("POST", "/session/ses_1/prompt_async"), ("POST", "/session/ses_new/prompt_async"):
-                return .ok(headers: [:])
+                return .error(statusCode: 204, MCPError.internalError("no content"))   // 204 with no body, as OpenCode answers
             default:
                 return .error(statusCode: 404, MCPError.methodNotFound("nope"))
             }

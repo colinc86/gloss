@@ -270,7 +270,8 @@ final class AppModel {
                 // Drained notes count as sent through that hook; the agent resolves them over MCP afterwards.
                 if !noteIDs.isEmpty {
                     let transport = flavour == "codex" ? TransportKind.codexHook : .claudeHook
-                    _ = try? await store.recordSend(transport: transport.rawValue, targetJSON: "{\"cwd\":\"\(cwd ?? "")\"}", packetText: text, noteIDs: noteIDs, outcome: .delivered)
+                    let targetJSON = (try? JSONSerialization.data(withJSONObject: ["cwd": cwd ?? ""])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                    _ = try? await store.recordSend(transport: transport.rawValue, targetJSON: targetJSON, packetText: text, noteIDs: noteIDs, outcome: .delivered)
                 }
                 return text
             },
@@ -307,7 +308,7 @@ final class AppModel {
         guard let fileSystem = fileSystems[hostID], let connection = connections[hostID], let alias = hosts.entry(for: hostID)?.name else { return nil }
         guard let home = hostHomes[hostID] else { return nil }
         return HookInstaller(fileSystem: fileSystem, home: home, hostAlias: alias, port: port) { line in
-            try await connection.exec("export PATH=\"$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH\"; " + line, timeout: .seconds(60))
+            try await connection.exec(LocalShell.pathPrefix + line, timeout: .seconds(60))
         }
     }
 

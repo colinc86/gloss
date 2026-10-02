@@ -24,7 +24,8 @@ public struct OpenCodeServer: Sendable, Hashable {
             let password = components.password
             components.user = nil
             components.password = nil
-            components.path = ""
+            // Keep a path prefix (a reverse proxy mount), minus the trailing slash so appending works.
+            while components.path.hasSuffix("/") { components.path.removeLast() }
             guard let url = components.url else { return nil }
             let effectiveUser = user ?? (password != nil ? "opencode" : nil)
             return OpenCodeServer(baseURL: url, username: effectiveUser, password: password)

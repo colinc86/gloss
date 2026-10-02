@@ -31,6 +31,12 @@ struct HookInstallerTests {
         let movedSubmit = try #require((movedObject?["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]])
         #expect(movedSubmit.count == 2 && HookInstaller.hasEntry(in: moved, command: "GLOSS_HOST='asus' " + command))
 
+        // Our handler inside a user's own group leaves the rest of that group alone.
+        let shared = Data(#"{"hooks":{"UserPromptSubmit":[{"matcher":"x","hooks":[{"type":"command","command":"other"},{"type":"command","command":"\"$HOME/.claude/hooks/gloss-notes.sh\" claude"}]}]}}"#.utf8)
+        let sharedMerged = try HookInstaller.mergeHookEntry(into: shared, command: command)
+        let sharedSubmit = try #require(((try JSONSerialization.jsonObject(with: sharedMerged) as? [String: Any])?["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]])
+        #expect(sharedSubmit.count == 2 && (sharedSubmit[0]["hooks"] as? [[String: Any]])?.map { $0["command"] as? String } == ["other"] && sharedSubmit[0]["matcher"] as? String == "x")
+
         let removed = try HookInstaller.mergeHookEntry(into: moved, command: nil)
         #expect(!HookInstaller.hasOurEntry(in: removed))
         let removedObject = try #require(try JSONSerialization.jsonObject(with: removed) as? [String: Any])
@@ -54,6 +60,9 @@ struct HookInstallerTests {
         #expect(HookInstaller.enableCodexHooks(in: missingKey) == "model = \"gpt-5\"\n\n[features]\nhooks = true\ndaemon_auto_start = false\n\n[hooks.state]\nx = 1\n")
         #expect(HookInstaller.enableCodexHooks(in: "model = \"gpt-5\"\n") == "model = \"gpt-5\"\n\n[features]\nhooks = true\n")
         #expect(HookInstaller.enableCodexHooks(in: "") == "[features]\nhooks = true\n")
+        let crlf = "model = \"x\"\r\n\r\n[features]\r\nhooks = true # keep\r\n"
+        #expect(HookInstaller.enableCodexHooks(in: crlf) == crlf, "CRLF files and trailing comments are recognised")
+        #expect(HookInstaller.enableCodexHooks(in: "[features]\r\nhooks = false\r\n") == "[features]\r\nhooks = true\r\n")
         #expect(HookInstaller.codexHooksEnabled(base) && !HookInstaller.codexHooksEnabled(disabled))
     }
 

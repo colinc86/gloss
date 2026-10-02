@@ -102,7 +102,7 @@ private struct HooksSettings: View {
             }
         }
         .formStyle(.grouped)
-        .task { await model.hooks.refresh(hosts: hostIDs) }
+        .task(id: hostIDs) { await model.hooks.refresh(hosts: hostIDs) }
     }
 
     private func row(agent: HookAgent, hostID: HostID) -> some View {
