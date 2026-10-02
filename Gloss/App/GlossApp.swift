@@ -18,6 +18,7 @@ struct GlossApp: App {
             ContentView()
                 .environment(model)
                 .task { await model.start() }
+                .onOpenURL { url in Task { await URLRouter.handle(url, model: model) } }
         }
         .defaultSize(width: 1200, height: 800)
         .commands {
@@ -25,7 +26,8 @@ struct GlossApp: App {
         }
 
         Settings {
-            SettingsPlaceholderView()
+            SettingsView()
+                .environment(model)
         }
     }
 }
@@ -80,6 +82,9 @@ struct AppCommands: Commands {
             .keyboardShortcut(".", modifiers: [.command, .shift])
             Button("Refresh Explorer") { model.explorer.refreshAll() }
                 .keyboardShortcut("r", modifiers: [.command])
+            Button("Find in Files") { model.explorer.contentSearch.isVisible = true }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
+                .disabled(model.explorer.selectedTab == nil)
             Button("Toggle Rendered / Source") { model.activeSession?.toggleMarkdownMode() }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
                 .disabled(model.activeSession?.markdown == nil)

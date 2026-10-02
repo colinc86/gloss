@@ -37,11 +37,3 @@ struct ContentView: View {
         }
     }
 }
-
-struct SettingsPlaceholderView: View {
-    var body: some View {
-        Text("Settings arrive in a later step.")
-            .padding()
-            .frame(width: 400, height: 200)
-    }
-}

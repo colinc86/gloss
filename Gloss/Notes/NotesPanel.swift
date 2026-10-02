@@ -152,6 +152,7 @@ struct NoteCard: View {
                         Button("Resolve") { Task { await model.notesPanel.resolve(note.id) } }
                     }
                     if note.state == .orphaned {
+                        Button("Re-anchor") { model.reanchor(note: note, in: document) }
                         Button("Restore") { Task { await model.notesPanel.restoreDraft(note) } }
                     }
                     Button("Edit") { model.edit(note: note, in: document) }

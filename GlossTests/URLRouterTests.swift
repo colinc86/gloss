@@ -1,0 +1,25 @@
+import Core
+import Foundation
+import Testing
+@testable import Gloss
+
+struct URLRouterTests {
+    let hosts: [String: HostID] = ["asus": HostID(rawValue: "h_01ARZ3NDEKTSV4RRFFQ69G5FAV")]
+
+    @Test func parsesOpen() {
+        let route = URLRouter.parse(URL(string: "gloss://open?host=local&path=/Users/colin/proj/a.md")!, hosts: hosts)
+        #expect(route == .open(hostID: .local, path: "/Users/colin/proj/a.md"))
+        let remote = URLRouter.parse(URL(string: "gloss://open?host=asus&path=/home/colin/x.md")!, hosts: hosts)
+        #expect(remote == .open(hostID: hosts["asus"]!, path: "/home/colin/x.md"))
+        #expect(URLRouter.parse(URL(string: "gloss://open?path=relative")!, hosts: hosts) == nil)
+        #expect(URLRouter.parse(URL(string: "https://example.com/open?path=/x")!, hosts: hosts) == nil)
+    }
+
+    @Test func parsesNote() {
+        let route = URLRouter.parse(URL(string: "gloss://note?host=local&path=/p/a.md&line=12&text=Fix%20this")!, hosts: hosts)
+        #expect(route == .note(hostID: .local, path: "/p/a.md", cwd: nil, line: 12, text: "Fix this", file: nil))
+        let selection = URLRouter.parse(URL(string: "gloss://note?cwd=/p&file=/tmp/sel.txt")!, hosts: hosts)
+        #expect(selection == .note(hostID: .local, path: nil, cwd: "/p", line: nil, text: "", file: "/tmp/sel.txt"))
+        #expect(URLRouter.parse(URL(string: "gloss://note?path=/p/a.md")!, hosts: hosts) == nil, "a note needs text or a file")
+    }
+}
