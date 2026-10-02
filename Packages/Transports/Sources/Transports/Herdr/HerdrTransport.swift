@@ -32,9 +32,15 @@ public actor HerdrTransport: Transport {
     /// socket route (CLI fallbacks cannot stream events).
     public func socketPath(for hostID: HostID) async -> String? {
         if hostID == .local { return FileManager.default.fileExists(atPath: localSocketPath) ? localSocketPath : nil }
-        if case .socket(let path)? = routes[hostID] { return path }
+        // Always re-check the forward: a reconnected master starts with none, and the cached route would be stale.
         guard let entry = await registry.all().first(where: { $0.hostID == hostID }) else { return nil }
         return await forwardedSocket(for: entry)
+    }
+
+    /// Drops cached routes and forwards for a host that disconnected.
+    public func forget(_ hostID: HostID) {
+        routes[hostID] = nil
+        forwards[hostID] = nil
     }
 
     // MARK: Discovery

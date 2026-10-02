@@ -9,11 +9,11 @@ public struct MCPDependencies: Sendable {
     public var packet: @Sendable ([NoteID]) async throws -> Packet
     /// `UserPromptSubmit` context for notes under `cwd` on `host`, already fitted to the hook limit.
     public var hookText: @Sendable (_ host: String, _ cwd: String?) async throws -> String
-    /// A draft note from the Herdr plugin on a host where `open` cannot reach the app.
-    public var createDraft: @Sendable (_ host: String, _ path: String?, _ cwd: String?, _ line: Int?, _ text: String) async throws -> NoteID
+    /// A whole-file draft note from the Herdr plugin on a host where `open` cannot reach the app.
+    public var createDraft: @Sendable (_ host: String, _ path: String?, _ cwd: String?, _ text: String) async throws -> NoteID
     public var appVersion: String
 
-    public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, Int?, String) async throws -> NoteID, appVersion: String) {
+    public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
         self.noteStore = noteStore
         self.packet = packet
         self.hookText = hookText
@@ -41,6 +41,9 @@ public actor MCPServer {
     private let portFileURL: URL?
     private var listener: HTTPListener?
     private var sessions: [String: Session] = [:]
+    private var sweeper: Task<Void, Never>?
+    /// Sessions idle this long are closed; agents rarely send DELETE, so this is what bounds the table.
+    public static let sessionIdleLimit: TimeInterval = 3600
 
     private struct Session {
         var server: Server
@@ -84,13 +87,30 @@ public actor MCPServer {
             return await self.route(request, query: query)
         }
         listener = started
+        sweeper = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                await self?.sweepIdleSessions()
+            }
+        }
         if let portFileURL {
             try? FileManager.default.createDirectory(at: portFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? "\(started.port)\n".write(to: portFileURL, atomically: true, encoding: .utf8)
         }
     }
 
+    private func sweepIdleSessions() async {
+        let cutoff = Date().addingTimeInterval(-Self.sessionIdleLimit)
+        for (id, session) in sessions where session.lastUsed < cutoff {
+            sessions[id] = nil
+            await session.server.stop()
+            await session.transport.disconnect()
+        }
+    }
+
     public func stop() async {
+        sweeper?.cancel()
+        sweeper = nil
         for session in sessions.values {
             await session.server.stop()
             await session.transport.disconnect()
@@ -99,13 +119,6 @@ public actor MCPServer {
         await listener?.stop()
         listener = nil
         if let portFileURL { try? FileManager.default.removeItem(at: portFileURL) }
-    }
-
-    /// Tells every open session that resources changed, for clients that keep a GET stream open.
-    public func notifyResourcesChanged() async {
-        for session in sessions.values {
-            try? await session.server.notify(ResourceListChangedNotification.message())
-        }
     }
 
     // MARK: Routing
@@ -136,11 +149,13 @@ public actor MCPServer {
             return response
         }
         guard request.method.uppercased() == "POST", let body = request.body, Self.isInitialize(body) else {
+            // 404 for a session this process no longer knows (an app restart): clients re-initialize on it.
+            if request.header("Mcp-Session-Id") != nil { return .error(statusCode: 404, MCPError.invalidRequest("session not found")) }
             return .error(statusCode: 400, MCPError.invalidRequest("send initialize first"))
         }
         let id = UUID().uuidString
         let transport = StatefulHTTPServerTransport(sessionIDGenerator: FixedSessionID(id), logger: nil)
-        let server = makeServer()
+        let server = await makeServer()
         do {
             try await server.start(transport: transport)
         } catch {
@@ -176,7 +191,7 @@ public actor MCPServer {
         }
         let host = object["host"] as? String ?? "local"
         do {
-            let id = try await dependencies.createDraft(host, object["path"] as? String, object["cwd"] as? String, object["line"] as? Int, text)
+            let id = try await dependencies.createDraft(host, object["path"] as? String, object["cwd"] as? String, text)
             let data = try JSONSerialization.data(withJSONObject: ["note_id": id.rawValue])
             return .data(data, headers: ["Content-Type": "application/json"])
         } catch {
@@ -213,19 +228,18 @@ public actor MCPServer {
         ),
     ]
 
-    private func makeServer() -> Server {
+    /// Handlers are registered before the server starts, so the first `tools/list` can never race them.
+    private func makeServer() async -> Server {
         let server = Server(
             name: Self.serverName, version: dependencies.appVersion,
             instructions: "Notes the user attached to files. Call list_pending_notes, act on each, then resolve_note.",
-            capabilities: .init(resources: .init(subscribe: false, listChanged: true), tools: .init(listChanged: false))
+            capabilities: .init(resources: .init(subscribe: false, listChanged: false), tools: .init(listChanged: false))
         )
         let dependencies = dependencies
-        Task {
-            await server.withMethodHandler(ListTools.self) { _ in ListTools.Result(tools: Self.toolSchemas) }
-            await server.withMethodHandler(CallTool.self) { params in try await Self.callTool(params, dependencies: dependencies) }
-            await server.withMethodHandler(ListResources.self) { _ in ListResources.Result(resources: try await Self.resources(dependencies: dependencies)) }
-            await server.withMethodHandler(ReadResource.self) { params in try await Self.readResource(uri: params.uri, dependencies: dependencies) }
-        }
+        await server.withMethodHandler(ListTools.self) { _ in ListTools.Result(tools: Self.toolSchemas) }
+        await server.withMethodHandler(CallTool.self) { params in try await Self.callTool(params, dependencies: dependencies) }
+        await server.withMethodHandler(ListResources.self) { _ in ListResources.Result(resources: try await Self.resources(dependencies: dependencies)) }
+        await server.withMethodHandler(ReadResource.self) { params in try await Self.readResource(uri: params.uri, dependencies: dependencies) }
         return server
     }
 
@@ -269,7 +283,13 @@ public actor MCPServer {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
             if note.state == .resolved { return CallTool.Result(content: [text("note \(raw) is already resolved")], isError: true) }
-            let outcome = arguments["outcome"]?.stringValue.flatMap(ResolveOutcome.init(rawValue:)) ?? .done
+            var outcome = ResolveOutcome.done
+            if let rawOutcome = arguments["outcome"]?.stringValue {
+                guard let parsed = ResolveOutcome(rawValue: rawOutcome) else {
+                    return CallTool.Result(content: [text("outcome must be done, skipped, or needs_input")], isError: true)
+                }
+                outcome = parsed
+            }
             try await store.resolve(id, outcome: outcome, message: arguments["message"]?.stringValue)
             return CallTool.Result(content: [text("resolved \(raw)")])
         case "list_documents":

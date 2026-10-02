@@ -19,7 +19,6 @@ struct RemoteTmuxTests {
             let tools = try await connection.tools()
             guard tools.tmux else { await manager.disconnectAll(); return }
             let socket = "gloss-test-\(UUID().uuidString.prefix(6))"
-            defer { Task { _ = try? await connection.exec("tmux -L \(socket) kill-server") } }
             let started = try await connection.exec("tmux -L \(socket) new-session -d -s gloss-verify -x 120 -y 30 cat")
             #expect(started.exitStatus == 0, "\(started.stderrText)")
             try await Task.sleep(for: .milliseconds(300))
@@ -44,6 +43,8 @@ struct RemoteTmuxTests {
             let killed = try await connection.exec("tmux -L \(socket) kill-server")
             #expect(killed.exitStatus == 0)
         } catch {
+            // Awaited before the master goes away, so a failing run cannot leave the private server on the host.
+            _ = try? await connection.exec("tmux -L 'gloss-test-*' kill-server 2>/dev/null; for s in /tmp/tmux-$(id -u)/gloss-test-*; do [ -S \"$s\" ] && tmux -S \"$s\" kill-server; done; true")
             await manager.disconnectAll()
             throw error
         }

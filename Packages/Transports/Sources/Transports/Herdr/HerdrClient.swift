@@ -193,7 +193,9 @@ final class LineConnection: Sendable {
             if let content, !content.isEmpty {
                 let oversized = state.withLock { state -> Bool in
                     state.buffer.append(content)
-                    return state.buffer.count > HerdrError.lineLimit && !state.buffer.contains(0x0A)
+                    // Only the unterminated tail counts; complete lines waiting for a slow consumer are fine.
+                    let tailStart = state.buffer.lastIndex(of: 0x0A).map { $0 + 1 } ?? state.buffer.startIndex
+                    return state.buffer.endIndex - tailStart > HerdrError.lineLimit
                 }
                 if oversized {
                     finish(error: HerdrError.decoding("reply line over 1 MiB"))

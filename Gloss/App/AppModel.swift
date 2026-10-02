@@ -73,6 +73,7 @@ final class AppModel {
             Task {
                 await self.connectionRegistry.register(connection, alias: alias, for: hostID)
                 await self.forwardMCPPort(to: connection, alias: alias)
+                if self.followHerdr { self.startFollowing() }
             }
             let stager = RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem, noteStore: self.noteStore)
             self.send.register(stager: stager, for: hostID)
@@ -83,7 +84,12 @@ final class AppModel {
             guard let self else { return }
             self.connections[hostID] = nil
             self.fileSystems[hostID] = nil
-            Task { await self.connectionRegistry.remove(hostID) }
+            self.followTasks[hostID]?.cancel()
+            self.followTasks[hostID] = nil
+            Task {
+                await self.connectionRegistry.remove(hostID)
+                await self.herdrTransport.forget(hostID)
+            }
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
@@ -96,17 +102,20 @@ final class AppModel {
         hostIDs += connections.keys.sorted { $0.rawValue < $1.rawValue }
         for hostID in hostIDs where followTasks[hostID] == nil {
             followTasks[hostID] = Task { [weak self] in
-                guard let self, let socket = await self.herdrTransport.socketPath(for: hostID) else { return }
+                guard let self, let socket = await self.herdrTransport.socketPath(for: hostID) else {
+                    if hostID == .local { self?.followStatus = "Herdr is not running" }
+                    return
+                }
                 let service = HerdrFollowService(hostID: hostID, socketPath: socket)
                 await service.start()
                 defer { Task { await service.stop() } }
+                self.followStatus = self.followStatus ?? "Following Herdr…"
                 for await event in service.events {
                     if Task.isCancelled { return }
                     await self.apply(event)
                 }
             }
         }
-        if followStatus == nil { followStatus = "Following Herdr…" }
     }
 
     private func stopFollowing() {
@@ -252,13 +261,13 @@ final class AppModel {
                 if host != "local", hostID == nil { return "" }
                 return try await send.hookText(hostID: hostID, cwd: cwd)
             },
-            createDraft: { host, path, cwd, line, text in
+            createDraft: { host, path, cwd, text in
                 let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
                 guard let hostID else { throw DeliveryError.targetUnavailable("unknown host \(host)") }
                 guard let documentPath = path ?? cwd.map({ PathUtilities.join($0, ".gloss-inbox.md") }) else {
                     throw DeliveryError.failed("path or cwd is required")
                 }
-                return try await AppModel.createPluginDraft(store: store, hostID: hostID, path: documentPath, line: line, text: text)
+                return try await AppModel.createPluginDraft(store: store, hostID: hostID, path: documentPath, text: text)
             },
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         )
@@ -287,8 +296,8 @@ final class AppModel {
         }
     }
 
-    /// A draft created by the Herdr plugin: whole-file unless a line is given.
-    nonisolated static func createPluginDraft(store: NoteStore, hostID: HostID, path: String, line: Int?, text: String) async throws -> NoteID {
+    /// A whole-file draft created by the Herdr plugin (the user re-anchors it in the app if needed).
+    nonisolated static func createPluginDraft(store: NoteStore, hostID: HostID, path: String, text: String) async throws -> NoteID {
         let kind = DocumentKindDetector.kind(forPath: path)
         let document = try await store.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: Fingerprint())
         return try await store.createNote(documentID: document.id, anchor: .wholeFile, body: text, color: .yellow).id

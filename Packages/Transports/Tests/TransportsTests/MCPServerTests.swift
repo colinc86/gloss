@@ -35,7 +35,7 @@ struct MCPServerTests {
                 let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: cwd)
                 return PacketBuilder.hookText(pending.map { PacketNote(noteID: $0.note.id, agentPath: $0.document.path, source: .markdown, anchor: $0.note.anchor, comment: $0.note.body) })
             },
-            createDraft: { _, path, cwd, _, text in
+            createDraft: { _, path, cwd, text in
                 let document = try await store.upsertDocument(hostID: .local, path: path ?? "\(cwd ?? "/tmp")/.gloss-inbox.md", kind: .markdown, fingerprint: Fingerprint())
                 return try await store.createNote(documentID: document.id, anchor: .wholeFile, body: text, color: .yellow).id
             },
@@ -142,7 +142,7 @@ struct MCPServerTests {
             let (_, deleted) = try await URLSession.shared.data(for: delete)
             #expect((deleted as? HTTPURLResponse)?.statusCode == 200)
             let stale = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 10, "method": "tools/list", "params": [:]])
-            #expect(stale.status == 400)
+            #expect(stale.status == 404, "an unknown session id tells the client to re-initialize")
         } catch {
             await server.stop()
             throw error

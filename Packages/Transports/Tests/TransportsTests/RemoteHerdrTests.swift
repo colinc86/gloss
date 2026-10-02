@@ -32,11 +32,10 @@ struct RemoteHerdrTests {
                 #expect(pong.protocol == 22)
                 let service = HerdrFollowService(hostID: hostID, socketPath: socket)
                 await service.start()
-                var first: FollowEvent?
-                for await event in service.events {
-                    first = event
-                    break
-                }
+                let first = await withDeadline(.seconds(10)) { () -> FollowEvent? in
+                    for await event in service.events { return event }
+                    return nil
+                } ?? nil
                 await service.stop()
                 #expect(first?.hostID == hostID && first?.path != nil, "the initial agent list seeds a follow event")
             }

@@ -20,6 +20,7 @@ public struct FollowEvent: Sendable, Equatable {
 
 /// Follows one Herdr endpoint: a focus event is answered with `pane.get` (focus frames carry no cwd), status
 /// changes stream through, and the subscription is rebuilt whenever a new agent pane appears or events were lost.
+/// Single use: `stop()` finishes `events`; make a new service to follow again.
 public actor HerdrFollowService {
     public nonisolated let events: AsyncStream<FollowEvent>
     private let continuation: AsyncStream<FollowEvent>.Continuation

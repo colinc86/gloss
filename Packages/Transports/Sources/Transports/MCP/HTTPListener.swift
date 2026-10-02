@@ -65,6 +65,8 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
     private let handler: HTTPListener.Handler
     private var pending: Pending?
     private var streamTask: Task<Void, Never>?
+    /// The port is reverse-forwarded to hosts, so anything on their loopback can POST; bound what we buffer.
+    private static let maximumBodyBytes = 8 * 1024 * 1024
 
     init(handler: @escaping HTTPListener.Handler) {
         self.handler = handler
@@ -75,6 +77,14 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
         case .head(let head):
             pending = Pending(head: head, body: context.channel.allocator.buffer(capacity: 0))
         case .body(var buffer):
+            guard pending != nil else { return }
+            if (pending?.body.readableBytes ?? 0) + buffer.readableBytes > Self.maximumBodyBytes {
+                pending = nil
+                let head = HTTPResponseHead(version: .http1_1, status: .payloadTooLarge, headers: ["Content-Length": "0", "Connection": "close"])
+                context.write(wrapOutboundOut(.head(head)), promise: nil)
+                context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in context.close(promise: nil) }
+                return
+            }
             pending?.body.writeBuffer(&buffer)
         case .end:
             guard let request = pending else { return }
@@ -92,6 +102,10 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
     func channelInactive(context: ChannelHandlerContext) {
         streamTask?.cancel()
         context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: any Error) {
+        context.close(promise: nil)
     }
 
     private static func convert(_ request: Pending) -> (HTTPRequest, [String: String]) {

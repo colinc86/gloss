@@ -2,13 +2,13 @@ import Foundation
 
 /// Environment checks evaluated once per run; gated tests skip when their resource is absent.
 enum TestGates {
-    nonisolated(unsafe) static let tmux: Bool = {
+    static let tmux: Bool = {
         let path = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].first { FileManager.default.isExecutableFile(atPath: $0) }
         return path != nil
     }()
 
     /// Herdr's server is running on the default socket.
-    nonisolated(unsafe) static let herdr: Bool = {
+    static let herdr: Bool = {
         let socket = ProcessInfo.processInfo.environment["HERDR_SOCKET_PATH"]
             ?? (NSHomeDirectory() as NSString).appendingPathComponent(".config/herdr/herdr.sock")
         return FileManager.default.fileExists(atPath: socket)
