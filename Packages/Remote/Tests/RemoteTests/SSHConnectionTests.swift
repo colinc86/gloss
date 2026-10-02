@@ -128,6 +128,28 @@ struct SSHConnectionTests {
         }
     }
 
+    /// Quitting while a master waits on the agent must not orphan it: the synchronous kill is SIGKILL.
+    @Test(.enabled(if: TestGates.loopback))
+    func killMastersEndsAStalledMasterAtOnce() async throws {
+        try await TestGates.serialized {
+            let control = TestGates.temporaryControlDirectory()
+            defer { try? FileManager.default.removeItem(atPath: control) }
+            let socket = "\(control)/agent.sock"
+            let fakeAgent = try ChildProcess.launch(ChildProcessSpec(executable: "/usr/bin/nc", arguments: ["-dlU", socket]))
+            defer { fakeAgent.terminate() }
+            try await Task.sleep(for: .milliseconds(400))
+            let manager = SSHConnectionManager(controlDirectory: control, agentBudget: .seconds(30))
+            let connect = Task { try await manager.connection(for: HostID.new(), alias: "localhost", options: ["-o", "IdentityAgent=\(socket)", "-o", "IdentitiesOnly=no"]) }
+            try await Task.sleep(for: .seconds(2))
+            #expect(pgrepMasters() == 1, "the master is stalled in the agent request")
+            manager.killMasters()
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(pgrepMasters() == 0, "SIGKILL ends it without waiting for the app's follow-up timer")
+            _ = try? await connect.value
+            await manager.disconnectAll()
+        }
+    }
+
     @Test func classifiesFailures() {
         let connection = SSHConnection(hostID: .local, alias: "x", controlDirectory: "/tmp", sshPath: "/usr/bin/ssh", events: AsyncStream<SSHConnectionEvent> { _ in }.makeContinuationForTest())
         #expect(connection.classify(stderr: "Host key verification failed.", status: 255) == .hostKeyProblem(fingerprint: nil, offerAcceptNew: true))

@@ -38,6 +38,28 @@ final class HostsModel {
     private(set) var status: [HostID: Status] = [:]
     /// The latest stage ssh reported while connecting, e.g. "Authenticating as colin…".
     private(set) var progress: [HostID: String] = [:]
+
+    /// What ssh is doing for this host, for the Details popover: the resolved destination, the agent socket in
+    /// use, and the last lines ssh wrote. Readable at any time, including mid-connect.
+    func diagnostics(for hostID: HostID) async -> String {
+        guard let entry = entry(for: hostID), entry.kind == .ssh else { return "" }
+        var lines: [String] = ["Host: \(entry.name)" + (entry.origin == .manual ? " (added in Settings)" : " (from ~/.ssh/config)")]
+        if let resolved = await SSHConfig.resolve(entry.name) {
+            lines.append("Destination: \(resolved.user.map { $0 + "@" } ?? "")\(resolved.hostName):\(resolved.port)")
+            lines.append("Key agent: \(resolved.identityAgent ?? (ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"] ?? "none"))")
+        }
+        if let options = entry.options, !options.isEmpty { lines.append("Options: \(entry.sshArguments.joined(separator: " "))") }
+        lines.append("Status: \(status(for: hostID))")
+        if let connection = await manager.existingConnection(for: hostID) {
+            let stderr = await connection.capturedStderr.split(whereSeparator: \.isNewline).suffix(25)
+            if !stderr.isEmpty {
+                lines.append("")
+                lines.append("ssh output (last \(stderr.count) lines):")
+                lines.append(contentsOf: stderr.map(String.init))
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
     /// Whether `~/.ssh/config` aliases are listed (Settings → Hosts).
     var importsSSHConfig = true {
         didSet {
@@ -211,7 +233,7 @@ final class HostsModel {
         case .authenticationFailed: "Authentication failed: no key was accepted. Check the key, your agent, or the user name."
         case .unreachable: "Host unreachable"
         case .timedOut: "Timed out waiting for ssh"
-        case .agentUnresponsive: "Your SSH key agent did not respond. If it shows an approval prompt, approve it (the prompt may be behind other windows). To skip the agent, add this host in Settings → Hosts with an identity file."
+        case .agentUnresponsive: "Your SSH key agent did not respond. If it is a password manager, it may be locked or waiting for an approval prompt behind other windows. Details shows which agent ssh is using; Settings → Hosts can add this host with a key file so the agent is skipped."
         case .notConnected: "Not connected"
         case .commandFailed(_, let stderr): stderr
         case .forwardFailed(let message): "Forward failed: \(message)"

@@ -1,3 +1,4 @@
+import AppKit
 import Core
 import SwiftUI
 
@@ -5,6 +6,7 @@ import SwiftUI
 struct ExplorerSidebar: View {
     @Environment(AppModel.self) private var model
     @State private var remotePathPrompt: RemotePathPrompt?
+    @State private var diagnostics: String?
 
     private var pickedHost: HostID { model.pickedHost }
 
@@ -145,6 +147,13 @@ struct ExplorerSidebar: View {
                 if failed { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange) }
                 Text(text).font(.caption).foregroundStyle(failed ? .primary : .secondary).lineLimit(3)
                 Spacer(minLength: 0)
+                if pickedHost != .local, failed || busy {
+                    Button("Details") { Task { diagnostics = await model.hosts.diagnostics(for: pickedHost) } }
+                        .controlSize(.small)
+                        .popover(isPresented: Binding(get: { diagnostics != nil }, set: { if !$0 { diagnostics = nil } })) {
+                            DiagnosticsPopover(text: diagnostics ?? "")
+                        }
+                }
                 if failed || (pickedHost != .local && model.hosts.status(for: pickedHost) == .idle) {
                     Button("Connect") { Task { await model.openRemoteRoot(hostID: pickedHost) } }
                         .controlSize(.small)
@@ -235,6 +244,28 @@ struct ExplorerSidebar: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .font(.callout)
+    }
+}
+
+/// ssh's own account of a connection, copyable, so a stuck connect can be reported precisely.
+private struct DiagnosticsPopover: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollView {
+                Text(text).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(width: 520, height: 260)
+            HStack {
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+            }
+        }
+        .padding(12)
     }
 }
 

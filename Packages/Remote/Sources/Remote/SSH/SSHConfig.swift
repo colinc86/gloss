@@ -84,6 +84,8 @@ public enum SSHConfig {
     /// Display values resolved by ssh itself.
     public struct Resolved: Sendable, Equatable {
         public var hostName: String
+        /// The agent socket ssh will ask for keys (`IdentityAgent`), when the config sets one.
+        public var identityAgent: String?
         public var user: String?
         public var port: Int
 
@@ -104,6 +106,8 @@ public enum SSHConfig {
             if parts.count == 2 { values[String(parts[0])] = String(parts[1]) }
         }
         guard let hostName = values["hostname"] else { return nil }
-        return Resolved(hostName: hostName, user: values["user"], port: Int(values["port"] ?? "22") ?? 22)
+        var resolved = Resolved(hostName: hostName, user: values["user"], port: Int(values["port"] ?? "22") ?? 22)
+        if let agent = values["identityagent"], agent != "none" { resolved.identityAgent = agent }
+        return resolved
     }
 }

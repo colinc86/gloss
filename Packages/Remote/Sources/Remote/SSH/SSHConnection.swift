@@ -102,7 +102,7 @@ public actor SSHConnection {
     private static let log = Logger(subsystem: "com.cnc.Gloss", category: "ssh")
     public static let connectBudget: Duration = .seconds(90)
     /// How long a key agent may stay silent after a key was offered or accepted before the connect is failed.
-    public static let agentBudget: Duration = .seconds(45)
+    public static let agentBudget: Duration = .seconds(20)
 
     public let hostID: HostID
     public let alias: String
@@ -398,9 +398,11 @@ public actor SSHConnection {
         }
     }
 
-    /// Sends SIGTERM to the master without touching actor state. Used when the process is exiting and cannot await.
+    /// Kills the master outright without touching actor state. Used when the app is exiting and cannot await:
+    /// a master blocked in a key-agent request ignores SIGTERM, and the usual SIGKILL follow-up would never run
+    /// once this process is gone, so this sends SIGKILL directly.
     public nonisolated func killMasterNow() {
-        if let pid = masterPID.value.withLock({ $0 }) { Darwin.kill(pid, SIGTERM) }
+        if let pid = masterPID.value.withLock({ $0 }) { Darwin.kill(pid, SIGKILL) }
     }
 
     public func disconnect() async {
