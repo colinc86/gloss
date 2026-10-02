@@ -1,0 +1,58 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild *)",
+      "Bash(xcrun *)",
+      "Bash(swift build *)",
+      "Bash(swift test *)",
+      "Bash(swift package *)",
+      "Bash(swiftlint *)",
+      "Bash(herdr status*)",
+      "Bash(herdr api schema *)",
+      "Bash(herdr agent list*)",
+      "Bash(herdr pane list*)",
+      "Bash(herdr pane read *)",
+      "Bash(herdr workspace list*)",
+      "Bash(herdr plugin list*)",
+      "Bash(tmux list-*)",
+      "Bash(tmux capture-pane *)",
+      "Bash(git status*)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(rg *)",
+      "Bash(jq *)",
+      "Bash(sqlite3 *)",
+      "Bash(open -n *)",
+      "Bash(screencapture *)",
+      "Bash(log stream *)",
+      "Bash(gh api *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(herdr server stop*)",
+      "Bash(herdr session stop*)",
+      "Bash(herdr session delete*)",
+      "Bash(tmux kill-server*)",
+      "Bash(git push --force*)",
+      "Edit(~/.claude/settings.json)",
+      "Edit(~/.codex/**)",
+      "Edit(~/.config/opencode/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.swift) swiftlint lint --quiet --reporter emoji \"$f\" 2>/dev/null | grep -E '^(⛔️|🚫|⚠️)' | head -10 ;; esac; exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

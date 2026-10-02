@@ -1,0 +1,14 @@
+# Xcode
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+Packages/*/.build/
+
+# Claude Code personal overrides
+.claude/settings.local.json
+CLAUDE.local.md
+
+# macOS
+.DS_Store

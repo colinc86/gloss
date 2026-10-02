@@ -1,0 +1,20 @@
+included:
+  - Gloss
+  - Packages
+excluded:
+  - build
+disabled_rules:
+  - line_length
+  - todo
+  - trailing_comma
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - unused_optional_binding
+identifier_name:
+  min_length: 2
+  excluded: [id, x, y, w, h, i, j, fd]
+type_body_length:
+  warning: 400
+file_length:
+  warning: 800

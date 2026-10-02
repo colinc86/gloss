@@ -6,15 +6,13 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		CC00000000000000000000A1 /* Core in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A1 /* Core */; };
+		CC00000000000000000000A2 /* Viewers in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A2 /* Viewers */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		3B84F6B2306F03BF003DBBFF /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 3B84F69A306F03BD003DBBFF /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 3B84F6A1306F03BD003DBBFF;
-			remoteInfo = "Gloss";
-		};
-		3B84F6BC306F03BF003DBBFF /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3B84F69A306F03BD003DBBFF /* Project object */;
 			proxyType = 1;
@@ -26,12 +24,24 @@
 /* Begin PBXFileReference section */
 		3B84F6A2306F03BD003DBBFF /* Gloss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Gloss.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B84F6B1306F03BF003DBBFF /* GlossTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "GlossTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		3B84F6BB306F03BF003DBBFF /* GlossUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "GlossUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		DD00000000000000000000A1 /* Exceptions for "Gloss" folder in "Gloss" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 3B84F6A1306F03BD003DBBFF /* Gloss */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		3B84F6A4306F03BD003DBBFF /* Gloss */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				DD00000000000000000000A1 /* Exceptions for "Gloss" folder in "Gloss" target */,
+			);
 			path = "Gloss";
 			sourceTree = "<group>";
 		};
@@ -40,25 +50,17 @@
 			path = "GlossTests";
 			sourceTree = "<group>";
 		};
-		3B84F6BE306F03BF003DBBFF /* GlossUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "GlossUITests";
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		3B84F69F306F03BD003DBBFF /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				CC00000000000000000000A1 /* Core in Frameworks */,
+				CC00000000000000000000A2 /* Viewers in Frameworks */,
 			);
 		};
 		3B84F6AE306F03BF003DBBFF /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			files = (
-			);
-		};
-		3B84F6B8306F03BF003DBBFF /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -71,7 +73,6 @@
 			children = (
 				3B84F6A4306F03BD003DBBFF /* Gloss */,
 				3B84F6B4306F03BF003DBBFF /* GlossTests */,
-				3B84F6BE306F03BF003DBBFF /* GlossUITests */,
 				3B84F6A3306F03BD003DBBFF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -81,7 +82,6 @@
 			children = (
 				3B84F6A2306F03BD003DBBFF /* Gloss.app */,
 				3B84F6B1306F03BF003DBBFF /* GlossTests.xctest */,
-				3B84F6BB306F03BF003DBBFF /* GlossUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -103,6 +103,10 @@
 				3B84F6A4306F03BD003DBBFF /* Gloss */,
 			);
 			name = "Gloss";
+			packageProductDependencies = (
+				BB00000000000000000000A1 /* Core */,
+				BB00000000000000000000A2 /* Viewers */,
+			);
 			productName = "Gloss";
 			productReference = 3B84F6A2306F03BD003DBBFF /* Gloss.app */;
 			productType = "com.apple.product-type.application";
@@ -128,27 +132,6 @@
 			productReference = 3B84F6B1306F03BF003DBBFF /* GlossTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		3B84F6BA306F03BF003DBBFF /* GlossUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 3B84F6C9306F03BF003DBBFF /* Build configuration list for PBXNativeTarget "GlossUITests" */;
-			buildPhases = (
-				3B84F6B7306F03BF003DBBFF /* Sources */,
-				3B84F6B8306F03BF003DBBFF /* Frameworks */,
-				3B84F6B9306F03BF003DBBFF /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				3B84F6BD306F03BF003DBBFF /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				3B84F6BE306F03BF003DBBFF /* GlossUITests */,
-			);
-			name = "GlossUITests";
-			productName = "GlossUITests";
-			productReference = 3B84F6BB306F03BF003DBBFF /* GlossUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -166,10 +149,6 @@
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 3B84F6A1306F03BD003DBBFF;
 					};
-					3B84F6BA306F03BF003DBBFF = {
-						CreatedOnToolsVersion = 27.0;
-						TestTargetID = 3B84F6A1306F03BD003DBBFF;
-					};
 				};
 			};
 			buildConfigurationList = 3B84F69D306F03BD003DBBFF /* Build configuration list for PBXProject "Gloss" */;
@@ -181,6 +160,10 @@
 			);
 			mainGroup = 3B84F699306F03BD003DBBFF;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AA00000000000000000000A1 /* XCLocalSwiftPackageReference "Packages/Core" */,
+				AA00000000000000000000A2 /* XCLocalSwiftPackageReference "Packages/Viewers" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B84F6A3306F03BD003DBBFF /* Products */;
 			projectDirPath = "";
@@ -188,7 +171,6 @@
 			targets = (
 				3B84F6A1306F03BD003DBBFF /* Gloss */,
 				3B84F6B0306F03BF003DBBFF /* GlossTests */,
-				3B84F6BA306F03BF003DBBFF /* GlossUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -200,11 +182,6 @@
 			);
 		};
 		3B84F6AF306F03BF003DBBFF /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			files = (
-			);
-		};
-		3B84F6B9306F03BF003DBBFF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -222,11 +199,6 @@
 			files = (
 			);
 		};
-		3B84F6B7306F03BF003DBBFF /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			files = (
-			);
-		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -234,11 +206,6 @@
 			isa = PBXTargetDependency;
 			target = 3B84F6A1306F03BD003DBBFF /* Gloss */;
 			targetProxy = 3B84F6B2306F03BF003DBBFF /* PBXContainerItemProxy */;
-		};
-		3B84F6BD306F03BF003DBBFF /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 3B84F6A1306F03BD003DBBFF /* Gloss */;
-			targetProxy = 3B84F6BC306F03BF003DBBFF /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -297,7 +264,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -355,7 +322,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -372,11 +339,11 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4WS4246RA4;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Gloss/Info.plist";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -385,13 +352,12 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.Gloss";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
@@ -404,11 +370,11 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4WS4246RA4;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Gloss/Info.plist";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -417,13 +383,12 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.Gloss";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
 		};
@@ -435,7 +400,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4WS4246RA4;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.GlossTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -443,7 +408,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Gloss.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Gloss";
 			};
 			name = Debug;
@@ -456,7 +421,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4WS4246RA4;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.GlossTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -464,46 +429,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Gloss.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Gloss";
-			};
-			name = Release;
-		};
-		3B84F6CA306F03BF003DBBFF /* Debug configuration for PBXNativeTarget "GlossUITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4WS4246RA4;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.GlossUITests";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = "Gloss";
-			};
-			name = Debug;
-		};
-		3B84F6CB306F03BF003DBBFF /* Release configuration for PBXNativeTarget "GlossUITests" */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4WS4246RA4;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.GlossUITests";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = "Gloss";
 			};
 			name = Release;
 		};
@@ -534,15 +461,28 @@
 			);
 			defaultConfigurationName = Release;
 		};
-		3B84F6C9306F03BF003DBBFF /* Build configuration list for PBXNativeTarget "GlossUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				3B84F6CA306F03BF003DBBFF /* Debug configuration for PBXNativeTarget "GlossUITests" */,
-				3B84F6CB306F03BF003DBBFF /* Release configuration for PBXNativeTarget "GlossUITests" */,
-			);
-			defaultConfigurationName = Release;
-		};
 /* End XCConfigurationList section */
+/* Begin XCLocalSwiftPackageReference section */
+		AA00000000000000000000A1 /* XCLocalSwiftPackageReference "Packages/Core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Core;
+		};
+		AA00000000000000000000A2 /* XCLocalSwiftPackageReference "Packages/Viewers" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Viewers;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BB00000000000000000000A1 /* Core */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Core;
+		};
+		BB00000000000000000000A2 /* Viewers */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Viewers;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3B84F69A306F03BD003DBBFF /* Project object */;
 	validationLevel = 1;
