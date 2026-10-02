@@ -9,7 +9,11 @@ struct ExplorerSidebar: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if explorer.selectedTab != nil {
+            if explorer.contentSearch.isVisible, explorer.selectedTab != nil {
+                searchBar
+                Divider()
+                SearchResultsView()
+            } else if explorer.selectedTab != nil {
                 FileOutlineView(model: explorer)
             } else {
                 ContentUnavailableView {
@@ -79,6 +83,26 @@ struct ExplorerSidebar: View {
         }
     }
 
+    private var searchBar: some View {
+        @Bindable var search = model.explorer.contentSearch
+        return HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search file contents", text: $search.query)
+                .textFieldStyle(.plain)
+                .onSubmit { if let root = model.explorer.selectedTab?.path { search.search(in: root) } }
+            if search.isSearching { ProgressView().controlSize(.small) }
+            Button {
+                search.isVisible = false
+                search.cancel()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(8)
+        .font(.callout)
+    }
+
     private var footer: some View {
         @Bindable var explorer = model.explorer
         return HStack(spacing: 6) {
@@ -86,6 +110,13 @@ struct ExplorerSidebar: View {
                 .foregroundStyle(.secondary)
             TextField("Filter files", text: $explorer.filter)
                 .textFieldStyle(.plain)
+            Button {
+                explorer.contentSearch.isVisible.toggle()
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .buttonStyle(.borderless)
+            .help("Search file contents (⌘⇧F)")
             Toggle(isOn: $explorer.showDotfiles) {
                 Image(systemName: "eye")
             }

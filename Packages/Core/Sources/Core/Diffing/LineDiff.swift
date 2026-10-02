@@ -1,5 +1,8 @@
 import Foundation
 
+// swiftlint:disable identifier_name cyclomatic_complexity function_body_length
+// Myers' algorithm reads best with its paper's names (n, m, v, d, k).
+
 public enum DiffEdit: Equatable, Sendable {
     case equal(old: Int, new: Int)
     case delete(old: Int)

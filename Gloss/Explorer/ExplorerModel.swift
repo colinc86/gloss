@@ -50,7 +50,8 @@ final class ExplorerModel {
     var filter = "" {
         didSet { treeDelegate?.treeDidChangeFilters() }
     }
-    private(set) var lastError: String?
+    var lastError: String?
+    let contentSearch = ContentSearchModel()
 
     @ObservationIgnored private var pendingReloads: Set<String> = []
     @ObservationIgnored private var reloadTask: Task<Void, Never>?

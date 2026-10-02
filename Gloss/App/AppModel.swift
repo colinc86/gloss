@@ -14,6 +14,7 @@ final class AppModel {
     let explorer: ExplorerModel
     let notesPanel: NotesPanelModel
     let send: SendCoordinator
+    let settings: SettingsStore
     let launchOptions: AppLaunchOptions
     var showNotesPanel = true
 
@@ -36,6 +37,7 @@ final class AppModel {
         noteStore = store
         explorer = ExplorerModel(noteStore: store)
         notesPanel = NotesPanelModel(noteStore: store)
+        settings = SettingsStore(noteStore: store)
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
         fileSystems[.local] = LocalFileSystem()
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
@@ -58,6 +60,44 @@ final class AppModel {
         Task { await session.open() }
     }
 
+    /// Opens a document and scrolls its text view to a 1-based line once it has loaded.
+    func openDocument(hostID: HostID, path: String, line: Int) {
+        openDocument(hostID: hostID, path: path)
+        guard let session = sessions["\(hostID.rawValue):\(path)"] else { return }
+        Task {
+            for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            guard let controller = session.textController else { return }
+            let range = controller.lineIndex.contentRange(ofLine: line)
+            if let markdown = session.markdown { markdown.scroll(toSource: range) } else { controller.scroll(to: range) }
+        }
+    }
+
+    /// Makes sure a root containing `path` is open, opening the parent directory when none is.
+    func openRootIfNeeded(hostID: HostID, containing path: String) async {
+        if explorer.tabs.contains(where: { $0.hostID == hostID && path.hasPrefix($0.path.hasSuffix("/") ? $0.path : $0.path + "/") }) { return }
+        await explorer.openRoot(hostID: hostID, path: PathUtilities.parent(of: path))
+    }
+
+    /// Creates a note from a URL or plugin: on `line` of the file, or on the whole file.
+    func createNote(hostID: HostID, path: String, line: Int?, body: String) async {
+        guard let fileSystem = fileSystems[hostID] else { return }
+        do {
+            var anchor = Anchor.wholeFile
+            if let line, let data = try? await fileSystem.read(path), let text = String(data: data, encoding: .utf8) {
+                let index = LineIndex(text)
+                let range = index.contentRange(ofLine: line)
+                anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: data.sha256Hex))
+            }
+            let kind = DocumentKindDetector.kind(forPath: path)
+            let fingerprint = (try? await fileSystem.stat(path))?.fingerprint ?? Fingerprint()
+            let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
+            _ = try await noteStore.createNote(documentID: document.id, anchor: anchor, body: body, color: .yellow)
+            showNotesPanel = true
+        } catch {
+            Log.notes.error("URL note failed: \(error, privacy: .public)")
+        }
+    }
+
     func closeDocument(_ session: DocumentSession) {
         session.close()
         sessions[session.id] = nil
@@ -70,9 +110,11 @@ final class AppModel {
 
     /// Applies `--root` and `--open`, or reopens the most recent root.
     func start() async {
+        await settings.load()
+        explorer.showDotfiles = settings.showDotfilesByDefault
         if let root = launchOptions.root {
             await explorer.openRoot(hostID: .local, path: root)
-        } else {
+        } else if settings.openLastRootOnLaunch {
             await explorer.reopenRecentRoot(hostID: .local)
         }
         if let open = launchOptions.open {
@@ -110,6 +152,15 @@ final class AppModel {
             // The session may still be opening.
             for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
             session.reveal(note)
+        }
+    }
+
+    func reanchor(note: Note, in document: Core.Document) {
+        openDocument(hostID: document.hostID, path: document.path)
+        guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
+        Task {
+            for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            session.beginReanchor(note)
         }
     }
 

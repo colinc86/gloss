@@ -31,6 +31,9 @@ struct FileOutlineView: NSViewRepresentable {
         outline.delegate = context.coordinator
         outline.target = context.coordinator
         outline.doubleAction = #selector(Coordinator.doubleClicked(_:))
+        let menu = NSMenu()
+        menu.delegate = context.coordinator
+        outline.menu = menu
         context.coordinator.outline = outline
         model.treeDelegate = context.coordinator
 
@@ -50,7 +53,7 @@ struct FileOutlineView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, ExplorerTreeDelegate {
+    final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate, ExplorerTreeDelegate {
         var model: ExplorerModel
         weak var outline: NSOutlineView?
 
@@ -110,6 +113,53 @@ struct FileOutlineView: NSViewRepresentable {
             } else {
                 model.select(node)
             }
+        }
+
+        // MARK: Context menu
+
+        private var clickedNode: FileNode? {
+            guard let outline, outline.clickedRow >= 0 else { return nil }
+            return outline.item(atRow: outline.clickedRow) as? FileNode
+        }
+
+        public func menuNeedsUpdate(_ menu: NSMenu) {
+            menu.removeAllItems()
+            guard let node = clickedNode else { return }
+            let directory = node.isDirectory ? node : node.parent
+            func item(_ title: String, _ action: Selector, key: String = "") {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+                item.target = self
+                menu.addItem(item)
+            }
+            if directory != nil {
+                item("New File", #selector(menuNewFile))
+                item("New Folder", #selector(menuNewFolder))
+                menu.addItem(.separator())
+            }
+            if node.parent != nil {
+                item("Rename…", #selector(menuRename))
+                if !node.isDirectory { item("Duplicate", #selector(menuDuplicate)) }
+                item(node.hostID == .local ? "Move to Trash" : "Delete…", #selector(menuDelete))
+                menu.addItem(.separator())
+            }
+            if node.hostID == .local { item("Reveal in Finder", #selector(menuReveal)) }
+            item("Copy Path", #selector(menuCopyPath))
+            item("Copy Relative Path", #selector(menuCopyRelativePath))
+        }
+
+        @objc private func menuNewFile() { if let node = clickedNode, let directory = node.isDirectory ? node : node.parent { model.newFile(in: directory) } }
+        @objc private func menuNewFolder() { if let node = clickedNode, let directory = node.isDirectory ? node : node.parent { model.newFolder(in: directory) } }
+        @objc private func menuRename() { if let node = clickedNode { model.rename(node) } }
+        @objc private func menuDuplicate() { if let node = clickedNode { model.duplicate(node) } }
+        @objc private func menuDelete() { if let node = clickedNode { model.delete(node) } }
+        @objc private func menuReveal() { if let node = clickedNode { model.revealInFinder(node) } }
+        @objc private func menuCopyPath() { if let node = clickedNode { model.copyPath(node, relative: false) } }
+        @objc private func menuCopyRelativePath() { if let node = clickedNode { model.copyPath(node, relative: true) } }
+
+        /// The selected row, for menu-bar commands.
+        var selectedNode: FileNode? {
+            guard let outline, outline.selectedRow >= 0 else { return nil }
+            return outline.item(atRow: outline.selectedRow) as? FileNode
         }
 
         // MARK: ExplorerTreeDelegate

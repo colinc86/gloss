@@ -14,7 +14,9 @@ final class DocumentSession: Identifiable {
         case text(TextEditorController)
         case image(ImageViewerController)
         case pdf(PDFViewerController)
-        /// Viewers for these kinds arrive in later steps; the raw bytes are kept for them.
+        case csv(CSVGridController)
+        /// QuickLook for everything else (local files only until remote fetching lands).
+        case quickLook(URL)
         case unsupported(DocumentKind)
         case failed(String)
     }
@@ -25,6 +27,7 @@ final class DocumentSession: Identifiable {
         case readOnlyLargeFile
         case tooLarge
         case nonAtomicSave
+        case reanchoring
     }
 
     struct ConflictState {
@@ -72,6 +75,8 @@ final class DocumentSession: Identifiable {
     @ObservationIgnored private var invalidatedNotes: Set<NoteID> = []
     /// The note being created or edited in the popover.
     var noteEditor: NoteEditorState?
+    /// An orphaned note waiting for the user to select its new range (⌘⇧N then places it).
+    var reanchoringNoteID: NoteID?
     var lastUsedColor: NoteColor = .yellow
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore) {
@@ -97,6 +102,11 @@ final class DocumentSession: Identifiable {
 
     var pdfController: PDFViewerController? {
         if case .pdf(let controller) = state { return controller }
+        return nil
+    }
+
+    var csvController: CSVGridController? {
+        if case .csv(let controller) = state { return controller }
         return nil
     }
 
@@ -138,7 +148,18 @@ final class DocumentSession: Identifiable {
             }
             guard kind == .text || kind == .code || kind == .markdown || kind == .csv else {
                 document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: attributes.fingerprint)
-                state = .unsupported(kind)
+                state = hostID == .local ? .quickLook(URL(fileURLWithPath: path)) : .unsupported(kind)
+                startWatching()
+                observeNotes()
+                return
+            }
+            if kind == .csv, attributes.size <= Self.readOnlyThreshold {
+                let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
+                fingerprintAtOpen = fingerprint
+                baseText = decode(data)
+                document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
+                let controller = CSVGridController(text: baseText ?? "", fileName: fileName)
+                state = .csv(controller)
                 startWatching()
                 observeNotes()
                 return
@@ -308,6 +329,12 @@ final class DocumentSession: Identifiable {
     }
 
     func handleExternalChange() async {
+        if csvController != nil || { if case .quickLook = state { return true } else { return false } }() {
+            // Rebuild the grid or preview from disk; notes re-anchor through the text path on the next open.
+            guard let expected = fingerprintAtOpen, case .changed = try? await fileSystem.checkForChanges(at: path, since: expected) else { return }
+            await open()
+            return
+        }
         if imageController != nil {
             await reloadImage()
             return
@@ -420,6 +447,13 @@ final class DocumentSession: Identifiable {
 
     /// Pushes note ranges into the editor, preferring live (edited) ranges over stored anchors.
     private func syncHighlights() {
+        if let csv = csvController {
+            csv.highlights = notes.compactMap { note in
+                guard case .text(let anchor) = note.anchor else { return nil }
+                return TextHighlight(id: note.id, range: csv.lineIndex.range(for: anchor), color: note.color, state: note.state)
+            }
+            return
+        }
         if let pdf = pdfController {
             pdf.highlights = notes.compactMap { note in
                 guard case .pdf(let anchor) = note.anchor else { return nil }
@@ -512,6 +546,17 @@ final class DocumentSession: Identifiable {
 
     /// Starts a note for the current selection (or the whole file when there is no text viewer).
     func beginNote() {
+        if let reanchoring = reanchoringNoteID {
+            placeOrphan(reanchoring)
+            return
+        }
+        if let csv = csvController {
+            guard let range = csv.selectionRange else { return }
+            let anchor = ReAnchorer.make(from: range, in: csv.text, index: csv.lineIndex, hash: Data(csv.text.utf8).sha256Hex)
+            let rect = csv.rectProvider(csv.selectedRows) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
+            noteEditor = NoteEditorState(anchor: .text(anchor), body: "", color: lastUsedColor, anchorRect: rect)
+            return
+        }
         if let pdf = pdfController {
             guard let anchor = pdf.selectionAnchor else { return }
             let bounds = anchor.bounds?.cgRect ?? pdf.textSelection?.bounds ?? .zero
@@ -540,6 +585,49 @@ final class DocumentSession: Identifiable {
             noteEditor = NoteEditorState(anchor: .text(anchor), body: "", color: lastUsedColor, anchorRect: rect)
         } else {
             noteEditor = NoteEditorState(anchor: .wholeFile, body: "", color: lastUsedColor, anchorRect: CGRect(x: 40, y: 40, width: 1, height: 1))
+        }
+    }
+
+    /// Starts re-anchoring: the viewer jumps near the old position and waits for a new selection.
+    func beginReanchor(_ note: Note) {
+        reanchoringNoteID = note.id
+        banner = .reanchoring
+        if let controller = textController, case .text(let anchor) = note.anchor {
+            let range = controller.lineIndex.contentRange(ofLine: anchor.start.line)
+            if let markdown { markdown.scroll(toSource: range) } else { controller.scroll(to: range) }
+        }
+    }
+
+    func cancelReanchor() {
+        reanchoringNoteID = nil
+        if banner == .reanchoring { banner = nil }
+    }
+
+    /// Uses the current selection as the orphan's new anchor and makes it a draft again.
+    private func placeOrphan(_ id: NoteID) {
+        var newAnchor: Anchor?
+        if let controller = textController {
+            var range = controller.selection
+            if let markdown, markdown.mode == .rendered, let mapping = markdown.renderedSelectionMapping { range = mapping.source }
+            if range.length > 0 {
+                newAnchor = .text(ReAnchorer.make(from: range, in: controller.text, index: controller.lineIndex, hash: Data(controller.text.utf8).sha256Hex))
+            }
+        } else if let image = imageController, let anchor = image.selectionAnchor {
+            newAnchor = .image(anchor)
+        } else if let pdf = pdfController, let anchor = pdf.selectionAnchor {
+            newAnchor = .pdf(anchor)
+        } else if let csv = csvController, let range = csv.selectionRange {
+            newAnchor = .text(ReAnchorer.make(from: range, in: csv.text, index: csv.lineIndex, hash: Data(csv.text.utf8).sha256Hex))
+        }
+        guard let newAnchor else { return }
+        cancelReanchor()
+        Task {
+            do {
+                try await noteStore.restoreDraft(id, anchor: newAnchor)
+                needsReview.remove(id)
+            } catch {
+                lastError = "Re-anchoring failed: \(error)"
+            }
         }
     }
 

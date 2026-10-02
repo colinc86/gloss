@@ -6,8 +6,8 @@ struct LineDiffTests {
     func apply(_ edits: [DiffEdit], old: [String], new: [String]) -> [String] {
         edits.compactMap { edit in
             switch edit {
-            case .equal(let o, _): old[o]
-            case .insert(let n): new[n]
+            case .equal(let oldIndex, _): old[oldIndex]
+            case .insert(let newIndex): new[newIndex]
             case .delete: nil
             }
         }

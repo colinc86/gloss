@@ -68,11 +68,31 @@ struct ViewerPane: View {
                         onCancel: { session.noteEditor = nil }
                     )
                 }
+        case .csv(let controller):
+            CSVGridPane(controller: controller)
+                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 }), attachmentAnchor: .rect(.rect(session.noteEditor?.anchorRect ?? .zero)), arrowEdge: .bottom) { state in
+                    NotePopover(
+                        state: state,
+                        onSave: { edited in Task { await session.commitNote(edited) } },
+                        onDelete: { id in Task { await session.deleteNote(id) } },
+                        onCancel: { session.noteEditor = nil }
+                    )
+                }
+        case .quickLook(let url):
+            QuickLookView(url: url)
+                .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 })) { state in
+                    NotePopover(
+                        state: state,
+                        onSave: { edited in Task { await session.commitNote(edited) } },
+                        onDelete: { id in Task { await session.deleteNote(id) } },
+                        onCancel: { session.noteEditor = nil }
+                    )
+                }
         case .unsupported(let kind):
             ContentUnavailableView(
                 session.fileName,
                 systemImage: icon(for: kind),
-                description: Text("The \(kind.rawValue) viewer arrives in a later step.")
+                description: Text("No viewer for this file on a remote host yet. Whole-file notes still work (⌘⇧N).")
             )
             .popover(item: Binding(get: { session.noteEditor }, set: { session.noteEditor = $0 })) { state in
                 NotePopover(
@@ -110,6 +130,8 @@ private struct BannerView: View {
             case .externalChange:
                 Button("Reload") { Task { await session.reloadFromDisk() } }
                 Button("Keep Mine") { session.dismissBanner() }
+            case .reanchoring:
+                Button("Cancel") { session.cancelReanchor() }
             default:
                 Button("Dismiss") { session.dismissBanner() }
             }
@@ -126,6 +148,7 @@ private struct BannerView: View {
         case .readOnlyLargeFile: "Files over 2 MB open read-only."
         case .tooLarge: "Files over 50 MB are not shown in the text viewer."
         case .nonAtomicSave: "This host cannot rename atomically; saves are not crash-safe."
+        case .reanchoring: "Select the note's new range, then press ⌘⇧N to place it."
         }
     }
 }
