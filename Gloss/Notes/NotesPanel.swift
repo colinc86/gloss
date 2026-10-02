@@ -11,7 +11,7 @@ struct NotesPanel: View {
             header
             Divider()
             if panel.visibleGroups.isEmpty {
-                ContentUnavailableView("No notes", systemImage: "note.text", description: Text("Select text and press ⌘⇧N to add one."))
+                ContentUnavailableView("No notes", systemImage: "note.text", description: Text("Select something in a file and click Add Note."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(selection: $panel.selectedNoteID) {

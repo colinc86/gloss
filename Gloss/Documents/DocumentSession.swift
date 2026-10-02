@@ -566,6 +566,35 @@ final class DocumentSession: Identifiable {
         syncHighlights()
     }
 
+    /// Where the floating "Add Note" button should sit: the current selection's rect in top-left window
+    /// coordinates, or nil when nothing is selected or an editor is already open. Reads the controllers'
+    /// observable selection state, so SwiftUI re-evaluates it as the selection changes.
+    var selectionAffordanceRect: CGRect? {
+        guard noteEditor == nil, reanchoringNoteID == nil else { return nil }
+        if let csv = csvController {
+            guard csv.selectionRange != nil else { return nil }
+            return csv.rectProvider(csv.selectedRows)
+        }
+        if let pdf = pdfController {
+            guard let anchor = pdf.selectionAnchor else { return nil }
+            let bounds = anchor.bounds?.cgRect ?? pdf.textSelection?.bounds ?? .zero
+            return pdf.rect(forPage: anchor.page, bounds: bounds)
+        }
+        if let image = imageController {
+            guard let selection = image.selection, image.selectionAnchor != nil else { return nil }
+            return image.rect(forPixelRect: selection)
+        }
+        if let controller = textController {
+            if let markdown, markdown.mode == .rendered {
+                guard let mapping = markdown.renderedSelectionMapping, mapping.source.length > 0 else { return nil }
+                return markdown.rect(forSource: mapping.source)
+            }
+            guard controller.selection.length > 0 else { return nil }
+            return controller.rect(for: controller.selection)
+        }
+        return nil
+    }
+
     /// Starts a note for the current selection (or the whole file when there is no text viewer).
     func beginNote() {
         if let reanchoring = reanchoringNoteID {

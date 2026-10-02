@@ -108,7 +108,7 @@ private struct BannerView: View {
         case .decodedAsLatin1: "This file is not valid UTF-8 and was decoded as Latin-1."
         case .readOnlyLargeFile: "Files over 2 MB open read-only."
         case .tooLarge: "Files over 50 MB are not shown in the text viewer."
-        case .reanchoring: "Select the note's new range, then press ⌘⇧N to place it."
+        case .reanchoring: "Select the note's new range, then click Add Note (or press ⌘⇧N) to place it."
         }
     }
 }
@@ -145,12 +145,25 @@ private struct StatusBar: View {
     }
 }
 
-/// Presents the note popover at `anchorRect`, which providers give in top-left window coordinates.
+/// Presents the note popover at `anchorRect`, which providers give in top-left window coordinates, and floats an
+/// "Add Note" button next to whatever is selected, so a note never needs the keyboard shortcut.
 private struct NotePopoverHost: ViewModifier {
     let session: DocumentSession
 
     func body(content: Content) -> some View {
         content.overlay {
+            GeometryReader { proxy in
+                let origin = proxy.frame(in: .global).origin
+                if let selection = session.selectionAffordanceRect {
+                    let local = selection.offsetBy(dx: -origin.x, dy: -origin.y)
+                    AddNoteButton(action: { session.beginNote() })
+                        .position(AddNoteButton.placement(for: local, in: proxy.size))
+                        .transition(.opacity)
+                        .animation(.easeOut(duration: 0.12), value: local)
+                }
+            }
+        }
+        .overlay {
             GeometryReader { proxy in
                 let origin = proxy.frame(in: .global).origin
                 let rect = (session.noteEditor?.anchorRect ?? .zero).offsetBy(dx: -origin.x, dy: -origin.y)
@@ -166,6 +179,37 @@ private struct NotePopoverHost: ViewModifier {
             }
             .allowsHitTesting(false)
         }
+    }
+}
+
+/// The floating pill. Glass on macOS 26, sized to its label; placed above the selection's trailing edge, or
+/// below it when there is no room above.
+struct AddNoteButton: View {
+    let action: () -> Void
+    static let size = CGSize(width: 108, height: 30)
+
+    var body: some View {
+        Button(action: action) {
+            Label("Add Note", systemImage: "note.text.badge.plus")
+                .labelStyle(.titleAndIcon)
+                .font(.callout.weight(.medium))
+                .padding(.horizontal, 10)
+                .frame(height: Self.size.height)
+        }
+        .buttonStyle(.glass)
+        .help("Attach a note to the selection (⌘⇧N)")
+        .accessibilityIdentifier("addNoteButton")
+    }
+
+    /// Center point for `.position`, kept inside `bounds`.
+    static func placement(for selection: CGRect, in bounds: CGSize) -> CGPoint {
+        let gap: CGFloat = 8
+        var x = selection.maxX - size.width / 2
+        var y = selection.minY - gap - size.height / 2
+        if y - size.height / 2 < 0 { y = selection.maxY + gap + size.height / 2 }
+        x = min(max(x, size.width / 2 + gap), bounds.width - size.width / 2 - gap)
+        y = min(max(y, size.height / 2), bounds.height - size.height / 2)
+        return CGPoint(x: x, y: y)
     }
 }
 
