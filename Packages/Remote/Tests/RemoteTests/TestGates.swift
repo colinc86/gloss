@@ -29,7 +29,6 @@ enum TestGates {
     }
 }
 
-
 /// Loopback tests share one sshd; running them one at a time keeps them deterministic.
 actor LoopbackSerializer {
     static let shared = LoopbackSerializer()

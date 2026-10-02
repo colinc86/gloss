@@ -20,7 +20,7 @@ struct RemoteSearchParsingTests {
 struct ExecIntegrationTests {
     @Test(.enabled(if: TestGates.loopback))
     func searchesAndStagesOverLoopback() async throws {
-        try await TestGates.withManager { manager, control in
+        try await TestGates.withManager { manager, _ in
             let host = HostID.new()
             let connection = try await manager.connection(for: host, alias: "localhost")
             let root = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-exec-\(UUID().uuidString.prefix(8))")

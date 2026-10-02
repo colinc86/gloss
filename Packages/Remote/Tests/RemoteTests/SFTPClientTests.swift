@@ -90,7 +90,7 @@ struct SFTPClientTests {
 
     @Test(.enabled(if: TestGates.loopback))
     func loopbackSFTPEndToEnd() async throws {
-        try await TestGates.withManager { manager, control in
+        try await TestGates.withManager { manager, _ in
             let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
             let fs = SFTPFileSystem(hostID: HostID.new(), connection: connection)
             let client = try await fs.channel.client()

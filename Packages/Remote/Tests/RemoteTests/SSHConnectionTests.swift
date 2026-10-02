@@ -6,7 +6,7 @@ import Testing
 struct SSHConnectionTests {
     @Test(.enabled(if: TestGates.loopback))
     func masterConnectsExecsAndExitsCleanly() async throws {
-        try await TestGates.withManager { manager, control in
+        try await TestGates.withManager { manager, _ in
             let host = HostID.new()
             let connection = try await manager.connection(for: host, alias: "localhost")
             #expect(await connection.state == .connected)
