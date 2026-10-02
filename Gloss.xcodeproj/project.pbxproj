@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		CC00000000000000000000A1 /* Core in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A1 /* Core */; };
 		CC00000000000000000000A2 /* Viewers in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A2 /* Viewers */; };
+		CC00000000000000000000A3 /* Remote in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A3 /* Remote */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -58,6 +59,7 @@
 			files = (
 				CC00000000000000000000A1 /* Core in Frameworks */,
 				CC00000000000000000000A2 /* Viewers in Frameworks */,
+				CC00000000000000000000A3 /* Remote in Frameworks */,
 			);
 		};
 		3B84F6AE306F03BF003DBBFF /* Frameworks */ = {
@@ -106,6 +108,7 @@
 			packageProductDependencies = (
 				BB00000000000000000000A1 /* Core */,
 				BB00000000000000000000A2 /* Viewers */,
+				BB00000000000000000000A3 /* Remote */,
 			);
 			productName = "Gloss";
 			productReference = 3B84F6A2306F03BD003DBBFF /* Gloss.app */;
@@ -163,6 +166,7 @@
 			packageReferences = (
 				AA00000000000000000000A1 /* XCLocalSwiftPackageReference "Packages/Core" */,
 				AA00000000000000000000A2 /* XCLocalSwiftPackageReference "Packages/Viewers" */,
+				AA00000000000000000000A3 /* XCLocalSwiftPackageReference "Packages/Remote" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B84F6A3306F03BD003DBBFF /* Products */;
@@ -471,6 +475,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/Viewers;
 		};
+		AA00000000000000000000A3 /* XCLocalSwiftPackageReference "Packages/Remote" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Remote;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -481,6 +489,10 @@
 		BB00000000000000000000A2 /* Viewers */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Viewers;
+		};
+		BB00000000000000000000A3 /* Remote */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Remote;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

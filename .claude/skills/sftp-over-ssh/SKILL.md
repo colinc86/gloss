@@ -10,7 +10,7 @@ Decision (2026-10-01): no pure-Swift SSH library. Spawn `/usr/bin/ssh`, which in
 ## Connection lifecycle
 
 ```
-CP=$TMPDIR/gl/%C                                 # %C = hash of host/user/port; ~96 bytes for this user
+CP=$TMPDIR/gl/<10-char host id>                 # NOT %C: ssh binds via "<path>.<16 random chars>", and %C alone is 40 chars
 ssh -o ControlMaster=yes -o ControlPath="$CP" -o ControlPersist=no \
     -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
     -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes \
@@ -25,7 +25,7 @@ ssh -o ControlPath="$CP" -O cancel -L <local-sock>:<remote-sock> <host>
 ssh -O exit <host>                               # tear down
 ```
 
-- Unix socket paths on macOS are limited to 104 bytes including the NUL. The Application Support path with `%C` is 103 bytes for user `colin` (verified 2026-10-01), so the ControlPath lives at `$TMPDIR/gl/%C` (about 96 bytes). Local forwarded sockets go under `$TMPDIR/gl/` for the same reason.
+- Unix socket paths on macOS are limited to 104 bytes including the NUL, and ssh binds the control socket through a temporary name with a 17-character suffix (`unix_listener: path ... too long`, verified 2026-10-01 with OpenSSH 10.3). So `$TMPDIR/gl/%C` (93 bytes + 17) fails too; the ControlPath is `$TMPDIR/gl/<10-char suffix of the host id>` (about 80 bytes with the suffix). Local forwarded sockets go under `$TMPDIR/gl/` for the same reason.
 - First connection may need host key confirmation or a key passphrase. Run the master with a pty-less `Process`; if it exits with "Host key verification failed", surface the fingerprint and offer `-o StrictHostKeyChecking=accept-new` for that host only. Passphrases must come from ssh-agent; the app never prompts for them.
 - Detect disconnect by the master Process exiting or `-O check` failing; reconnect with backoff, then re-open the SFTP channel and re-add forwards.
 - `BatchMode=yes` and `ControlMaster=no` on everything except the master so nothing ever blocks on a prompt and a client never becomes a stray master.

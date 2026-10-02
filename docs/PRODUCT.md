@@ -130,7 +130,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 | --- | --- | --- |
 | Language and UI | Swift 6, SwiftUI shell, AppKit for outline view, text editor, PDF, image canvas | Native feel, performance, system integration |
 | Deployment target | macOS 26 | Other machines still on 26 |
-| Remote connection | System `ssh` with a ControlMaster socket per host under `$TMPDIR/gl/%C`; the master runs without BatchMode so the 1Password agent can prompt | Inherits ssh config, keys, agent, ProxyJump. Pure-Swift SSH libraries lack config and agent support |
+| Remote connection | System `ssh` with a ControlMaster socket per host under `$TMPDIR/gl/<short host id>` (ssh's bind-time suffix rules out `%C`); the master runs without BatchMode so the 1Password agent can prompt | Inherits ssh config, keys, agent, ProxyJump. Pure-Swift SSH libraries lack config and agent support |
 | Remote file access | SFTP v3 spoken by the app over the `sftp` subsystem | Exact protocol with stat, rename, atomic save; no remote shell assumptions |
 | Remote commands | Exec channel on the same connection | Search, git status, tmux, Herdr CLI, staging |
 | Forwarding | OpenSSH forwarding on the control connection | Remote Herdr socket to a local path, local MCP port to the host |
