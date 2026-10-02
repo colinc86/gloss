@@ -18,27 +18,23 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
     init(arguments: [String]) {
         var iterator = arguments.dropFirst().makeIterator()
         while let argument = iterator.next() {
-            switch argument {
-            case "--root":
-                root = iterator.next()
-            case "--host":
-                host = iterator.next() ?? "local"
-            case "--open":
-                open = iterator.next()
-            case "--reset-db":
+            if argument == "--reset-db" {
                 resetDatabase = true
-            default:
-                if argument.hasPrefix("--"), let equals = argument.firstIndex(of: "=") {
-                    let key = String(argument[..<equals])
-                    let value = String(argument[argument.index(after: equals)...])
-                    switch key {
-                    case "--root": root = value
-                    case "--host": host = value
-                    case "--open": open = value
-                    default: break
-                    }
-                }
+            } else if let equals = argument.firstIndex(of: "="), argument.hasPrefix("--") {
+                apply(key: String(argument[..<equals]), value: String(argument[argument.index(after: equals)...]))
+            } else if argument.hasPrefix("--") {
+                guard let value = iterator.next() else { break }
+                apply(key: argument, value: value)
             }
+        }
+    }
+
+    private mutating func apply(key: String, value: String) {
+        switch key {
+        case "--root": root = value
+        case "--host": host = value
+        case "--open": open = value
+        default: break
         }
     }
 
