@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // At file scope the two-argument call resolves to the C function rather than the `stat` struct.
@@ -62,6 +63,9 @@ public struct LocalFileSystem: FileSystemProvider {
         do {
             try data.write(to: URL(fileURLWithPath: temporary), options: [])
             try FileManager.default.setAttributes([.posixPermissions: Int(mode)], ofItemAtPath: temporary)
+            // The rename would otherwise drop the original's extended attributes (Finder tags, quarantine, app
+            // metadata). Failure is fine: the file may not exist yet.
+            _ = copyfile(path, temporary, nil, copyfile_flags_t(COPYFILE_XATTR))
             guard Foundation.rename(temporary, path) == 0 else {
                 let code = errno
                 try? FileManager.default.removeItem(atPath: temporary)

@@ -139,8 +139,13 @@ final class SendCoordinator {
         let pending = try await noteStore.pendingNotes(hostID: hostID, pathPrefix: cwd).filter { $0.note.state == .draft }
         let (notes, attachments) = try await collect(noteIDs: pending.map(\.note.id))
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
-        let text = PacketBuilder.hookText(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged))
-        return (text, notes.map(\.note.id))
+        // Each block costs at least its header lines; when the headers alone cannot fit, the builder will use
+        // the summary form, so reading every document (over SFTP, inside the hook's timeout) would be wasted.
+        let headersOnly = notes.count * 80 > PacketBuilder.hookDefaultLimit
+        let packetNotes = headersOnly
+            ? notes.map { PacketNote(noteID: $0.note.id, agentPath: $0.document.path, source: PacketSource(kind: $0.document.kind), anchor: $0.note.anchor, comment: $0.note.body) }
+            : try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged)
+        return (PacketBuilder.hookText(packetNotes), notes.map(\.note.id))
     }
 
     func draftNoteIDs(documentID: DocumentID?) async -> [NoteID] {

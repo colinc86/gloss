@@ -189,8 +189,8 @@ public struct PDFViewerView: NSViewRepresentable {
             guard let pdfView = container?.pdfView else { return }
             var selections: [PDFSelection] = []
             for highlight in controller.highlights where highlight.bounds == nil {
-                guard let text = highlight.text, let page = controller.document.page(at: highlight.page) else { continue }
-                if let selection = page.document?.findString(text, withOptions: [.caseInsensitive]).first(where: { $0.pages.contains(page) }) {
+                guard let text = highlight.text else { continue }
+                if let selection = controller.selections(matching: text, onPage: highlight.page).first {
                     selection.color = Theme.color(for: highlight.color).withAlphaComponent(0.35)
                     selections.append(selection)
                 }

@@ -28,7 +28,9 @@ public enum FSEventsWatcher {
     }
 
     public static func events(forPaths paths: [String], latency: TimeInterval = 0.3) -> AsyncStream<FileSystemEvent> {
-        AsyncStream { continuation in
+        // Events are coalesced paths, so a consumer that falls behind only needs the newest ones; an unbounded
+        // buffer would grow without limit during a large checkout or build while the consumer is busy.
+        AsyncStream(bufferingPolicy: .bufferingNewest(512)) { continuation in
             let box = Unmanaged.passRetained(Box(continuation))
             var context = FSEventStreamContext(
                 version: 0, info: box.toOpaque(),

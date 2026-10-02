@@ -97,6 +97,14 @@ Herdr's own `[remote] manage_ssh_config` only affects Herdr's attach connection;
 
 ## Plugins
 
+Verified on 0.9.3 (2026-10-02): `herdr plugin link <dir>` validates the manifest and warns when top-level
+`platforms` is missing; `herdr plugin action list` / `herdr plugin action invoke <plugin>.<action>` run actions
+from the CLI; actions get `HERDR_PLUGIN_CONTEXT_JSON` with `workspace_cwd`, `focused_pane_cwd`, `focused_pane_id`,
+`focused_pane_agent`, `focused_pane_status`, `invocation_source`, plus `selected_text` for selection invocations and
+`clicked_url` / `HERDR_PLUGIN_CLICKED_URL` for link handlers (Control-click). Herdr creates
+`~/.local/state/herdr/plugins/<id>` and `~/.config/herdr/plugins/config/<id>` on first use and does not remove them on
+unlink. Commands are argv arrays run without a shell from the plugin directory.
+
 A plugin is a directory with `herdr-plugin.toml` (`id`, `name`, `version`, `min_herdr_version`, `[[actions]]`, `[[panes]]`, `[[link_handlers]]`, `[[events]]`).
 Actions receive `HERDR_PLUGIN_CONTEXT_JSON` with workspace, tab, pane, agent, selected text, and clicked URL.
 Bind in config.toml: `[[keys.command]] key = "prefix+n" type = "plugin_action" command = "<plugin.id>.<action>"`.

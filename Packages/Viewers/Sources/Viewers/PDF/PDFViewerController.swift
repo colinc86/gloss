@@ -47,11 +47,34 @@ public final class PDFViewerController {
     /// Set by the view: page-space rect → container coordinates.
     @ObservationIgnored public var rectProvider: (Int, CGRect) -> CGRect? = { _, _ in nil }
 
+    /// `findString` walks every page, and the view asks for the same (page, text) on every highlight pass.
+    /// `document` is immutable, so nothing here goes stale; a reloaded file gets a new controller and an empty cache.
+    @ObservationIgnored private var selectionCache: [SelectionKey: [PDFSelection]] = [:]
+
+    private struct SelectionKey: Hashable {
+        var page: Int
+        var text: String
+    }
+
     public init(document: PDFDocument) {
         self.document = document
     }
 
     public var pageCount: Int { document.pageCount }
+
+    /// Case-insensitive matches of `text` on one page, as fresh copies so callers may recolour them freely.
+    public func selections(matching text: String, onPage page: Int) -> [PDFSelection] {
+        let key = SelectionKey(page: page, text: text)
+        let cached: [PDFSelection]
+        if let hit = selectionCache[key] {
+            cached = hit
+        } else {
+            guard let pdfPage = document.page(at: page) else { return [] }
+            cached = document.findString(text, withOptions: [.caseInsensitive]).filter { $0.pages.contains(pdfPage) }
+            selectionCache[key] = cached
+        }
+        return cached.compactMap { $0.copy() as? PDFSelection }
+    }
 
     /// The anchor for whatever is selected: a drawn region first, else a text selection.
     public var selectionAnchor: PDFAnchor? {

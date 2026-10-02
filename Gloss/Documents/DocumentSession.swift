@@ -210,11 +210,17 @@ final class DocumentSession: Identifiable {
     }
 
     /// Discards unsaved edits and shows what is on disk now.
-    func reloadFromDisk() async {
+    /// `discardingEdits: false` is the automatic path behind the watcher: edits that arrived while the read was in
+    /// flight win, and the banner offers the reload instead of silently replacing them.
+    func reloadFromDisk(discardingEdits: Bool = true) async {
         guard let controller = textController else { return }
         do {
             let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
             let text = decode(data)
+            if !discardingEdits, isDirty {
+                if text != baseText { banner = .externalChange }
+                return
+            }
             fingerprintAtOpen = fingerprint
             baseText = text
             controller.replaceAll(with: text)
@@ -364,7 +370,7 @@ final class DocumentSession: Identifiable {
             if isDirty {
                 banner = .externalChange
             } else {
-                await reloadFromDisk()
+                await reloadFromDisk(discardingEdits: false)
             }
         } catch {
             Log.viewer.error("external change check failed: \(error, privacy: .public)")

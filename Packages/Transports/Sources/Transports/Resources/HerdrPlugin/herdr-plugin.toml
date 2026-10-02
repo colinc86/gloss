@@ -1,0 +1,24 @@
+id = "gloss"
+name = "Gloss"
+version = "1.0.0"
+min_herdr_version = "0.9.0"
+description = "Send selected text to Gloss as a note; open file links in its viewer"
+platforms = ["macos", "linux"]
+
+[[actions]]
+id = "note-from-selection"
+title = "Send selection to Gloss"
+contexts = ["selection", "pane"]
+command = ["sh", "bin/gloss-plugin.sh", "note"]
+
+[[actions]]
+id = "open-link"
+title = "Open in Gloss"
+contexts = ["pane"]
+command = ["sh", "bin/gloss-plugin.sh", "open"]
+
+[[link_handlers]]
+id = "file-link"
+title = "Open file in Gloss"
+pattern = "^file://.+"
+action = "open-link"

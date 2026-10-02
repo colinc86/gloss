@@ -29,6 +29,8 @@ final class AppModel {
     private(set) var mcpStatus: String?
     /// Remote home directories, learned from the probe when a host connects (hook installs need them).
     private(set) var hostHomes: [HostID: String] = [:]
+    @ObservationIgnored private var cleanupTasks: [HostID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var warnedNonAtomic: Set<HostID> = []
     /// Follow mode: the explorer opens the directory of whichever Herdr agent pane has focus.
     var followHerdr = false {
         didSet { followHerdr ? startFollowing() : stopFollowing() }
@@ -72,6 +74,14 @@ final class AppModel {
         notesPanel.start()
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
             guard let self else { return }
+            var fileSystem = fileSystem
+            fileSystem.onNonAtomicSave = { [weak self] in
+                Task { @MainActor in
+                    guard let self, !self.warnedNonAtomic.contains(hostID) else { return }
+                    self.warnedNonAtomic.insert(hostID)
+                    self.hosts.noteWarning("This host's sftp server lacks posix-rename; saves there replace the file in two steps.", for: hostID)
+                }
+            }
             let firstRegistration = self.fileSystems[hostID] == nil
             self.fileSystems[hostID] = fileSystem
             self.connections[hostID] = connection
@@ -84,8 +94,15 @@ final class AppModel {
             }
             let stager = RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem, noteStore: self.noteStore)
             self.send.register(stager: stager, for: hostID)
-            // Expired staging directories are swept once per host per launch, not on every host click.
-            if firstRegistration { Task { await stager.cleanupExpired() } }
+            // Expired staging directories are swept when the host first comes up and every 24 h after that.
+            if firstRegistration {
+                self.cleanupTasks[hostID] = Task {
+                    while !Task.isCancelled {
+                        await stager.cleanupExpired()
+                        try? await Task.sleep(for: .seconds(24 * 3600))
+                    }
+                }
+            }
         }
         hosts.onDisconnected = { [weak self] hostID in
             guard let self else { return }
@@ -93,6 +110,8 @@ final class AppModel {
             self.fileSystems[hostID] = nil
             self.followTasks[hostID]?.cancel()
             self.followTasks[hostID] = nil
+            self.cleanupTasks[hostID]?.cancel()
+            self.cleanupTasks[hostID] = nil
             Task {
                 await self.connectionRegistry.remove(hostID)
                 await self.herdrTransport.forget(hostID)

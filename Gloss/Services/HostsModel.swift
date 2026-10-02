@@ -72,6 +72,13 @@ final class HostsModel {
         hostID == .local ? .connected : (status[hostID] ?? .idle)
     }
 
+    /// One-line warnings per host shown under the picker (e.g. a non-atomic save fallback).
+    private(set) var warnings: [HostID: String] = [:]
+
+    func noteWarning(_ message: String, for hostID: HostID) {
+        warnings[hostID] = message
+    }
+
     /// Connects (reusing a live master) and hands the file system to the app. Returns the remote home directory.
     func connect(_ hostID: HostID) async -> String? {
         guard let entry = entry(for: hostID), entry.kind == .ssh else { return nil }

@@ -119,6 +119,7 @@ public struct SFTPFileSystem: FileSystemProvider {
         let directory = PathUtilities.parent(of: target)
         let name = PathUtilities.name(of: target)
         let temporary = PathUtilities.join(directory, ".cc-\(name)-\(String(UInt32.random(in: 0...UInt32.max), radix: 16)).tmp")
+        await sweepStaleTemporaries(in: directory, client: client)
         var originalRemoved = false
         do {
             let handle = try await client.open(temporary, flags: [.write, .create, .exclusive, .truncate], attributes: SFTPAttributes(permissions: mode))
@@ -146,6 +147,17 @@ public struct SFTPFileSystem: FileSystemProvider {
             if originalRemoved { throw Self.map(status, path: temporary) }
             try? await client.remove(temporary)
             throw Self.map(status, path: path)
+        }
+    }
+
+    /// A connection drop mid-save leaves `.cc-<name>-<hex>.tmp` behind; remove ones older than a day.
+    private func sweepStaleTemporaries(in directory: String, client: SFTPClient) async {
+        guard let entries = try? await client.listDirectory(directory) else { return }
+        let cutoff = Date().addingTimeInterval(-24 * 3600)
+        for entry in entries where entry.name.hasPrefix(".cc-") && entry.name.hasSuffix(".tmp") {
+            if let seconds = entry.attributes.mtime, Date(timeIntervalSince1970: TimeInterval(seconds)) < cutoff {
+                try? await client.remove(PathUtilities.join(directory, entry.name))
+            }
         }
     }
 

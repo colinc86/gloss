@@ -74,6 +74,8 @@ struct DocumentSessionTests {
         session.close()
     }
 
+    /// The session's FSEvents watcher runs alongside the explicit `handleExternalChange` calls here, so a reload it
+    /// started for v2 may still be reading when the edit below lands; the session keeps the edit in that case.
     @Test func externalChangeReloadsWhenClean() async throws {
         let (directory, path) = try makeFile("v1\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }

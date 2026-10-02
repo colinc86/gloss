@@ -104,6 +104,8 @@ public enum PacketBuilder {
 
     /// Ids listed in a hook closing line before it falls back to "and N more".
     public static let hookClosingIDLimit = 40
+    /// Claude Code and Codex cap `additionalContext` here.
+    public static let hookDefaultLimit = 10_000
 
     /// `<id>: <file>:<anchor> "<first 80 chars of comment>"`, the hook form used when the full packet exceeds the cap.
     public static func summaryLine(_ note: PacketNote) -> String {

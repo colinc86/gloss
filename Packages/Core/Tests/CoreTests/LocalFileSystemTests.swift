@@ -54,6 +54,22 @@ struct LocalFileSystemTests {
         }
     }
 
+    @Test func atomicWriteKeepsExtendedAttributes() async throws {
+        try await withTemporaryDirectory { directory, fs in
+            let path = "\(directory)/tagged.txt"
+            try "old".write(toFile: path, atomically: true, encoding: .utf8)
+            let name = "com.cnc.gloss.test"
+            let value = Array("tag".utf8)
+            #expect(setxattr(path, name, value, value.count, 0, 0) == 0)
+            _ = try await fs.writeAtomically(Data("new".utf8), to: path, preservingModeFrom: nil)
+            var buffer = [UInt8](repeating: 0, count: 16)
+            let length = getxattr(path, name, &buffer, buffer.count, 0, 0)
+            #expect(length == value.count)
+            #expect(length > 0 && Array(buffer.prefix(max(length, 0))) == value)
+            #expect(try await fs.read(path) == Data("new".utf8))
+        }
+    }
+
     @Test func conflictCheckUsesSizeMtimeThenHash() async throws {
         try await withTemporaryDirectory { directory, fs in
             let path = "\(directory)/doc.md"

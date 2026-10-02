@@ -72,25 +72,17 @@ final class ContentSearchModel {
         return order.map { ($0, groups[$0] ?? []) }
     }
 
-    nonisolated private static func run(pattern: String, root: String) async -> [SearchHit] {
-        await Task.detached(priority: .userInitiated) {
-            if let rg = ripgrepPath {
-                return runRipgrep(rg, pattern: pattern, root: root)
-            }
-            return runGrep(pattern: pattern, root: root)
-        }.value
+    /// Runs the search tool off the main actor and parses its output; cancelling the task terminates the child.
+    @concurrent nonisolated private static func run(pattern: String, root: String) async -> [SearchHit] {
+        if let rg = ripgrepPath {
+            return await runRipgrep(rg, pattern: pattern, root: root)
+        }
+        return await runGrep(pattern: pattern, root: root)
     }
 
-    nonisolated private static func runRipgrep(_ rg: String, pattern: String, root: String) -> [SearchHit] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: rg)
-        process.arguments = ["--json", "-n", "--no-messages", "--max-count", "200", "--max-filesize", "2M", "-e", pattern, "--", root]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [] }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+    nonisolated private static func runRipgrep(_ rg: String, pattern: String, root: String) async -> [SearchHit] {
+        let arguments = ["--json", "-n", "--no-messages", "--max-count", "200", "--max-filesize", "2M", "-e", pattern, "--", root]
+        guard let data = await output(of: rg, arguments: arguments) else { return [] }
         var hits: [SearchHit] = []
         for line in data.split(separator: 0x0A) {
             guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
@@ -104,20 +96,25 @@ final class ContentSearchModel {
         return hits
     }
 
-    nonisolated private static func runGrep(pattern: String, root: String) -> [SearchHit] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/grep")
-        process.arguments = ["-rnI", "--exclude-dir=.git", "-e", pattern, "--", root]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [] }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+    nonisolated private static func runGrep(pattern: String, root: String) async -> [SearchHit] {
+        guard let data = await output(of: "/usr/bin/grep", arguments: ["-rnI", "--exclude-dir=.git", "-e", pattern, "--", root]) else { return [] }
         return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
             let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
             guard parts.count == 3, let number = Int(parts[1]) else { return nil }
             return SearchHit(path: String(parts[0]), line: number, text: String(parts[2]))
         }
+    }
+
+    /// Everything the tool wrote to stdout by the time it exited, or nil when it could not start or the search was
+    /// cancelled. rg and grep exit 1 when nothing matched, so the exit status is not an error here; stderr is dropped.
+    nonisolated private static func output(of executable: String, arguments: [String]) async -> Data? {
+        guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: executable, arguments: arguments)) else { return nil }
+        let data = await withTaskCancellationHandler {
+            await process.collectStdout()
+        } onCancel: {
+            process.terminate()
+        }
+        _ = try? await process.exitCode
+        return Task.isCancelled ? nil : data
     }
 }

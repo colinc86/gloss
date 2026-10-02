@@ -22,6 +22,8 @@ public actor HerdrTransport: Transport {
         self.herdrPath = herdrPath
     }
 
+    public static let execArgumentLimit = 120 * 1024
+
     public static func locateHerdr() -> String? {
         let candidates = ["/opt/homebrew/bin/herdr", "/usr/local/bin/herdr", (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/herdr")]
             + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { "\($0)/herdr" }
@@ -138,6 +140,8 @@ public actor HerdrTransport: Transport {
             case .socket(let path):
                 _ = try await HerdrClient(socketPath: path).prompt(target: identity.paneID, text: packet.text)
             case .exec:
+                // Linux limits one argv string to 128 KiB; the CLI takes the text as an argument.
+                guard packet.text.utf8.count < Self.execArgumentLimit else { throw DeliveryError.packetTooLarge(limit: Self.execArgumentLimit) }
                 guard let connection = await registry.connection(for: target.hostID) else { throw DeliveryError.targetUnavailable("host is not connected") }
                 let result = try await connection.exec("herdr agent prompt \(ShellQuote.single(identity.paneID)) \(ShellQuote.single(packet.text))", timeout: .seconds(30))
                 guard result.exitStatus == 0 else { throw Self.map(cliOutput: result.stdout, stderr: result.stderrText) }

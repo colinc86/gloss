@@ -92,6 +92,9 @@ private struct HooksSettings: View {
                     ForEach(HookAgent.allCases) { agent in
                         row(agent: agent, hostID: hostID)
                     }
+                    if model.hooks.status[HooksModel.Key(hostID: hostID, agent: .herdrPlugin)] == .installed {
+                        MCPSnippetRow(title: "Herdr keybinding (config.toml)", text: HookInstaller.keybindingSnippet)
+                    }
                 }
             }
             if let report = model.hooks.lastReport {

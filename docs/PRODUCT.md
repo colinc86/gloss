@@ -112,13 +112,13 @@ Notes: 2. Mark each resolved with the gloss MCP tool when done.
 | --- | --- | --- | --- |
 | Herdr socket | Push | Any agent in a Herdr pane, local or remote | NDJSON over the Unix socket. `agent.list` discovers targets, `agent.prompt` submits with bracketed paste, `events.subscribe` drives follow mode and status badges. Remote servers reached by forwarding their socket over the app's SSH connection |
 | MCP server | Pull and resolve | Claude Code, Codex, OpenCode | Streamable HTTP on localhost. Tools: `list_pending_notes`, `get_note`, `resolve_note`, `list_documents`. Attachments as resources. Port reverse-forwarded for remote agents; the app writes each agent's config line on request |
-| Claude Code hook | Pull | Claude Code | `UserPromptSubmit` hook drains pending notes into `additionalContext` (10,000 char limit) |
+| Claude Code hook | Pull | Claude Code | `UserPromptSubmit` hook drains draft notes under the session's cwd into `additionalContext` (10,000 char limit); drained notes become `sent` and stay reachable through MCP until resolved, so they are not re-injected on every prompt |
 | Codex hook | Pull | Codex | Same shape via `hooks.json`; experimental, needs the hooks feature flag |
 | OpenCode API | Push | OpenCode launched with a fixed port | `POST /session/:id/message` with text and image parts |
 | tmux | Push | Any agent in a tmux pane without Herdr | bracketed paste over the exec channel; pane chosen once per host |
 | Clipboard | Manual | Anything, including bare mosh or ssh | Packet as text; attachments by path |
 
-**Herdr plugin.** Ships with the app: a keybinding sends selected pane text to Gloss as a note; a link handler opens file paths printed by an agent in the viewer. Manifest plus a shell script calling the app's URL scheme.
+**Herdr plugin.** Ships with the app and is installed from Settings → Hooks, locally or on a connected host: the bundle is copied to `~/.config/gloss/herdr-plugin/` and linked with `herdr plugin link`. A keybinding (snippet shown in Settings; the app never edits Herdr's config) sends selected pane text to Gloss as a note; a link handler opens `file://` links printed by an agent in the viewer. On this Mac the script calls the app's URL scheme; on a host it posts to the app's `/plugin/note` endpoint through the reverse-forwarded port.
 
 **Herdr follow mode.** Subscribes to `pane.focused` and `pane.agent_status_changed` on every connected Herdr server. The focused pane's `foreground_cwd` becomes the suggested root. Remote: `~/.config/herdr/herdr.sock` forwarded to a local socket on the existing control connection.
 
@@ -209,5 +209,5 @@ Milestone 1 is the whole product. Done means every check passes on the local Mac
 
 - Should an agent be allowed to create notes through MCP, to ask anchored questions?
 - Should notes be exportable as a markdown file in the repo for agents with no transport?
-- Herdr plugin: installed automatically on first launch or offered from settings?
+- Herdr plugin: offered from Settings → Hooks (decided during milestone 1), never installed silently.
 - Is a menu bar presence useful for quick capture when the main window is closed?

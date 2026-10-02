@@ -8,6 +8,8 @@ public enum HookAgent: String, Sendable, CaseIterable, Identifiable {
     case claude
     case codex
     case opencode
+    /// Herdr's plugin: a keybinding sends the selected text to the app as a note.
+    case herdrPlugin = "herdr-plugin"
 
     public var id: String { rawValue }
 
@@ -16,6 +18,7 @@ public enum HookAgent: String, Sendable, CaseIterable, Identifiable {
         case .claude: "Claude Code"
         case .codex: "Codex"
         case .opencode: "OpenCode"
+        case .herdrPlugin: "Herdr plugin"
         }
     }
 }
@@ -37,6 +40,7 @@ public struct HookInstallReport: Sendable, Equatable {
 public enum HookInstallerError: Error, Sendable, Equatable {
     case unparsable(path: String, reason: String)
     case bundledScriptMissing
+    case commandFailed(String)
 }
 
 /// Installs the hook script and the per-agent configuration on a file system (this Mac or a host over SFTP), merging
@@ -73,6 +77,20 @@ public struct HookInstaller: Sendable {
     public var opencodeConfigPath: String { PathUtilities.join(home, ".config/opencode/opencode.json") }
     /// Remote hosts have no Application Support; the script reads the port from here.
     public var remotePortFilePath: String { PathUtilities.join(home, ".config/gloss/mcp-port") }
+    /// Tells the plugin which host alias it runs on, so notes land on the right host.
+    public var hostFilePath: String { PathUtilities.join(home, ".config/gloss/host") }
+    /// Where the plugin bundle is copied; linking from the app bundle would break on every rebuild or update.
+    public var pluginDirectory: String { PathUtilities.join(home, ".config/gloss/herdr-plugin") }
+    public static let pluginID = "gloss"
+    public static let pluginFiles = ["herdr-plugin.toml", "bin/gloss-plugin.sh"]
+    /// Shown in Settings; the app never edits Herdr's config.
+    public static let keybindingSnippet = """
+    [[keys.command]]
+    key = "prefix+n"
+    type = "plugin_action"
+    command = "gloss.note-from-selection"
+    description = "send selection to Gloss"
+    """
     public var mcpURL: String { "http://127.0.0.1:\(port)/mcp" }
 
     public func hookCommand(for agent: HookAgent) -> String {
@@ -83,6 +101,12 @@ public struct HookInstaller: Sendable {
     public static func bundledScript() throws -> Data {
         guard let url = Bundle.module.url(forResource: "gloss-notes", withExtension: "sh", subdirectory: "HookScripts"),
               let data = FileManager.default.contents(atPath: url.path) else { throw HookInstallerError.bundledScriptMissing }
+        return data
+    }
+
+    public static func bundledPluginFile(_ relativePath: String) throws -> Data {
+        guard let root = Bundle.module.url(forResource: "HerdrPlugin", withExtension: nil),
+              let data = FileManager.default.contents(atPath: root.appendingPathComponent(relativePath).path) else { throw HookInstallerError.bundledScriptMissing }
         return data
     }
 
@@ -103,6 +127,8 @@ public struct HookInstaller: Sendable {
             report.notices.append("Codex skips new hooks until you trust them: run /hooks inside Codex and trust the Gloss entry.")
         case .opencode:
             try await mergeOpenCodeConfig(report: &report)
+        case .herdrPlugin:
+            try await installPlugin(report: &report)
         }
         return report
     }
@@ -118,8 +144,14 @@ public struct HookInstaller: Sendable {
             _ = try? await run("codex mcp remove \(Self.mcpServerName) >/dev/null 2>&1")
         case .opencode:
             try await mergeOpenCodeConfig(remove: true, report: &report)
+        case .herdrPlugin:
+            _ = try? await run("herdr plugin unlink \(Self.pluginID) >/dev/null 2>&1")
+            for path in Self.pluginFiles.map({ PathUtilities.join(pluginDirectory, $0) }) + [PathUtilities.join(pluginDirectory, "bin"), pluginDirectory, hostFilePath]
+            where (try? await fileSystem.delete(path)) != nil {
+                report.changedFiles.append(path)
+            }
         }
-        if agent != .opencode, !(try await hookFileMentionsScript(claudeSettingsPath)), !(try await hookFileMentionsScript(codexHooksPath)) {
+        if agent == .claude || agent == .codex, !(try await hookFileMentionsScript(claudeSettingsPath)), !(try await hookFileMentionsScript(codexHooksPath)) {
             for path in [scriptPath] + (hostAlias != nil ? [remotePortFilePath] : []) where (try? await fileSystem.delete(path)) != nil {
                 report.changedFiles.append(path)
             }
@@ -141,6 +173,15 @@ public struct HookInstaller: Sendable {
             if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != Data("\(port)\n".utf8) {
                 return .outdated("port file does not match port \(port)")
             }
+            return .installed
+        case .herdrPlugin:
+            for file in Self.pluginFiles {
+                guard let installed = try? await fileSystem.read(PathUtilities.join(pluginDirectory, file)) else { return .notInstalled }
+                if let bundled = try? Self.bundledPluginFile(file), installed != bundled { return .outdated("\(file) differs from this build") }
+            }
+            guard let listed = try? await run("herdr plugin list --json"), listed.exitStatus == 0 else { return .outdated("herdr is not reachable") }
+            guard listed.stdoutText.contains("\"plugin_id\":\"\(Self.pluginID)\"") else { return .outdated("not linked in Herdr") }
+            if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != Data("\(port)\n".utf8) { return .outdated("port file does not match port \(port)") }
             return .installed
         case .opencode:
             guard let data = try? await fileSystem.read(opencodeConfigPath),
@@ -178,6 +219,35 @@ public struct HookInstaller: Sendable {
         let executable = FileAttributes(kind: .file, size: Int64(bundled.count), mtime: now(), mode: 0o755)
         _ = try await fileSystem.writeAtomically(bundled, to: scriptPath, preservingModeFrom: executable)
         report.changedFiles.append(scriptPath)
+    }
+
+    /// Copies the plugin bundle next to the port file and links it with `herdr plugin link`.
+    private func installPlugin(report: inout HookInstallReport) async throws {
+        try await fileSystem.makeDirectory(PathUtilities.join(pluginDirectory, "bin"))
+        for file in Self.pluginFiles {
+            let bundled = try Self.bundledPluginFile(file)
+            let path = PathUtilities.join(pluginDirectory, file)
+            if try await readIfPresent(path) == bundled { continue }
+            let mode: UInt16 = file.hasSuffix(".sh") ? 0o755 : 0o644
+            _ = try await fileSystem.writeAtomically(bundled, to: path, preservingModeFrom: FileAttributes(kind: .file, size: Int64(bundled.count), mtime: now(), mode: mode))
+            report.changedFiles.append(path)
+        }
+        let portLine = Data("\(port)\n".utf8)
+        if try await readIfPresent(remotePortFilePath) != portLine {
+            _ = try await fileSystem.writeAtomically(portLine, to: remotePortFilePath, preservingModeFrom: nil)
+            report.changedFiles.append(remotePortFilePath)
+        }
+        let hostLine = Data("\(hostAlias ?? "local")\n".utf8)
+        if try await readIfPresent(hostFilePath) != hostLine {
+            _ = try await fileSystem.writeAtomically(hostLine, to: hostFilePath, preservingModeFrom: nil)
+            report.changedFiles.append(hostFilePath)
+        }
+        _ = try? await run("herdr plugin unlink \(Self.pluginID) >/dev/null 2>&1")
+        let linked = try await run("herdr plugin link \(ShellQuote.single(pluginDirectory))")
+        guard linked.exitStatus == 0 else {
+            throw HookInstallerError.commandFailed("herdr plugin link: \(linked.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        report.notices.append("Bind a key in Herdr's config.toml:\n" + Self.keybindingSnippet)
     }
 
     /// Rewrites `hooks.UserPromptSubmit` so exactly one entry is ours (`command` nil removes it).
