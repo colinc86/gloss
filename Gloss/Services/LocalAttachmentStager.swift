@@ -9,8 +9,8 @@ struct LocalAttachmentStager: AttachmentStager {
         self.cacheRoot = cacheRoot
     }
 
-    func stage(_ files: [LocalAttachment], for target: AgentTarget, sendID: SendID) async throws -> [StagedAttachment] {
-        guard !files.isEmpty else { return [] }
+    func stage(_ files: [LocalAttachment], for target: AgentTarget, sendID: SendID) async throws -> StagingResult {
+        guard !files.isEmpty else { return .empty }
         let directory = cacheRoot.appendingPathComponent(sendID.rawValue, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var staged: [StagedAttachment] = []
@@ -21,7 +21,7 @@ struct LocalAttachmentStager: AttachmentStager {
             try FileManager.default.copyItem(atPath: file.localPath, toPath: destination.path)
             staged.append(StagedAttachment(noteID: file.noteID, agentPath: destination.path))
         }
-        return staged
+        return StagingResult(attachments: staged)
     }
 }
 

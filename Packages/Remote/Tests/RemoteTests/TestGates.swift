@@ -26,3 +26,36 @@ enum TestGates {
         return path
     }
 }
+
+
+/// Loopback tests share one sshd; running them one at a time keeps them deterministic.
+actor LoopbackSerializer {
+    static let shared = LoopbackSerializer()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !busy {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        if let next = waiters.first {
+            waiters.removeFirst()
+            next.resume()
+        } else {
+            busy = false
+        }
+    }
+}
+
+extension TestGates {
+    static func serialized<T>(_ body: () async throws -> T) async throws -> T {
+        await LoopbackSerializer.shared.acquire()
+        defer { Task { await LoopbackSerializer.shared.release() } }
+        return try await body()
+    }
+}

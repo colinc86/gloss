@@ -2,6 +2,7 @@ import Core
 import Foundation
 import Observation
 import OSLog
+import Remote
 
 struct SearchHit: Identifiable, Hashable, Sendable {
     var path: String
@@ -31,7 +32,7 @@ final class ContentSearchModel {
         isSearching = false
     }
 
-    func search(in root: String) {
+    func search(in root: String, connection: SSHConnection? = nil) {
         cancel()
         let pattern = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !pattern.isEmpty else {
@@ -41,7 +42,19 @@ final class ContentSearchModel {
         isSearching = true
         truncated = false
         task = Task { [weak self] in
-            let results = await Self.run(pattern: pattern, root: root)
+            var results: [SearchHit] = []
+            if let connection {
+                do {
+                    for try await hit in RemoteSearch.run(pattern: pattern, root: root, over: connection) {
+                        results.append(SearchHit(path: hit.path, line: hit.line, text: hit.text))
+                        if results.count > 500 { break }
+                    }
+                } catch {
+                    Log.explorer.error("remote search failed: \(error, privacy: .public)")
+                }
+            } else {
+                results = await Self.run(pattern: pattern, root: root)
+            }
             guard !Task.isCancelled, let self else { return }
             self.hits = Array(results.prefix(500))
             self.truncated = results.count > 500

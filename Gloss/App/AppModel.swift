@@ -2,6 +2,7 @@ import Core
 import Foundation
 import Observation
 import OSLog
+import Remote
 import Viewers
 
 /// Root object for the app: owns the database, the file systems per host, and the explorer.
@@ -15,7 +16,10 @@ final class AppModel {
     let notesPanel: NotesPanelModel
     let send: SendCoordinator
     let settings: SettingsStore
+    let hosts: HostsModel
     let launchOptions: AppLaunchOptions
+    /// Live ssh connections by host, for transports and search.
+    private(set) var connections: [HostID: SSHConnection] = [:]
     var showNotesPanel = true
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
@@ -38,12 +42,20 @@ final class AppModel {
         explorer = ExplorerModel(noteStore: store)
         notesPanel = NotesPanelModel(noteStore: store)
         settings = SettingsStore(noteStore: store)
+        hosts = HostsModel(noteStore: store)
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
         fileSystems[.local] = LocalFileSystem()
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
         send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
         notesPanel.start()
+        hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
+            guard let self else { return }
+            self.fileSystems[hostID] = fileSystem
+            self.connections[hostID] = connection
+            self.send.register(stager: RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem as! SFTPFileSystem, noteStore: self.noteStore), for: hostID)
+            Task { await RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem as! SFTPFileSystem, noteStore: self.noteStore).cleanupExpired() }
+        }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
     }
@@ -135,6 +147,8 @@ final class AppModel {
         guard !started else { return }
         started = true
         await settings.load()
+        send.stagedFileExpiryDays = settings.stagedFileExpiryDays
+        await hosts.refresh()
         explorer.showDotfiles = settings.showDotfilesByDefault
         if let root = launchOptions.root {
             await explorer.openRoot(hostID: .local, path: root)
@@ -197,9 +211,17 @@ final class AppModel {
         }
     }
 
+    /// Connects to a remote host and opens its home directory (or the given path) as a root.
+    func openRemoteRoot(hostID: HostID, path: String? = nil) async {
+        guard let home = await hosts.connect(hostID) else { return }
+        await explorer.openRoot(hostID: hostID, path: path ?? home)
+    }
+
     func shutDown() {
         notesPanel.stop()
         explorer.stopWatching()
+        let hosts = hosts
+        Task { await hosts.disconnectAll() }
         for session in sessions.values { session.close() }
         do {
             try database.close()

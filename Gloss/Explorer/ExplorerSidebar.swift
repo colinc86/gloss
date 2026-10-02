@@ -34,11 +34,7 @@ struct ExplorerSidebar: View {
         @Bindable var explorer = model.explorer
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Picker("Host", selection: .constant(HostID.local)) {
-                    Text("local").tag(HostID.local)
-                }
-                .labelsHidden()
-                .frame(maxWidth: 120)
+                HostPicker()
                 Spacer()
                 Button {
                     explorer.chooseRootWithPanel(hostID: .local)
@@ -48,11 +44,29 @@ struct ExplorerSidebar: View {
                 .help("Open Folder (⌘⇧O)")
                 .buttonStyle(.borderless)
             }
+            if let message = hostStatusMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
             if !explorer.tabs.isEmpty {
                 rootTabs
             }
         }
         .padding(8)
+    }
+
+    private var hostStatusMessage: String? {
+        guard let tab = model.explorer.selectedTab, tab.hostID != .local else { return nil }
+        switch model.hosts.status(for: tab.hostID) {
+        case .idle: return "Disconnected"
+        case .connecting: return "Connecting…"
+        case .waitingForAgent: return "Waiting for the SSH agent (check 1Password)…"
+        case .connected: return nil
+        case .reconnecting(let attempt): return "Reconnecting (attempt \(attempt))…"
+        case .failed(let message): return message
+        }
     }
 
     private var rootTabs: some View {
@@ -89,7 +103,9 @@ struct ExplorerSidebar: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("Search file contents", text: $search.query)
                 .textFieldStyle(.plain)
-                .onSubmit { if let root = model.explorer.selectedTab?.path { search.search(in: root) } }
+                .onSubmit {
+                    if let tab = model.explorer.selectedTab { search.search(in: tab.path, connection: model.connections[tab.hostID]) }
+                }
             if search.isSearching { ProgressView().controlSize(.small) }
             Button {
                 search.isVisible = false
@@ -126,5 +142,48 @@ struct ExplorerSidebar: View {
         }
         .padding(6)
         .font(.callout)
+    }
+}
+
+
+/// Chooses a host; picking a remote one connects and opens its home directory as a root.
+struct HostPicker: View {
+    @Environment(AppModel.self) private var model
+    @State private var selection: HostID = .local
+
+    var body: some View {
+        Picker("Host", selection: $selection) {
+            ForEach(model.hosts.entries) { entry in
+                Label(entry.name, systemImage: entry.kind == .local ? "desktopcomputer" : statusIcon(entry.id)).tag(entry.id)
+            }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 160)
+        .onChange(of: selection) { _, hostID in
+            guard hostID != .local else { return }
+            Task { await model.openRemoteRoot(hostID: hostID) }
+        }
+        .onChange(of: model.explorer.selectedTabID) { _, _ in
+            if let tab = model.explorer.selectedTab { selection = tab.hostID }
+        }
+        .alert("Unknown host key", isPresented: Binding(get: { model.hosts.pendingHostKey != nil }, set: { _ in })) {
+            Button("Accept and Connect") {
+                if let pending = model.hosts.pendingHostKey {
+                    Task { await model.openRemoteRoot(hostID: pending.hostID) ; _ = await model.hosts.acceptNewHostKey(pending.hostID) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This host's key is not in known_hosts yet.\n\(model.hosts.pendingHostKey?.fingerprint ?? "")\nAccept it for this host only?")
+        }
+    }
+
+    private func statusIcon(_ hostID: HostID) -> String {
+        switch model.hosts.status(for: hostID) {
+        case .connected: "network"
+        case .connecting, .waitingForAgent, .reconnecting: "network.badge.shield.half.filled"
+        case .failed: "exclamationmark.triangle"
+        case .idle: "network.slash"
+        }
     }
 }

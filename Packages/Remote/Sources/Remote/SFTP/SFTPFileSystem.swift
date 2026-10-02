@@ -24,7 +24,14 @@ public actor SFTPChannel {
         guard let connection else { throw SFTPClientError.connectionLost }
         let task = Task<SFTPClient, any Error> {
             let process = try await connection.openSFTPSubsystem()
-            return try await SFTPClient.connect(transport: ChildProcessSFTPTransport(process: process))
+            let stderrTask = Task { String(decoding: await process.collectStderr(), as: UTF8.self) }
+            do {
+                return try await SFTPClient.connect(transport: ChildProcessSFTPTransport(process: process))
+            } catch SFTPClientError.connectionLost {
+                let status = await process.exitCode
+                let stderr = await stderrTask.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw SFTPClientError.subsystemFailed("ssh exited \(status): \(stderr)")
+            }
         }
         opening = task
         defer { opening = nil }

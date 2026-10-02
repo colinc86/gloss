@@ -21,6 +21,8 @@ final class SendCoordinator {
     private(set) var lastOutcome: String?
     private(set) var lastError: String?
     private(set) var lastTarget: AgentTarget?
+    /// Days before staged remote directories are removed.
+    var stagedFileExpiryDays = 7
 
     init(noteStore: NoteStore, transports: [any Transport], stagers: [HostID: any AttachmentStager]) {
         self.noteStore = noteStore
@@ -92,16 +94,23 @@ final class SendCoordinator {
         let sendID = SendID.new()
         do {
             let (notes, attachments) = try await collect(noteIDs: noteIDs)
-            let staged = try await stagers[target.hostID]?.stage(attachments, for: target, sendID: sendID) ?? []
-            let packetNotes = try await packetNotes(for: notes, target: target, staged: staged)
+            let staging = try await stagers[target.hostID]?.stage(attachments, for: target, sendID: sendID) ?? .empty
+            let packetNotes = try await packetNotes(for: notes, target: target, staged: staging.attachments)
             let packet = PacketBuilder.build(packetNotes)
+            let expiresAt = Date().addingTimeInterval(TimeInterval(stagedFileExpiryDays) * 24 * 3600)
             do {
-                let receipt = try await transport.deliver(packet, attachments: staged, to: target)
-                _ = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .delivered)
+                let receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
+                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .delivered)
+                if !staging.remoteDirectories.isEmpty {
+                    try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
+                }
                 lastOutcome = "Sent \(packet.noteIDs.count) note\(packet.noteIDs.count == 1 ? "" : "s") to \(target.label)" + (receipt.detail.map { " (\($0))" } ?? "")
                 rememberTarget(target)
             } catch {
-                _ = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error)"))
+                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error)"))
+                if !staging.remoteDirectories.isEmpty {
+                    try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
+                }
                 throw error
             }
         } catch {

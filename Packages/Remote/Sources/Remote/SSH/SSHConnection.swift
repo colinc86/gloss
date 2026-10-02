@@ -97,7 +97,11 @@ public actor SSHConnection {
     private var toolsCache: RemoteTools?
     private var homeCache: String?
     /// After the user accepts a new host key once, the master is launched with accept-new for this host.
-    public var acceptNewHostKey = false
+    public private(set) var acceptNewHostKey = false
+
+    public func setAcceptNewHostKey(_ accept: Bool) {
+        acceptNewHostKey = accept
+    }
 
     init(hostID: HostID, alias: String, controlDirectory: String, sshPath: String, events: AsyncStream<SSHConnectionEvent>.Continuation) {
         self.hostID = hostID
@@ -409,7 +413,7 @@ public actor SSHConnection {
 
 /// Creates and caches one connection per host; publishes connection events for the UI.
 public actor SSHConnectionManager {
-    public let events: AsyncStream<SSHConnectionEvent>
+    public nonisolated let events: AsyncStream<SSHConnectionEvent>
     private let continuation: AsyncStream<SSHConnectionEvent>.Continuation
     private var connections: [HostID: SSHConnection] = [:]
     private let controlDirectory: String

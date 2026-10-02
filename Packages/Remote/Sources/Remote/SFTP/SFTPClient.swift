@@ -49,6 +49,8 @@ public enum SFTPClientError: Error, Sendable, Equatable {
     case connectionLost
     case protocolError(String)
     case unsupportedVersion(UInt32)
+    /// The ssh subsystem exited before the handshake finished; carries ssh's stderr.
+    case subsystemFailed(String)
 }
 
 /// Pipelined SFTP v3 client: every call awaits its own continuation keyed by request id, so callers can

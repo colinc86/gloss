@@ -92,7 +92,20 @@ public protocol Transport: Sendable {
     func deliver(_ packet: Packet, attachments: [StagedAttachment], to target: AgentTarget) async throws -> DeliveryReceipt
 }
 
+public struct StagingResult: Sendable, Equatable {
+    public var attachments: [StagedAttachment]
+    /// Directories created on the target host, recorded for expiry once the send row exists.
+    public var remoteDirectories: [String]
+
+    public init(attachments: [StagedAttachment], remoteDirectories: [String] = []) {
+        self.attachments = attachments
+        self.remoteDirectories = remoteDirectories
+    }
+
+    public static let empty = StagingResult(attachments: [])
+}
+
 /// Puts attachments where the target's machine can read them and returns the paths to print in the packet.
 public protocol AttachmentStager: Sendable {
-    func stage(_ files: [LocalAttachment], for target: AgentTarget, sendID: SendID) async throws -> [StagedAttachment]
+    func stage(_ files: [LocalAttachment], for target: AgentTarget, sendID: SendID) async throws -> StagingResult
 }

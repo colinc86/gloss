@@ -6,56 +6,60 @@ import Testing
 struct SSHConnectionTests {
     @Test(.enabled(if: TestGates.loopback))
     func masterConnectsExecsAndExitsCleanly() async throws {
-        let control = TestGates.temporaryControlDirectory()
-        defer { try? FileManager.default.removeItem(atPath: control) }
-        let manager = SSHConnectionManager(controlDirectory: control)
-        let host = HostID.new()
-        let connection = try await manager.connection(for: host, alias: "localhost")
-        #expect(await connection.state == .connected)
-        #expect(await connection.check())
+        try await TestGates.serialized {
+            let control = TestGates.temporaryControlDirectory()
+            defer { try? FileManager.default.removeItem(atPath: control) }
+            let manager = SSHConnectionManager(controlDirectory: control)
+            let host = HostID.new()
+            let connection = try await manager.connection(for: host, alias: "localhost")
+            #expect(await connection.state == .connected)
+            #expect(await connection.check())
 
-        let echo = try await connection.exec("printf 'hi %s' \"$(uname -s)\"")
-        #expect(echo.exitStatus == 0)
-        #expect(echo.stdoutText == "hi Darwin")
+            let echo = try await connection.exec("printf 'hi %s' \"$(uname -s)\"")
+            #expect(echo.exitStatus == 0)
+            #expect(echo.stdoutText == "hi Darwin")
 
-        let quoted = try await connection.exec("printf '%s' " + ShellQuote.single("it's \"quoted\" $HOME"))
-        #expect(quoted.stdoutText == "it's \"quoted\" $HOME")
+            let quoted = try await connection.exec("printf '%s' " + ShellQuote.single("it's \"quoted\" $HOME"))
+            #expect(quoted.stdoutText == "it's \"quoted\" $HOME")
 
-        let piped = try await connection.exec("cat", stdin: Data("stdin bytes".utf8))
-        #expect(piped.stdoutText == "stdin bytes")
+            let piped = try await connection.exec("cat", stdin: Data("stdin bytes".utf8))
+            #expect(piped.stdoutText == "stdin bytes")
 
-        let failing = try await connection.exec("exit 7")
-        #expect(failing.exitStatus == 7)
+            let failing = try await connection.exec("exit 7")
+            #expect(failing.exitStatus == 7)
 
-        let tools = try await connection.tools()
-        #expect(tools.os == "Darwin")
-        #expect(tools.home == NSHomeDirectory())
-        #expect(tools.git)
+            let tools = try await connection.tools()
+            #expect(tools.os == "Darwin")
+            #expect(tools.home == NSHomeDirectory())
+            #expect(tools.git)
 
-        await manager.disconnectAll()
-        #expect(await connection.state == .disconnected)
-        #expect(!(await connection.check()), "the master must be gone after disconnect")
+            await manager.disconnectAll()
+            #expect(await connection.state == .disconnected)
+            #expect(!(await connection.check()), "the master must be gone after disconnect")
+        }
     }
 
     @Test(.enabled(if: TestGates.loopback))
     func forwardsAUnixSocketAndCancelsIt() async throws {
-        let control = TestGates.temporaryControlDirectory()
-        defer { try? FileManager.default.removeItem(atPath: control) }
-        let manager = SSHConnectionManager(controlDirectory: control)
-        let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
-        let remoteSocket = "\(control)/remote.sock"
-        let localSocket = "\(control)/local.sock"
-        // A tiny echo server on the "remote" side (this Mac).
-        let server = try ChildProcess.launch(ChildProcessSpec(executable: "/usr/bin/nc", arguments: ["-lU", remoteSocket]))
-        try await Task.sleep(for: .milliseconds(400))
-        let forward = try await connection.forwardLocalSocket(local: localSocket, remote: remoteSocket)
-        #expect(await connection.activeForwards.contains(forward))
-        #expect(FileManager.default.fileExists(atPath: localSocket))
-        await connection.cancel(forward)
-        #expect(await connection.activeForwards.isEmpty)
-        server.terminate()
-        _ = await server.exitCode
-        await manager.disconnectAll()
+        try await TestGates.serialized {
+            let control = TestGates.temporaryControlDirectory()
+            defer { try? FileManager.default.removeItem(atPath: control) }
+            let manager = SSHConnectionManager(controlDirectory: control)
+            let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
+            let remoteSocket = "\(control)/remote.sock"
+            let localSocket = "\(control)/local.sock"
+            // A tiny echo server on the "remote" side (this Mac).
+            let server = try ChildProcess.launch(ChildProcessSpec(executable: "/usr/bin/nc", arguments: ["-lU", remoteSocket]))
+            try await Task.sleep(for: .milliseconds(400))
+            let forward = try await connection.forwardLocalSocket(local: localSocket, remote: remoteSocket)
+            #expect(await connection.activeForwards.contains(forward))
+            #expect(FileManager.default.fileExists(atPath: localSocket))
+            await connection.cancel(forward)
+            #expect(await connection.activeForwards.isEmpty)
+            server.terminate()
+            _ = await server.exitCode
+            await manager.disconnectAll()
+        }
     }
 
     @Test func classifiesFailures() {

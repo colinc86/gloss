@@ -90,38 +90,40 @@ struct SFTPClientTests {
 
     @Test(.enabled(if: TestGates.loopback))
     func loopbackSFTPEndToEnd() async throws {
-        let control = TestGates.temporaryControlDirectory()
-        defer { try? FileManager.default.removeItem(atPath: control) }
-        let manager = SSHConnectionManager(controlDirectory: control)
-        let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
-        let fs = SFTPFileSystem(hostID: HostID.new(), connection: connection)
-        let client = try await fs.channel.client()
-        #expect(await client.supportsPosixRename, "OpenSSH advertises posix-rename")
-        #expect(await client.homeDirectory == NSHomeDirectory())
-        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-sftp-\(UUID().uuidString.prefix(8))")
-        try await fs.makeDirectory(directory)
-        defer { try? FileManager.default.removeItem(atPath: directory) }
-        let path = "\(directory)/note.md"
-        let big = Data((0..<300_000).map { UInt8($0 % 251) })
-        let written = try await fs.writeAtomically(big, to: path, preservingModeFrom: nil)
-        #expect(written.size == 300_000)
-        #expect(try await fs.read(path) == big)
-        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == big)
-        let listed = try await fs.list(directory)
-        #expect(listed.map(\.name) == ["note.md"])
-        try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: path)
-        let attributes = try await fs.stat(path)
-        #expect(attributes.mode == 0o640)
-        let (_, fingerprint) = try await fs.readWithFingerprint(path)
-        try "agent edit".write(toFile: path, atomically: true, encoding: .utf8)
-        guard case .changed = try await fs.checkForChanges(at: path, since: fingerprint) else { Issue.record("expected change"); return }
-        let saved = try await fs.writeAtomically(Data("mine".utf8), to: path, preservingModeFrom: attributes)
-        #expect(saved.mode == 0o640, "mode survives the temp-file rename")
-        #expect(try String(contentsOfFile: path, encoding: .utf8) == "mine")
-        try await fs.rename(path, to: "\(directory)/renamed.md")
-        try await fs.delete("\(directory)/renamed.md")
-        #expect(try await fs.list(directory).isEmpty)
-        await fs.channel.close()
-        await manager.disconnectAll()
+        try await TestGates.serialized {
+            let control = TestGates.temporaryControlDirectory()
+            defer { try? FileManager.default.removeItem(atPath: control) }
+            let manager = SSHConnectionManager(controlDirectory: control)
+            let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
+            let fs = SFTPFileSystem(hostID: HostID.new(), connection: connection)
+            let client = try await fs.channel.client()
+            #expect(await client.supportsPosixRename, "OpenSSH advertises posix-rename")
+            #expect(await client.homeDirectory == NSHomeDirectory())
+            let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-sftp-\(UUID().uuidString.prefix(8))")
+            try await fs.makeDirectory(directory)
+            defer { try? FileManager.default.removeItem(atPath: directory) }
+            let path = "\(directory)/note.md"
+            let big = Data((0..<300_000).map { UInt8($0 % 251) })
+            let written = try await fs.writeAtomically(big, to: path, preservingModeFrom: nil)
+            #expect(written.size == 300_000)
+            #expect(try await fs.read(path) == big)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == big)
+            let listed = try await fs.list(directory)
+            #expect(listed.map(\.name) == ["note.md"])
+            try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: path)
+            let attributes = try await fs.stat(path)
+            #expect(attributes.mode == 0o640)
+            let (_, fingerprint) = try await fs.readWithFingerprint(path)
+            try "agent edit".write(toFile: path, atomically: true, encoding: .utf8)
+            guard case .changed = try await fs.checkForChanges(at: path, since: fingerprint) else { Issue.record("expected change"); return }
+            let saved = try await fs.writeAtomically(Data("mine".utf8), to: path, preservingModeFrom: attributes)
+            #expect(saved.mode == 0o640, "mode survives the temp-file rename")
+            #expect(try String(contentsOfFile: path, encoding: .utf8) == "mine")
+            try await fs.rename(path, to: "\(directory)/renamed.md")
+            try await fs.delete("\(directory)/renamed.md")
+            #expect(try await fs.list(directory).isEmpty)
+            await fs.channel.close()
+            await manager.disconnectAll()
+        }
     }
 }
