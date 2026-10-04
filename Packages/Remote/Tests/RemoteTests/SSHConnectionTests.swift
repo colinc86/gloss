@@ -55,6 +55,47 @@ struct SSHConnectionTests {
         }
     }
 
+    @Test(.enabled(if: TestGates.loopback))
+    func forwardsALocalPortToARemoteLoopbackServer() async throws {
+        try await TestGates.withManager { manager, control in
+            let connection = try await manager.connection(for: HostID.new(), alias: "localhost")
+            // A dev server on the "remote" side (this Mac), on a port only it knows.
+            let remotePort = try PortAllocator.freeLoopbackPort()
+            try "hello through the tunnel".write(toFile: "\(control)/hello.txt", atomically: true, encoding: .utf8)
+            let server = try ChildProcess.launch(ChildProcessSpec(
+                executable: "/usr/bin/python3", arguments: ["-m", "http.server", String(remotePort), "--bind", "127.0.0.1", "--directory", control]
+            ))
+            // Python takes a moment to listen; forwarding before that makes ssh drop the first connection.
+            let direct = URL(string: "http://127.0.0.1:\(remotePort)/hello.txt")!
+            var up = false
+            for _ in 0..<50 where !up {
+                if let (_, response) = try? await URLSession.shared.data(from: direct), (response as? HTTPURLResponse)?.statusCode == 200 { up = true } else { try await Task.sleep(for: .milliseconds(100)) }
+            }
+            #expect(up, "the test server is listening")
+
+            let forward = try await connection.forwardLocalPort(toRemotePort: remotePort)
+            guard case .localPort(let local, let remote) = forward.kind else { Issue.record("expected a local port forward"); return }
+            #expect(remote == remotePort)
+            #expect(await connection.localPort(forRemotePort: remotePort) == local)
+            #expect(try await connection.forwardLocalPort(toRemotePort: remotePort) == forward, "a second request reuses the forward")
+
+            let (data, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(local)/hello.txt")!)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            #expect(String(decoding: data, as: UTF8.self) == "hello through the tunnel")
+
+            await connection.cancel(forward)
+            #expect(await connection.localPort(forRemotePort: remotePort) == nil)
+            server.terminate()
+            _ = try? await server.exitCode
+        }
+    }
+
+    @Test func allocatesFreeLoopbackPortsAndBuildsForwardArguments() throws {
+        let port = try PortAllocator.freeLoopbackPort()
+        #expect(port >= 1024)
+        #expect(SSHForward(kind: .localPort(local: 50_123, remotePort: 3000)).arguments == ["-L", "127.0.0.1:50123:127.0.0.1:3000"])
+    }
+
     @Test func buildsHostOptionArguments() {
         #expect(SSHConnection.arguments(hostName: "", user: "", port: nil, identityFile: "").isEmpty)
         #expect(SSHConnection.arguments(hostName: "10.0.0.5", user: "me", port: 2222, identityFile: "/k/id") ==

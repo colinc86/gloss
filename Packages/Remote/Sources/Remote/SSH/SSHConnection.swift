@@ -76,6 +76,8 @@ public struct SSHForward: Sendable, Hashable {
     public enum Kind: Sendable, Hashable {
         case localSocket(local: String, remote: String)
         case remotePort(port: UInt16)
+        /// A loopback port on this Mac that reaches `remotePort` on the host's loopback: a dev server there.
+        case localPort(local: UInt16, remotePort: UInt16)
     }
 
     public var kind: Kind
@@ -84,6 +86,7 @@ public struct SSHForward: Sendable, Hashable {
         switch kind {
         case .localSocket(let local, let remote): ["-L", "\(local):\(remote)"]
         case .remotePort(let port): ["-R", "\(port):127.0.0.1:\(port)"]
+        case .localPort(let local, let remote): ["-L", "127.0.0.1:\(local):127.0.0.1:\(remote)"]
         }
     }
 }
@@ -479,6 +482,35 @@ public actor SSHConnection {
         let forward = SSHForward(kind: .remotePort(port: port))
         try await add(forward)
         return forward
+    }
+
+    /// Reaches `remotePort` on the host's loopback through a free loopback port here, reusing an existing forward
+    /// for that port. A local bind can race another process between choosing the port and ssh binding it, so a
+    /// bind failure is retried with a fresh port.
+    public func forwardLocalPort(toRemotePort remotePort: UInt16) async throws -> SSHForward {
+        if let existing = forwards.first(where: { if case .localPort(_, let remote) = $0.kind { remote == remotePort } else { false } }) {
+            return existing
+        }
+        var lastError: any Error = SSHError.notConnected
+        for _ in 0..<3 {
+            let local = try PortAllocator.freeLoopbackPort()
+            let forward = SSHForward(kind: .localPort(local: local, remotePort: remotePort))
+            do {
+                try await add(forward)
+                return forward
+            } catch SSHError.forwardFailed(let message) where message.localizedCaseInsensitiveContains("bind") {
+                lastError = SSHError.forwardFailed(message)
+            }
+        }
+        throw lastError
+    }
+
+    /// The loopback port here that reaches `remotePort` on the host, when one is forwarded.
+    public func localPort(forRemotePort remotePort: UInt16) -> UInt16? {
+        for forward in forwards {
+            if case .localPort(let local, let remote) = forward.kind, remote == remotePort { return local }
+        }
+        return nil
     }
 
     private func add(_ forward: SSHForward) async throws {
