@@ -6,7 +6,7 @@ import Foundation
 /// is ever written; the agent changes the pull request with its own tools.
 public actor GitHubPullRequestFileSystem: FileSystemProvider {
     public nonisolated let hostID = HostID.github
-    private let client: GitHubClient
+    private var client: GitHubClient
     private let pollInterval: Duration
 
     struct Key: Hashable { var owner: String; var repo: String; var number: Int }
@@ -32,6 +32,15 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     private var inflight: [Key: Task<Snapshot, any Error>] = [:]
     private var contents: [String: Data] = [:]
     private var pollers: [Key: Poller] = [:]
+
+    /// A new key: what was read with the old one is dropped, and open documents and pollers carry on with this.
+    public func replaceClient(_ client: GitHubClient) {
+        self.client = client
+        snapshots = [:]
+        inflight.values.forEach { $0.cancel() }
+        inflight = [:]
+        contents = [:]
+    }
     /// Watchers whose stream ended before their registration ran.
     private var terminated: Set<UUID> = []
 

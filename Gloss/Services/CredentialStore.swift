@@ -3,7 +3,7 @@ import Security
 
 /// Where integration keys live. The real store is the login Keychain; a test host or a throwaway run keeps them in
 /// memory, so neither prompts for the Keychain nor leaves keys behind.
-protocol CredentialStoring: Sendable {
+nonisolated protocol CredentialStoring: Sendable {
     func read(account: String) throws -> Data?
     func write(_ data: Data, account: String) throws
     func delete(account: String) throws
@@ -52,7 +52,7 @@ nonisolated struct KeychainCredentialStore: CredentialStoring {
 }
 
 /// Keys for this run only.
-final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
+nonisolated final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
     private var items: [String: Data] = [:]
     private let lock = NSLock()
 
@@ -61,11 +61,11 @@ final class MemoryCredentialStore: CredentialStoring, @unchecked Sendable {
     func delete(account: String) throws { lock.lock(); defer { lock.unlock() }; items[account] = nil }
 }
 
-struct GitHubCredentials: Codable, Equatable, Sendable {
+nonisolated struct GitHubCredentials: Codable, Equatable, Sendable {
     var token: String
 }
 
-struct AtlassianCredentials: Codable, Equatable, Sendable {
+nonisolated struct AtlassianCredentials: Codable, Equatable, Sendable {
     var site: URL
     var email: String
     var token: String

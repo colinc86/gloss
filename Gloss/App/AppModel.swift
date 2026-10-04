@@ -104,9 +104,11 @@ final class AppModel {
         }
     }
 
-    init(launchOptions: AppLaunchOptions) {
+    /// - integrationsSession: what the integration clients talk through; tests pass a stubbed session so nothing
+    ///   reaches a real service.
+    init(launchOptions: AppLaunchOptions, integrationsSession: URLSession = .shared) {
         // A test host or a throwaway run keeps keys in memory: no Keychain prompt, nothing left behind.
-        integrations = IntegrationsModel(store: launchOptions.resetDatabase || launchOptions.isTestHost ? MemoryCredentialStore() : KeychainCredentialStore())
+        integrations = IntegrationsModel(store: launchOptions.resetDatabase || launchOptions.isTestHost ? MemoryCredentialStore() : KeychainCredentialStore(), session: integrationsSession)
         self.launchOptions = launchOptions
         let database: AppDatabase
         do {
@@ -438,11 +440,28 @@ final class AppModel {
 
     // MARK: Integration hosts
 
-    /// The GitHub host exists while a token is saved: its provider serves pull requests with that token. When the
-    /// token goes, so do the host and its open documents.
+    /// The keys the integration hosts are serving with, so a change to one service's key leaves the other alone.
+    @ObservationIgnored private var registeredGitHub: GitHubCredentials?
+    @ObservationIgnored private var registeredAtlassian: AtlassianCredentials?
+
+    /// The GitHub host exists while a token is saved: its provider serves pull requests with that token. A new
+    /// token goes into the same provider, so open pull requests carry on; when the token goes, so do the host and
+    /// its open documents. Saving one service's key never touches the other's provider.
     private func registerIntegrationHosts() async {
-        if let client = integrations.githubClient {
-            fileSystems[.github] = GitHubPullRequestFileSystem(client: client)
+        let github = integrations.github
+        if github != registeredGitHub || fileSystems[.github] == nil {
+            await registerGitHub(github)
+        }
+        let atlassian = integrations.atlassian
+        if atlassian != registeredAtlassian || fileSystems[.atlassian] == nil {
+            await registerAtlassian(atlassian)
+        }
+    }
+
+    private func registerGitHub(_ credentials: GitHubCredentials?) async {
+        registeredGitHub = credentials
+        if credentials != nil, let client = integrations.githubClient {
+            if let provider = pullRequests { await provider.replaceClient(client) } else { fileSystems[.github] = GitHubPullRequestFileSystem(client: client) }
         } else {
             fileSystems[.github] = nil
             for (key, session) in sessions where session.hostID == .github {
@@ -452,14 +471,18 @@ final class AppModel {
             }
             for tab in explorer.tabs where tab.hostID == .github { explorer.closeTab(tab.id) }
         }
-        await hosts.setVirtualHost(.github, name: "github", kind: .github, enabled: integrations.github != nil)
-        let site = integrations.atlassian?.site
+        await hosts.setVirtualHost(.github, name: "github", kind: .github, enabled: credentials != nil)
+    }
+
+    private func registerAtlassian(_ credentials: AtlassianCredentials?) async {
+        registeredAtlassian = credentials
+        let site = credentials?.site
         let previousSite = atlassianSite.withLock { previous in
             defer { previous = site }
             return previous
         }
-        if let client = integrations.atlassianClient {
-            fileSystems[.atlassian] = AtlassianFileSystem(client: client)
+        if credentials != nil, let client = integrations.atlassianClient {
+            if let provider = atlassianDocuments, previousSite == site { await provider.replaceClient(client) } else { fileSystems[.atlassian] = AtlassianFileSystem(client: client) }
         } else {
             fileSystems[.atlassian] = nil
         }
@@ -472,7 +495,7 @@ final class AppModel {
             }
             for tab in explorer.tabs where tab.hostID == .atlassian { explorer.closeTab(tab.id) }
         }
-        await hosts.setVirtualHost(.atlassian, name: "atlassian", kind: .atlassian, enabled: integrations.atlassian != nil)
+        await hosts.setVirtualHost(.atlassian, name: "atlassian", kind: .atlassian, enabled: credentials != nil)
     }
 
     /// The Atlassian provider, for what the viewer asks beyond files.
@@ -830,7 +853,6 @@ final class AppModel {
         updateDockBadge()
         sweepAttachments()
         await hosts.load()
-        integrations.onChange = { [weak self] in Task { await self?.registerIntegrationHosts() } }
         #if DEBUG
         if let path = launchOptions.integrationsEnv {
             await integrations.importEnvironmentFile(at: path, atlassianSite: launchOptions.atlassianSite)
@@ -838,6 +860,8 @@ final class AppModel {
         #endif
         await integrations.load()
         await registerIntegrationHosts()
+        // Registered once above; from here on a saved or removed key re-registers only what changed.
+        integrations.onChange = { [weak self] in Task { await self?.registerIntegrationHosts() } }
         explorer.showDotfiles = settings.showDotfilesByDefault
         let launchHost = launchOptions.host == "local" ? HostID.local : hosts.entries.first { $0.name == launchOptions.host }?.id
         if let launchHost, launchHost != .local {

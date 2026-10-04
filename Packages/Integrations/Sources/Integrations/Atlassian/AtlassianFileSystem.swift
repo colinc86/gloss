@@ -6,7 +6,7 @@ import Foundation
 /// pages, each page's folder holding the page and its children). Read with the user's token; never written.
 public actor AtlassianFileSystem: FileSystemProvider {
     public nonisolated let hostID = HostID.atlassian
-    private let client: AtlassianClient
+    private var client: AtlassianClient
     private let pollInterval: Duration
 
     struct IssueDocument {
@@ -36,6 +36,16 @@ public actor AtlassianFileSystem: FileSystemProvider {
     /// Titles and versions seen in listings, so a folder names its own document without fetching the body.
     private var pageTitles: [String: ConfluencePage] = [:]
     private var pollers: [String: Poller] = [:]
+
+    /// A new key for the same site: what was read with the old one is dropped; open documents and pollers carry on.
+    public func replaceClient(_ client: AtlassianClient) {
+        self.client = client
+        issues = [:]
+        issueLists = [:]
+        spaces = nil
+        pages = [:]
+        pageTitles = [:]
+    }
     private var terminated: Set<UUID> = []
 
     public init(client: AtlassianClient, pollInterval: Duration = .seconds(10)) {
