@@ -11,6 +11,7 @@
 		CC00000000000000000000A2 /* Viewers in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A2 /* Viewers */; };
 		CC00000000000000000000A3 /* Remote in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A3 /* Remote */; };
 		CC00000000000000000000A4 /* Transports in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A4 /* Transports */; };
+		CC00000000000000000000A5 /* Integrations in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A5 /* Integrations */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,6 +63,7 @@
 				CC00000000000000000000A2 /* Viewers in Frameworks */,
 				CC00000000000000000000A3 /* Remote in Frameworks */,
 				CC00000000000000000000A4 /* Transports in Frameworks */,
+				CC00000000000000000000A5 /* Integrations in Frameworks */,
 			);
 		};
 		3B84F6AE306F03BF003DBBFF /* Frameworks */ = {
@@ -112,6 +114,7 @@
 				BB00000000000000000000A2 /* Viewers */,
 				BB00000000000000000000A3 /* Remote */,
 				BB00000000000000000000A4 /* Transports */,
+				BB00000000000000000000A5 /* Integrations */,
 			);
 			productName = "Gloss";
 			productReference = 3B84F6A2306F03BD003DBBFF /* Gloss.app */;
@@ -171,6 +174,7 @@
 				AA00000000000000000000A2 /* XCLocalSwiftPackageReference "Packages/Viewers" */,
 				AA00000000000000000000A3 /* XCLocalSwiftPackageReference "Packages/Remote" */,
 				AA00000000000000000000A4 /* XCLocalSwiftPackageReference "Packages/Transports" */,
+				AA00000000000000000000A5 /* XCLocalSwiftPackageReference "Packages/Integrations" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B84F6A3306F03BD003DBBFF /* Products */;
@@ -488,6 +492,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/Transports;
 		};
+		AA00000000000000000000A5 /* XCLocalSwiftPackageReference "Packages/Integrations" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/Integrations;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -506,6 +514,10 @@
 		BB00000000000000000000A4 /* Transports */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Transports;
+		};
+		BB00000000000000000000A5 /* Integrations */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Integrations;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

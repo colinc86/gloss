@@ -28,6 +28,10 @@ the tokens and components there instead of literals.
    there and how it arrives, and offers the one way back. Emptiness that is good news says so ("All clear").
 10. **Say what a risky action touches.** Where the app writes outside itself (hooks, settings files), the screen
     says what changes, where the backup goes, and how to undo it, before anything is pressed.
+11. **The app reads, the agent writes.** What the app shows of a pull request, a ticket or a page is the live
+    thing, read with the user's own key, and the app never changes it: every edit goes through the agent with its
+    own tools, and the packet names the exact resource (URL, head commit, field, version) so the agent can. Settings
+    say this where the key is entered.
 
 ## Tokens
 
@@ -563,3 +567,9 @@ path. Dropping on the Dock icon is not supported yet.
   red failed, grey idle), the name, and a second line with the address and state (ssh config aliases show only the
   state, with an "ssh config" tag, since their address lives in that file). Hosts added in the app can be edited
   and removed; removal asks first.
+- **Integrations** (`key`): one section per service, GitHub and Atlassian. Each has the Status line (dot and
+  sentence: "Signed in as colinc86 · repo, user", "Colin Campbell · Jira and Confluence", or the service's own error),
+  a `SecureField` for the token (its prompt says "Saved · paste a new one to replace it" once one is), Atlassian's
+  site and email fields with the saved values as prompts, and Save (glass), Test Connection and Remove. The footer is
+  the trust note, with `lock.shield` as on Hooks: the app only reads with these keys, the agent makes every change,
+  and keys live in the Keychain. Saving tests the key at once, so the sentence is the receipt.

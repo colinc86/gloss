@@ -3,6 +3,7 @@ import Core
 import Foundation
 import Observation
 import OSLog
+import Integrations
 import Remote
 import Transports
 import Viewers
@@ -20,6 +21,7 @@ final class AppModel {
     let settings: SettingsStore
     let hosts: HostsModel
     let hooks = HooksModel()
+    let integrations: IntegrationsModel
     let quickOpen = QuickOpenModel()
     /// The one web view, shared by every HTML document and live page.
     let browser = WebBrowserController()
@@ -100,6 +102,8 @@ final class AppModel {
     }
 
     init(launchOptions: AppLaunchOptions) {
+        // A test host or a throwaway run keeps keys in memory: no Keychain prompt, nothing left behind.
+        integrations = IntegrationsModel(store: launchOptions.resetDatabase || launchOptions.isTestHost ? MemoryCredentialStore() : KeychainCredentialStore())
         self.launchOptions = launchOptions
         let database: AppDatabase
         do {
@@ -613,6 +617,12 @@ final class AppModel {
         updateDockBadge()
         sweepAttachments()
         await hosts.load()
+        #if DEBUG
+        if let path = launchOptions.integrationsEnv {
+            await integrations.importEnvironmentFile(at: path, atlassianSite: launchOptions.atlassianSite)
+        }
+        #endif
+        await integrations.load()
         explorer.showDotfiles = settings.showDotfilesByDefault
         let launchHost = launchOptions.host == "local" ? HostID.local : hosts.entries.first { $0.name == launchOptions.host }?.id
         if let launchHost, launchHost != .local {

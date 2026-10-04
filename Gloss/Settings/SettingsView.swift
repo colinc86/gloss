@@ -74,6 +74,10 @@ struct SettingsView: View {
                 .frame(height: 390)
                 .tabItem { Label("Hooks", systemImage: "link") }
 
+            IntegrationsSettings()
+                .frame(height: 660)
+                .tabItem { Label("Integrations", systemImage: "key") }
+
             AttachmentsSettings(settings: settings)
                 .frame(height: 380)
                 .tabItem { Label("Attachments", systemImage: "photo.on.rectangle") }
@@ -647,6 +651,124 @@ private struct IntegrationRow: View {
 
     private var isOutdated: Bool { if case .outdated = status { true } else { false } }
     private var outdatedReason: String? { if case .outdated(let reason) = status { reason } else { nil } }
+}
+
+/// GitHub and Atlassian keys. Each section says what the key can see once it is tested, and the footer says
+/// what the app does with it: read, only ever read.
+private struct IntegrationsSettings: View {
+    @Environment(AppModel.self) private var model
+    @State private var githubToken = ""
+    @State private var site = ""
+    @State private var email = ""
+    @State private var atlassianToken = ""
+
+    var body: some View {
+        let integrations = model.integrations
+        Form {
+            Section {
+                statusLine(integrations.githubStatus, unset: "No token saved")
+                SecureField("Personal access token", text: $githubToken, prompt: Text(integrations.github == nil ? "github_pat_… or ghp_…" : "Saved · paste a new one to replace it"))
+                    .onSubmit { Task { await saveGitHub() } }
+                HStack {
+                    Spacer()
+                    if integrations.github != nil {
+                        Button("Remove", role: .destructive) { integrations.clear(.github) }
+                        Button("Test Connection") { Task { await integrations.test(.github) } }
+                            .disabled(integrations.githubStatus == .checking)
+                    }
+                    Button("Save") { Task { await saveGitHub() } }
+                        .buttonStyle(.glass)
+                        .disabled(githubToken.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Label("GitHub", systemImage: "arrow.triangle.pull")
+            } footer: {
+                Text("Pull requests open as documents: description, conversation, changed files at the head commit. A read-only fine-grained token with Pull requests and Contents access is enough.")
+            }
+            Section {
+                statusLine(integrations.atlassianStatus, unset: "No key saved")
+                TextField("Site", text: $site, prompt: Text(integrations.atlassian?.site.host() ?? "example.atlassian.net"))
+                    .textContentType(.URL)
+                TextField("Email", text: $email, prompt: Text(integrations.atlassian?.email ?? "you@example.com"))
+                    .textContentType(.emailAddress)
+                SecureField("API token", text: $atlassianToken, prompt: Text(integrations.atlassian == nil ? "From id.atlassian.com → Security → API tokens" : "Saved · paste a new one to replace it"))
+                    .onSubmit { Task { await saveAtlassian() } }
+                HStack {
+                    Spacer()
+                    if integrations.atlassian != nil {
+                        Button("Remove", role: .destructive) { integrations.clear(.atlassian) }
+                        Button("Test Connection") { Task { await integrations.test(.atlassian) } }
+                            .disabled(integrations.atlassianStatus == .checking)
+                    }
+                    Button("Save") { Task { await saveAtlassian() } }
+                        .buttonStyle(.glass)
+                        .disabled(!canSaveAtlassian)
+                }
+            } header: {
+                Label("Atlassian", systemImage: "square.stack.3d.up")
+            } footer: {
+                Text("Jira issues and Confluence pages open as Markdown documents, read from the live site.")
+            }
+            Section {
+            } footer: {
+                Label {
+                    Text("The app only reads with these keys. Changes to pull requests, tickets and pages are made by your agent with its own tools; the packet names the exact resource. Keys are kept in your Keychain.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "lock.shield")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            if let error = integrations.lastError {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .formStyle(.grouped)
+        .animation(DS.Motion.smooth, value: integrations.githubStatus)
+        .animation(DS.Motion.smooth, value: integrations.atlassianStatus)
+    }
+
+    private var canSaveAtlassian: Bool {
+        let saved = model.integrations.atlassian
+        let siteGiven = !site.trimmingCharacters(in: .whitespaces).isEmpty || saved != nil
+        let emailGiven = !email.trimmingCharacters(in: .whitespaces).isEmpty || saved != nil
+        return siteGiven && emailGiven && !atlassianToken.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func saveGitHub() async {
+        await model.integrations.saveGitHub(token: githubToken)
+        githubToken = ""
+    }
+
+    private func saveAtlassian() async {
+        let saved = model.integrations.atlassian
+        await model.integrations.saveAtlassian(
+            site: site.isEmpty ? (saved?.site.absoluteString ?? "") : site,
+            email: email.isEmpty ? (saved?.email ?? "") : email,
+            token: atlassianToken
+        )
+        atlassianToken = ""
+    }
+
+    /// The live state as a coloured dot and a sentence, as the Agents tab shows the MCP server.
+    private func statusLine(_ status: IntegrationsModel.Status, unset: String) -> some View {
+        let (color, text): (Color, String) = switch status {
+        case .unset: (.secondary, unset)
+        case .checking: (.orange, "Checking…")
+        case .ok(let detail): (.green, detail)
+        case .failed(let detail): (.red, detail)
+        }
+        return LabeledContent("Status") {
+            HStack(spacing: DS.Space.s) {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text(text).foregroundStyle(status == .unset ? .secondary : .primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+            }
+        }
+    }
 }
 
 private struct AttachmentsSettings: View {

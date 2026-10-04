@@ -14,6 +14,10 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
     var follow = false
     /// `--appearance dark|light`: force one appearance for this run, to check both without changing System Settings.
     var appearance: String?
+    /// `--integrations-env <path>`: a KEY=VALUE file of integration keys loaded at launch (debug builds only), so a
+    /// scripted run never types a key into a field. `--atlassian-site <site>` names the site when the file doesn't.
+    var integrationsEnv: String?
+    var atlassianSite: String?
     /// The app is the host of a unit-test run. It then uses a throwaway database and skips `start()`: reopening
     /// the last root could connect a remote host (whose master the test runner then orphaned by killing the
     /// process), and the MCP server would take the real port from a running copy of the app.
@@ -54,6 +58,8 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
         case "--host": host = value
         case "--open": open = value
         case "--appearance": appearance = ["dark", "light"].contains(value.lowercased()) ? value.lowercased() : nil
+        case "--integrations-env": integrationsEnv = value
+        case "--atlassian-site": atlassianSite = value
         default: break
         }
     }
@@ -65,6 +71,8 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
         if resetDatabase { parts.append("reset-db") }
         if follow { parts.append("follow") }
         if let appearance { parts.append("appearance=\(appearance)") }
+        if let integrationsEnv { parts.append("integrations-env=\(integrationsEnv)") }
+        if let atlassianSite { parts.append("atlassian-site=\(atlassianSite)") }
         if isTestHost { parts.append("test-host") }
         return parts.joined(separator: " ")
     }
