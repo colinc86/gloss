@@ -6,7 +6,9 @@ enum AtlassianMarkdown {
 
     /// `KEY.md`: a fact list, the description, then the comments; the lines each comment occupies are returned so a
     /// note inside one can name it.
-    static func issue(_ issue: JiraIssue, url: URL) -> (text: String, comments: [(range: ClosedRange<Int>, id: String)]) {
+    /// The issue as Markdown, with the lines its description and each comment take (1-based), so a note can say
+    /// which part of the ticket it is about.
+    static func issue(_ issue: JiraIssue, url: URL) -> (text: String, description: ClosedRange<Int>, comments: [(range: ClosedRange<Int>, id: String)]) {
         var lines: [String] = ["# \(issue.key): \(issue.summary)", ""]
         lines.append("- **\(issue.issueType)** · \(issue.status)" + (issue.priority.map { " · \($0)" } ?? ""))
         var people: [String] = []
@@ -20,7 +22,9 @@ enum AtlassianMarkdown {
         lines.append("")
         lines.append("## Description")
         lines.append("")
+        let descriptionStart = lines.count + 1
         lines.append(contentsOf: bodyLines(issue.description ?? "_No description._"))
+        let description = descriptionStart...lines.count
         var map: [(ClosedRange<Int>, String)] = []
         if !issue.comments.isEmpty {
             lines.append("")
@@ -34,7 +38,7 @@ enum AtlassianMarkdown {
             }
         }
         lines.append("")
-        return (lines.joined(separator: "\n"), map)
+        return (lines.joined(separator: "\n"), description, map)
     }
 
     /// `<Title>.md`: a fact list, then the body.

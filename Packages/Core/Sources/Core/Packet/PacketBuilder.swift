@@ -164,16 +164,27 @@ public enum PacketBuilder {
     static func fileBlock(path: String, notes: [PacketNote]) -> String {
         guard let first = notes.first else { return "" }
         var header = ["File: \(path)", "Source: \(first.source.rawValue)"]
+        // The resource's lines that hold for every note go in the header; a line that differs (each note on its
+        // own comment, or its own field) goes with its note, under the note's place.
+        var shared: [String] = []
         if let resource = first.resource {
             header.append("Resource: \(resource)")
-            header.append(contentsOf: first.resourceDetails)
+            shared = first.resourceDetails.filter { line in notes.allSatisfy { $0.resourceDetails.contains(line) } }
+            header.append(contentsOf: shared)
         }
         if let size = notes.lazy.compactMap({ note -> ImageAnchor? in if case .image(let image) = note.anchor { image } else { nil } }).first {
             header.append("Original size: \(size.imageW)x\(size.imageH)")
         } else if let pdf = notes.lazy.compactMap({ note -> PDFAnchor? in if case .pdf(let pdf) = note.anchor { pdf } else { nil } }).first {
             header.append("Pages: \(pdf.pageCount)")
         }
-        let blocks = notes.map(noteBlock)
+        let blocks = notes.map { note -> String in
+            let block = noteBlock(note)
+            let own = note.resourceDetails.filter { !shared.contains($0) }
+            guard !own.isEmpty else { return block }
+            var lines = block.components(separatedBy: "\n")
+            lines.insert(contentsOf: own, at: min(1, lines.count))
+            return lines.joined(separator: "\n")
+        }
         return (header.joined(separator: "\n")) + "\n\n" + blocks.joined(separator: "\n\n")
     }
 

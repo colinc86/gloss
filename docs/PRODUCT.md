@@ -130,7 +130,7 @@ Notes: 2. Mark each resolved with the gloss MCP tool when done.
 | Integration | Credential | What the app reads | Shown as |
 | --- | --- | --- | --- |
 | GitHub | Personal access token (read scopes are enough; the client never issues anything but GET) | Pull requests: metadata, description, review and issue comments, changed files at the head commit, the unified diff | A root `github:/owner/repo/pull/N` with `Pull request.md`, `Conversation.md`, `changes/…`, `pull-N.diff`; polled for a new head commit while open |
-| Atlassian | Site URL, email, API token | Jira issues (fields, description, comments) and Confluence pages (body and version), converted from the Atlassian document format to Markdown | `atlassian:/jira/PROJ/PROJ-123.md` and `atlassian:/confluence/SPACE/<id> <title>.md`; polled for a new version while open |
+| Atlassian | Site URL, email, API token | Jira issues (fields, description, comments) and Confluence pages (body and version), converted from the Atlassian document format to Markdown | `atlassian:/jira/PROJ/PROJ-123.md` and `atlassian:/confluence/SPACE/<ancestor ids…>/<id>/<Title>.md` (a page is its id: notes follow it through renames and moves); polled for a new version while open |
 | Web | None | Any URL in the review browser; `localhost` on a remote host through a port forward on the app's ssh connection | `web:<url>`, or a document of the ssh host when proxied |
 
 **Herdr plugin.** Ships with the app and is installed from Settings → Hooks, locally or on a connected host: the bundle is copied to `~/.config/gloss/herdr-plugin/` and linked with `herdr plugin link`. A keybinding (snippet shown in Settings; the app never edits Herdr's config) sends selected pane text to Gloss as a note; a link handler opens `file://` links and `path:line[:col]` locations printed by an agent in the viewer, scrolled to that line (also `file://…#L12`); `gloss://open` and `/plugin/open` take an optional `line`. On this Mac the script calls the app's URL scheme; on a host it posts to the app's `/plugin/note` endpoint through the reverse-forwarded port.
@@ -214,7 +214,7 @@ Milestone 2 (scoped 2026-10-03) runs the same loop, select → note → send →
 
 **Build order.** Review browser → Integrations tab and GitHub pull requests → Jira and Confluence. Each phase ends with a live check and a review.
 
-**Credentials in development.** `integrations.env` at the repo root holds real keys. It is gitignored and never committed. In testing the keys only read; test notes go to the clipboard target, never to an agent with GitHub or Atlassian tools; a debug-only launch option loads the file into the Keychain so no key is ever typed into the app by a script.
+**Credentials in development.** `integrations.env` at the repo root holds real keys. It is gitignored and never committed. In testing the keys only read; test notes go to the clipboard target, never to an agent with GitHub or Atlassian tools; a debug-only launch option loads the file into the run's credential store (in memory with `--reset-db`, so a throwaway copy keeps nothing), so no key is ever typed into the app by a script.
 
 **Acceptance checks.** Ticked when verified; the note will say how.
 

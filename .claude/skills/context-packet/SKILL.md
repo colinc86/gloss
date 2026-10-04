@@ -75,9 +75,11 @@ Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9
 ### Milestone 2 sources
 
 - `web`: a live page. `File:` is the logical URL as the user sees it (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form). A text note's anchor line is `Line N` of the page's serialised DOM (rarely meaningful) and its excerpt is the selected text itself, as for a PDF text selection; element anchors as above.
-- `pull_request`: `File:` is the virtual path (`/owner/repo/pull/123/changes/Sources/App.swift`), `Resource:` the PR URL, `Path: Sources/App.swift at <head sha>` for a changed file, `Field: description` for the description document, `Comment: <url>` when a note sits inside one review comment.
-- `jira`: `File:` is `/jira/PROJ/PROJ-123.md`, `Resource:` the browse URL, `Field: description` or `Comment: <id>` by the note's position.
-- `confluence`: `File:` is `/confluence/SPACE/<id> <title>.md`, `Resource:` the page URL, `Version: <n>` the version the note was made against.
+- `pull_request`: `File:` is the virtual path (`/owner/repo/pull/123/changes/Sources/App.swift`), `Resource:` the PR URL, then by the note's position: `Path: Sources/App.swift at <head sha7>` for a changed file; in `Pull request.md`, `Field: description` on the description's lines, `Comment: <review comment url>` inside a review comment, nothing more on the fact lines; in `Conversation.md`, `Comment: <comment url>` inside a comment, `Field: conversation` elsewhere.
+- `jira`: `File:` is `/jira/PROJ/PROJ-123.md`, `Resource:` the browse URL, then by position: `Field: summary` on the title line, `Field: description` in the Description section, `Comment: <browse url>?focusedCommentId=<id>` inside a comment; every line but a comment's also gets `Updated: <ISO 8601 time>`, the issue's last update when the packet was built.
+- `confluence`: `File:` is `/confluence/SPACE/<ancestor page ids…>/<page id>/<Title>.md`, `Resource:` the page URL, `Version: <n>` the page's version when the packet was built.
+
+Lines that hold for every note of one file go in its header; a line that differs between them (each on its own comment) goes in that note's block, right under its `Line N`.
 
 The app only ever reads these resources; the agent makes every change with its own GitHub or Atlassian tools, which is why the header names the resource precisely.
 

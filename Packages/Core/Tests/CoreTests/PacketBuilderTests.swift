@@ -138,6 +138,16 @@ struct PacketBuilderTests {
         #expect(text.hasPrefix("File: /o/r/pull/123/changes/Sources/App.swift\nSource: pull_request\nResource: https://github.com/o/r/pull/123\nPath: Sources/App.swift at 0f3a9c1\n\nLine 7\n"))
         #expect(PacketSource(kind: .web) == .web)
         #expect(PacketSource.pullRequest.rawValue == "pull_request")
+
+        // Two notes on different comments of one issue: each keeps its own Comment: line, the shared lines stay up top.
+        let url = "https://example.atlassian.net/browse/CP-7"
+        let first = PacketNote(noteID: markdownID, agentPath: "/jira/CP/CP-7.md", source: .jira, anchor: textAnchor(17, 17), comment: "a", excerptLines: ["x"],
+                               resource: url, resourceDetails: ["Comment: \(url)?focusedCommentId=1"])
+        let second = PacketNote(noteID: NoteID.new(), agentPath: "/jira/CP/CP-7.md", source: .jira, anchor: textAnchor(20, 20), comment: "b", excerptLines: ["y"],
+                                resource: url, resourceDetails: ["Comment: \(url)?focusedCommentId=2"])
+        let both = PacketBuilder.build([first, second]).text
+        #expect(both.hasPrefix("File: /jira/CP/CP-7.md\nSource: jira\nResource: \(url)\n\nLine 17\nComment: \(url)?focusedCommentId=1\n"), Comment(rawValue: both))
+        #expect(both.contains("Line 20\nComment: \(url)?focusedCommentId=2\n"), Comment(rawValue: both))
     }
 
     @Test func escapesCommentsAndSplitsEmbeddedNewlines() {

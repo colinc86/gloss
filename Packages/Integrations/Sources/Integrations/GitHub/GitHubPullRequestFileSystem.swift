@@ -17,6 +17,8 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         var issueComments: [GitHubComment]
         var reviewComments: [GitHubComment]
         var description: Data
+        var descriptionBody: ClosedRange<Int>
+        var reviewLines: [(range: ClosedRange<Int>, url: URL)]
         var conversation: Data
         var conversationLines: [(range: ClosedRange<Int>, url: URL)]
         var diff: Data?
@@ -75,9 +77,10 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
             async let reviewComments = client.reviewComments(owner: path.owner, repo: path.repo, number: path.number)
             let (pullValue, fileValues, issues, reviews) = try await (pull, files, issueComments, reviewComments)
             let conversation = PullRequestMarkdown.conversation(issues)
+            let description = PullRequestMarkdown.description(pullValue, files: fileValues, reviewComments: reviews, path: path)
             return Snapshot(
                 pull: pullValue, files: fileValues, issueComments: issues, reviewComments: reviews,
-                description: Data(PullRequestMarkdown.description(pullValue, files: fileValues, reviewComments: reviews, path: path).utf8),
+                description: Data(description.text.utf8), descriptionBody: description.body, reviewLines: description.reviews,
                 conversation: Data(conversation.text.utf8), conversationLines: conversation.lines, diff: nil
             )
         }
@@ -292,7 +295,13 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         let url = snapshot.pull.htmlUrl
         if let file = parsed.changedFile { return PacketResource(url: url, details: ["Path: \(file) at \(snapshot.pull.head.sha.prefix(7))"]) }
         switch parsed.rest {
-        case PullRequestPath.descriptionName: return PacketResource(url: url, details: ["Field: description"])
+        case PullRequestPath.descriptionName:
+            // A review comment by its own link; the description by its field; the facts above it are the pull request.
+            if let line, let review = snapshot.reviewLines.first(where: { $0.range.contains(line) }) {
+                return PacketResource(url: url, details: ["Comment: \(review.url.absoluteString)"])
+            }
+            if let line, !snapshot.descriptionBody.contains(line) { return PacketResource(url: url) }
+            return PacketResource(url: url, details: ["Field: description"])
         case PullRequestPath.conversationName:
             if let line, let comment = snapshot.conversationLines.first(where: { $0.range.contains(line) }) {
                 return PacketResource(url: url, details: ["Comment: \(comment.url.absoluteString)"])

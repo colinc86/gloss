@@ -18,8 +18,10 @@ enum PullRequestMarkdown {
         return pull.state
     }
 
-    /// `Pull request.md`: a header block, the description as the author wrote it, then review comments by file.
-    static func description(_ pull: GitHubPullRequest, files: [GitHubPullRequestFile], reviewComments: [GitHubComment], path: PullRequestPath) -> String {
+    /// `Pull request.md`: a header block, the description as the author wrote it, then review comments by file;
+    /// with the lines the description and each review comment take (1-based), so a note can name what it is about.
+    static func description(_ pull: GitHubPullRequest, files: [GitHubPullRequestFile], reviewComments: [GitHubComment], path: PullRequestPath)
+        -> (text: String, body: ClosedRange<Int>, reviews: [(range: ClosedRange<Int>, url: URL)]) {
         var lines: [String] = ["# \(pull.title)", ""]
         let short = String(pull.head.sha.prefix(7))
         // One fact per list item: Markdown would run adjacent lines into a single paragraph.
@@ -36,7 +38,10 @@ enum PullRequestMarkdown {
         lines.append("- <\(pull.htmlUrl.absoluteString)>")
         lines.append("")
         let body = (pull.body ?? "").replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        lines.append(body.isEmpty ? "_No description._" : body)
+        let bodyStart = lines.count + 1
+        lines.append(contentsOf: body.isEmpty ? ["_No description._"] : bodyLines(body))
+        let bodyRange = bodyStart...lines.count
+        var reviews: [(range: ClosedRange<Int>, url: URL)] = []
         if !reviewComments.isEmpty {
             lines.append("")
             lines.append("## Reviews")
@@ -44,14 +49,16 @@ enum PullRequestMarkdown {
             for file in byFile.keys.sorted() {
                 for comment in byFile[file]!.sorted(by: { $0.createdAt < $1.createdAt }) {
                     lines.append("")
+                    let start = lines.count + 1
                     let where_ = comment.line ?? comment.originalLine
                     lines.append("### \(file)" + (where_.map { ":\($0)" } ?? "") + " · @\(comment.user.login) · \(stamp(comment.createdAt))")
                     lines.append(contentsOf: bodyLines(comment.body))
+                    reviews.append((start...lines.count, comment.htmlUrl))
                 }
             }
         }
         lines.append("")
-        return lines.joined(separator: "\n")
+        return (lines.joined(separator: "\n"), bodyRange, reviews)
     }
 
     /// `Conversation.md` and, per comment, the 1-based lines it occupies, so a note inside one can name it.

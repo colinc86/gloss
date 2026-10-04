@@ -12,6 +12,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
     struct IssueDocument {
         var issue: JiraIssue
         var data: Data
+        var description: ClosedRange<Int>
         var comments: [(range: ClosedRange<Int>, id: String)]
     }
 
@@ -74,7 +75,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
         do {
             let issue = try await client.issue(key: key)
             let rendered = AtlassianMarkdown.issue(issue, url: client.browseURL(forIssue: key))
-            let document = IssueDocument(issue: issue, data: Data(rendered.text.utf8), comments: rendered.comments)
+            let document = IssueDocument(issue: issue, data: Data(rendered.text.utf8), description: rendered.description, comments: rendered.comments)
             issues[key] = document
             return document
         } catch {
@@ -281,9 +282,17 @@ public actor AtlassianFileSystem: FileSystemProvider {
                 // Jira's deep link to one comment, so the agent (and a click) lands on it.
                 return PacketResource(url: client.browseURL(forIssue: key), details: ["Comment: \(client.browseURL(forIssue: key).absoluteString)?focusedCommentId=\(comment.id)"])
             }
-            return PacketResource(url: client.browseURL(forIssue: key), details: ["Field: description", "Updated: \(AtlassianMarkdown.stamp(document.issue.updated))"])
+            // The field the line is in: the title is the summary, the Description section the description; the
+            // fact lines, the headings and a whole-file note are about the issue as a whole.
+            let updated = "Updated: \(AtlassianMarkdown.stamp(document.issue.updated))"
+            switch line {
+            case 1?: return PacketResource(url: client.browseURL(forIssue: key), details: ["Field: summary", updated])
+            case let line? where document.description.contains(line): return PacketResource(url: client.browseURL(forIssue: key), details: ["Field: description", updated])
+            default: return PacketResource(url: client.browseURL(forIssue: key), details: [updated])
+            }
         case .confluencePage(let space, let id, _, _)?:
-            guard let document = try? await pageDocument(id, space: space) else { return nil }
+            // Without the page's facts the address is still worth giving.
+            guard let document = try? await pageDocument(id, space: space) else { return PacketResource(url: client.site.appendingPathComponent("wiki/pages/\(id)")) }
             return PacketResource(url: client.pageURL(document.page), details: ["Version: \(document.page.version)"])
         default:
             return nil

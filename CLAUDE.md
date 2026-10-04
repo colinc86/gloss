@@ -15,7 +15,7 @@ Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, a
 - Child processes are spawned with `posix_spawn` (close-on-exec defaults, responsibility disclaimed), never Foundation's `Process`.
 - Transport priority: Herdr socket, MCP server, Claude Code and Codex hooks, OpenCode HTTP API, tmux, clipboard. See `herdr-api` and `agent-integrations`. Hooks drain draft notes only; drained notes become `sent` and stay reachable through MCP until resolved.
 - Packet format is fixed by the `context-packet` skill. Every transport emits the same text.
-- The app reads, the agent writes. Integrations (GitHub, Atlassian, live web pages) are virtual hosts (`github`, `atlassian`, `web`) serving read-only `FileSystemProvider`s, so documents, notes, the packet and the MCP tools are not duplicated. The `Integrations` clients issue GET only (a test asserts it); the packet's `Resource:` line names the pull request, issue or page so the agent changes it with its own tools. Keys live in the Keychain, entered in Settings → Integrations or loaded in debug builds with `--integrations-env`.
+- The app reads, the agent writes. Integrations (GitHub, Atlassian, live web pages) are virtual hosts (`github`, `atlassian`, `web`) serving read-only `FileSystemProvider`s, so documents, notes, the packet and the MCP tools are not duplicated. The `Integrations` clients issue GET only (a test asserts it); the packet's `Resource:` line names the pull request, issue or page so the agent changes it with its own tools. Keys live in the Keychain, entered in Settings → Integrations; debug builds load them with `--integrations-env` (into memory under `--reset-db`).
 - `integrations.env` at the repo root holds real keys: gitignored, never committed, used only to read while testing; test notes go to the clipboard target, never to an agent with GitHub or Atlassian tools.
 - Markdown viewer toggles rendered and source; anchors are stored in source coordinates. Text and markdown are editable; images, PDFs, spreadsheets are not.
 - Notes are created from a floating "Add Note" button beside the selection in every viewer; ⌘⇧N is a secondary shortcut, never the only path.
@@ -31,7 +31,7 @@ Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, a
 ## Build and test
 
 - There is exactly one copy of the app: Xcode's default DerivedData. Build with plain `xcodebuild` (never `-derivedDataPath`) or `/build`; launch and screenshot per the `run-app` skill (`--host <alias>`, `--root`, `--open`, `--reset-db`, `--follow`). A scripted build can collide with Xcode's ⌘R on code signing; just build again.
-- Package tests: `swift test --package-path Packages/<Name>`. Tests that need the environment skip when it is absent: loopback ssh, a running Herdr, tmux, and `GLOSS_REMOTE_HOST=<alias>` for real-host checks. They create only throwaway resources and remove them on every path.
+- Package tests: `swift test --package-path Packages/<Name>`. Tests that need the environment skip when it is absent: loopback ssh, a running Herdr, tmux, `GLOSS_REMOTE_HOST=<alias>` for real-host checks, and the gitignored `integrations.env` (with `GLOSS_ATLASSIAN_SITE` and `GLOSS_LIVE_PULL_REQUEST=owner/repo#n`) for read-only integration checks. They create only throwaway resources and remove them on every path.
 - Use `/verify-transport <name> [host]` before claiming a transport works.
 
 ## Working rules

@@ -56,6 +56,9 @@ struct AtlassianFileSystemTests {
         #expect(try await fs.stat("/jira/CP/CP-7.md").mtime == ISO8601DateFormatter().date(from: "2026-10-03T11:00:00Z"))
         let url = URL(string: "https://x.atlassian.net/browse/CP-7")!
         #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 12) == PacketResource(url: url, details: ["Field: description", "Updated: 2026-10-03T11:00:00Z"]))
+        #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 1) == PacketResource(url: url, details: ["Field: summary", "Updated: 2026-10-03T11:00:00Z"]))
+        #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 3) == PacketResource(url: url, details: ["Updated: 2026-10-03T11:00:00Z"]), "a fact line is the issue as a whole")
+        #expect(await fs.resource(for: "/jira/CP/CP-7.md") == PacketResource(url: url, details: ["Updated: 2026-10-03T11:00:00Z"]), "so is a whole-file note")
         #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 17) == PacketResource(url: url, details: ["Comment: https://x.atlassian.net/browse/CP-7?focusedCommentId=1"]))
         #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 20) == PacketResource(url: url, details: ["Comment: https://x.atlassian.net/browse/CP-7?focusedCommentId=2"]))
         #expect(await fs.title(for: "/jira/CP/CP-7.md") == "CP-7 · Name the receiver")
