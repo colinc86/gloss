@@ -11,6 +11,51 @@ public struct HTMLSelection: Equatable, Sendable {
     public var rect: CGRect?
 }
 
+/// An element the user picked in note mode, as the page's bridge described it.
+public struct ElementPick: Equatable, Sendable {
+    public var selector: String
+    public var tag: String
+    public var text: String
+    public var html: String
+    /// Where the element is on screen, in top-left window coordinates.
+    public var windowRect: CGRect?
+    /// Where the element is on the page, in CSS pixels from the page's top-left.
+    public var pageRect: ElementRect
+    /// DOM text offset of the element's first non-blank text node, for mapping to a source line.
+    public var textOffset: Int?
+
+    public init(selector: String, tag: String, text: String, html: String, windowRect: CGRect?, pageRect: ElementRect, textOffset: Int?) {
+        self.selector = selector
+        self.tag = tag
+        self.text = text
+        self.html = html
+        self.windowRect = windowRect
+        self.pageRect = pageRect
+        self.textOffset = textOffset
+    }
+}
+
+/// An element note to draw on the page.
+public struct ElementHighlight: Equatable {
+    public var id: NoteID
+    public var selector: String
+    public var tag: String
+    public var text: String
+    public var color: NSColor
+    public var state: NoteState
+    public var needsReview: Bool
+
+    public init(id: NoteID, selector: String, tag: String, text: String, color: NSColor, state: NoteState, needsReview: Bool) {
+        self.id = id
+        self.selector = selector
+        self.tag = tag
+        self.text = text
+        self.color = color
+        self.state = state
+        self.needsReview = needsReview
+    }
+}
+
 /// Rendered and source views of one HTML document. The page is served from memory, so unsaved edits render;
 /// its relative resources come from `loadResource` (local disk or the remote host), limited to `resourceRoot`.
 /// Page scripts run, so the view re-aligns its text map whenever they change the page.
@@ -57,6 +102,23 @@ public final class HTMLViewerController: RenderedDocumentController {
     @ObservationIgnored public var alignment: HTMLTextProjection.Alignment?
     /// Set by the view: a fallback rect (top of the page) for notes when no selection rect is known.
     @ObservationIgnored public var pageRect: CGRect?
+
+    /// Note mode: hovering outlines elements and a click picks one. The browser applies it to the page.
+    public var isNoteMode = false
+    /// The element the user just clicked in note mode; the session turns it into a note and clears it.
+    public var pendingPick: ElementPick?
+    /// Element notes to draw; set by the session from its notes.
+    public var elementHighlights: [ElementHighlight] = [] {
+        didSet { elementHighlightsVersion += 1 }
+    }
+    public private(set) var elementHighlightsVersion = 0
+    /// Where each drawn element note is on screen (top-left window coordinates), after the last layout.
+    public internal(set) var elementRects: [NoteID: CGRect] = [:]
+    /// A cheap hash of the page's text as last seen, so unchanged pages are not re-serialised.
+    public internal(set) var textHash: String?
+    /// The page's text changed (a load, a script, a route) and its notes should be looked at again: text notes
+    /// against `source.text`, element notes through the browser's `resolve`.
+    @ObservationIgnored public var onPageChanged: @MainActor () -> Void = {}
 
     /// A source range to scroll the page to, resolved by the view once the page has loaded.
     public internal(set) var pendingScroll: (range: NSRange, select: Bool)?
@@ -138,6 +200,20 @@ public final class HTMLViewerController: RenderedDocumentController {
         alignment = nil
         selection = nil
         renderedVersion += 1
+    }
+
+    /// Largest live-page serialisation the source view takes; beyond it the view says so and text notes still map
+    /// through the projection of what was kept.
+    public static let liveSourceLimit = 8 * 1024 * 1024
+
+    /// Takes the live page's current DOM as the source: the editor shows it, and the projection maps its text.
+    /// Never bumps `renderedVersion`: the page is already showing.
+    func adoptLivePage(html: String, textHash: String) {
+        let kept = html.utf8.count <= Self.liveSourceLimit ? html : "<!-- The page's DOM is larger than 8 MB; the source view shows nothing. -->"
+        source.replaceAll(with: kept)
+        projection = HTMLTextProjection(kept)
+        renderedContentVersion = source.contentVersion
+        self.textHash = textHash
     }
 
     // MARK: Selection and notes

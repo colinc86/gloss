@@ -35,6 +35,8 @@ public final class WebBrowserController {
     @ObservationIgnored private var appliedCollapseVersion = 0
     @ObservationIgnored private var isLoaded = false
     @ObservationIgnored private var savedScrollY: Double?
+    @ObservationIgnored private var appliedPickMode = false
+    @ObservationIgnored private var appliedElementVersion = -1
 
     public init() {
         let configuration = WKWebViewConfiguration()
@@ -69,6 +71,10 @@ public final class WebBrowserController {
             webView.observe(\.canGoForward, options: [.new]) { [weak self] webView, _ in
                 MainActor.assumeIsolated { self?.canGoForward = webView.canGoForward }
             },
+            // Same-document navigations (pushState, hash changes) commit nothing; the URL still moves.
+            webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
+                MainActor.assumeIsolated { self?.committed(webView.url) }
+            },
         ]
     }
 
@@ -90,7 +96,7 @@ public final class WebBrowserController {
             loadedVersion = controller.renderedVersion
             isLoaded = true
             controller.pageRect = topRect()
-            applyHighlights()
+            refresh()
         }
     }
 
@@ -100,6 +106,10 @@ public final class WebBrowserController {
         highlightToken = nil
         schemeHandler.cancelAll()
         current.loadProgress = nil
+        if appliedPickMode { run("window.__cc && window.__cc.setPickMode(false)") }
+        appliedPickMode = false
+        appliedElementVersion = -1
+        current.isNoteMode = false
         // The next page starts without a selection; a stale one would show an Add Note button for nothing.
         current.selection = nil
         current.alignment = nil
@@ -168,6 +178,13 @@ public final class WebBrowserController {
             appliedCollapseVersion = current.collapseVersion
             run("window.__cc && window.__cc.collapse()")
         }
+        if appliedPickMode != current.isNoteMode {
+            appliedPickMode = current.isNoteMode
+            webView.callAsyncJavaScript("window.__cc && window.__cc.setPickMode(on)", arguments: ["on": current.isNoteMode], in: nil, in: .defaultClient)
+        }
+        if appliedElementVersion != current.elementHighlightsVersion {
+            applyElementHighlights()
+        }
     }
 
     // MARK: Navigation
@@ -226,7 +243,7 @@ public final class WebBrowserController {
 
     fileprivate func finished() {
         isLoaded = true
-        realign { [weak self] in
+        refresh { [weak self] in
             guard let self else { return }
             if let y = savedScrollY {
                 savedScrollY = nil
@@ -243,16 +260,32 @@ public final class WebBrowserController {
 
     // MARK: Bridge
 
-    /// Maps the page's current text onto the source again (after a load, or after scripts changed the page),
-    /// then repaints the highlights.
-    private func realign(then next: @escaping @MainActor () -> Void = {}) {
-        webView.callAsyncJavaScript("return document.documentElement ? document.documentElement.textContent : ''", arguments: [:], in: nil, in: .defaultClient) { [weak self] result in
+    /// Reads the page's text (and, for a live page, its DOM) after a load or a change, maps it onto the source,
+    /// repaints the highlights, and tells the session when the text actually changed.
+    private func refresh(then next: @escaping @MainActor () -> Void = {}) {
+        guard let current else { return }
+        let live = current.page.isLive
+        let script = live
+            ? "return window.__cc ? window.__cc.serialize() : { html: document.documentElement.outerHTML, text: document.documentElement.textContent, textHash: '' }"
+            : "return { text: document.documentElement ? document.documentElement.textContent : '', textHash: window.__cc ? window.__cc.textHash() : '' }"
+        let started = current
+        webView.callAsyncJavaScript(script, arguments: [:], in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
-                guard let self, let current = self.current else { return }
-                if case .success(let value) = result, let text = value as? String {
+                guard let self, let current = self.current, current === started else { return }
+                var changed = false
+                if case .success(let value) = result, let page = value as? [String: Any], let text = page["text"] as? String {
+                    let hash = page["textHash"] as? String ?? ""
+                    changed = hash != current.textHash
+                    if live, changed, let html = page["html"] as? String {
+                        current.adoptLivePage(html: html, textHash: hash)
+                    } else if changed {
+                        current.textHash = hash
+                    }
                     current.alignment = current.projection.alignment(withDOM: text)
                 }
                 self.applyHighlights()
+                self.applyElementHighlights()
+                if changed { current.onPageChanged() }
                 next()
             }
         }
@@ -261,7 +294,19 @@ public final class WebBrowserController {
     fileprivate func received(_ body: Any) {
         guard let current, let message = body as? [String: Any] else { return }
         if message["changed"] != nil {
-            realign()
+            refresh()
+            return
+        }
+        if let url = message["url"] as? String {
+            committed(URL(string: url))
+            return
+        }
+        if let pick = message["pick"] as? [String: Any] {
+            current.pendingPick = elementPick(from: pick)
+            return
+        }
+        if message["pickCancel"] != nil {
+            current.isNoteMode = false
             return
         }
         guard let start = message["start"] as? Int, let length = message["length"] as? Int, length > 0 else {
@@ -273,6 +318,74 @@ public final class WebBrowserController {
             rect = webView.topLeftWindowRect(CGRect(x: x, y: y, width: max(w, 2), height: max(h, 2)))
         }
         current.selection = HTMLSelection(dom: NSRange(location: start, length: length), text: message["text"] as? String ?? "", rect: rect)
+    }
+
+    private func elementPick(from pick: [String: Any]) -> ElementPick? {
+        guard let selector = pick["selector"] as? String, let tag = pick["tag"] as? String,
+              let page = rect(pick["page"]) else { return nil }
+        let viewport = rect(pick["rect"]).map { CGRect(x: $0.x, y: $0.y, width: max($0.w, 2), height: max($0.h, 2)) }
+        return ElementPick(
+            selector: selector, tag: tag, text: pick["text"] as? String ?? "", html: pick["html"] as? String ?? "",
+            windowRect: viewport.flatMap { webView.topLeftWindowRect($0) }, pageRect: page, textOffset: pick["textOffset"] as? Int
+        )
+    }
+
+    private func rect(_ value: Any?) -> ElementRect? {
+        guard let dictionary = value as? [String: Any], let x = dictionary["x"] as? Double, let y = dictionary["y"] as? Double,
+              let w = dictionary["w"] as? Double, let h = dictionary["h"] as? Double else { return nil }
+        return ElementRect(x: x, y: y, w: w, h: h)
+    }
+
+    private func candidate(_ value: Any?) -> ElementCandidate? {
+        guard let dictionary = value as? [String: Any], let selector = dictionary["selector"] as? String,
+              let tag = dictionary["tag"] as? String, let rect = rect(dictionary["rect"]) else { return nil }
+        return ElementCandidate(selector: selector, tag: tag, text: dictionary["text"] as? String ?? "", html: dictionary["html"] as? String ?? "", rect: rect)
+    }
+
+    // MARK: Elements
+
+    /// Asks the page where each element note's element is now: at its selector, and wherever the same text sits.
+    public func resolve(_ items: [(id: NoteID, anchor: ElementAnchor)]) async -> [NoteID: ElementResolution] {
+        guard isLoaded, !items.isEmpty else { return [:] }
+        let list: [[String: Any]] = items.map { ["id": $0.id.rawValue, "selector": $0.anchor.selector, "tag": $0.anchor.tag, "text": $0.anchor.text] }
+        let value = try? await webView.callAsyncJavaScript("return window.__cc ? window.__cc.resolveElements(list) : []", arguments: ["list": list], in: nil, contentWorld: .defaultClient)
+        var result: [NoteID: ElementResolution] = [:]
+        for entry in value as? [[String: Any]] ?? [] {
+            guard let id = entry["id"] as? String else { continue }
+            let byText = (entry["byText"] as? [Any] ?? []).compactMap(candidate)
+            result[NoteID(rawValue: id)] = ElementResolution(bySelector: candidate(entry["bySelector"]), byText: byText)
+        }
+        return result
+    }
+
+    /// Scrolls the page to an element note's element and pulses its outline.
+    public func scrollToElement(selector: String) {
+        webView.callAsyncJavaScript("window.__cc && window.__cc.scrollToElement(selector)", arguments: ["selector": selector], in: nil, in: .defaultClient)
+    }
+
+    private func applyElementHighlights() {
+        guard isLoaded, let current else { return }
+        appliedElementVersion = current.elementHighlightsVersion
+        let list: [[String: Any]] = current.elementHighlights.map { highlight in
+            let color = highlight.color.usingColorSpace(.sRGB) ?? .systemBlue
+            let rgb = "\(Int(color.redComponent * 255)),\(Int(color.greenComponent * 255)),\(Int(color.blueComponent * 255))"
+            return ["id": highlight.id.rawValue, "selector": highlight.selector, "tag": highlight.tag, "text": highlight.text,
+                    "color": "rgb(\(rgb))", "fill": "rgba(\(rgb),0.12)", "state": highlight.state.rawValue, "needsReview": highlight.needsReview]
+        }
+        webView.callAsyncJavaScript("return window.__cc ? window.__cc.highlightElements(list) : {}", arguments: ["list": list], in: nil, in: .defaultClient) { [weak self] result in
+            MainActor.assumeIsolated {
+                guard let self, let current = self.current else { return }
+                var rects: [NoteID: CGRect] = [:]
+                if case .success(let value) = result, let map = value as? [String: Any] {
+                    for (id, entry) in map {
+                        if let r = self.rect(entry), let window = self.webView.topLeftWindowRect(CGRect(x: r.x, y: r.y, width: max(r.w, 2), height: max(r.h, 2))) {
+                            rects[NoteID(rawValue: id)] = window
+                        }
+                    }
+                }
+                current.elementRects = rects
+            }
+        }
     }
 
     private func topRect() -> CGRect? {
@@ -333,18 +446,20 @@ public final class WebBrowserController {
     private final class Delegate: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         weak var browser: WebBrowserController?
 
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-            browser?.decide(navigationAction) ?? .cancel
+        // The completion-handler forms decide synchronously; the async ones would hop through the main actor's
+        // queue for every request, which also stalls under a manually run loop (the offscreen tests).
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+            decisionHandler(browser?.decide(navigationAction) ?? .cancel)
         }
 
-        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
-            guard navigationResponse.isForMainFrame else { return .allow }
+        func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
+            guard navigationResponse.isForMainFrame else { return decisionHandler(.allow) }
             let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?.lowercased() ?? ""
             if !navigationResponse.canShowMIMEType || disposition.hasPrefix("attachment") {
                 browser?.refuse("Downloads aren't available here")
-                return .cancel
+                return decisionHandler(.cancel)
             }
-            return .allow
+            decisionHandler(.allow)
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
