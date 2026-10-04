@@ -1,0 +1,54 @@
+import Foundation
+
+/// The documents a Jira issue and a Confluence page are read through, rendered the same way every time.
+enum AtlassianMarkdown {
+    static func stamp(_ date: Date) -> String { date.formatted(.iso8601) }
+
+    /// `KEY.md`: a fact list, the description, then the comments; the lines each comment occupies are returned so a
+    /// note inside one can name it.
+    static func issue(_ issue: JiraIssue, url: URL) -> (text: String, comments: [(range: ClosedRange<Int>, id: String)]) {
+        var lines: [String] = ["# \(issue.key): \(issue.summary)", ""]
+        lines.append("- **\(issue.issueType)** · \(issue.status)" + (issue.priority.map { " · \($0)" } ?? ""))
+        var people: [String] = []
+        if let assignee = issue.assignee { people.append("Assignee: \(assignee)") }
+        if let reporter = issue.reporter { people.append("Reporter: \(reporter)") }
+        if !people.isEmpty { lines.append("- " + people.joined(separator: " · ")) }
+        if !issue.labels.isEmpty { lines.append("- Labels: " + issue.labels.joined(separator: ", ")) }
+        if let parent = issue.parentKey { lines.append("- Parent: \(parent)") }
+        lines.append("- Updated \(stamp(issue.updated)) · created \(stamp(issue.created))")
+        lines.append("- <\(url.absoluteString)>")
+        lines.append("")
+        lines.append("## Description")
+        lines.append("")
+        lines.append(contentsOf: bodyLines(issue.description ?? "_No description._"))
+        var map: [(ClosedRange<Int>, String)] = []
+        if !issue.comments.isEmpty {
+            lines.append("")
+            lines.append("## Comments")
+            for comment in issue.comments {
+                lines.append("")
+                let start = lines.count + 1
+                lines.append("### \(comment.author) · \(stamp(comment.created))")
+                lines.append(contentsOf: bodyLines(comment.body))
+                map.append((start...lines.count, comment.id))
+            }
+        }
+        lines.append("")
+        return (lines.joined(separator: "\n"), map)
+    }
+
+    /// `<Title>.md`: a fact list, then the body.
+    static func page(_ page: ConfluencePage, spaceKey: String, url: URL) -> String {
+        var lines: [String] = ["# \(page.title)", ""]
+        lines.append("- **Confluence** · \(spaceKey) · version \(page.version)" + (page.versionDate.map { " · \(stamp($0))" } ?? ""))
+        lines.append("- <\(url.absoluteString)>")
+        lines.append("")
+        lines.append(contentsOf: bodyLines(page.body ?? "_No content._"))
+        lines.append("")
+        return lines.joined(separator: "\n")
+    }
+
+    static func bodyLines(_ text: String) -> [String] {
+        text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+    }
+}
