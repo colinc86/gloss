@@ -278,7 +278,7 @@ final class NotesPanelModel {
                 let token = UndoToken()
                 undoTokens[deleted.id] = token
                 undo.registerUndo(withTarget: token) { [weak self] _ in
-                    MainActor.assumeIsolated { Task { await self?.undoDelete(deleted) } }
+                    _ = MainActor.assumeIsolated { Task { await self?.undoDelete(deleted) } }
                 }
                 undo.setActionName("Delete Note")
             }

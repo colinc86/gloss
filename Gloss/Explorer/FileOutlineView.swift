@@ -309,12 +309,13 @@ final class TreeOutlineView: NSOutlineView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard !claimedInitialFocus, let window else { return }
+        guard !claimedInitialFocus, window != nil else { return }
         claimedInitialFocus = true
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.window, let content = window.contentView else { return }
             let current = window.firstResponder as? NSView
-            if current == nil || current === window.contentView || !(current?.isDescendant(of: content) ?? false) || current is NSToolbar {
+            // Outside the content view is the toolbar (its items are views, not the NSToolbar): the tree takes over.
+            if current == nil || current === window.contentView || !(current?.isDescendant(of: content) ?? false) {
                 window.makeFirstResponder(self)
             }
         }

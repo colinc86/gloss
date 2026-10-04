@@ -4,7 +4,7 @@ import Remote
 /// Environment checks evaluated once per run; gated tests skip when their resource is absent.
 enum TestGates {
     /// Remote Login is on and the key is in the agent.
-    nonisolated(unsafe) static let loopback: Bool = {
+    static let loopback: Bool = {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         // StrictHostKeyChecking=yes: the probe never writes to the developer's known_hosts; add localhost by hand once.

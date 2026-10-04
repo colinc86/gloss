@@ -591,7 +591,6 @@ struct NoteCard: View {
         return text
     }
 
-    @ViewBuilder
     private var stateBadge: some View {
         let style = note.state.style
         let needsInput = note.state == .resolved && note.resolveOutcome == .needsInput

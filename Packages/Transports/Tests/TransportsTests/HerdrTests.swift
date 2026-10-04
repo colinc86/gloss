@@ -66,8 +66,10 @@ struct HerdrTests {
         do {
             try await Task.sleep(for: .seconds(1))   // let the shell finish starting before typing into it
             _ = try await client.call("pane.send_text", params: ["pane_id": paneID, "text": "exec \(standIn)\n"])
+            // Herdr notices a new agent on its own schedule, slower when the machine is busy (a parallel build):
+            // up to 15 s rather than a guess at how long it takes.
             var detected = false
-            for _ in 0..<20 {
+            for _ in 0..<60 {
                 try await Task.sleep(for: .milliseconds(250))
                 if let pane = try? await client.paneGet(paneID), pane.agent == "claude" { detected = true; break }
             }

@@ -138,7 +138,7 @@ struct ContentView: View {
 /// panel unless it clearly has the slack already. The resize runs on the next turn, outside SwiftUI's update, and
 /// `done` says (once it has finished) whether the panel fits; false when the screen stopped the window short.
 enum NotesPanelRoom {
-    static func make(in window: NSWindow, panelWidth: CGFloat, done: @escaping (Bool) -> Void) {
+    static func make(in window: NSWindow, panelWidth: CGFloat, done: @escaping @MainActor (Bool) -> Void) {
         let slack = window.frame.width - window.minSize.width
         guard slack < panelWidth + 100 else {
             DispatchQueue.main.async { done(true) }
@@ -156,7 +156,7 @@ enum NotesPanelRoom {
                 context.duration = Motion.isReduced ? 0 : 0.2
                 window.animator().setFrame(frame, display: true)
             } completionHandler: {
-                done(fits)
+                MainActor.assumeIsolated { done(fits) }
             }
         }
     }
