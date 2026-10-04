@@ -3,6 +3,7 @@ import Foundation
 import Testing
 @testable import Gloss
 
+@MainActor
 struct AddNoteButtonTests {
     @Test func sitsAboveTheSelectionsTrailingEdgeAndStaysInside() {
         let size = AddNoteButton.size

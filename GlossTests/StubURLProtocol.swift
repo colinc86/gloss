@@ -94,13 +94,22 @@ nonisolated final class StubURLProtocol: URLProtocol {
         } else {
             // A late answer arrives on the thread that started loading, and not at all once the load was stopped.
             let (seconds, attoseconds) = response.delay.components
-            let timer = Timer(timeInterval: Double(seconds) + Double(attoseconds) / 1e18, repeats: false) { [weak self] _ in self?.answer(response) }
+            // Target-action, not a closure: the protocol object is not Sendable, and the timer fires on this thread anyway.
+            delayed = response
+            let timer = Timer(timeInterval: Double(seconds) + Double(attoseconds) / 1e18, target: self, selector: #selector(answerDelayed), userInfo: nil, repeats: false)
             RunLoop.current.add(timer, forMode: .common)
             pending = timer
         }
     }
 
     private var pending: Timer?
+    private var delayed: Stub.Response?
+
+    @objc private func answerDelayed() {
+        guard let response = delayed else { return }
+        delayed = nil
+        answer(response)
+    }
 
     private func answer(_ response: Stub.Response) {
         client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: response.status, httpVersion: nil, headerFields: response.headers)!, cacheStoragePolicy: .notAllowed)
