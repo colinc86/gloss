@@ -31,7 +31,12 @@ public final class HTMLViewerController: RenderedDocumentController {
 
     public let source: TextEditorController
     public var mode: Mode = .rendered
+    /// What the view shows: a served file or a live page.
+    public let page: BrowserPage
+    /// The served file's path, or a live page's document key (its normalised URL).
     public let documentPath: String
+    /// The tunnels of the page's remote host, for pages opened "via" an ssh host; nil on this Mac and on the web.
+    public var proxy: WebProxyMap?
     /// The only folder the page may read from (the explorer root holding the document, else its folder). Scripts
     /// run, so without this a page could fetch any file on the host and send it over the network. Asked on every
     /// request: the explorer may open the document's root after the document itself.
@@ -63,6 +68,7 @@ public final class HTMLViewerController: RenderedDocumentController {
 
     public init(source: TextEditorController, documentPath: String, resourceRoot: @escaping () -> String? = { nil }, loadResource: @escaping @Sendable (String) async throws -> Data) {
         self.source = source
+        page = .file(path: documentPath)
         self.documentPath = documentPath
         rootProvider = resourceRoot
         self.loadResource = loadResource
@@ -73,6 +79,20 @@ public final class HTMLViewerController: RenderedDocumentController {
             previous()
             self?.scheduleRebuild()
         }
+    }
+
+    /// A live page. Its source is the page's current DOM, read-only, filled in by the browser as the page loads.
+    public init(livePage url: URL, proxy: WebProxyMap? = nil) {
+        let source = TextEditorController(text: "", languageName: "html")
+        source.isEditable = false
+        self.source = source
+        page = .live(url)
+        documentPath = WebDocumentKey.normalize(url)
+        self.proxy = proxy
+        rootProvider = { nil }
+        loadResource = { _ in throw URLError(.noPermissionsToReadFile) }
+        projection = HTMLTextProjection("")
+        renderedContentVersion = source.contentVersion
     }
 
     public var isShowingRendered: Bool { mode == .rendered }

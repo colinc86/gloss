@@ -21,6 +21,8 @@ final class AppModel {
     let hosts: HostsModel
     let hooks = HooksModel()
     let quickOpen = QuickOpenModel()
+    /// The one web view, shared by every HTML document and live page.
+    let browser = WebBrowserController()
     let launchOptions: AppLaunchOptions
     /// Live ssh connections by host, for transports and search.
     private(set) var connections: [HostID: SSHConnection] = [:]
@@ -173,6 +175,10 @@ final class AppModel {
             }
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
+        browser.onOpenFile = { [weak self] path in
+            guard let self, let hostID = activeSession?.hostID else { return }
+            openDocument(hostID: hostID, path: path)
+        }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
         notesPanel.onGroupsChange = { [weak self, weak explorer] groups in
             explorer?.updateNoteMarks(groups)
