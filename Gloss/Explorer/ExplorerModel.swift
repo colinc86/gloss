@@ -73,6 +73,9 @@ final class ExplorerModel {
     var showDotfiles = false {
         didSet { treeDelegate?.treeDidChangeFilters() }
     }
+    /// The web address of a node on an integration host (a pull request, issue or page); set by the app.
+    @ObservationIgnored var webURL: (HostID, String) -> URL? = { _, _ in nil }
+
     /// Bumped by View › Filter Files to put the caret in the tree's filter field.
     var filterFocusRequest = 0
     var filter = "" {
@@ -197,7 +200,11 @@ final class ExplorerModel {
             return
         }
         guard let fileSystem = fileSystemProvider(hostID) else {
-            lastError = "No connection to host \(hostID.rawValue)"
+            lastError = switch hostID {
+            case .github: "GitHub isn't set up. Save a token in Settings → Integrations."
+            case .atlassian: "Atlassian isn't set up. Save a key in Settings → Integrations."
+            default: "Not connected to this folder's host."
+            }
             return
         }
         do {
@@ -220,7 +227,7 @@ final class ExplorerModel {
             startWatching(tab, fileSystem: fileSystem)
             await loadRecents(hostID: hostID)
         } catch {
-            lastError = "Could not open \(normalized): \(error)"
+            lastError = "Couldn't open \(PathUtilities.name(of: normalized)): " + DocumentSession.openFailure(error, virtual: hostID.isVirtual)
             Log.explorer.error("openRoot failed: \(error, privacy: .public)")
         }
     }

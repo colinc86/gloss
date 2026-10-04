@@ -72,6 +72,14 @@ extension ExplorerModel {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)])
     }
 
+    /// A pull request's, issue's or page's web address, for Copy URL on the integration hosts' nodes.
+    func copyURL(_ node: FileNode) {
+        guard let url = webURL(node.hostID, node.path) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        onCopied("URL copied")
+    }
+
     func copyPath(_ node: FileNode, relative: Bool) {
         let text = relative ? PathUtilities.relative(node.path, to: selectedTab?.path ?? "/") : node.path
         NSPasteboard.general.clearContents()

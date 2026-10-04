@@ -20,7 +20,7 @@ struct RootSwitcher: View {
         } label: {
             HStack(spacing: DS.Space.s) {
                 if let tab = explorer.selectedTab {
-                    Image(systemName: tab.hostID == .local ? "folder.fill" : tab.hostID == .github ? "arrow.triangle.pull" : tab.hostID == .atlassian ? "square.stack.3d.up" : "network")
+                    Image(systemName: SwitcherEntry.symbol(hostID: tab.hostID, path: tab.path, open: true))
                         .foregroundStyle(Color.accentColor)
                         .contentTransition(.symbolEffect(.replace))
                     if tab.hostID != .local, !tab.hostID.isVirtual {
@@ -108,11 +108,31 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
         return (path as NSString).lastPathComponent
     }
 
+    /// One symbol per kind of root, the same in the switcher, the tree and the pickers.
+    nonisolated static func symbol(hostID: HostID, path: String, open: Bool) -> String {
+        switch hostID {
+        case .local: open ? "folder.fill" : "folder"
+        case .github: "arrow.triangle.pull"
+        case .atlassian: path.hasPrefix("/jira") ? "ticket" : "doc.text"
+        default: "network"
+        }
+    }
+
+    /// What sits under a root's name: where a folder is, or what kind of thing an integration root is.
+    nonisolated static func subtitle(hostID: HostID, path: String) -> String {
+        switch hostID {
+        case .github: "Pull request"
+        case .atlassian: path.hasPrefix("/jira") ? "Jira project" : "Confluence space"
+        default: (path as NSString).deletingLastPathComponent.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        }
+    }
+
     /// `Jira · CP` or `Confluence · ENG` for an Atlassian root.
     nonisolated static func atlassianLabel(_ path: String) -> String? {
         switch AtlassianPath(path) {
         case .jiraProject(let project)?: "Jira · \(project)"
         case .confluenceSpace(let space)?: "Confluence · \(space)"
+        case .confluencePageFolder(let space, _, _)?: "Confluence · \(space) page"
         default: nil
         }
     }
@@ -236,7 +256,8 @@ private struct RootSwitcherList: View {
         let explorer = model.explorer
         let isOpen = entry.section == .open
         let tab = explorer.tabs.first { $0.id == entry.id }
-        return RootRow(title: entry.title, path: entry.hostID == .github ? "pull request" : entry.hostID == .atlassian ? "Atlassian" : entry.path,
+        return RootRow(title: entry.title, subtitle: SwitcherEntry.subtitle(hostID: entry.hostID, path: entry.path),
+                       symbol: SwitcherEntry.symbol(hostID: entry.hostID, path: entry.path, open: isOpen),
                        host: entry.hostID == .local ? nil : entry.hostID == .github ? "GitHub" : entry.hostID == .atlassian ? "Atlassian" : hostName(entry.hostID),
                        isCurrent: isOpen && explorer.selectedTabID == entry.id, isOpen: isOpen, isHighlighted: highlighted,
                        pinned: entry.pinned, notes: tab.map { explorer.folderCountForRoot($0) } ?? 0,
@@ -248,7 +269,8 @@ private struct RootSwitcherList: View {
 
 private struct RootRow: View {
     let title: String
-    let path: String
+    let subtitle: String
+    let symbol: String
     let host: String?
     let isCurrent: Bool
     let isOpen: Bool
@@ -262,7 +284,7 @@ private struct RootRow: View {
 
     var body: some View {
         HStack(spacing: DS.Space.s) {
-            Image(systemName: host == nil ? (isOpen ? "folder.fill" : "folder") : "network")
+            Image(systemName: symbol)
                 .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 0) {
@@ -274,7 +296,7 @@ private struct RootRow: View {
                         .font(.callout.weight(isCurrent ? .semibold : .regular))
                         .lineLimit(1)
                 }
-                Text((path as NSString).deletingLastPathComponent.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -199,8 +199,13 @@ struct FileOutlineView: NSViewRepresentable {
             }
             if node.isDirectory { item("Open as Its Own Folder", #selector(menuOpenAsRoot), symbol: "folder") }
             if node.hostID == .local { item("Reveal in Finder", #selector(menuReveal), symbol: "finder") }
-            item("Copy Path", #selector(menuCopyPath), symbol: "doc.on.doc")
-            item("Copy Relative Path", #selector(menuCopyRelativePath), symbol: "arrow.turn.down.right")
+            if node.hostID.isVirtual {
+                // A pull request's, issue's or page's path is the app's own; its address is what is worth copying.
+                item("Copy URL", #selector(menuCopyURL), symbol: "link")
+            } else {
+                item("Copy Path", #selector(menuCopyPath), symbol: "doc.on.doc")
+                item("Copy Relative Path", #selector(menuCopyRelativePath), symbol: "arrow.turn.down.right")
+            }
         }
 
         @objc private func menuOpenAsRoot() { if let node = clickedNode, node.isDirectory { Task { await model.openRoot(hostID: node.hostID, path: node.path) } } }
@@ -243,6 +248,7 @@ struct FileOutlineView: NSViewRepresentable {
         @objc private func menuDelete() { if let node = clickedNode { model.delete(node) } }
         @objc private func menuReveal() { if let node = clickedNode { model.revealInFinder(node) } }
         @objc private func menuCopyPath() { if let node = clickedNode { model.copyPath(node, relative: false) } }
+        @objc private func menuCopyURL() { if let node = clickedNode { model.copyURL(node) } }
         @objc private func menuCopyRelativePath() { if let node = clickedNode { model.copyPath(node, relative: true) } }
 
         /// The selected row, for menu-bar commands.

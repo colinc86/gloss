@@ -119,7 +119,7 @@ struct OpenAtlassianSheet: View {
 
     private func row(_ row: AtlassianPickerModel.Row, product: AtlassianPickerModel.Product, selected: Bool) -> some View {
         HStack(spacing: DS.Space.m) {
-            Image(systemName: product == .jira ? "ticket" : "square.stack.3d.up")
+            Image(systemName: product == .jira ? "ticket" : "doc.text")
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {

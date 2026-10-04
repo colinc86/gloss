@@ -209,6 +209,7 @@ final class AppModel {
             }
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
+        explorer.webURL = { [weak self] hostID, path in self?.webURL(hostID: hostID, path: path) }
         fileSystems[.web] = UnavailableFileSystem(hostID: .web)
         // A page moves the viewer only while it is what the viewer shows: one left running behind another document
         // (a redirect, a refresh, a script) never pulls the reader away.
@@ -566,6 +567,34 @@ final class AppModel {
         return canonical
     }
 
+    /// The web address of a path on an integration host: a pull request (or its changed file), a Jira issue or a
+    /// Confluence page; nil for anything else.
+    func webURL(hostID: HostID, path: String) -> URL? {
+        switch hostID {
+        case .github:
+            guard let pull = PullRequestPath(path) else { return nil }
+            return pull.webURL
+        case .atlassian:
+            guard let site = integrations.atlassian?.site else { return nil }
+            switch AtlassianPath(path) {
+            case .jiraIssue(_, let key)?: return site.appendingPathComponent("browse/\(key)")
+            case .jiraProject(let project)?: return site.appendingPathComponent("browse/\(project)")
+            case .confluenceSpace(let space)?: return site.appendingPathComponent("wiki/spaces/\(space)")
+            case let reference?: return reference.pageID.map { site.appendingPathComponent("wiki/spaces/\(Self.space(of: reference))/pages/\($0)") }
+            case nil: return nil
+            }
+        default:
+            return nil
+        }
+    }
+
+    private nonisolated static func space(of reference: AtlassianPath) -> String {
+        switch reference {
+        case .confluencePageFolder(let space, _, _), .confluencePage(let space, _, _, _): space
+        default: ""
+        }
+    }
+
     /// The Atlassian provider, for what the viewer asks beyond files.
     var atlassianDocuments: AtlassianFileSystem? { fileSystems[.atlassian] as? AtlassianFileSystem }
 
@@ -778,8 +807,12 @@ final class AppModel {
     }
 
     /// Open Quickly over the selected root, on whichever host it belongs to.
+    /// A pull request, a Jira project or a Confluence space: browsed, not searched (its files are not on a disk
+    /// that ssh or rg can reach).
+    var selectedRootIsVirtual: Bool { explorer.selectedTab?.hostID.isVirtual ?? false }
+
     func presentQuickOpen() {
-        guard let tab = explorer.selectedTab else { return }
+        guard let tab = explorer.selectedTab, !tab.hostID.isVirtual else { return }
         guard tab.hostID != .local else {
             quickOpen.present(root: tab.path, hostID: .local, connection: nil)
             return
@@ -794,7 +827,7 @@ final class AppModel {
     /// Find in Files over the selected root, reconnecting a remote host first; never searches this Mac for a
     /// remote root.
     func runContentSearch() {
-        guard let tab = explorer.selectedTab else { return }
+        guard let tab = explorer.selectedTab, !tab.hostID.isVirtual else { return }
         let search = explorer.contentSearch
         guard tab.hostID != .local else {
             search.search(in: tab.path)
@@ -824,6 +857,8 @@ final class AppModel {
     /// Makes sure a root containing `path` is open, opening the parent directory when none is (a pull request's
     /// documents open their pull request).
     func openRootIfNeeded(hostID: HostID, containing path: String) async {
+        // A web page has no folder to open.
+        guard !DocumentKindDetector.isWebURL(path) else { return }
         guard await ensureConnected(hostID) else { return }
         if explorer.tabs.contains(where: { $0.hostID == hostID && ExplorerModel.inRootSpelling(path, root: $0.path, hostID: hostID) != nil }) { return }
         if hostID == .github, let pull = PullRequestPath(path) {
@@ -1012,17 +1047,15 @@ final class AppModel {
 
     private func reopenMostRecentRoot() async {
         let hosts = (try? await noteStore.hosts()) ?? []
-        var best: Root?
-        for host in hosts {
-            for root in (try? await noteStore.roots(for: host.id)) ?? [] where best.map({ root.lastOpenedAt > $0.lastOpenedAt }) ?? true {
-                best = root
-            }
-        }
-        guard let best else { return }
+        var roots: [Root] = []
+        for host in hosts { roots += (try? await noteStore.roots(for: host.id)) ?? [] }
+        // The most recent root whose host is there: a pull request or ticket whose key was removed since is
+        // passed over for the next one, rather than opening nothing.
+        let usable = roots.sorted { $0.lastOpenedAt > $1.lastOpenedAt }.first { !$0.hostID.isVirtual || fileSystems[$0.hostID] != nil }
+        guard let best = usable else { return }
         if best.hostID == .local {
             await explorer.openRoot(hostID: .local, path: best.path)
         } else if best.hostID.isVirtual {
-            guard fileSystems[best.hostID] != nil else { return }
             await explorer.openRoot(hostID: best.hostID, path: best.path)
         } else {
             await openRemoteRoot(hostID: best.hostID, path: best.path)

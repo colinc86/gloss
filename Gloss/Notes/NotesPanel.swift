@@ -104,7 +104,11 @@ struct NotesPanel: View {
             let host = path.split(separator: "/").dropFirst().first.map(String.init) ?? "another site"
             return "\(host) (previous site)"
         }
-        return path.hasPrefix("/jira/") ? "Jira" : "Confluence"
+        switch AtlassianPath(path) {
+        case .jiraIssue(let project, _)?: return "Jira · \(project)"
+        case .confluencePage(let space, _, _, _)?: return "Confluence · \(space)"
+        default: return path.hasPrefix("/jira/") ? "Jira" : "Confluence"
+        }
     }
 
     private var header: some View {

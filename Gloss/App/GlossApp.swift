@@ -65,7 +65,7 @@ struct AppCommands: Commands {
             .keyboardShortcut("o", modifiers: [.command, .shift])
             Button { model.presentQuickOpen() } label: { Label("Open Quickly…", systemImage: "doc.text.magnifyingglass") }
                 .keyboardShortcut("p", modifiers: [.command])
-                .disabled(model.explorer.selectedTab == nil)
+                .disabled(model.explorer.selectedTab == nil || model.selectedRootIsVirtual)
             Button { model.presentOpenLocation() } label: { Label("Open Location…", systemImage: "globe") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Button { model.presentOpenPullRequest() } label: { Label("Open Pull Request…", systemImage: "arrow.triangle.pull") }
@@ -173,7 +173,7 @@ struct AppCommands: Commands {
                 model.explorer.contentSearch.focusRequest += 1
             } label: { Label("Find in Files", systemImage: "text.magnifyingglass") }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
-                .disabled(model.explorer.selectedTab == nil)
+                .disabled(model.explorer.selectedTab == nil || model.selectedRootIsVirtual)
             Button { model.revealActiveDocumentInExplorer() } label: { Label("Reveal in Explorer", systemImage: "scope") }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
                 .disabled(model.activeSession == nil)

@@ -291,6 +291,16 @@ private struct StatusBar: View {
                     Label("Confluence · \(space)", systemImage: "doc.text")
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)
+                        .contextMenu {
+                            if let url = model.webURL(hostID: .atlassian, path: session.path) {
+                                Button("Open in Confluence") { NSWorkspace.shared.open(url) }
+                                Button("Copy Page URL") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                                    model.flashCopied("URL copied")
+                                }
+                            }
+                        }
                 default:
                     EmptyView()
                 }

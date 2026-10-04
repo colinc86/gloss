@@ -43,18 +43,21 @@ struct ContentView: View {
                     EmptyState(
                         symbol: "doc.text.magnifyingglass",
                         title: "Open a file",
-                        message: "Pick one in the explorer, or jump straight to it by name."
+                        message: model.selectedRootIsVirtual ? "Pick one in the explorer." : "Pick one in the explorer, or jump straight to it by name."
                     ) {
-                        Button {
-                            model.presentQuickOpen()
-                        } label: {
-                            HStack(spacing: DS.Space.s) {
-                                Text("Open Quickly…")
-                                KeyCap("⌘P")
+                        // A pull request, project or space is browsed in the tree; there is no file index to jump through.
+                        if !model.selectedRootIsVirtual {
+                            Button {
+                                model.presentQuickOpen()
+                            } label: {
+                                HStack(spacing: DS.Space.s) {
+                                    Text("Open Quickly…")
+                                    KeyCap("⌘P")
+                                }
                             }
+                            .controlSize(.large)
+                            .buttonStyle(.glass)
                         }
-                        .controlSize(.large)
-                        .buttonStyle(.glass)
                         if let tab = model.explorer.selectedTab {
                             let work = OpenWorkItem.items(from: model.notesPanel.groups, rootPath: tab.path, hostID: tab.hostID)
                             if !work.isEmpty {

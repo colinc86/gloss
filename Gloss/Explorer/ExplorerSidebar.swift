@@ -130,7 +130,8 @@ struct ExplorerSidebar: View {
             Label(pickedHost == .local ? "local" : pickedHost == .github ? "GitHub" : pickedHost == .atlassian ? "Atlassian" : hostName(pickedHost), systemImage: pickedHost == .local ? "desktopcomputer" : pickedHost == .github ? "arrow.triangle.pull" : pickedHost == .atlassian ? "square.stack.3d.up" : statusIcon(pickedHost))
                 .labelStyle(.titleAndIcon)
         }
-        .help(pickedHost == .local ? "Browsing this Mac. Choose another host…" : "Browsing \(hostName(pickedHost)). Choose another host…")
+        .help(pickedHost == .local ? "Browsing this Mac. Choose another host…"
+              : "Browsing \(pickedHost == .github ? "GitHub" : pickedHost == .atlassian ? "Atlassian" : hostName(pickedHost)). Choose another host…")
         .accessibilityLabel("Host: \(hostName(pickedHost))")
     }
 
