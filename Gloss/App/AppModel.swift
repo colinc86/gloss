@@ -443,6 +443,10 @@ final class AppModel {
         }
         if hostID == .github {
             session.lineChangesProvider = { [weak self] path in await self?.pullRequests?.changes(forPath: path) }
+            session.changeSummaryProvider = { [weak self] path in await self?.pullRequests?.changeSummary(for: path) }
+        }
+        if hostID == .atlassian {
+            session.changeSummaryProvider = { [weak self] path in await self?.atlassianDocuments?.changeSummary(for: path) }
         }
         sessions[key] = session
         activeSession = session

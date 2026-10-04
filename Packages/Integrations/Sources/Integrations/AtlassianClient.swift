@@ -193,6 +193,21 @@ public actor AtlassianClient {
         try await results(startingAt: url("wiki/api/v2/pages/\(id)/children", query: ["limit": "250"])).compactMap { self.page(from: $0, body: false) }
     }
 
+    /// Who last changed an issue's fields and when, from its change history (comments are not in it).
+    public func lastChange(ofIssue key: String) async throws -> (author: String, at: Date)? {
+        let issue = try object(try await http.get(url("rest/api/3/issue/\(key)", query: ["fields": "updated", "expand": "changelog"]), headers: headers))
+        let histories = ((issue["changelog"] as? [String: Any])?["histories"] as? [[String: Any]]) ?? []
+        return histories.compactMap { history -> (String, Date)? in
+            guard let created = date(history["created"]), let author = (history["author"] as? [String: Any])?["displayName"] as? String else { return nil }
+            return (author, created)
+        }.max { $0.1 < $1.1 }
+    }
+
+    /// A Confluence user's display name.
+    public func userName(accountId: String) async throws -> String? {
+        try object(try await http.get(url("wiki/rest/api/user", query: ["accountId": accountId]), headers: headers))["displayName"] as? String
+    }
+
     /// A page's ancestor pages, the space's top-level page first. Folders and other content types in between are
     /// left out: the tree lists pages only.
     public func ancestors(ofPage id: String) async throws -> [String] {

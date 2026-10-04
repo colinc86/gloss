@@ -179,7 +179,7 @@ private struct BannerView: View {
         case .deletedOnDisk:
             (.warning, "trash", "Deleted on disk", "This file is no longer at its path. Its notes stay until you delete them.")
         case .resourceUpdated:
-            (.info, "arrow.triangle.2.circlepath", session.hostID == .atlassian ? "Updated in Jira or Confluence" : "Pull request updated",
+            (.info, "arrow.triangle.2.circlepath", session.resourceUpdateSummary ?? (session.hostID == .atlassian ? "Updated in Jira or Confluence" : "Pull request updated"),
              session.hostID == .atlassian ? "The ticket or page changed at its source; this document reloaded and its notes followed." : "Something changed on GitHub; this document reloaded and its notes followed.")
         }
     }

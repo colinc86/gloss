@@ -99,6 +99,10 @@ final class DocumentSession: Identifiable {
     var proxy: WebProxyMap?
     /// The lines a change touched in this document (a pull request's file), asked for on open and after a reload.
     @ObservationIgnored var lineChangesProvider: ((String) async -> LineChanges?)?
+    /// Who changed a pull request, ticket or page, for the banner after a reload ("Updated by Ana Ruiz · version 8").
+    @ObservationIgnored var changeSummaryProvider: ((String) async -> String?)?
+    /// What the last `resourceUpdated` banner says changed, once known.
+    private(set) var resourceUpdateSummary: String?
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot) {
         self.id = "\(hostID.rawValue):\(path)"
@@ -473,6 +477,14 @@ final class DocumentSession: Identifiable {
     /// "Pull request updated" for a few seconds, long enough to notice, gone before it nags.
     private func showResourceUpdated() {
         banner = .resourceUpdated
+        resourceUpdateSummary = nil
+        if let provider = changeSummaryProvider {
+            let path = path
+            Task { [weak self] in
+                let summary = await provider(path)
+                if self?.banner == .resourceUpdated { self?.resourceUpdateSummary = summary }
+            }
+        }
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(8))
             if self?.banner == .resourceUpdated { self?.banner = nil }

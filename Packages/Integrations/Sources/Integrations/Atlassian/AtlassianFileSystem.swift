@@ -14,12 +14,14 @@ public actor AtlassianFileSystem: FileSystemProvider {
         var data: Data
         var description: ClosedRange<Int>
         var comments: [(range: ClosedRange<Int>, id: String)]
+        var fetchedAt: ContinuousClock.Instant = .now
     }
 
     struct PageDocument {
         var page: ConfluencePage
         var spaceKey: String
         var data: Data
+        var fetchedAt: ContinuousClock.Instant = .now
     }
 
     private final class Poller {
@@ -68,10 +70,17 @@ public actor AtlassianFileSystem: FileSystemProvider {
         return parsed
     }
 
+    /// A document read a while ago is read again when it is next asked for, unless a watcher keeps it fresh: a
+    /// reopened ticket shows today's text, not the first read's followed by an "updated" banner.
+    private func isFresh(_ fetchedAt: ContinuousClock.Instant, _ path: AtlassianPath?) -> Bool {
+        if let path, pollers[path.path] != nil { return true }
+        return ContinuousClock.now - fetchedAt < listingLifetime
+    }
+
     // MARK: Jira
 
     private func issueDocument(_ key: String, project: String, refresh: Bool = false) async throws -> IssueDocument {
-        if !refresh, let cached = issues[key] { return cached }
+        if !refresh, let cached = issues[key], isFresh(cached.fetchedAt, AtlassianPath.jiraIssue(project: project, key: key)) { return cached }
         do {
             let issue = try await client.issue(key: key)
             let rendered = AtlassianMarkdown.issue(issue, url: client.browseURL(forIssue: key))
@@ -87,7 +96,8 @@ public actor AtlassianFileSystem: FileSystemProvider {
     private func issueList(_ project: String) async throws -> [JiraIssue.Summary] {
         if let cached = issueLists[project], ContinuousClock.now - cached.fetchedAt < listingLifetime { return cached.list }
         do {
-            let list = try await client.searchIssues(jql: "project = \"\(project)\" AND (assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) ORDER BY updated DESC")
+            // The 200 most recently updated: a project root is for the issues one works on, not the whole backlog.
+            let list = try await client.searchIssues(jql: "project = \"\(project)\" AND (assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) ORDER BY updated DESC", limit: 200)
             issueLists[project] = (list, .now)
             return list
         } catch {
@@ -111,7 +121,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
     }
 
     private func pageDocument(_ id: String, space: String, refresh: Bool = false) async throws -> PageDocument {
-        if !refresh, let cached = pages[id] { return cached }
+        if !refresh, let cached = pages[id], isFresh(cached.fetchedAt, nil) || pollers.keys.contains(where: { AtlassianPath($0)?.pageID == id }) { return cached }
         do {
             let page = try await client.page(id: id)
             pageTitles[id] = page
@@ -294,6 +304,25 @@ public actor AtlassianFileSystem: FileSystemProvider {
             // Without the page's facts the address is still worth giving.
             guard let document = try? await pageDocument(id, space: space) else { return PacketResource(url: client.site.appendingPathComponent("wiki/pages/\(id)")) }
             return PacketResource(url: client.pageURL(document.page), details: ["Version: \(document.page.version)"])
+        default:
+            return nil
+        }
+    }
+
+    /// For the banner after a change: who made it and, for a page, its version ("Updated by Ana Ruiz · version 8").
+    /// An issue's latest change is its newest field change or comment, whichever came last.
+    public func changeSummary(for path: String) async -> String? {
+        switch AtlassianPath(path) {
+        case .jiraIssue(let project, let key)?:
+            guard let document = try? await issueDocument(key, project: project) else { return nil }
+            var latest: (author: String, at: Date)? = document.issue.comments.max { $0.created < $1.created }.map { ($0.author, $0.created) }
+            if let change = try? await client.lastChange(ofIssue: key), change.at > (latest?.at ?? .distantPast) { latest = change }
+            return latest.map { "Updated by \($0.author)" }
+        case .confluencePage(let space, let id, _, _)?:
+            guard let document = try? await pageDocument(id, space: space) else { return nil }
+            var author: String?
+            if let id = document.page.authorId { author = try? await client.userName(accountId: id) }
+            return (author.map { "Updated by \($0) · " } ?? "Updated to ") + "version \(document.page.version)"
         default:
             return nil
         }

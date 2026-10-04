@@ -289,6 +289,12 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         return PatchHunks.parse(patch)
     }
 
+    /// For the banner after a change: the head the pull request moved to.
+    public func changeSummary(for path: String) async -> String? {
+        guard let parsed = PullRequestPath(path), let snapshot = try? await snapshot(for: parsed) else { return nil }
+        return "Pull request updated to \(snapshot.pull.head.sha.prefix(7))"
+    }
+
     /// For the packet: the pull request's URL and what in it the document is.
     public func resource(for path: String, line: Int? = nil) async -> PacketResource? {
         guard let parsed = PullRequestPath(path), let snapshot = try? await snapshot(for: parsed) else { return nil }

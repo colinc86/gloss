@@ -34,7 +34,7 @@ struct AtlassianFileSystemTests {
 
     static func serve(_ stub: Stub, updated: String = "2026-10-03T12:00:00.000+0100") {
         stub.respond(to: "\(site)/rest/api/3/issue/CP-7?fields=summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project", with: .json(AtlassianReadTests.issueJSON.replacingOccurrences(of: "2026-10-03T12:00:00.000+0100", with: updated)))
-        stub.respond(to: "\(site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated&jql=project%20%3D%20%22CP%22%20AND%20(assignee%20%3D%20currentUser()%20OR%20reporter%20%3D%20currentUser()%20OR%20watcher%20%3D%20currentUser())%20ORDER%20BY%20updated%20DESC&maxResults=50", with: .json(#"{"issues":[{"key":"CP-7","fields":{"summary":"Name the receiver","status":{"name":"In Progress"},"issuetype":{"name":"Task"},"project":{"key":"CP"},"updated":"2026-10-03T12:00:00.000+0100"}}],"isLast":true}"#))
+        stub.respond(to: "\(site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated&jql=project%20%3D%20%22CP%22%20AND%20(assignee%20%3D%20currentUser()%20OR%20reporter%20%3D%20currentUser()%20OR%20watcher%20%3D%20currentUser())%20ORDER%20BY%20updated%20DESC&maxResults=100", with: .json(#"{"issues":[{"key":"CP-7","fields":{"summary":"Name the receiver","status":{"name":"In Progress"},"issuetype":{"name":"Task"},"project":{"key":"CP"},"updated":"2026-10-03T12:00:00.000+0100"}}],"isLast":true}"#))
         stub.respond(to: "\(site)/wiki/api/v2/spaces?limit=250&sort=name", with: .json(#"{"results":[{"id":"11","key":"ENG","name":"Engineering"}]}"#))
         stub.respond(to: "\(site)/wiki/api/v2/spaces/11/pages?depth=root&limit=250&sort=title", with: .json(#"{"results":[{"id":"100","title":"Release plan","spaceId":"11","version":{"number":7,"createdAt":"2026-10-03T12:00:00.000Z"},"_links":{"webui":"/spaces/ENG/pages/100/Release+plan"}}]}"#))
         stub.respond(to: "\(site)/wiki/api/v2/pages/100/children?limit=250", with: .json(#"{"results":[{"id":"101","title":"Phase 1/2","spaceId":"11","parentId":"100","version":{"number":2}}]}"#))
@@ -64,6 +64,18 @@ struct AtlassianFileSystemTests {
         #expect(await fs.title(for: "/jira/CP/CP-7.md") == "CP-7 · Name the receiver")
         await #expect(throws: FileSystemError.permissionDenied("/jira/CP/x")) { try await fs.makeDirectory("/jira/CP/x") }
         #expect(Set(stub.recorded.map { $0.httpMethod ?? "" }) == ["GET"])
+    }
+
+    @Test func changeSummariesNameWhoChangedIt() async throws {
+        let stub = Stub()
+        Self.serve(stub)
+        stub.respond(to: "\(Self.site)/rest/api/3/issue/CP-7?expand=changelog&fields=updated", with: .json(#"{"changelog":{"histories":[{"created":"2026-10-01T09:00:00.000+0000","author":{"displayName":"Old Editor"}},{"created":"2026-10-05T09:00:00.000+0000","author":{"displayName":"Bo Chen"}}]}}"#))
+        let fs = provider(stub)
+        #expect(await fs.changeSummary(for: "/jira/CP/CP-7.md") == "Updated by Bo Chen", "the newest field change, later than any comment")
+        stub.respond(to: "\(Self.site)/rest/api/3/issue/CP-7?expand=changelog&fields=updated", with: .json(#"{"changelog":{"histories":[{"created":"2026-09-01T09:00:00.000+0000","author":{"displayName":"Old Editor"}}]}}"#))
+        let fresh = provider(stub)
+        #expect(await fresh.changeSummary(for: "/jira/CP/CP-7.md") == "Updated by Sam", "Sam's comment came after the last field change")
+        #expect(await fs.changeSummary(for: "/confluence/ENG/100/Release plan.md") == "Updated to version 7", "no author known: the version alone")
     }
 
     @Test func listsASpaceAndReadsAPage() async throws {
