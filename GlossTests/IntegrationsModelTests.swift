@@ -104,10 +104,29 @@ struct IntegrationsModelTests {
         await model.integrations.saveAtlassian(site: "example", email: "c@x.com", token: "tok")
         try await waitFor { model.atlassianDocuments != nil }
         #expect(model.pullRequests === provider, "open pull requests keep their provider")
+        stub.respond(to: "https://api.github.com/repos/o/r/pulls/2", with: .json("{}", status: 404))
         await model.integrations.saveGitHub(token: "ghp_y")
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitFor { model.integrations.github?.token == "ghp_y" }
+        await model.registration?.value
         #expect(model.pullRequests === provider, "a new token goes into the same provider")
+        // The provider reads with the new token from here on.
+        _ = try? await provider.read("/o/r/pull/2/Pull request.md")
+        let read = stub.recorded.last { $0.url?.path == "/repos/o/r/pulls/2" }
+        #expect(read != nil, "the provider asked GitHub")
+        #expect(read?.value(forHTTPHeaderField: "Authorization")?.hasSuffix("ghp_y") == true, Comment(rawValue: read?.value(forHTTPHeaderField: "Authorization").map { String($0.prefix(7)) } ?? "no header"))
         await model.shutDown()
+    }
+
+    @Test func removingAKeyWhileItsCheckRunsWins() async throws {
+        let stub = stubbed(github: .json(#"{"login":"octo"}"#, delay: .milliseconds(300)))
+        let store = MemoryCredentialStore()
+        let model = IntegrationsModel(store: store, session: stub.session())
+        async let save: Void = model.saveGitHub(token: "ghp_new")
+        try await Task.sleep(for: .milliseconds(50))
+        model.clear(.github)
+        await save
+        #expect(model.github == nil, "the removal came last: the save that finished after it is not written")
+        #expect(try store.read(account: "github") == nil)
     }
 
     func waitFor(_ condition: @escaping @MainActor () -> Bool) async throws {

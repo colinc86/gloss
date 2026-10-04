@@ -29,17 +29,20 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
 
     private var snapshots: [Key: Snapshot] = [:]
     /// Fetches in flight, so callers arriving together share one set of requests.
-    private var inflight: [Key: Task<Snapshot, any Error>] = [:]
+    private var inflight: [Key: (id: UUID, task: Task<Snapshot, any Error>)] = [:]
+    /// Bumped by `replaceClient`: a read that started with the old key may finish, but is not kept.
+    private var generation = 0
     private var contents: [String: Data] = [:]
     private var pollers: [Key: Poller] = [:]
 
-    /// A new key: what was read with the old one is dropped, and open documents and pollers carry on with this.
+    /// A new key. Open documents and pollers carry on with it; the snapshots stay, so the next poll still
+    /// compares against what the documents show and reports a head that moved meanwhile. File contents read with
+    /// the old key are dropped, and reads already under way finish for their callers without being kept.
     public func replaceClient(_ client: GitHubClient) {
         self.client = client
-        snapshots = [:]
-        inflight.values.forEach { $0.cancel() }
-        inflight = [:]
+        generation += 1
         contents = [:]
+        inflight = [:]
     }
     /// Watchers whose stream ended before their registration ran.
     private var terminated: Set<UUID> = []
@@ -62,8 +65,9 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     func snapshot(for path: PullRequestPath, refresh: Bool = false) async throws -> Snapshot {
         let key = key(path)
         if !refresh, let cached = snapshots[key] { return cached }
-        if let running = inflight[key] { return try await running.value }
+        if let running = inflight[key] { return try await running.task.value }
         let client = client
+        let started = generation
         let task = Task<Snapshot, any Error> {
             async let pull = client.pullRequest(owner: path.owner, repo: path.repo, number: path.number)
             async let files = client.pullRequestFiles(owner: path.owner, repo: path.repo, number: path.number)
@@ -77,10 +81,13 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
                 conversation: Data(conversation.text.utf8), conversationLines: conversation.lines, diff: nil
             )
         }
-        inflight[key] = task
-        defer { inflight[key] = nil }
+        let id = UUID()
+        inflight[key] = (id, task)
+        // Only this fetch's own entry goes: a fetch for a new key may have taken the slot meanwhile.
+        defer { if inflight[key]?.id == id { inflight[key] = nil } }
         do {
             let snapshot = try await task.value
+            guard generation == started else { return snapshot }
             if let previous = snapshots[key], previous.pull.head.sha != snapshot.pull.head.sha {
                 // The old head's files are not coming back.
                 let stale = "\(previous.pull.head.sha):"
@@ -104,9 +111,10 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     private func content(of file: String, in snapshot: Snapshot, path: PullRequestPath) async throws -> Data {
         let cacheKey = "\(snapshot.pull.head.sha):\(path.repository):\(file)"
         if let cached = contents[cacheKey] { return cached }
+        let started = generation
         do {
             let data = try await client.fileContent(owner: path.owner, repo: path.repo, path: file, ref: snapshot.pull.head.sha)
-            contents[cacheKey] = data
+            if generation == started { contents[cacheKey] = data }
             return data
         } catch let error as IntegrationError {
             throw Self.fileSystemError(error, path: path.path)

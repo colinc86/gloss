@@ -69,7 +69,10 @@ final class PullRequestPickerModel {
     var typedAction: TypedAction? {
         guard let typed = typedReference else { return nil }
         if hasKey { return .open(typed) }
-        if let url = URL(string: query.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme?.hasPrefix("http") == true { return .browse(url) }
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // `github.com/o/r/pull/12` is an address too.
+        let address = text.contains("://") ? text : (text.contains("/") && text.contains(".") ? "https://" + text : text)
+        if let url = URL(string: address), url.scheme?.hasPrefix("http") == true, url.host() != nil { return .browse(url) }
         return .needsKey
     }
 

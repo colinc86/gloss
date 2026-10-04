@@ -25,7 +25,8 @@ struct PullRequestPickerTests {
         let picker = PullRequestPickerModel()
         var opened: PullRequestPath?
         picker.onOpen = { opened = $0 }
-        let client = GitHubClient(token: "t", session: URLSession(configuration: .ephemeral))
+        // The list load goes to a stub that has no answer: nothing reaches GitHub.
+        let client = GitHubClient(token: "t", session: Stub().session())
         picker.present(client: client, login: nil)
         #expect(picker.errorMessage == nil, "a saved token lists even before its check has named the login")
         picker.query = "https://github.com/o/r/pull/12/files/Sources/A.swift"
@@ -47,7 +48,8 @@ struct PullRequestPickerTests {
         #expect(picker.typedAction == .needsKey)
         picker.submit()
         #expect(picker.isPresented && picker.query == "o/r#12", "nothing to open it with: the sheet and the query stay")
-        picker.query = "https://github.com/o/r/pull/12"
+        picker.query = "github.com/o/r/pull/12"
+        #expect(picker.typedAction == .browse(URL(string: "https://github.com/o/r/pull/12")!), "an address without its scheme is still an address")
         picker.submit()
         #expect(browsed == URL(string: "https://github.com/o/r/pull/12"))
         #expect(opened == nil)

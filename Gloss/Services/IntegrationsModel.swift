@@ -39,7 +39,8 @@ final class IntegrationsModel {
 
     /// Every request the clients make, with its method, so a live session can be checked for anything but GET
     /// (`log show --info --predicate 'subsystem == "com.cnc.Gloss" AND category == "integrations"'`).
-    /// The method is public; the URL (private repositories, file paths, searches) is private outside debug builds.
+    /// Each line is a method and a URL. Outside debug builds the whole line is private: URLs name private
+    /// repositories, file paths and searches. Debug builds show it, so a live session can be checked for GETs.
     nonisolated static let requestLog: GetOnlyHTTP.Logger = { line in
         #if DEBUG
         IntegrationsModel.log.info("\(line, privacy: .public)")
@@ -57,18 +58,20 @@ final class IntegrationsModel {
     /// registers what they serve. What each key can see is checked afterwards, without holding up launch.
     func load() async {
         let store = store
-        let read = await Task.detached { () -> (GitHubCredentials?, AtlassianCredentials?, String?) in
-            do {
-                let github = try store.read(account: Service.github.rawValue).flatMap { try JSONDecoder().decode(GitHubCredentials.self, from: $0) }
-                let atlassian = try store.read(account: Service.atlassian.rawValue).flatMap { try JSONDecoder().decode(AtlassianCredentials.self, from: $0) }
-                return (github, atlassian, nil)
-            } catch {
-                return (nil, nil, "Couldn't read the saved keys: \(error)")
-            }
+        let generations = (github: generation[.github, default: 0], atlassian: generation[.atlassian, default: 0])
+        // Each service on its own: one unreadable item does not cost the other its key.
+        let read = await Task.detached { () -> (GitHubCredentials?, AtlassianCredentials?, [String]) in
+            var errors: [String] = []
+            var github: GitHubCredentials?
+            var atlassian: AtlassianCredentials?
+            do { github = try store.read(account: Service.github.rawValue).flatMap { try JSONDecoder().decode(GitHubCredentials.self, from: $0) } } catch { errors.append("GitHub: \(error)") }
+            do { atlassian = try store.read(account: Service.atlassian.rawValue).flatMap { try JSONDecoder().decode(AtlassianCredentials.self, from: $0) } } catch { errors.append("Atlassian: \(error)") }
+            return (github, atlassian, errors)
         }.value
-        github = read.0
-        atlassian = read.1
-        if let error = read.2 { lastError = error }
+        // A key saved or removed while the Keychain was being read is newer than what the read found.
+        if generation[.github, default: 0] == generations.github { github = read.0 }
+        if generation[.atlassian, default: 0] == generations.atlassian { atlassian = read.1 }
+        if !read.2.isEmpty { lastError = "Couldn't read the saved keys: " + read.2.joined(separator: "; ") }
         onChange()
         checking?.cancel()
         checking = Task { [weak self] in
@@ -80,28 +83,46 @@ final class IntegrationsModel {
 
     /// The launch check of both keys, for tests that need to wait for it.
     @ObservationIgnored private(set) var checking: Task<Void, Never>?
+    /// Bumped by every save and removal of a service's key: a save whose check finishes after a newer save or a
+    /// removal is not written, so the last thing the user did wins.
+    @ObservationIgnored private var generation: [Service: Int] = [:]
+
+    private func begin(_ service: Service) -> Int {
+        generation[service, default: 0] += 1
+        return generation[service, default: 0]
+    }
 
     /// Saves a token once GitHub has looked at it: a refused token is never stored, so a typo cannot become the
     /// key every pull request then fails with. A network or rate-limit failure still saves it, and says so.
-    func saveGitHub(token: String) async {
+    /// - check: false for the debug `--integrations-env` import, which saves without waiting on the network
+    ///   (the launch check that follows looks at the key).
+    func saveGitHub(token: String, check: Bool = true) async {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let candidate = GitHubCredentials(token: trimmed)
+        let mine = begin(.github)
+        guard check else { persist(candidate, as: .github); return }
+        let hadKey = github != nil
         githubStatus = .checking
-        do {
-            let viewer = try await GitHubClient(token: trimmed, session: session, log: Self.requestLog).viewer()
+        let result: Result<GitHubViewer, any Error>
+        do { result = .success(try await GitHubClient(token: trimmed, session: session, log: Self.requestLog).viewer()) } catch { result = .failure(error) }
+        // Saved again or removed meanwhile: that newer action stands.
+        guard generation[.github] == mine else { return }
+        switch result {
+        case .success(let viewer):
             guard persist(candidate, as: .github) else { return }
             githubLogin = viewer.login
             githubStatus = .ok(Self.describe(viewer))
-        } catch IntegrationError.unauthorized(let detail) {
-            githubStatus = .failed((detail.isEmpty ? "GitHub refused the token." : detail) + " It wasn't saved.")
-        } catch {
+        case .failure(IntegrationError.unauthorized(let detail)):
+            let refused = detail.isEmpty ? "GitHub refused the token." : detail
+            githubStatus = .failed(refused + (hadKey ? " It wasn't saved; the saved token is still in use." : " It wasn't saved."))
+        case .failure(let error):
             guard persist(candidate, as: .github) else { return }
             githubStatus = .failed("Saved; couldn't reach GitHub: \(Self.message(error))")
         }
     }
 
-    func saveAtlassian(site: String, email: String, token: String) async {
+    func saveAtlassian(site: String, email: String, token: String, check: Bool = true) async {
         guard let url = AtlassianClient.siteURL(from: site) else {
             atlassianStatus = .failed("That isn't an Atlassian site. Try example.atlassian.net.")
             return
@@ -110,14 +131,21 @@ final class IntegrationsModel {
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, !trimmedToken.isEmpty else { return }
         let candidate = AtlassianCredentials(site: url, email: trimmedEmail, token: trimmedToken)
+        let mine = begin(.atlassian)
+        guard check else { persist(candidate, as: .atlassian); return }
+        let hadKey = atlassian != nil
         atlassianStatus = .checking
-        do {
-            let status = try await AtlassianClient(site: url, email: trimmedEmail, token: trimmedToken, session: session, log: Self.requestLog).status()
+        let result: Result<AtlassianStatus, any Error>
+        do { result = .success(try await AtlassianClient(site: url, email: trimmedEmail, token: trimmedToken, session: session, log: Self.requestLog).status()) } catch { result = .failure(error) }
+        guard generation[.atlassian] == mine else { return }
+        switch result {
+        case .success(let status):
             guard persist(candidate, as: .atlassian) else { return }
             atlassianStatus = .ok(Self.describe(status))
-        } catch IntegrationError.unauthorized(let detail) {
-            atlassianStatus = .failed((detail.isEmpty ? "Atlassian refused the email and token." : detail) + " They weren't saved.")
-        } catch {
+        case .failure(IntegrationError.unauthorized(let detail)):
+            let refused = detail.isEmpty ? "Atlassian refused the email and token." : detail
+            atlassianStatus = .failed(refused + (hadKey ? " They weren't saved; the saved key is still in use." : " They weren't saved."))
+        case .failure(let error):
             guard persist(candidate, as: .atlassian) else { return }
             atlassianStatus = .failed("Saved; couldn't reach \(url.host() ?? "the site"): \(Self.message(error))")
         }
@@ -153,6 +181,7 @@ final class IntegrationsModel {
     }
 
     func clear(_ service: Service) {
+        _ = begin(service)
         do {
             try store.delete(account: service.rawValue)
         } catch {
@@ -212,10 +241,10 @@ final class IntegrationsModel {
             return
         }
         let values = Self.parseEnvironment(text)
-        if let token = values["GITHUB_ACCESS_TOKEN"] { await saveGitHub(token: token) }
+        if let token = values["GITHUB_ACCESS_TOKEN"] { await saveGitHub(token: token, check: false) }
         if let email = values["ATLASSIAN_USERNAME"], let token = values["ATLASSIAN_API_KEY"],
            let site = atlassianSite ?? values["ATLASSIAN_SITE"] ?? atlassian?.site.absoluteString {
-            await saveAtlassian(site: site, email: email, token: token)
+            await saveAtlassian(site: site, email: email, token: token, check: false)
         }
     }
 

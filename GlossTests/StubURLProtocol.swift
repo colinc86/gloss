@@ -89,16 +89,27 @@ nonisolated final class StubURLProtocol: URLProtocol {
             client?.urlProtocolDidFinishLoading(self)
             return
         }
-        let answer = { [self] in
-            client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: response.status, httpVersion: nil, headerFields: response.headers)!, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: response.body)
-            client?.urlProtocolDidFinishLoading(self)
-        }
-        if response.delay == .zero { answer() } else {
+        if response.delay == .zero {
+            answer(response)
+        } else {
+            // A late answer arrives on the thread that started loading, and not at all once the load was stopped.
             let (seconds, attoseconds) = response.delay.components
-            DispatchQueue.global().asyncAfter(deadline: .now() + Double(seconds) + Double(attoseconds) / 1e18) { answer() }
+            let timer = Timer(timeInterval: Double(seconds) + Double(attoseconds) / 1e18, repeats: false) { [weak self] _ in self?.answer(response) }
+            RunLoop.current.add(timer, forMode: .common)
+            pending = timer
         }
     }
 
-    override func stopLoading() {}
+    private var pending: Timer?
+
+    private func answer(_ response: Stub.Response) {
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: response.status, httpVersion: nil, headerFields: response.headers)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: response.body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {
+        pending?.invalidate()
+        pending = nil
+    }
 }

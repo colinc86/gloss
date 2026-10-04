@@ -18,4 +18,5 @@ integrations.env
 *.env
 
 # Build artifacts
+Packages/.build/
 *.profraw

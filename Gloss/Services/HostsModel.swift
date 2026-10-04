@@ -122,6 +122,14 @@ final class HostsModel {
             case .manual:
                 list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .manual, options: host.options))
             case .sshConfig:
+                // The config says `Host github-ssh` and not `Host github`: the row is that alias, not a renamed one.
+                if let alias = host.options?.alias, alias != host.name, importsSSHConfigStored, aliases.contains(host.name), !aliases.contains(alias) {
+                    try? await noteStore.clearHostAlias(host.id)
+                    var cleared = host.options
+                    cleared?.alias = nil
+                    list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .sshConfig, options: cleared))
+                    continue
+                }
                 let stillListed = importsSSHConfigStored && aliases.contains(host.options?.alias ?? host.name)
                 let hasNotes = documents.contains { $0.document.hostID == host.id }
                 if stillListed || hasNotes { list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .sshConfig, options: host.options)) }

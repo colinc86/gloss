@@ -17,7 +17,8 @@ struct HostAliasTests {
         let entry = try #require(model.hosts.entry(for: host.id))
         #expect(entry.name == "github-ssh")
         #expect(entry.alias == "github", "ssh is given the alias it knows, not the listed name")
-        #expect(model.hosts.entry(for: .github) == nil || model.hosts.entry(for: .github)?.alias == "github")
+        // Herdr names the ssh destination; the follow scope finds the ssh host by it, never the GitHub host.
+        #expect(model.hosts.entries.first { $0.kind == .ssh && $0.alias == "github" }?.id == host.id)
         await model.shutDown()
     }
 }

@@ -31,23 +31,48 @@ public struct NoteStore: Sendable {
     /// gets the first free `<name>-<kind>` name and remembers its real alias, which is what ssh is given.
     public func upsertHost(name: String, kind: HostKind, origin: HostOrigin = .sshConfig) async throws -> Host {
         try await queue.write { db in
-            if let existing = try HostRecord.filter(Column("name") == name).fetchOne(db), existing.kind == kind.rawValue { return Host(record: existing) }
-            guard try HostRecord.filter(Column("name") == name).fetchOne(db) != nil else {
+            let named = try HostRecord.filter(Column("name") == name).fetchOne(db)
+            // A row by this name is this alias's, unless it stands in for another alias (`github-ssh` for `github`).
+            if let named, named.kind == kind.rawValue, Self.alias(of: named) == nil || Self.alias(of: named) == name { return Host(record: named) }
+            guard named != nil else {
                 let record = HostRecord(id: HostID.new().rawValue, name: name, kind: kind.rawValue, lastConnectedAt: nil, origin: origin.rawValue, optionsJson: nil)
                 try record.insert(db)
                 return Host(record: try Self.refetch(record, db))
             }
             // Taken by another kind: reuse the row already standing in for this alias, else make one.
-            let aliased = try HostRecord.filter(Column("kind") == kind.rawValue).fetchAll(db).first { record in
-                record.optionsJson.flatMap { try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) }?.alias == name
-            }
+            let aliased = try HostRecord.filter(Column("kind") == kind.rawValue).fetchAll(db).first { Self.alias(of: $0) == name }
             if let aliased { return Host(record: aliased) }
-            let free = try Self.freeName(for: name, suffix: kind.rawValue, db)
+            // Taken by another kind (`github`, the integration host): `github-ssh`. Taken by a row standing in for
+            // another alias: `github-ssh-2`.
+            let free = try named?.kind == kind.rawValue ? Self.freeNumbered(name, db) : Self.freeName(for: name, suffix: kind.rawValue, db)
             let json = String(decoding: try JSONEncoder().encode(HostOptions(alias: name)), as: UTF8.self)
             let record = HostRecord(id: HostID.new().rawValue, name: free, kind: kind.rawValue, lastConnectedAt: nil, origin: origin.rawValue, optionsJson: json)
             try record.insert(db)
             return Host(record: try Self.refetch(record, db))
         }
+    }
+
+    static func alias(of record: HostRecord) -> String? {
+        record.optionsJson.flatMap { try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) }?.alias
+    }
+
+    /// Forgets a row's alias: its name is what ssh knows it by after all (a config alias really called
+    /// `github-ssh` that an earlier migration took for a renamed `github`).
+    public func clearHostAlias(_ id: HostID) async throws {
+        try await queue.write { db in
+            guard var record = try HostRecord.fetchOne(db, key: id.rawValue),
+                  var options = record.optionsJson.flatMap({ try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) }) else { return }
+            options.alias = nil
+            record.optionsJson = options.isEmpty ? nil : String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
+            try record.update(db)
+        }
+    }
+
+    /// `name-2`, `name-3`, … whichever is free first.
+    static func freeNumbered(_ name: String, _ db: Database) throws -> String {
+        var counter = 2
+        while try HostRecord.filter(Column("name") == "\(name)-\(counter)").fetchCount(db) > 0 { counter += 1 }
+        return "\(name)-\(counter)"
     }
 
     /// `name-suffix`, or `name-suffix-2`, `-3`, … when that is taken too.
@@ -68,7 +93,10 @@ public struct NoteStore: Sendable {
             if let id, var record = try HostRecord.fetchOne(db, key: id.rawValue) {
                 record.name = name
                 record.origin = HostOrigin.manual.rawValue
-                record.optionsJson = json
+                // The editor knows nothing of an alias the row keeps for ssh; it stays.
+                var merged = options
+                if merged.alias == nil { merged.alias = Self.alias(of: record) }
+                record.optionsJson = String(decoding: try JSONEncoder().encode(merged), as: UTF8.self)
                 try record.update(db)
                 return Host(record: try Self.refetch(record, db))
             }

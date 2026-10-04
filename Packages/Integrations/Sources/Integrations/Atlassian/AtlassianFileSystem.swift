@@ -37,13 +37,13 @@ public actor AtlassianFileSystem: FileSystemProvider {
     private var pageTitles: [String: ConfluencePage] = [:]
     private var pollers: [String: Poller] = [:]
 
-    /// A new key for the same site: what was read with the old one is dropped; open documents and pollers carry on.
+    /// A new key for the same site. Open documents and pollers carry on with it; the documents they compare
+    /// against stay, so the next poll still reports a change made meanwhile. Listings read with the old key are
+    /// dropped.
     public func replaceClient(_ client: AtlassianClient) {
         self.client = client
-        issues = [:]
         issueLists = [:]
         spaces = nil
-        pages = [:]
         pageTitles = [:]
     }
     private var terminated: Set<UUID> = []

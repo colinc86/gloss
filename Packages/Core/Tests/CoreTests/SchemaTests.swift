@@ -50,6 +50,12 @@ struct SchemaTests {
         _ = try await store.saveHost(id: nil, name: "web-ssh", options: HostOptions(hostName: "10.0.0.9"))
         let web = try await store.upsertHost(name: "web", kind: .ssh)
         #expect(web.name == "web-ssh-2" && web.options?.alias == "web")
+        // The config also says `Host github-ssh`: that alias gets its own row, not the one standing in for github.
+        let real = try await store.upsertHost(name: "github-ssh", kind: .ssh)
+        #expect(real.id != alias.id && real.name == "github-ssh-2" && real.options?.alias == "github-ssh")
+        // Saving an app-added host keeps an alias the editor knows nothing of.
+        let saved = try await store.saveHost(id: alias.id, name: alias.name, options: HostOptions(hostName: "10.0.0.5"))
+        #expect(saved.options?.alias == "github" && saved.options?.hostName == "10.0.0.5")
     }
 
     /// The milestone 2 migration rebuilds host, document and note to widen their CHECK constraints; every row written
@@ -65,6 +71,7 @@ struct SchemaTests {
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01GITH', 'github', 'ssh', NULL, 'ssh_config', NULL);
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01WEB1', 'web', 'ssh', NULL, 'ssh_config', NULL);
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01WEB2', 'web-ssh', 'ssh', NULL, 'manual', '{"hostName":"10.0.0.9","user":"","identityFile":""}');
+                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01ATSS', 'atlassian-ssh', 'ssh', NULL, 'ssh_config', NULL);
                 INSERT INTO root (id, host_id, path, last_opened_at, pinned) VALUES ('r_1', 'h_01HOST', '/home/colin', '2026-10-01 10:00:00', 1);
                 INSERT INTO document (id, host_id, path, kind, last_hash, last_mtime, last_size) VALUES ('d_1', 'h_01HOST', '/home/colin/a.md', 'markdown', 'abc', '2026-10-01 10:00:00', 12);
                 INSERT INTO note (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message)
@@ -93,6 +100,9 @@ struct SchemaTests {
             #expect(try String.fetchOne(db, sql: "SELECT name FROM host WHERE id = 'h_01WEB1'") == "web-ssh-2", "web-ssh was taken, so the next free name")
             #expect(try options("h_01WEB1")?.alias == "web")
             #expect(try options("h_01WEB2")?.alias == nil && options("h_01WEB2")?.hostName == "10.0.0.9", "an app-added host that happens to be called web-ssh is left alone")
+            // A config alias really called atlassian-ssh existed before v4, so nothing renamed it; v5 cannot tell it
+            // from a renamed one and tags it, and the host list clears the tag against the config.
+            #expect(try String.fetchOne(db, sql: "SELECT name FROM host WHERE id = 'h_01ATSS'") == "atlassian-ssh")
             #expect(try String.fetchOne(db, sql: "SELECT kind FROM host WHERE name = 'github'") == "github")
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
             #expect(try Row.fetchOne(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'note_document_state'") != nil)

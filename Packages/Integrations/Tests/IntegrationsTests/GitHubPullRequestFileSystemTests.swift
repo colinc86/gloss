@@ -148,6 +148,27 @@ struct GitHubPullRequestFileSystemTests {
         #expect(title?.reference == "o/r #2" && title?.title == "Name the receiver" && title?.state == "merged")
     }
 
+    /// A new token mid-watch: the next poll reads with it and still reports the head that moved meanwhile.
+    @Test(.timeLimit(.minutes(1))) func aNewKeyKeepsWatchingAndReportsTheMovedHead() async throws {
+        let old = Stub()
+        Self.serve(old)
+        let fs = provider(old, poll: .milliseconds(30))
+        _ = try await fs.read("/o/r/pull/2/changes/Sources/App.swift")
+        let new = Stub()
+        Self.serve(new, sha: "b222222222222")
+        await fs.replaceClient(GitHubClient(token: "new-token", session: new.session()))
+        var events: [FileSystemEvent] = []
+        for await event in fs.watch("/o/r/pull/2/changes/Sources/App.swift") {
+            events.append(event)
+            break
+        }
+        #expect(events == [.changed(["/o/r/pull/2/changes/Sources/App.swift"])] || events.first.map { if case .changed = $0 { true } else { false } } == true)
+        #expect(String(decoding: try await fs.read("/o/r/pull/2/changes/Sources/App.swift"), as: UTF8.self) == "new\nctx\n")
+        #expect(await fs.resource(for: "/o/r/pull/2/changes/Sources/App.swift")?.details == ["Path: Sources/App.swift at b222222"], "the packet follows the new head")
+        #expect(new.recorded.allSatisfy { $0.value(forHTTPHeaderField: "Authorization")?.hasSuffix("new-token") == true }, "everything after the swap reads with the new key")
+        #expect(!new.recorded.isEmpty)
+    }
+
     @Test(.timeLimit(.minutes(1))) func watchingSeesANewHead() async throws {
         let stub = Stub()
         Self.serve(stub)

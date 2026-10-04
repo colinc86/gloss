@@ -126,7 +126,7 @@ public enum Schema {
                 """)
             // An ssh alias that took a name the integration hosts need moves to the first free `<name>-ssh` (a
             // database may hold `web-ssh` already) and remembers its alias, which is what ssh is still given.
-            try Self.moveAliasesOffVirtualNames(db)
+            try Self.moveAliasesOffVirtualNames(db, includingRenamed: false)
             try db.execute(sql: """
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES
                     ('h_web', 'web', 'web', NULL, 'local', NULL),
@@ -169,7 +169,10 @@ public enum Schema {
         migrator.registerMigration("v5-host-alias") { db in
             // Databases migrated before v4 kept the real alias: an ssh row renamed to `github-ssh` there learns that
             // its alias is `github`, so ssh is given the name it knows.
-            try Self.moveAliasesOffVirtualNames(db)
+            // A row named `<name>-ssh` from the config looks the same whether an earlier v4 renamed it or the
+            // config really says `Host github-ssh`; it is tagged here and the host list clears the tag when the
+            // config lists the name but not the alias.
+            try Self.moveAliasesOffVirtualNames(db, includingRenamed: true)
         }
         return migrator
     }
@@ -179,12 +182,24 @@ public enum Schema {
 
     /// Moves ssh rows off the integration hosts' names (first free `<name>-ssh`) and records each one's real alias
     /// in its options, including rows an earlier version already renamed without recording it.
-    static func moveAliasesOffVirtualNames(_ db: Database) throws {
+    static func moveAliasesOffVirtualNames(_ db: Database, includingRenamed: Bool) throws {
         for name in virtualHostNames {
-            for row in try Row.fetchAll(db, sql: "SELECT id, name, options_json FROM host WHERE kind = 'ssh' AND (name = ? OR (name = ? AND origin = 'ssh_config'))", arguments: [name, name + "-ssh"]) {
+            let sql = includingRenamed
+                ? "SELECT id, name, options_json FROM host WHERE kind = 'ssh' AND (name = ? OR (name = ? AND origin = 'ssh_config'))"
+                : "SELECT id, name, options_json FROM host WHERE kind = 'ssh' AND name = ?"
+            let arguments: StatementArguments = includingRenamed ? [name, name + "-ssh"] : [name]
+            for row in try Row.fetchAll(db, sql: sql, arguments: arguments) {
                 let id: String = row["id"]
                 let current: String = row["name"]
-                var options = (row["options_json"] as String?).flatMap { try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) } ?? HostOptions()
+                let stored: String? = row["options_json"]
+                // Options that cannot be read are left alone rather than overwritten.
+                var options: HostOptions
+                if let stored {
+                    guard let decoded = try? JSONDecoder().decode(HostOptions.self, from: Data(stored.utf8)) else { continue }
+                    options = decoded
+                } else {
+                    options = HostOptions()
+                }
                 if options.alias == nil { options.alias = name }
                 let json = String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
                 let newName = current == name ? try NoteStore.freeName(for: name, suffix: "ssh", db) : current

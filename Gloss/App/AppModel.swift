@@ -259,7 +259,8 @@ final class AppModel {
         switch herdrMachine {
         case nil: .any
         case .local: .host(.local)
-        case .remote(let target, _): hosts.entries.first { $0.name == target }.map { .host($0.id) } ?? .none
+        // Herdr names the ssh destination, which is the alias (`github` for a host listed as `github-ssh`).
+        case .remote(let target, _): hosts.entries.first { $0.kind == .ssh && $0.alias == target }.map { .host($0.id) } ?? .none
         case .unknown: .none
         }
     }
@@ -450,6 +451,18 @@ final class AppModel {
     /// The GitHub host exists while a token is saved: its provider serves pull requests with that token. A new
     /// token goes into the same provider, so open pull requests carry on; when the token goes, so do the host and
     /// its open documents. Saving one service's key never touches the other's provider.
+    /// Registrations run one after another: one that suspends (a provider swapping its key) never lets a later
+    /// one (a removal) finish first and then put the host back.
+    @ObservationIgnored private(set) var registration: Task<Void, Never>?
+
+    private func scheduleIntegrationRegistration() {
+        let previous = registration
+        registration = Task { [weak self] in
+            await previous?.value
+            await self?.registerIntegrationHosts()
+        }
+    }
+
     private func registerIntegrationHosts() async {
         let github = integrations.github
         if github != registeredGitHub || fileSystems[.github] == nil {
@@ -856,17 +869,21 @@ final class AppModel {
         updateDockBadge()
         sweepAttachments()
         await hosts.load()
+        // Set before anything can save a key, so no save is missed; registrations are queued and only act on what
+        // changed, so the explicit one below adds nothing but waiting for them.
+        integrations.onChange = { [weak self] in self?.scheduleIntegrationRegistration() }
         #if DEBUG
         if let path = launchOptions.integrationsEnv {
             await integrations.importEnvironmentFile(at: path, atlassianSite: launchOptions.atlassianSite)
         }
         #endif
         await integrations.load()
-        await registerIntegrationHosts()
-        // Registered once above; from here on a saved or removed key re-registers only what changed.
-        integrations.onChange = { [weak self] in Task { await self?.registerIntegrationHosts() } }
+        scheduleIntegrationRegistration()
+        await registration?.value
         explorer.showDotfiles = settings.showDotfilesByDefault
-        let launchHost = launchOptions.host == "local" ? HostID.local : hosts.entries.first { $0.name == launchOptions.host }?.id
+        // `--host` takes an ssh alias; a listed name is accepted too.
+        let launchHost = launchOptions.host == "local" ? HostID.local
+            : (hosts.entries.first { $0.kind == .ssh && $0.alias == launchOptions.host } ?? hosts.entries.first { $0.name == launchOptions.host })?.id
         if let launchHost, launchHost != .local {
             // `--host <alias>` connects first; `--root` names a directory there, else the home directory.
             await openRemoteRoot(hostID: launchHost, path: launchOptions.root)
