@@ -101,3 +101,71 @@ struct GitHubClientTests {
         #expect(open.count <= 5)
     }
 }
+
+struct HTTPLayerTests {
+    @Test func queriesEscapeEveryReservedCharacter() {
+        let url = GetOnlyHTTP.url(URL(string: "https://example.atlassian.net")!, path: "rest/api/3/search/jql", query: ["jql": "summary ~ \"a+b\" & x=1"])
+        #expect(url.absoluteString.contains("a%2Bb"), "a plus is a plus, not a space")
+        #expect(url.absoluteString.contains("%26") && url.absoluteString.contains("x%3D1"))
+    }
+
+    @Test func rateLimitResetsAreRead() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        #expect(GetOnlyHTTP.resetDate(["retry-after": "30"], now: now) == Date(timeIntervalSince1970: 1_030))
+        #expect(GetOnlyHTTP.resetDate(["x-ratelimit-reset": "2000"], now: now) == Date(timeIntervalSince1970: 2_000))
+        #expect(GetOnlyHTTP.resetDate(["x-ratelimit-reset": "1970-01-01T00:40:00Z"], now: now) == Date(timeIntervalSince1970: 2_400), "Atlassian sends an ISO time")
+        #expect(GetOnlyHTTP.resetDate([:], now: now) == nil)
+    }
+
+    @Test func pollsBackOffAndWaitOutALimit() {
+        var schedule = PollSchedule(interval: .seconds(10))
+        let now = Date(timeIntervalSince1970: 0)
+        #expect(schedule.delay(rateLimitedUntil: nil, now: now) == .seconds(10))
+        schedule.failed()
+        #expect(schedule.delay(rateLimitedUntil: nil, now: now) == .seconds(20))
+        for _ in 0..<10 { schedule.failed() }
+        #expect(schedule.delay(rateLimitedUntil: nil, now: now) == .seconds(300), "never more than five minutes")
+        schedule.succeeded()
+        #expect(schedule.delay(rateLimitedUntil: nil, now: now) == .seconds(10))
+        #expect(schedule.delay(rateLimitedUntil: Date(timeIntervalSince1970: 120), now: now) == .seconds(120))
+    }
+
+    @Test func secondaryLimitsAndStrayNotModifiedAreHandled() async throws {
+        let stub = Stub()
+        stub.respond(to: "https://api.github.com/user", with: .json(#"{"message":"You have exceeded a secondary rate limit."}"#, status: 403, headers: ["Retry-After": "60"]))
+        let client = GitHubClient(token: "t", session: stub.session())
+        await #expect(throws: IntegrationError.self) { _ = try await client.viewer() }
+        do { _ = try await client.viewer() } catch let error as IntegrationError {
+            if case .rateLimited(let reset) = error { #expect(reset != nil) } else { Issue.record("a secondary limit is a rate limit, not a refused key: \(error)") }
+        }
+        // A server that answers 304 to a request that sent no tag is asked once more, plainly.
+        let other = Stub()
+        other.respond(to: "https://api.github.com/user", inOrder: [.json("", status: 304), .json(#"{"login":"octo"}"#)])
+        #expect(try await GitHubClient(token: "t", session: other.session()).viewer().login == "octo")
+    }
+}
+
+struct HTTPLayerProviderTests {
+    @Test func aChangedFilesSizeComesFromItsMetadata() async throws {
+        let stub = Stub()
+        GitHubPullRequestFileSystemTests.serve(stub)
+        let base = GitHubPullRequestFileSystemTests.base
+        // 90 MB: the metadata says so without the bytes; nothing downloads the file to learn its size.
+        stub.respond(to: "\(base)/repos/o/r/contents/Sources/App.swift?ref=f00d123abcdef", accept: "application/vnd.github+json", with: .json(#"{"size":94371840,"encoding":"none","content":""}"#))
+        let fs = GitHubPullRequestFileSystem(client: GitHubClient(token: "t", session: stub.session()))
+        #expect(try await fs.stat("/o/r/pull/2/changes/Sources/App.swift").size == 94_371_840)
+        #expect(!stub.recorded.contains { $0.value(forHTTPHeaderField: "Accept")?.contains("raw") == true }, "the file itself was not fetched")
+    }
+
+    @Test func aRepeatedPageTokenEndsTheSearch() async throws {
+        let stub = Stub()
+        let site = "https://example.atlassian.net"
+        let first = "\(site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated&jql=project%20%3D%20CP&maxResults=100"
+        stub.respond(to: first, with: .json(#"{"issues":[],"isLast":false,"nextPageToken":"t1"}"#))
+        stub.respond(to: first + "&nextPageToken=t1", with: .json(#"{"issues":[],"isLast":false,"nextPageToken":"t1"}"#))
+        let client = AtlassianClient(site: URL(string: site)!, email: "a@x.com", token: "t", session: stub.session())
+        let issues = try await client.searchIssues(jql: "project = CP", limit: 200)
+        #expect(issues.isEmpty)
+        #expect(stub.recorded.count <= 3, "\(stub.recorded.count) requests")
+    }
+}

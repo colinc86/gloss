@@ -160,8 +160,17 @@ final class DocumentSession: Identifiable {
     // MARK: Open and reload
 
     /// A failed open as a sentence for the viewer, not a Swift error dump.
-    nonisolated static func openFailure(_ error: any Error) -> String {
-        switch error as? FileSystemError {
+    /// - virtual: a pull request, ticket or page: its provider's own words say what went wrong (a refused key, a
+    ///   repository the token cannot see), not a file's.
+    nonisolated static func openFailure(_ error: any Error, virtual: Bool = false) -> String {
+        if virtual {
+            switch error as? FileSystemError {
+            case .notFound: return "Not found, or the key can't see it."
+            case .permissionDenied(let detail), .io(let detail): return detail
+            default: break
+            }
+        }
+        return switch error as? FileSystemError {
         case .notFound: "The file isn't there. It may have been moved, renamed, or deleted."
         case .permissionDenied: "You don't have permission to read this file."
         case .notADirectory: "Part of this path isn't a folder."
@@ -289,7 +298,7 @@ final class DocumentSession: Identifiable {
             observeNotes()
             refreshLineChanges()
         } catch {
-            state = .failed(Self.openFailure(error))
+            state = .failed(Self.openFailure(error, virtual: hostID.isVirtual))
             Log.viewer.error("open \(self.path, privacy: .public) failed: \(error, privacy: .public)")
         }
     }
@@ -313,7 +322,7 @@ final class DocumentSession: Identifiable {
             state = .text(viewer.source)
             observeNotes()
         } catch {
-            state = .failed(Self.openFailure(error))
+            state = .failed(Self.openFailure(error, virtual: hostID.isVirtual))
         }
     }
 

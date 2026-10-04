@@ -39,6 +39,12 @@ public actor AtlassianFileSystem: FileSystemProvider {
     /// Titles and versions seen in listings, so a folder names its own document without fetching the body.
     private var pageTitles: [String: ConfluencePage] = [:]
     private var pollers: [String: Poller] = [:]
+    /// Set when Jira or Confluence says the rate limit is spent; pollers wait until then.
+    private var rateLimitedUntil: Date?
+
+    private func noteRateLimit(_ error: any Error) {
+        if case IntegrationError.rateLimited(let reset) = error { rateLimitedUntil = reset ?? Date().addingTimeInterval(60) }
+    }
 
     /// A new key for the same site. Open documents and pollers carry on with it; the documents they compare
     /// against stay, so the next poll still reports a change made meanwhile. Listings read with the old key are
@@ -60,7 +66,8 @@ public actor AtlassianFileSystem: FileSystemProvider {
         guard let error = error as? IntegrationError else { return error }
         switch error {
         case .notFound: return FileSystemError.notFound(path)
-        case .unauthorized(let message): return FileSystemError.permissionDenied(message.isEmpty ? path : message)
+        case .unauthorized(let message):
+            return FileSystemError.permissionDenied("Atlassian refused the key" + (message.isEmpty ? "" : " (\(message))") + ". Check it in Settings → Integrations.")
         default: return FileSystemError.io(error.message)
         }
     }
@@ -84,6 +91,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
         do {
             let issue: JiraIssue
             do { issue = try await client.issue(key: key) } catch {
+                noteRateLimit(error)
                 // Offline or refused on a re-read: the copy already shown is better than an error.
                 if !refresh, let cached = issues[key] { return cached }
                 throw error
@@ -130,6 +138,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
         do {
             let page: ConfluencePage
             do { page = try await client.page(id: id) } catch {
+                noteRateLimit(error)
                 if !refresh, let cached = pages[id] { return cached }
                 throw error
             }
@@ -252,11 +261,13 @@ public actor AtlassianFileSystem: FileSystemProvider {
         poller.continuations[id] = continuation
         pollers[path.path] = poller
         if poller.task == nil {
+            let interval = pollInterval
             poller.task = Task { [weak self] in
+                var schedule = PollSchedule(interval: interval)
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: self?.pollInterval ?? .seconds(10))
+                    try? await Task.sleep(for: schedule.delay(rateLimitedUntil: await self?.rateLimitedUntil))
                     guard !Task.isCancelled, let self else { return }
-                    await self.poll(path)
+                    if await self.poll(path) { schedule.succeeded() } else { schedule.failed() }
                 }
             }
         }
@@ -274,20 +285,26 @@ public actor AtlassianFileSystem: FileSystemProvider {
         }
     }
 
-    private func poll(_ path: AtlassianPath) async {
+    /// One look at the issue or page; false when it could not be read (offline, refused, rate limited).
+    @discardableResult
+    private func poll(_ path: AtlassianPath) async -> Bool {
         var changed = false
         switch path {
         case .jiraIssue(let project, let key):
-            guard let previous = issues[key], let fresh = try? await issueDocument(key, project: project, refresh: true) else { return }
+            guard let previous = issues[key] else { return true }
+            guard let fresh = try? await issueDocument(key, project: project, refresh: true) else { return false }
             changed = fresh.issue.updated != previous.issue.updated || fresh.data != previous.data
         case .confluencePage(let space, let id, _, _):
-            guard let previous = pages[id], let fresh = try? await pageDocument(id, space: space, refresh: true) else { return }
+            guard let previous = pages[id] else { return true }
+            guard let fresh = try? await pageDocument(id, space: space, refresh: true) else { return false }
             changed = fresh.page.version != previous.page.version
         default:
-            return
+            return true
         }
-        guard changed, let poller = pollers[path.path] else { return }
+        rateLimitedUntil = nil
+        guard changed, let poller = pollers[path.path] else { return true }
         for continuation in poller.continuations.values { continuation.yield(.changed([path.path])) }
+        return true
     }
 
     // MARK: What the app asks beyond files

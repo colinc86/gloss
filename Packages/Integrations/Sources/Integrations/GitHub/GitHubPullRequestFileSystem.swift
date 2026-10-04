@@ -36,6 +36,8 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     private var generation = 0
     private var contents: [String: Data] = [:]
     private var pollers: [Key: Poller] = [:]
+    /// Set when GitHub says its rate limit is spent; pollers wait until then.
+    private var rateLimitedUntil: Date?
     /// The head before the last change a poll saw, so the banner can say whether the head moved.
     private var previousHeads: [Key: String] = [:]
 
@@ -101,6 +103,9 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
             snapshots[key] = snapshot
             return snapshot
         } catch let error as IntegrationError {
+            if case .rateLimited(let reset) = error { rateLimitedUntil = reset ?? Date().addingTimeInterval(60) }
+            // The pull request itself missing usually means the token cannot see the repository.
+            if case .notFound = error { throw FileSystemError.io("Not found on GitHub, or the token can't see \(path.repository).") }
             throw Self.fileSystemError(error, path: path.path)
         }
     }
@@ -108,7 +113,7 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     nonisolated static func fileSystemError(_ error: IntegrationError, path: String) -> FileSystemError {
         switch error {
         case .notFound: .notFound(path)
-        case .unauthorized(let message): .permissionDenied(message.isEmpty ? path : message)
+        case .unauthorized(let message): .permissionDenied("GitHub refused the key" + (message.isEmpty ? "" : " (\(message))") + ". Check it in Settings → Integrations.")
         default: .io(error.message)
         }
     }
@@ -121,6 +126,22 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
             let data = try await client.fileContent(owner: path.owner, repo: path.repo, path: file, ref: snapshot.pull.head.sha)
             if generation == started { contents[cacheKey] = data }
             return data
+        } catch let error as IntegrationError {
+            throw Self.fileSystemError(error, path: path.path)
+        }
+    }
+
+    /// A changed file's size, without downloading a large one: GitHub's metadata says it, and carries the bytes of
+    /// a small file (up to 1 MB), which are kept so reading it next costs nothing. A 90 MB asset is not fetched
+    /// just to learn it is too large to show.
+    private func size(of file: String, in snapshot: Snapshot, path: PullRequestPath) async throws -> Int64 {
+        let cacheKey = "\(snapshot.pull.head.sha):\(path.repository):\(file)"
+        if let cached = contents[cacheKey] { return Int64(cached.count) }
+        let started = generation
+        do {
+            let metadata = try await client.fileMetadata(owner: path.owner, repo: path.repo, path: file, ref: snapshot.pull.head.sha)
+            if let content = metadata.content, generation == started { contents[cacheKey] = content }
+            return metadata.size
         } catch let error as IntegrationError {
             throw Self.fileSystemError(error, path: path.path)
         }
@@ -196,7 +217,7 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         }
         guard let file = parsed.changedFile else { throw FileSystemError.notFound(path) }
         if presentFiles(snapshot).contains(where: { $0.filename == file }) {
-            return FileAttributes(kind: .file, size: Int64(try await content(of: file, in: snapshot, path: parsed).count), mtime: mtime, mode: 0o444)
+            return FileAttributes(kind: .file, size: try await size(of: file, in: snapshot, path: parsed), mtime: mtime, mode: 0o444)
         }
         if presentFiles(snapshot).contains(where: { $0.filename.hasPrefix(file + "/") }) {
             return FileAttributes(kind: .directory, size: 0, mtime: mtime, mode: 0o555)
@@ -244,11 +265,13 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         poller.continuations[id] = (continuation, path.isRoot)
         pollers[key] = poller
         if poller.task == nil {
+            let interval = pollInterval
             poller.task = Task { [weak self] in
+                var schedule = PollSchedule(interval: interval)
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: self?.pollInterval ?? .seconds(10))
+                    try? await Task.sleep(for: schedule.delay(rateLimitedUntil: await self?.rateLimitedUntil))
                     guard !Task.isCancelled, let self else { return }
-                    await self.poll(path)
+                    if await self.poll(path) { schedule.succeeded() } else { schedule.failed() }
                 }
             }
         }
@@ -264,14 +287,30 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         if poller.continuations.isEmpty {
             poller.task?.cancel()
             pollers[key] = nil
+            // Nothing shows this pull request any more: what was read for it goes, and is read again if it opens.
+            if let snapshot = snapshots.removeValue(forKey: key) {
+                let prefix = "\(snapshot.pull.head.sha):\(path.repository):"
+                contents = contents.filter { !$0.key.hasPrefix(prefix) }
+            }
+            previousHeads[key] = nil
         }
     }
 
-    private func poll(_ path: PullRequestPath) async {
+    /// One look at the pull request; false when GitHub could not be asked (offline, refused, rate limited).
+    @discardableResult
+    private func poll(_ path: PullRequestPath) async -> Bool {
         let key = key(path)
-        guard let previous = snapshots[key], let latest = try? await client.pullRequest(owner: path.owner, repo: path.repo, number: path.number) else { return }
-        guard latest.head.sha != previous.pull.head.sha || latest.updatedAt != previous.pull.updatedAt else { return }
-        guard let fresh = try? await snapshot(for: path, refresh: true), let poller = pollers[key] else { return }
+        guard let previous = snapshots[key] else { return true }
+        let latest: GitHubPullRequest
+        do {
+            latest = try await client.pullRequest(owner: path.owner, repo: path.repo, number: path.number)
+            rateLimitedUntil = nil
+        } catch {
+            if case IntegrationError.rateLimited(let reset) = error { rateLimitedUntil = reset ?? Date().addingTimeInterval(60) }
+            return false
+        }
+        guard latest.head.sha != previous.pull.head.sha || latest.updatedAt != previous.pull.updatedAt else { return true }
+        guard let fresh = try? await snapshot(for: path, refresh: true), let poller = pollers[key] else { return false }
         previousHeads[key] = previous.pull.head.sha
         let changed = documentPaths(in: fresh, path: path) + documentPaths(in: previous, path: path)
         for (continuation, isRoot) in poller.continuations.values {
@@ -279,6 +318,7 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
             continuation.yield(.changed(Array(Set(changed))))
             if isRoot { continuation.yield(.rescan(path.root)) }
         }
+        return true
     }
 
     private func documentPaths(in snapshot: Snapshot, path: PullRequestPath) -> [String] {
