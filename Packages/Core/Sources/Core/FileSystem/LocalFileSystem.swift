@@ -61,8 +61,28 @@ public struct LocalFileSystem: FileSystemProvider {
         let mode = original?.mode ?? Self.attributes(path)?.mode ?? 0o644
         let temporary = PathUtilities.join(directory, ".cc-\(name)-\(UInt32.random(in: 0...UInt32.max)).tmp")
         do {
-            try data.write(to: URL(fileURLWithPath: temporary), options: [])
-            try FileManager.default.setAttributes([.posixPermissions: Int(mode)], ofItemAtPath: temporary)
+            // Made new (never through an existing file or link at that name) with the original's mode from the
+            // start, so a private file is never readable by others in between; flushed before the rename, so a
+            // crash leaves the old file or the new one, never an empty one.
+            let descriptor = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(mode & 0o7777))
+            guard descriptor >= 0 else { throw Self.map(errno: errno, path: path) }
+            var written = 0
+            let failure: Int32? = data.withUnsafeBytes { buffer -> Int32? in
+                while written < buffer.count {
+                    let result = write(descriptor, buffer.baseAddress! + written, buffer.count - written)
+                    if result < 0 { if errno == EINTR { continue }; return errno }
+                    written += result
+                }
+                // The umask may have taken bits off at creation; the mode is set exactly.
+                if fchmod(descriptor, mode_t(mode & 0o7777)) != 0 { return errno }
+                if fsync(descriptor) != 0 { return errno }
+                return nil
+            }
+            close(descriptor)
+            if let failure {
+                try? FileManager.default.removeItem(atPath: temporary)
+                throw Self.map(errno: failure, path: path)
+            }
             // The rename would otherwise drop the original's extended attributes (Finder tags, quarantine, app
             // metadata). Failure is fine: the file may not exist yet.
             _ = copyfile(path, temporary, nil, copyfile_flags_t(COPYFILE_XATTR))

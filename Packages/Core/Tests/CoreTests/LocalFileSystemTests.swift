@@ -10,6 +10,23 @@ struct LocalFileSystemTests {
         return try await body(directory, LocalFileSystem(deleteBehavior: .permanent))
     }
 
+    /// A private file stays private through a save, a save of nothing leaves an empty file, and no temporary file
+    /// is left beside it.
+    @Test func savesKeepAPrivateFilesModeAndLeaveNothingBehind() async throws {
+        try await withTemporaryDirectory { directory, fs in
+            let path = "\(directory)/.env"
+            try "SECRET=1\n".write(toFile: path, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+            let original = try await fs.stat(path)
+            let saved = try await fs.writeAtomically(Data("SECRET=2\n".utf8), to: path, preservingModeFrom: original)
+            #expect(saved.mode == 0o600)
+            #expect(try String(contentsOfFile: path, encoding: .utf8) == "SECRET=2\n")
+            _ = try await fs.writeAtomically(Data(), to: path, preservingModeFrom: original)
+            #expect(try Data(contentsOf: URL(fileURLWithPath: path)).isEmpty)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: directory) == [".env"], "no temporary file left")
+        }
+    }
+
     @Test func listsWithKindsAndHiddenFlag() async throws {
         try await withTemporaryDirectory { directory, fs in
             try "hello".write(toFile: "\(directory)/b.txt", atomically: true, encoding: .utf8)
