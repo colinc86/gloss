@@ -28,6 +28,10 @@ public final class PDFViewerController {
     public let document: PDFDocument
     /// Draw rectangles instead of selecting text.
     public var regionMode = false
+    /// The page thumbnails column, as in Preview's sidebar; off until asked for.
+    public var showsThumbnails = false
+    /// Bumped on each region copy, for the toolbar's brief "Copied".
+    public internal(set) var copyCount = 0
     /// Current region in page points (crop box space) with its page, or nil.
     public var region: (page: Int, bounds: CGRect)?
     /// Current text selection: first page index, bounds on that page, and the text.

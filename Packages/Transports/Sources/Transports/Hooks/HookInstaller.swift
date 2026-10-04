@@ -91,7 +91,9 @@ public struct HookInstaller: Sendable {
     command = "gloss.note-from-selection"
     description = "send selection to Gloss"
     """
-    public var mcpURL: String { "http://127.0.0.1:\(port)/mcp" }
+    /// On a host, the URL carries the alias so the app knows which machine the agent's paths are on.
+    public var mcpURL: String { MCPServer.url(port: port, host: hostAlias) }
+    private var shellMCPURL: String { mcpURL.contains("?") ? ShellQuote.single(mcpURL) : mcpURL }
 
     public func hookCommand(for agent: HookAgent) -> String {
         let prefix = hostAlias.map { "GLOSS_HOST=\(ShellQuote.single($0)) " } ?? ""
@@ -118,12 +120,12 @@ public struct HookInstaller: Sendable {
         case .claude:
             try await installScript(into: &report)
             try await mergeHookFile(at: claudeSettingsPath, command: hookCommand(for: .claude), report: &report)
-            await registerMCP(remove: "claude mcp remove -s user \(Self.mcpServerName) >/dev/null 2>&1", add: "claude mcp add -s user --transport http \(Self.mcpServerName) \(mcpURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port).claudeCommand)", report: &report)
+            await registerMCP(remove: "claude mcp remove -s user \(Self.mcpServerName) >/dev/null 2>&1", add: "claude mcp add -s user --transport http \(Self.mcpServerName) \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias).claudeCommand)", report: &report)
         case .codex:
             try await installScript(into: &report)
             try await mergeHookFile(at: codexHooksPath, command: hookCommand(for: .codex), report: &report)
             try await enableCodexHooks(report: &report)
-            await registerMCP(remove: "codex mcp remove \(Self.mcpServerName) >/dev/null 2>&1", add: "codex mcp add \(Self.mcpServerName) --url \(mcpURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port).codexCommand)", report: &report)
+            await registerMCP(remove: "codex mcp remove \(Self.mcpServerName) >/dev/null 2>&1", add: "codex mcp add \(Self.mcpServerName) --url \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias).codexCommand)", report: &report)
             report.notices.append("Codex skips new hooks until you trust them: run /hooks inside Codex and trust the Gloss entry.")
         case .opencode:
             try await mergeOpenCodeConfig(report: &report)
@@ -166,6 +168,47 @@ public struct HookInstaller: Sendable {
         return report
     }
 
+    /// The URL the agent's own config has for our MCP server, or nil when there is no entry to compare (the
+    /// registration may have needed the manual fallback). Claude Code keeps user-scope servers in `~/.claude.json`,
+    /// Codex in `[mcp_servers.<name>]` of `config.toml`.
+    func registeredMCPURL(for agent: HookAgent) async -> String? {
+        switch agent {
+        case .claude:
+            guard let data = try? await fileSystem.read(PathUtilities.join(home, ".claude.json")),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let entry = (object["mcpServers"] as? [String: Any])?[Self.mcpServerName] as? [String: Any] else { return nil }
+            return entry["url"] as? String
+        case .codex:
+            guard let data = try? await fileSystem.read(codexConfigPath) else { return nil }
+            return Self.codexMCPURL(in: String(decoding: data, as: UTF8.self))
+        default:
+            return nil
+        }
+    }
+
+    /// `url = "…"` inside `[mcp_servers.gloss]` (quoted or bare table name).
+    static func codexMCPURL(in toml: String) -> String? {
+        var inSection = false
+        for raw in toml.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                let header = line.prefix { $0 != "#" }.trimmingCharacters(in: .whitespaces)
+                let name = header.trimmingCharacters(in: CharacterSet(charactersIn: "[] ")).replacingOccurrences(of: "\"", with: "")
+                inSection = name == "mcp_servers.\(mcpServerName)"
+                continue
+            }
+            guard inSection, let equals = line.firstIndex(of: "=") else { continue }
+            guard line[..<equals].trimmingCharacters(in: .whitespaces) == "url" else { continue }
+            let value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+            if let quote = value.first, quote == "\"" || quote == "'" {
+                let rest = value.dropFirst()
+                return rest.firstIndex(of: quote).map { String(rest[..<$0]) }
+            }
+            return value.prefix { $0 != "#" }.trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
     public func status(_ agent: HookAgent) async -> HookStatus {
         switch agent {
         case .claude, .codex:
@@ -179,6 +222,9 @@ public struct HookInstaller: Sendable {
             }
             if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != Data("\(port)\n".utf8) {
                 return .outdated("port file does not match port \(port)")
+            }
+            if let registered = await registeredMCPURL(for: agent), registered != mcpURL {
+                return .outdated("MCP url differs")
             }
             return .installed
         case .herdrPlugin:

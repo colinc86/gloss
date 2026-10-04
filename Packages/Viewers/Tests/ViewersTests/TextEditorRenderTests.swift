@@ -40,4 +40,115 @@ struct TextEditorRenderTests {
         let (distinct, _) = try render(languageName: "swift")
         #expect(distinct > 3, "highlighted text should produce more than a flat background")
     }
+
+    /// Typing must not strip syntax colours from the other lines (seen in the app after `/*` and after a Backspace).
+    @Test @MainActor func typingKeepsSyntaxColours() throws {
+        let source = (1...40).map { "func f\($0)() -> Int { let value = \($0); return value } // note \($0)" }.joined(separator: "\n") + "\n"
+        let controller = TextEditorController(text: source, languageName: "swift")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
+        hosting.frame = NSRect(x: 0, y: 0, width: 700, height: 400)
+        window.contentView = hosting
+        window.layoutIfNeeded()
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T { return match }
+            for subview in view.subviews { if let found = find(type, in: subview) { return found } }
+            return nil
+        }
+        let textView = try #require(find(SourceTextView.self, in: hosting))
+        func colouredPixels() throws -> Int {
+            textView.layoutSubtreeIfNeeded()
+            let rep = try #require(textView.bitmapImageRepForCachingDisplay(in: textView.visibleRect))
+            textView.cacheDisplay(in: textView.visibleRect, to: rep)
+            var count = 0
+            for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+                for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                    guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                    if max(c.redComponent, c.greenComponent, c.blueComponent) - min(c.redComponent, c.greenComponent, c.blueComponent) > 0.25 { count += 1 }
+                }
+            }
+            return count
+        }
+        func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.3)) }
+        settle()
+        let before = try colouredPixels()
+        #expect(before > 200, "keywords and numbers are coloured: \(before)")
+        let line5End = controller.lineIndex.contentRange(ofLine: 5)
+        textView.setSelectedRange(NSRange(location: line5End.location + line5End.length, length: 0))
+        textView.insertText("/", replacementRange: textView.selectedRange())
+        textView.insertText("*", replacementRange: textView.selectedRange())
+        settle()
+        let afterComment = try colouredPixels()
+        #expect(afterComment > before / 3, "lines above the edit keep their colours: \(afterComment) of \(before)")
+        textView.deleteBackward(nil)
+        textView.deleteBackward(nil)
+        settle()
+        let restored = try colouredPixels()
+        #expect(restored > before * 8 / 10, "after undoing the edit by hand every line is coloured again: \(restored) of \(before)")
+
+        // Lines coloured before the edits and off screen during them are re-coloured as they scroll in.
+        textView.scrollToEndOfDocument(nil)
+        settle()
+        let end = try colouredPixels()
+        textView.scrollToBeginningOfDocument(nil)
+        settle()
+        let top = try colouredPixels()
+        #expect(end > before / 2 && top > before * 8 / 10, "scrolled lines are coloured: end \(end), top \(top), before \(before)")
+    }
+
+    /// A jump requested while the document is still opening (the view not yet in a window) is applied once the
+    /// view is attached: the line is on screen and the editor has the keyboard.
+    @Test @MainActor func aJumpBeforeTheViewIsInAWindowStillLandsAndFocuses() throws {
+        let source = (1...200).map { "let value\($0) = \($0)" }.joined(separator: "\n") + "\n"
+        let controller = TextEditorController(text: source, languageName: "swift")
+        let target = controller.lineIndex.contentRange(ofLine: 150)
+        controller.scroll(to: target)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
+        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 300)
+        window.contentView = hosting
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T { return match }
+            for subview in view.subviews { if let found = find(type, in: subview) { return found } }
+            return nil
+        }
+        let textView = try #require(find(SourceTextView.self, in: hosting))
+        #expect(window.firstResponder === textView, "the editor takes the keyboard")
+        #expect(textView.selectedRange() == target)
+        let lineTop = controller.lineIndex.position(forUTF16Offset: textView.characterIndexForInsertion(at: NSPoint(x: 10, y: textView.visibleRect.minY + 5))).line
+        #expect(lineTop > 100 && lineTop <= 150, "line 150 is on screen, top line \(lineTop)")
+    }
+
+    /// A jump to an off-screen line puts that line in the middle of the view, within a couple of lines, for
+    /// lines far from anything laid out yet (where TextKit only has estimated heights).
+    @Test @MainActor func jumpsCentreTheTargetLine() throws {
+        let source = (1...3000).map { $0 % 7 == 0 ? "// a longer comment line \($0) that wraps \(String(repeating: "x", count: 150))" : "let value\($0) = \($0)" }.joined(separator: "\n") + "\n"
+        let controller = TextEditorController(text: source, languageName: "swift")
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
+        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        window.contentView = hosting
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T { return match }
+            for subview in view.subviews { if let found = find(type, in: subview) { return found } }
+            return nil
+        }
+        let textView = try #require(find(SourceTextView.self, in: hosting))
+        var misses: [String] = []
+        for line in [1500, 2900, 40, 2200] {
+            controller.scroll(to: controller.lineIndex.contentRange(ofLine: line))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            let visible = textView.visibleRect
+            let middle = controller.lineIndex.position(forUTF16Offset: textView.characterIndexForInsertion(at: NSPoint(x: 10, y: visible.midY))).line
+            let top = controller.lineIndex.position(forUTF16Offset: textView.characterIndexForInsertion(at: NSPoint(x: 10, y: visible.minY + 2))).line
+            let bottom = controller.lineIndex.position(forUTF16Offset: textView.characterIndexForInsertion(at: NSPoint(x: 10, y: visible.maxY - 2))).line
+            #expect(top <= line && line <= bottom, "line \(line) is on screen (\(top)...\(bottom))")
+            if line > 60, abs(middle - line) > 2 { misses.append("\(line)→\(middle)") }
+        }
+        #expect(misses.isEmpty, "off-centre jumps: \(misses)")
+    }
 }

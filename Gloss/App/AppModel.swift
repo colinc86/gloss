@@ -1,3 +1,4 @@
+import AppKit
 import Core
 import Foundation
 import Observation
@@ -19,6 +20,7 @@ final class AppModel {
     let settings: SettingsStore
     let hosts: HostsModel
     let hooks = HooksModel()
+    let quickOpen = QuickOpenModel()
     let launchOptions: AppLaunchOptions
     /// Live ssh connections by host, for transports and search.
     private(set) var connections: [HostID: SSHConnection] = [:]
@@ -30,6 +32,32 @@ final class AppModel {
     let herdrTransport: HerdrTransport
     private(set) var mcpServer: MCPServer?
     private(set) var mcpStatus: String?
+    /// The port the MCP server actually bound; the setting can differ until the next launch.
+    private(set) var mcpListeningPort: Int?
+    /// The main window (explorer, viewer, notes), for commands that must act there whatever window is in front.
+    @ObservationIgnored weak var mainWindow: NSWindow?
+    /// What was just copied ("Path copied"), shown briefly at the bottom of the window; the id restarts the timer.
+    private(set) var copyFlash: (id: Int, text: String)?
+
+    func flashCopied(_ text: String) {
+        copyFlash = ((copyFlash?.id ?? 0) + 1, text)
+    }
+
+    func clearCopyFlash(_ id: Int) {
+        if copyFlash?.id == id { copyFlash = nil }
+    }
+
+    /// Starts a note on the open document. The composer is a popover on the main window, so a command chosen
+    /// while Settings or Keyboard Shortcuts is in front brings the main window forward first.
+    func beginNoteInMainWindow() {
+        guard let session = activeSession else { return }
+        if let window = mainWindow, !window.isKeyWindow {
+            window.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.async { session.beginNote() }
+        } else {
+            session.beginNote()
+        }
+    }
     /// Remote home directories, learned from the probe when a host connects (hook installs need them).
     private(set) var hostHomes: [HostID: String] = [:]
     @ObservationIgnored private var cleanupTasks: [HostID: Task<Void, Never>] = [:]
@@ -39,12 +67,35 @@ final class AppModel {
         didSet { followHerdr ? startFollowing() : stopFollowing() }
     }
     private(set) var followStatus: String?
+    /// The followed pane, for the sidebar's follow card: host (nil on this Mac), agent, status, pane, folder.
+    struct FollowedPane: Equatable {
+        var host: String?
+        var agent: String
+        var status: String?
+        var paneID: String
+        var path: String?
+    }
+    private(set) var followedPane: FollowedPane?
     @ObservationIgnored private var followTasks: [HostID: Task<Void, Never>] = [:]
+    /// The machine the Herdr client is showing, read from its state files while following; nil when Herdr has
+    /// not written one (then every server's focus events are applied, as before machines existed).
+    private(set) var herdrMachine: HerdrMachineSelection?
+    @ObservationIgnored private var machineWatcherTask: Task<Void, Never>?
+    /// The last focused agent pane per Herdr server, applied when the client switches back to that machine.
+    @ObservationIgnored private var latestFocus: [HostID: FollowEvent] = [:]
+    /// Bumped whenever the machine selection changes or following stops, so work resumed after an await can
+    /// tell that the world moved on.
+    @ObservationIgnored private var followGeneration = 0
     var showNotesPanel = true
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
     private(set) var sessions: [String: DocumentSession] = [:]
-    private(set) var activeSession: DocumentSession?
+    private(set) var activeSession: DocumentSession? {
+        didSet {
+            explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
+            rememberLastDocument()
+        }
+    }
 
     init(launchOptions: AppLaunchOptions) {
         self.launchOptions = launchOptions
@@ -113,6 +164,7 @@ final class AppModel {
             self.fileSystems[hostID] = nil
             self.followTasks[hostID]?.cancel()
             self.followTasks[hostID] = nil
+            self.latestFocus[hostID] = nil
             self.cleanupTasks[hostID]?.cancel()
             self.cleanupTasks[hostID] = nil
             Task {
@@ -122,11 +174,39 @@ final class AppModel {
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+        notesPanel.onGroupsChange = { [weak self, weak explorer] groups in
+            explorer?.updateNoteMarks(groups)
+            self?.updateDockBadge(groups)
+        }
+        explorer.onCopied = { [weak self] text in self?.flashCopied(text) }
+        explorer.onCreateFileNote = { [weak self] hostID, path, body, color in
+            Task { await self?.createWholeFileNote(hostID: hostID, path: path, body: body, color: color) }
+        }
+        quickOpen.onOpen = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
     }
 
     // MARK: Follow mode
 
+    /// Which Herdr server's focus the explorer acts on.
+    private enum FollowScope: Equatable {
+        /// Herdr has not said which machine it shows: act on every server, as before machines existed.
+        case any
+        case host(HostID)
+        /// Herdr shows a machine this app has no host for.
+        case none
+    }
+
+    private var followScope: FollowScope {
+        switch herdrMachine {
+        case nil: .any
+        case .local: .host(.local)
+        case .remote(let target, _): hosts.entries.first { $0.name == target }.map { .host($0.id) } ?? .none
+        case .unknown: .none
+        }
+    }
+
     private func startFollowing() {
+        startWatchingHerdrMachine()
         var hostIDs: [HostID] = [.local]
         hostIDs += connections.keys.sorted { $0.rawValue < $1.rawValue }
         for hostID in hostIDs where followTasks[hostID] == nil {
@@ -147,19 +227,108 @@ final class AppModel {
         }
     }
 
+    /// Herdr's socket API knows nothing about machines, so the client's own state files say which server it shows.
+    private func startWatchingHerdrMachine() {
+        guard machineWatcherTask == nil else { return }
+        machineWatcherTask = Task { [weak self] in
+            let watcher = HerdrMachineWatcher()
+            await watcher.start()
+            defer { Task { await watcher.stop() } }
+            for await selection in watcher.events {
+                if Task.isCancelled { return }
+                guard let self else { return }
+                await self.herdrMachineChanged(to: selection)
+            }
+        }
+    }
+
+    /// The Herdr client switched machines: connect the matching host when needed and show its focused pane.
+    private func herdrMachineChanged(to selection: HerdrMachineSelection) async {
+        // Herdr writes the selection before the endpoint catalogue when a machine is added; an id the catalogue
+        // does not know yet keeps the previous scope until the next read instead of dropping events.
+        if case .unknown = selection, herdrMachine != nil { return }
+        herdrMachine = selection
+        followGeneration += 1
+        switch followScope {
+        case .any:
+            return
+        case .none:
+            if case .remote(let target, let label) = selection {
+                followStatus = "Herdr is on \(label), which is not one of this app's hosts (\(target))"
+            }
+        case .host(let hostID):
+            if hostID != .local, fileSystems[hostID] == nil {
+                let name = hosts.entry(for: hostID)?.name ?? hostID.rawValue
+                pickedHost = hostID
+                followStatus = "Connecting to \(name) for Herdr…"
+                // The connection callback starts following this host; its first event is the focused pane.
+                let generation = followGeneration
+                guard await hosts.connect(hostID) != nil else {
+                    if followGeneration == generation { followStatus = "Could not connect to \(name) for Herdr" }
+                    return
+                }
+            }
+            if let event = latestFocus[hostID] { await apply(event) }
+        }
+    }
+
     private func stopFollowing() {
         for task in followTasks.values { task.cancel() }
         followTasks = [:]
+        machineWatcherTask?.cancel()
+        machineWatcherTask = nil
+        herdrMachine = nil
+        latestFocus = [:]
+        followGeneration += 1
         followStatus = nil
+        followedPane = nil
     }
 
     private func apply(_ event: FollowEvent) async {
-        if let agent = event.agent {
-            followStatus = "\(agent) \(event.status ?? "") · \(event.paneID)"
+        if event.path != nil { latestFocus[event.hostID] = event }
+        guard followScope == .any || followScope == .host(event.hostID) else { return }
+        // Status changes arrive for every agent pane; the row describes the focused one.
+        if let agent = event.agent, event.path != nil || latestFocus[event.hostID]?.paneID == event.paneID {
+            let host = event.hostID == .local ? "" : "\(hosts.entry(for: event.hostID)?.name ?? event.hostID.rawValue): "
+            followStatus = "\(host)\(agent) \(event.status ?? "") · \(event.paneID)"
+            followedPane = FollowedPane(
+                host: event.hostID == .local ? nil : (hosts.entry(for: event.hostID)?.name ?? event.hostID.rawValue),
+                agent: agent, status: event.status, paneID: event.paneID,
+                path: event.path ?? (followedPane?.paneID == event.paneID ? followedPane?.path : nil)
+            )
         }
         guard let path = event.path, !path.isEmpty else { return }
         if event.hostID != .local, fileSystems[event.hostID] == nil { return }
+        pickedHost = event.hostID
+        let generation = followGeneration
         await explorer.openRoot(hostID: event.hostID, path: path)
+        // Herdr may have switched machines (or follow mode been turned off) while a remote root was opening;
+        // the machine selected now wins, so only its pane becomes the target.
+        guard followGeneration == generation, followScope == .any || followScope == .host(event.hostID) else { return }
+        pickedHost = event.hostID
+        let hostLabel = event.hostID == .local ? nil : hosts.entry(for: event.hostID)?.name
+        if let info = event.info, let target = HerdrTransport.target(for: info, hostID: event.hostID, hostLabel: hostLabel) {
+            adopt(target: target)
+        }
+    }
+
+    /// Makes a target the one packets go to, discovering again when the list does not show it yet.
+    private func adopt(target: AgentTarget) {
+        send.rememberTarget(target)
+        if !send.targets.contains(where: { $0.id == target.id }) {
+            Task { await send.refreshTargets() }
+        }
+    }
+
+    /// The user picked a target: remember it, and show the agent's working directory when the target has one.
+    func choose(target: AgentTarget) {
+        send.rememberTarget(target)
+        guard target.transport == .herdr || target.transport == .tmux, let path = target.detail, path.hasPrefix("/") else { return }
+        Task {
+            guard await ensureConnected(target.hostID) else { return }
+            pickedHost = target.hostID
+            await explorer.openRoot(hostID: target.hostID, path: path)
+        }
     }
 
     func openDocument(hostID: HostID, path: String) {
@@ -176,6 +345,16 @@ final class AppModel {
             return
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
+        // The deepest open root holding the file bounds what a rendered HTML page may read; looked up per request,
+        // since the root can open after the document (launch with --open, a jump from a note).
+        session.resourceRoot = { [weak explorer] in
+            // Compare resolved folders: a root opened as `/private/tmp/x` is stored as `/tmp/x`.
+            let file = ExplorerModel.canonical(path, hostID: hostID)
+            return explorer?.tabs.filter { tab in
+                let root = ExplorerModel.canonical(tab.path, hostID: hostID)
+                return tab.hostID == hostID && file.hasPrefix(root == "/" ? "/" : root + "/")
+            }.max { $0.path.count < $1.path.count }?.path
+        }
         sessions[key] = session
         activeSession = session
         Task { await session.open() }
@@ -200,14 +379,17 @@ final class AppModel {
     }
 
     /// Opens a document and scrolls its text view to a 1-based line once it has loaded.
-    func openDocument(hostID: HostID, path: String, line: Int) {
+    /// Opens at a line: selected for a jump (a link, an agent pointing somewhere), or just the caret at its start
+    /// when resuming, so the reopened file doesn't greet you with a selection and an Add Note button.
+    func openDocument(hostID: HostID, path: String, line: Int, select: Bool = true) {
         openDocument(hostID: hostID, path: path)
         guard let session = sessions["\(hostID.rawValue):\(path)"] else { return }
         Task {
             for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
             guard let controller = session.textController else { return }
-            let range = controller.lineIndex.contentRange(ofLine: line)
-            if let markdown = session.markdown { markdown.scroll(toSource: range) } else { controller.scroll(to: range) }
+            let line = controller.lineIndex.contentRange(ofLine: line)
+            let range = select ? line : NSRange(location: line.location, length: 0)
+            if let rendered = session.rendered { rendered.scroll(toSource: range, select: select) } else { controller.scroll(to: range) }
         }
     }
 
@@ -217,15 +399,74 @@ final class AppModel {
         return await hosts.connect(hostID) != nil
     }
 
+    /// Clears attachment files nothing references, off the main actor. Only with the real database: a throwaway
+    /// one (`--reset-db`) has no notes, and the files on disk belong to the real one.
+    private func sweepAttachments() {
+        guard !launchOptions.resetDatabase else { return }
+        let store = noteStore
+        let expiry = TimeInterval(settings.stagedFileExpiryDays) * 24 * 3600
+        Task.detached(priority: .background) {
+            guard let referenced = try? await store.allAttachmentPaths() else { return }
+            let removed = AttachmentCache.sweep(referenced: referenced, stagedExpiry: expiry)
+            if removed.noteFiles + removed.sendFolders > 0 {
+                Log.notes.info("swept \(removed.noteFiles) unreferenced note attachments and \(removed.sendFolders) expired send folders")
+            }
+        }
+    }
+
+    /// Open Quickly over the selected root, on whichever host it belongs to.
+    func presentQuickOpen() {
+        guard let tab = explorer.selectedTab else { return }
+        guard tab.hostID != .local else {
+            quickOpen.present(root: tab.path, hostID: .local, connection: nil)
+            return
+        }
+        // A remote root's host may have dropped since the tab opened: reconnect rather than list this Mac.
+        Task {
+            _ = await ensureConnected(tab.hostID)
+            quickOpen.present(root: tab.path, hostID: tab.hostID, connection: connections[tab.hostID])
+        }
+    }
+
+    /// Find in Files over the selected root, reconnecting a remote host first; never searches this Mac for a
+    /// remote root.
+    func runContentSearch() {
+        guard let tab = explorer.selectedTab else { return }
+        let search = explorer.contentSearch
+        guard tab.hostID != .local else {
+            search.search(in: tab.path)
+            return
+        }
+        Task {
+            guard await ensureConnected(tab.hostID), let connection = connections[tab.hostID] else {
+                search.fail("Not connected to this folder's host")
+                return
+            }
+            search.search(in: tab.path, connection: connection)
+        }
+    }
+
+    /// Shows the open document in the explorer, opening its folder as a root when no root contains it.
+    func revealActiveDocumentInExplorer() {
+        guard let session = activeSession else { return }
+        Task {
+            if await !explorer.reveal(hostID: session.hostID, path: session.path) {
+                await openRootIfNeeded(hostID: session.hostID, containing: session.path)
+                await explorer.reveal(hostID: session.hostID, path: session.path)
+            }
+            pickedHost = session.hostID
+        }
+    }
+
     /// Makes sure a root containing `path` is open, opening the parent directory when none is.
     func openRootIfNeeded(hostID: HostID, containing path: String) async {
         guard await ensureConnected(hostID) else { return }
-        if explorer.tabs.contains(where: { $0.hostID == hostID && path.hasPrefix($0.path.hasSuffix("/") ? $0.path : $0.path + "/") }) { return }
+        if explorer.tabs.contains(where: { $0.hostID == hostID && ExplorerModel.inRootSpelling(path, root: $0.path, hostID: hostID) != nil }) { return }
         await explorer.openRoot(hostID: hostID, path: PathUtilities.parent(of: path))
     }
 
     /// Creates a note from a URL or plugin: on `line` of the file, or on the whole file.
-    func createNote(hostID: HostID, path: String, line: Int?, body: String) async {
+    func createNote(hostID: HostID, path: String, line: Int?, body: String, color: NoteColor = .yellow) async {
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { return }
         do {
             var anchor = Anchor.wholeFile
@@ -239,11 +480,28 @@ final class AppModel {
             let kind = DocumentKindDetector.kind(forPath: path)
             let fingerprint = (try? await fileSystem.stat(path))?.fingerprint ?? Fingerprint()
             let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
-            _ = try await noteStore.createNote(documentID: document.id, anchor: anchor, body: body, color: .yellow)
+            _ = try await noteStore.createNote(documentID: document.id, anchor: anchor, body: body, color: color)
             showNotesPanel = true
         } catch {
             Log.notes.error("URL note failed: \(error, privacy: .public)")
         }
+    }
+
+    /// Open documents with edits not written to disk, most recently used first.
+    var unsavedSessions: [DocumentSession] {
+        sessions.values.filter(\.isDirty).sorted { lhs, rhs in
+            (activationOrder.lastIndex(of: lhs.id) ?? -1) > (activationOrder.lastIndex(of: rhs.id) ?? -1)
+        }
+    }
+
+    /// Whether any document is writing to disk right now.
+    var isSavingAnything: Bool { sessions.values.contains(where: \.isSaving) }
+
+    /// Saves every unsaved document and returns those still unsaved afterwards (a failed write, or a conflict
+    /// with a newer version on disk, which then waits in its conflict sheet).
+    func saveAll() async -> [DocumentSession] {
+        for session in unsavedSessions { await session.save() }
+        return unsavedSessions
     }
 
     func closeDocument(_ session: DocumentSession) {
@@ -260,10 +518,14 @@ final class AppModel {
 
     /// Applies `--root` and `--open`, or reopens the most recent root. Runs once even if several windows appear.
     func start() async {
-        guard !started else { return }
+        guard !started, !launchOptions.isTestHost else { return }
         started = true
         await settings.load()
         send.stagedFileExpiryDays = settings.stagedFileExpiryDays
+        settings.onStagedExpiryChange = { [weak self] days in self?.send.stagedFileExpiryDays = days }
+        settings.onDockSettingChange = { [weak self] in self?.updateDockBadge() }
+        updateDockBadge()
+        sweepAttachments()
         await hosts.load()
         explorer.showDotfiles = settings.showDotfilesByDefault
         let launchHost = launchOptions.host == "local" ? HostID.local : hosts.entries.first { $0.name == launchOptions.host }?.id
@@ -283,6 +545,57 @@ final class AppModel {
     }
 
     /// The root opened most recently on any host; a remote one connects the host first (the agent prompt may show).
+    /// Questions back from agents, on the Dock icon: the app often sits behind the agent's terminal, and a note
+    /// waiting on an answer should be visible from there, as unread mail is.
+    func updateDockBadge(_ groups: [DocumentNotes]? = nil) {
+        let groups = groups ?? notesPanel.groups
+        let waiting = settings.showsQuestionsOnDock
+            ? groups.reduce(0) { $0 + $1.notes.filter { $0.state == .resolved && $0.resolveOutcome == .needsInput }.count }
+            : 0
+        NSApp.dockTile.badgeLabel = waiting > 0 ? String(waiting) : nil
+    }
+
+    /// The document in front, kept so the next launch reopens it with its folder.
+    private func rememberLastDocument(line: Int? = nil) {
+        guard let session = activeSession else {
+            // Everything closed: the next launch should start without a document, not reopen the closed one.
+            guard !isShutDown else { return }
+            let store = noteStore
+            Task { try? await store.setSetting("general.lastDocument", nil) }
+            return
+        }
+        let value = "\(session.hostID.rawValue)\n\(session.path)" + (line.map { "\n\($0)" } ?? "")
+        let store = noteStore
+        Task { try? await store.setSetting("general.lastDocument", value) }
+    }
+
+    /// At quit, the caret's line too, so the next launch lands where reading stopped.
+    private func rememberLastPosition() async {
+        guard let session = activeSession, let controller = session.textController else { return }
+        // Reading rendered markdown moves the rendered selection, not the source caret: map it back to the source.
+        var location = controller.selection.location
+        if let markdown = session.markdown, markdown.mode == .rendered, let mapping = markdown.renderedSelectionMapping {
+            location = mapping.source.location
+        }
+        let line = controller.lineIndex.position(forUTF16Offset: location).line
+        let value = "\(session.hostID.rawValue)\n\(session.path)\n\(line)"
+        try? await noteStore.setSetting("general.lastDocument", value)
+    }
+
+    /// Reopens the document that was in front last time, when it lives in `root` (and, on this Mac, still exists).
+    private func reopenLastDocument(in root: Root) async {
+        guard let value = try? await noteStore.setting("general.lastDocument") else { return }
+        let parts = value.split(separator: "\n").map(String.init)
+        guard parts.count >= 2, HostID(rawValue: parts[0]) == root.hostID,
+              ExplorerModel.inRootSpelling(parts[1], root: root.path, hostID: root.hostID) != nil else { return }
+        if root.hostID == .local, !FileManager.default.fileExists(atPath: parts[1]) { return }
+        if parts.count >= 3, let line = Int(parts[2]), line > 1 {
+            openDocument(hostID: root.hostID, path: parts[1], line: line, select: false)
+        } else {
+            openDocument(hostID: root.hostID, path: parts[1])
+        }
+    }
+
     private func reopenMostRecentRoot() async {
         let hosts = (try? await noteStore.hosts()) ?? []
         var best: Root?
@@ -297,6 +610,9 @@ final class AppModel {
         } else {
             await openRemoteRoot(hostID: best.hostID, path: best.path)
         }
+        // Only into a folder that actually opened: a failed connection must not be retried for the document.
+        guard explorer.tabs.contains(where: { ExplorerModel.markKey($0.hostID, $0.path) == ExplorerModel.markKey(best.hostID, best.path) }) else { return }
+        await reopenLastDocument(in: best)
     }
 
     // MARK: MCP
@@ -321,7 +637,7 @@ final class AppModel {
             },
             createDraft: { host, path, cwd, text in
                 let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
-                guard let hostID else { throw DeliveryError.targetUnavailable("unknown host \(host)") }
+                guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }
                 guard let documentPath = path ?? cwd.map({ PathUtilities.join($0, ".gloss-inbox.md") }) else {
                     throw DeliveryError.failed("path or cwd is required")
                 }
@@ -329,14 +645,14 @@ final class AppModel {
             },
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         )
-        dependencies.openDocument = { [weak self] host, path in
+        dependencies.openDocument = { [weak self] host, path, line in
             let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
-            guard let hostID else { throw DeliveryError.targetUnavailable("unknown host \(host)") }
+            guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }
             await MainActor.run {
                 guard let self else { return }
                 Task {
                     await self.openRootIfNeeded(hostID: hostID, containing: path)
-                    self.openDocument(hostID: hostID, path: path)
+                    if let line { self.openDocument(hostID: hostID, path: path, line: line) } else { self.openDocument(hostID: hostID, path: path) }
                 }
             }
         }
@@ -345,6 +661,7 @@ final class AppModel {
             try await server.start()
             mcpServer = server
             mcpStatus = nil
+            mcpListeningPort = settings.mcpPort
             for (hostID, connection) in connections {
                 await forwardMCPPort(to: connection, alias: hosts.entry(for: hostID)?.name ?? hostID.rawValue)
             }
@@ -356,7 +673,8 @@ final class AppModel {
 
     /// The hook installer for a host: local files and shell, or the host's SFTP file system and exec channel.
     func makeHookInstaller(for hostID: HostID) -> HookInstaller? {
-        let port = settings.mcpPort
+        // Hooks must point where the server listens now, not at a port the setting names for the next launch.
+        let port = mcpListeningPort ?? settings.mcpPort
         if hostID == .local {
             return HookInstaller(fileSystem: LocalFileSystem(), home: NSHomeDirectory(), port: port) { try await LocalShell.run($0) }
         }
@@ -364,6 +682,19 @@ final class AppModel {
         guard let home = hostHomes[hostID] else { return nil }
         return HookInstaller(fileSystem: fileSystem, home: home, hostAlias: alias, port: port) { line in
             try await connection.exec(LocalShell.pathPrefix + line, timeout: .seconds(60))
+        }
+    }
+
+    /// A whole-file note from the explorer's context menu. An open session for the file picks it up through its
+    /// note observation.
+    func createWholeFileNote(hostID: HostID, path: String, body: String, color: NoteColor) async {
+        do {
+            let fingerprint = (try? await fileSystems[hostID]?.stat(path))?.fingerprint ?? Fingerprint()
+            let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: DocumentKindDetector.kind(forPath: path), fingerprint: fingerprint)
+            _ = try await noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: color)
+            showNotesPanel = true
+        } catch {
+            Log.notes.error("file note for \(path, privacy: .public) failed: \(error, privacy: .public)")
         }
     }
 
@@ -395,27 +726,64 @@ final class AppModel {
         await send.send(noteIDs: noteIDs, to: target)
     }
 
+    /// The open document's drafts you can see: all of them, or only the colours the notes panel is filtered to.
+    /// What the Send button and ⌘↩ send, so nothing hidden from view goes to the agent.
+    var visibleDrafts: [Note] {
+        guard let session = activeSession else { return [] }
+        let drafts = session.notes.filter { $0.state == .draft }
+        // With the panel closed nothing is filtered on screen, so nothing is filtered here either.
+        guard showNotesPanel, let documentID = session.document?.id else { return drafts }
+        // Exactly the cards the panel shows for this document: state tab, colours, and search all apply.
+        let shown = Set(notesPanel.visibleGroups.first { $0.document.id == documentID }?.notes.map(\.id) ?? [])
+        return drafts.filter { shown.contains($0.id) }
+    }
+
+    /// Whether the panel is narrowing what Send takes (for wording: "the 2 shown drafts").
+    var draftsAreFiltered: Bool {
+        showNotesPanel && (notesPanel.filter != .all || !notesPanel.colorFilter.isEmpty || !notesPanel.searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+    }
+
+    /// Opens the main window when it was closed (the app keeps running), for the Dock menu.
+    @ObservationIgnored var openMainWindow: () -> Void = {}
+
+    func sendVisibleDrafts() async {
+        let ids = visibleDrafts.map(\.id)
+        guard !ids.isEmpty else { return }
+        await send(noteIDs: ids)
+    }
+
+    /// The same notes Send would send, as a packet on the clipboard instead.
+    func copyVisibleDrafts() async {
+        await copyPacket(noteIDs: visibleDrafts.map(\.id))
+    }
+
     func sendAllDrafts(scope: SendScope) async {
         let ids = await send.draftNoteIDs(documentID: scope == .all ? nil : activeSession?.document?.id)
         guard !ids.isEmpty else { return }
         await send(noteIDs: ids)
     }
 
-    func copyPacket(scope: SendScope) async {
-        let ids = await send.draftNoteIDs(documentID: scope == .all ? nil : activeSession?.document?.id)
-        guard !ids.isEmpty else { return }
-        await send.send(noteIDs: ids, to: ClipboardTransport.target)
+    /// Copies these notes as one packet; like any send, drafts in it become sent.
+    func copyPacket(noteIDs: [NoteID]) async {
+        guard !noteIDs.isEmpty else { return }
+        await send.send(noteIDs: noteIDs, to: ClipboardTransport.target)
     }
 
     /// Opens the note's document and scrolls to it.
-    func reveal(note: Note, in document: Core.Document) {
+    func reveal(note: Note, in document: Core.Document, select: Bool = true) {
         openDocument(hostID: document.hostID, path: document.path)
         guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
         Task {
             // The session may still be opening.
             for _ in 0..<50 where !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
-            session.reveal(note)
+            session.reveal(note, select: select)
         }
+    }
+
+    /// Next or Previous Note: the active document's next open note, with its card selected in the notes panel.
+    func stepNote(forward: Bool) {
+        guard let note = activeSession?.stepNote(forward: forward) else { return }
+        notesPanel.selectedNoteID = note.id
     }
 
     func reanchor(note: Note, in document: Core.Document) {
@@ -449,6 +817,8 @@ final class AppModel {
     func shutDown() async {
         guard !isShutDown else { return }
         isShutDown = true
+        // Bounded: a slow or locked database must not hold up quitting.
+        _ = await withDeadline(.seconds(1)) { await self.rememberLastPosition() }
         notesPanel.stop()
         explorer.stopWatching()
         for session in sessions.values { session.close() }
@@ -465,6 +835,8 @@ final class AppModel {
 
     /// Last resort when the app terminates without `shutDown` having run (crash reporter, force quit path): kills the masters outright.
     func shutDownSynchronously() {
+        // Even after an async shutdown began: if the process ends before it finished, the masters must still go.
+        hosts.killMasters()
         guard !isShutDown else { return }
         isShutDown = true
         notesPanel.stop()

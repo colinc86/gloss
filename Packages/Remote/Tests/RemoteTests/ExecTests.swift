@@ -11,9 +11,11 @@ struct RemoteSearchParsingTests {
         #expect(RemoteSearch.parse(line: Data("/p/b.md:3:needle: here".utf8), ripgrep: false) == RemoteSearchHit(path: "/p/b.md", line: 3, text: "needle: here"))
         var tools = RemoteTools()
         tools.rg = true
-        #expect(RemoteSearch.script(pattern: "it's", root: "/r", tools: tools) == #"rg --json -n --no-messages --max-count 200 --max-filesize 2M -e 'it'\''s' -- '/r'"#)
+        #expect(RemoteSearch.script(pattern: "it's", root: "/r", tools: tools) == #"rg --json -n --no-messages --max-count 200 --max-filesize 2M --fixed-strings --smart-case -e 'it'\''s' -- '/r'"#)
+        #expect(RemoteSearch.script(pattern: "a.*b", root: "/r", tools: tools, regex: true).contains("--smart-case -e 'a.*b'"), "regex mode drops --fixed-strings")
         tools.rg = false
-        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools).hasPrefix("grep -rnI"))
+        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools).hasPrefix("grep -rnI --exclude-dir=.git -F -i -e"))
+        #expect(RemoteSearch.grepFlags(pattern: "Foo", regex: true) == ["-E"], "a capital letter makes the search case-sensitive")
     }
 }
 

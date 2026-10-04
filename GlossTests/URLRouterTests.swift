@@ -12,6 +12,8 @@ struct URLRouterTests {
         let remote = URLRouter.parse(URL(string: "gloss://open?host=asus&path=/home/colin/x.md")!, hosts: hosts)
         #expect(remote == .open(hostID: hosts["asus"]!, path: "/home/colin/x.md"))
         #expect(URLRouter.parse(URL(string: "gloss://open?path=relative")!, hosts: hosts) == nil)
+        #expect(URLRouter.parse(URL(string: "gloss://open?path=/a/b.swift&line=42")!, hosts: hosts) == .open(hostID: .local, path: "/a/b.swift", line: 42))
+        #expect(URLRouter.parse(URL(string: "gloss://open?path=/a/b.swift&line=0")!, hosts: hosts) == .open(hostID: .local, path: "/a/b.swift"), "line numbers are 1-based")
         #expect(URLRouter.parse(URL(string: "https://example.com/open?path=/x")!, hosts: hosts) == nil)
     }
 
@@ -21,5 +23,9 @@ struct URLRouterTests {
         let selection = URLRouter.parse(URL(string: "gloss://note?cwd=/p&file=/tmp/sel.txt")!, hosts: hosts)
         #expect(selection == .note(hostID: .local, path: nil, cwd: "/p", line: nil, text: "", file: "/tmp/sel.txt"))
         #expect(URLRouter.parse(URL(string: "gloss://note?path=/p/a.md")!, hosts: hosts) == nil, "a note needs text or a file")
+        #expect(URLRouter.parse(URL(string: "gloss://note?path=/p/a.md&text=x&color=Blue")!, hosts: hosts)
+                == .note(hostID: .local, path: "/p/a.md", cwd: nil, line: nil, text: "x", file: nil, color: .blue), "colour names ignore case")
+        #expect(URLRouter.parse(URL(string: "gloss://note?path=/p/a.md&text=x&color=teal")!, hosts: hosts)
+                == .note(hostID: .local, path: "/p/a.md", cwd: nil, line: nil, text: "x", file: nil), "an unknown colour falls back to the default")
     }
 }

@@ -85,6 +85,20 @@ public enum DeliveryError: Error, Sendable, Equatable {
     case failed(String)
 }
 
+/// Plain sentences, because these reach the notes panel and the send history verbatim through `"\(error)"`.
+extension DeliveryError: CustomStringConvertible, LocalizedError {
+    public var description: String {
+        switch self {
+        case .targetUnavailable(let reason): reason.isEmpty ? "The agent is not reachable" : "The agent is not reachable (\(reason))"
+        case .agentBlocked(let reason): reason.isEmpty ? "The agent is waiting on a permission prompt" : reason
+        case .packetTooLarge(let limit): "The notes are too long for this transport (limit \(limit.formatted()) bytes); send fewer at once or use the clipboard"
+        case .failed(let reason): reason.isEmpty ? "Delivery failed" : reason
+        }
+    }
+
+    public var errorDescription: String? { description }
+}
+
 /// How a packet reaches an agent. Every transport emits the same packet text; only delivery differs.
 public protocol Transport: Sendable {
     var kind: TransportKind { get }

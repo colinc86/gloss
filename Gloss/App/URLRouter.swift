@@ -2,14 +2,14 @@ import Core
 import Foundation
 import OSLog
 
-/// `gloss://open?host=<alias|local>&path=<abs>` opens a file;
-/// `gloss://note?host=&path=&line=&text=` (or `cwd=` plus `text=` for a selection without a file)
+/// `gloss://open?host=<alias|local>&path=<abs>[&line=<n>]` opens a file, scrolled to a line;
+/// `gloss://note?host=&path=&line=&text=[&color=blue]` (or `cwd=` plus `text=` for a selection without a file)
 /// creates a note. Used by the Herdr plugin and by scripts.
 @MainActor
 enum URLRouter {
     nonisolated enum Route: Equatable {
-        case open(hostID: HostID, path: String)
-        case note(hostID: HostID, path: String?, cwd: String?, line: Int?, text: String, file: String?)
+        case open(hostID: HostID, path: String, line: Int? = nil)
+        case note(hostID: HostID, path: String?, cwd: String?, line: Int?, text: String, file: String?, color: NoteColor? = nil)
     }
 
     /// `~/Library/Application Support/Gloss/inbox`, where the plugin writes long selections.
@@ -35,12 +35,13 @@ enum URLRouter {
         switch url.host?.lowercased() ?? components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() {
         case "open":
             guard let path = query["path"], path.hasPrefix("/") else { return nil }
-            return .open(hostID: hostID, path: path)
+            return .open(hostID: hostID, path: path, line: query["line"].flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil })
         case "note":
             let text = query["text"] ?? ""
             let file = query["file"]
             guard !text.isEmpty || file != nil else { return nil }
-            return .note(hostID: hostID, path: query["path"], cwd: query["cwd"], line: query["line"].flatMap(Int.init), text: text, file: file)
+            return .note(hostID: hostID, path: query["path"], cwd: query["cwd"], line: query["line"].flatMap(Int.init), text: text, file: file,
+                         color: query["color"].flatMap { NoteColor(rawValue: $0.lowercased()) })
         default:
             return nil
         }
@@ -53,10 +54,10 @@ enum URLRouter {
             return
         }
         switch route {
-        case .open(let hostID, let path):
+        case .open(let hostID, let path, let line):
             await model.openRootIfNeeded(hostID: hostID, containing: path)
-            model.openDocument(hostID: hostID, path: path)
-        case .note(let hostID, let path, let cwd, let line, let text, let file):
+            if let line { model.openDocument(hostID: hostID, path: path, line: line) } else { model.openDocument(hostID: hostID, path: path) }
+        case .note(let hostID, let path, let cwd, let line, let text, let file, let color):
             var body = text
             // `file=` carries a long selection from the Herdr plugin. Only the app's own inbox is honoured: any
             // process can open a URL, so reading and deleting arbitrary paths from it would be a hole.
@@ -66,7 +67,7 @@ enum URLRouter {
             }
             let documentPath = path ?? cwd.map { PathUtilities.join($0, ".gloss-inbox.md") }
             guard let documentPath else { return }
-            await model.createNote(hostID: hostID, path: documentPath, line: line, body: body)
+            await model.createNote(hostID: hostID, path: documentPath, line: line, body: body, color: color ?? .yellow)
         }
     }
 }

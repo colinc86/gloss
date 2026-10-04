@@ -5,6 +5,30 @@ import Testing
 @testable import Transports
 
 struct HookInstallerTests {
+    @Test func readsTheCodexMCPRegistration() {
+        let toml = "model = \"x\"\n\n[mcp_servers.gloss]\nurl = \"http://127.0.0.1:47831/mcp?host=asus\"\n\n[mcp_servers.other]\nurl = \"http://o\"\n"
+        #expect(HookInstaller.codexMCPURL(in: toml) == "http://127.0.0.1:47831/mcp?host=asus")
+        #expect(HookInstaller.codexMCPURL(in: "[mcp_servers.\"gloss\"]\nurl='http://a/mcp'\n") == "http://a/mcp")
+        #expect(HookInstaller.codexMCPURL(in: "[mcp_servers.other]\nurl = \"http://o\"\n") == nil)
+        #expect(HookInstaller.codexMCPURL(in: "[mcp_servers.gloss] # ours\nurl_note = \"x\"\nurl = \"http://a/mcp\" # comment\n") == "http://a/mcp", "comments and look-alike keys")
+    }
+
+    /// A remote install registered before URLs carried the host shows as outdated, so Settings offers a reinstall.
+    @Test func aRemoteRegistrationWithoutTheHostIsOutdated() async throws {
+        let home = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcpurl-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "asus", port: 47831) { _ in
+            ExecResult(exitStatus: 0, stdout: Data(), stderr: Data())
+        }
+        _ = try await installer.install(.claude)
+        #expect(await installer.status(.claude) == .installed, "no ~/.claude.json entry yet: nothing to compare")
+        try #"{"mcpServers":{"gloss":{"type":"http","url":"http://127.0.0.1:47831/mcp"}}}"#.write(toFile: "\(home)/.claude.json", atomically: true, encoding: .utf8)
+        #expect(await installer.status(.claude) == .outdated("MCP url differs"))
+        try #"{"mcpServers":{"gloss":{"type":"http","url":"http://127.0.0.1:47831/mcp?host=asus"}}}"#.write(toFile: "\(home)/.claude.json", atomically: true, encoding: .utf8)
+        #expect(await installer.status(.claude) == .installed)
+    }
+
     static let sampleSettings = """
     {"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"'/opt/homebrew/opt/moshi-hook/bin/moshi-hook' claude-hook","async":true}]}],"SessionStart":[{"hooks":[{"type":"command","command":"$HOME/.claude/hooks/herdr-agent-state.sh"}]}]},"permissions":{"allow":["Bash(ls *)"]},"model":"opus"}
     """

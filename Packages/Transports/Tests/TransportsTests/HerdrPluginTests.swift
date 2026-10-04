@@ -38,6 +38,12 @@ struct HerdrPluginTests {
             == "gloss://note?host=local&cwd=%2Ftmp%2Fx%20y&pane=w1%3Ap1&agent=claude&text=hello%20%26%20bye")
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///tmp/a%20b.md"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fa%20b.md")
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"docs/plan.md"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fx%2Fdocs%2Fplan.md")
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"Sources/App.swift:42:7"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fx%2FSources%2FApp.swift&line=42")
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"/srv/log.txt:9"}"#) == "gloss://open?host=local&path=%2Fsrv%2Flog.txt&line=9")
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"/srv/file2:10"}"#) == "gloss://open?host=local&path=%2Fsrv%2Ffile2&line=10")
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///tmp/a.md#L12"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fa.md&line=12")
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"/srv/12:30"}"#) == "gloss://open?host=local&path=%2Fsrv%2F12%3A30", "a digits-only name in a directory keeps its colons too")
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"12:30"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fx%2F12%3A30", "a name made only of digits keeps its colons")
         #expect(run("note", context: #"{"focused_pane_cwd":"/tmp/x"}"#).isEmpty, "no selection: nothing to send")
         let long = String(repeating: "y", count: 7000)
         let longURL = run("note", context: "{\"focused_pane_cwd\":\"/tmp/x\",\"selected_text\":\"\(long)\"}")
@@ -47,6 +53,9 @@ struct HerdrPluginTests {
         try "asus\n".write(toFile: "\(home)/.config/gloss/host", atomically: true, encoding: .utf8)
         let openBody = run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///srv/app.log"}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
         #expect((try? JSONSerialization.jsonObject(with: Data(openBody.utf8)) as? [String: String]) == ["host": "asus", "path": "/srv/app.log"])
+        let lineBody = run("open", context: #"{"focused_pane_cwd":"/srv","selected_text":"app.py:88"}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
+        let lineObject = try JSONSerialization.jsonObject(with: Data(lineBody.utf8)) as? [String: Any]
+        #expect(lineObject?["path"] as? String == "/srv/app.py" && lineObject?["line"] as? Int == 88)
         let body = run("note", context: #"{"focused_pane_cwd":"/home/colin","selected_text":"line1\nline2 \"q\""}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
         let object = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
         #expect(object?["host"] as? String == "asus" && object?["cwd"] as? String == "/home/colin" && object?["text"] as? String == "line1\nline2 \"q\"")

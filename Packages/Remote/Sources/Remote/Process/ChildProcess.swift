@@ -95,17 +95,25 @@ public final class ChildProcess: Sendable {
         }
         posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1)
         posix_spawn_file_actions_adddup2(&actions, errPipe[1], 2)
-        if let directory = spec.workingDirectory { posix_spawn_file_actions_addchdir_np(&actions, directory) }
+        if let directory = spec.workingDirectory { posix_spawn_file_actions_addchdir(&actions, directory) }
 
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
         // Close every descriptor the child did not get through dup2 above, and give it default signal handling.
+        // Every catchable signal, not just SIGPIPE: the app ignores SIGTERM/SIGINT/SIGHUP to route them into a clean
+        // quit, and an inherited SIG_IGN would make `terminate()` a no-op for ssh and every other child.
         var defaultSignals = sigset_t()
-        sigemptyset(&defaultSignals)
-        sigaddset(&defaultSignals, SIGPIPE)
+        sigfillset(&defaultSignals)
+        sigdelset(&defaultSignals, SIGKILL)
+        sigdelset(&defaultSignals, SIGSTOP)
         posix_spawnattr_setsigdefault(&attributes, &defaultSignals)
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF))
+        // The signal mask is inherited too, and this runs on a concurrency worker thread whose mask blocks
+        // SIGTERM: without an empty mask every child ignored `terminate()` until the SIGKILL two seconds later.
+        var emptyMask = sigset_t()
+        sigemptyset(&emptyMask)
+        posix_spawnattr_setsigmask(&attributes, &emptyMask)
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
         Self.disclaimResponsibility(&attributes)
 
         let environment = ProcessInfo.processInfo.environment.merging(spec.extraEnvironment) { _, new in new }

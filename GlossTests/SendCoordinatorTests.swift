@@ -58,6 +58,16 @@ struct SendCoordinatorTests {
         #expect(coordinator.lastError != nil)
         #expect(try await store.note(note.id)?.state == .draft)
         #expect(try await store.sends(for: note.id).first?.outcome.hasPrefix("failed:") == true)
+        // The toast's result names what failed, and Retry sends the same notes to the same agent.
+        let failed = try #require(coordinator.lastResult)
+        #expect(failed.failure != nil && failed.noteIDs == [note.id] && failed.target.id == FakeTransport.target.id)
+        #expect(coordinator.inFlight == nil, "nothing is in flight once the attempt ends")
+        transport.shouldFail = false
+        await coordinator.retry()
+        #expect(coordinator.lastResult?.failure == nil && coordinator.lastResult?.noteIDs == [note.id])
+        #expect(try await store.note(note.id)?.state == .sent)
+        coordinator.clearResult()
+        #expect(coordinator.lastResult == nil)
     }
 
     @Test func stagesAttachmentsIntoTheSendDirectory() async throws {

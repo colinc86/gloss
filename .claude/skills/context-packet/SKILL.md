@@ -32,6 +32,8 @@ Notes: <count>. Mark each resolved with the gloss MCP tool `resolve_note` (ids: 
 | Source | Anchor line | Excerpt |
 | --- | --- | --- |
 | text, code, markdown | `Line 42` or `Lines 40-52` | selected lines, blockquoted; over 40 lines → first 20, `> ...`, last 20 |
+| csv cells | `Lines 2-4` then `Cells: B2, E4` (`B2:C4` for a full block); rows are the record's first source line | one `> B2 (header): value` per cell, read from the current file |
+| csv columns | `Column E "notes"` or `Columns B "distance_km", C "climb_m"` (replaces the line range) | one `> <line>: value` per record, several columns joined by ` \| ` |
 | markdown with a rendered-view selection | `Lines 40-52` plus `Selected: "<exact text>"` when the selection is a sub-line span | same |
 | image | `Region: x=.. y=.. w=.. h=.. (crop attached)` in original pixel coordinates, origin top-left | none |
 | pdf | `Page 3` plus `Region: ...` in page points when a region was drawn | selected text, blockquoted, if any |

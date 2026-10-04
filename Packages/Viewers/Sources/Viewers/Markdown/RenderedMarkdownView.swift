@@ -15,13 +15,17 @@ public struct RenderedMarkdownView: NSViewRepresentable {
     }
 
     public func makeNSView(context: Context) -> NSScrollView {
-        let textView = NSTextView(usingTextLayoutManager: true)
+        let textView = RenderedTextView(usingTextLayoutManager: true)
+        textView.onAttachedToWindow = { [weak coordinator = context.coordinator] in coordinator?.sync() }
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
         textView.drawsBackground = true
         textView.backgroundColor = .textBackgroundColor
-        textView.textContainerInset = NSSize(width: 18, height: 16)
+        textView.textContainerInset = NSSize(width: Coordinator.minimumInset, height: 20)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
+        textView.textLayoutManager?.delegate = context.coordinator.layoutDelegate
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -34,6 +38,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
+        scroll.postsFrameChangedNotifications = true
         context.coordinator.attach(textView: textView)
         context.coordinator.sync()
         return scroll
@@ -57,6 +62,12 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         private var isSyncing = false
         private var highlightToken: UUID?
         private var scrollObserver: (any NSObjectProtocol)?
+        private var frameObserver: (any NSObjectProtocol)?
+        /// Held here: the layout manager keeps its delegate weakly.
+        let layoutDelegate = MarkdownLayoutDelegate()
+        static let minimumInset: CGFloat = 24
+        /// Widest text column; wider panes centre it.
+        static let readableWidth: CGFloat = 780
 
         init(controller: MarkdownViewerController) {
             self.controller = controller
@@ -69,6 +80,11 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 clip.postsBoundsChangedNotifications = true
                 scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak backdrop = self.backdrop] _ in
                     MainActor.assumeIsolated { backdrop?.needsDisplay = true }
+                }
+            }
+            if let scroll = textView.enclosingScrollView {
+                frameObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroll, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.updateReadableWidth() }
                 }
             }
             controller.renderedRectProvider = { [weak self] range in self?.rect(for: range) }
@@ -84,11 +100,23 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         func detach() {
             if let highlightToken { controller.source.removeHighlightObserver(highlightToken) }
             if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
+            if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
             textView?.delegate = nil
+        }
+
+        /// Caps the text column at `readableWidth`, centred, so long lines stay readable in a wide pane.
+        func updateReadableWidth() {
+            guard let textView, let scroll = textView.enclosingScrollView else { return }
+            let width = scroll.contentSize.width
+            let inset = max(Self.minimumInset, ((width - Self.readableWidth) / 2).rounded(.down))
+            guard textView.textContainerInset.width != inset else { return }
+            textView.textContainerInset = NSSize(width: inset, height: textView.textContainerInset.height)
+            backdrop?.needsDisplay = true
         }
 
         func sync() {
             guard let textView else { return }
+            updateReadableWidth()
             // Read the highlight version here so SwiftUI re-runs this update when notes change;
             // the rendering validator alone runs outside SwiftUI's dependency tracking.
             _ = controller.source.highlightsVersion
@@ -101,11 +129,15 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 let length = textView.string.utf16.count
                 textView.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
             }
-            if appliedScrollVersion != controller.pendingRenderedScrollVersion, let range = controller.pendingRenderedScroll {
+            // Waits for a window like the source editor does (see `SourceTextView.onAttachedToWindow`).
+            if appliedScrollVersion != controller.pendingRenderedScrollVersion, let range = controller.pendingRenderedScroll,
+               textView.window != nil, !textView.visibleRect.isEmpty {
                 appliedScrollVersion = controller.pendingRenderedScrollVersion
                 textView.scrollRangeToVisible(range)
-                textView.setSelectedRange(range)
-                textView.window?.makeFirstResponder(textView)
+                if controller.pendingRenderedScrollSelects {
+                    textView.setSelectedRange(range)
+                    textView.window?.makeFirstResponder(textView)
+                }
             }
             invalidateHighlights()
         }
@@ -147,26 +179,53 @@ public struct MarkdownViewerView: View {
     public var body: some View {
         @Bindable var controller = controller
         VStack(spacing: 0) {
-            HStack {
-                Spacer()
-                Picker("Mode", selection: $controller.mode) {
-                    Text("Rendered").tag(MarkdownViewerController.Mode.rendered)
-                    Text("Source").tag(MarkdownViewerController.Mode.source)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 180)
-                .help("Toggle rendered and source (⌘⇧M)")
+            ViewerToolbar {
+                // What a reader wants to know at a glance, as writing apps show it; the kind is in the status bar.
+                Label(controller.readingSummary, systemImage: "text.document")
+                    .contentTransition(.numericText())
+                    .help("Markdown")
+            } trailing: {
+                ModeSwitch([
+                    .init(MarkdownViewerController.Mode.rendered, "Rendered", symbol: "eye"),
+                    .init(MarkdownViewerController.Mode.source, "Source", symbol: "chevron.left.forwardslash.chevron.right"),
+                ], selection: $controller.mode)
+                .help("Toggle rendered and source")
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            Divider()
             switch controller.mode {
             case .rendered:
                 RenderedMarkdownView(controller: controller)
             case .source:
                 TextEditorView(controller: controller.source)
             }
+        }
+    }
+}
+
+/// The rendered view's text view, reporting when it is in a window so a pending jump can be applied.
+final class RenderedTextView: NSTextView {
+    var onAttachedToWindow: (() -> Void)?
+
+    /// Copies plain text: code lines are joined by line separators and images are attachment characters, neither
+    /// of which pastes well into a terminal or an editor.
+    override func copy(_ sender: Any?) {
+        let text = selectedRanges.map { (string as NSString).substring(with: $0.rangeValue) }.joined(separator: "\n")
+        let plain = Self.plainText(text)
+        guard !plain.isEmpty else { return super.copy(sender) }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(plain, forType: .string)
+    }
+
+    static func plainText(_ rendered: String) -> String {
+        rendered.replacingOccurrences(of: MarkdownRenderer.lineSeparator, with: "\n")
+            .replacingOccurrences(of: "\u{FFFC}\u{00A0}", with: "")
+            .replacingOccurrences(of: "\u{FFFC}", with: "")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            MainActor.assumeIsolated { self?.onAttachedToWindow?() }
         }
     }
 }

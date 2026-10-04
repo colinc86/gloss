@@ -76,6 +76,7 @@ extension ExplorerModel {
         let text = relative ? PathUtilities.relative(node.path, to: selectedTab?.path ?? "/") : node.path
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        onCopied(relative ? "Relative path copied" : "Path copied")
     }
 
     private func prompt(title: String, message: String, defaultValue: String) -> String? {

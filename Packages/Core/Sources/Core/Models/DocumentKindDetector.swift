@@ -8,7 +8,7 @@ public enum DocumentKindDetector {
     public static let codeExtensions: Set<String> = [
         "swift", "m", "mm", "h", "c", "cc", "cpp", "cxx", "hpp", "rs", "go", "py", "rb", "js", "jsx", "ts", "tsx", "mjs", "cjs",
         "java", "kt", "kts", "scala", "cs", "php", "pl", "pm", "lua", "sh", "bash", "zsh", "fish", "ps1", "sql", "r", "jl",
-        "json", "jsonc", "yaml", "yml", "toml", "xml", "plist", "html", "htm", "css", "scss", "less", "vue", "svelte",
+        "json", "jsonc", "jsonl", "ndjson", "yaml", "yml", "toml", "xml", "plist", "html", "htm", "css", "scss", "less", "vue", "svelte",
         "dart", "ex", "exs", "erl", "hs", "ml", "clj", "cljs", "lisp", "el", "nix", "zig", "proto", "graphql", "gql",
         "cmake", "make", "mk", "gradle", "tf", "hcl", "dockerfile", "ini", "cfg", "conf", "env", "lock", "pbxproj",
         "entitlements", "xcconfig", "strings", "xcstrings", "podspec", "rake", "gemspec",
@@ -35,10 +35,16 @@ public enum DocumentKindDetector {
         return .file
     }
 
-    /// A last resort for unknown extensions: looks at the bytes. Binary content (NUL bytes or invalid UTF-8) stays `.file`.
+    /// A last resort for unknown extensions: looks at the first 8 KiB. Binary is a NUL byte or more than 1 % C0
+    /// control bytes beyond tab, newline, return, form feed, and escape. Decoding is no help here: every byte
+    /// sequence is valid Latin-1, and control bytes are valid UTF-8, so the viewer's decoder (UTF-8, then Latin-1)
+    /// takes whatever passes.
     public static func looksLikeText(_ data: Data) -> Bool {
         let sample = data.prefix(8192)
+        if sample.isEmpty { return true }
         if sample.contains(0) { return false }
-        return String(data: sample, encoding: .utf8) != nil || String(data: sample, encoding: .isoLatin1) != nil
+        let allowed: Set<UInt8> = [0x09, 0x0A, 0x0D, 0x0C, 0x1B]
+        let controls = sample.filter { $0 < 0x20 && !allowed.contains($0) }.count
+        return controls * 100 < sample.count
     }
 }

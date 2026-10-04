@@ -35,11 +35,14 @@ public struct PacketNote: Sendable {
     public var selectedText: String?
     /// Absolute path of the crop or page render on the agent's machine.
     public var attachmentAgentPath: String?
+    /// For a spreadsheet cell or column note: `Column E "notes"` or `B2, E4` (see `CellExcerpt`).
+    public var cellDescription: String?
 
     public init(
         noteID: NoteID, agentPath: String, source: PacketSource, anchor: Anchor, comment: String,
-        excerptLines: [String] = [], selectedText: String? = nil, attachmentAgentPath: String? = nil
+        excerptLines: [String] = [], selectedText: String? = nil, attachmentAgentPath: String? = nil, cellDescription: String? = nil
     ) {
+        self.cellDescription = cellDescription
         self.noteID = noteID
         self.agentPath = agentPath
         self.source = source
@@ -158,6 +161,14 @@ public enum PacketBuilder {
     static func noteBlock(_ note: PacketNote) -> String {
         var lines: [String] = []
         switch note.anchor {
+        case .text(let anchor) where anchor.cells?.isColumns == true:
+            // A whole-column note: the column replaces the line range, and the excerpt lists its values by line.
+            lines.append(note.cellDescription ?? "Columns \(anchor.cells!.references(startLine: anchor.start.line))")
+            lines.append(contentsOf: excerpt(note.excerptLines))
+        case .text(let anchor) where anchor.cells != nil:
+            lines.append(anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)")
+            lines.append("Cells: \(note.cellDescription ?? anchor.cells!.references(startLine: anchor.start.line))")
+            lines.append(contentsOf: excerpt(note.excerptLines))
         case .text(let anchor):
             lines.append(anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)")
             if let selected = note.selectedText {
@@ -213,6 +224,8 @@ public enum PacketBuilder {
 
     static func anchorSummary(_ anchor: Anchor) -> String {
         switch anchor {
+        case .text(let text) where text.cells != nil:
+            (text.cells!.isColumns ? "column " : "cells ") + text.cells!.references(startLine: text.start.line).replacingOccurrences(of: " ", with: "")
         case .text(let text): text.isSingleLine ? "\(text.start.line)" : "\(text.start.line)-\(text.end.line)"
         case .image(let image): "region(\(image.x),\(image.y),\(image.w),\(image.h))"
         case .pdf(let pdf): "page \(pdf.page + 1)"
@@ -251,5 +264,38 @@ public enum ExcerptExtractor {
     static func lastRealLine(_ index: LineIndex) -> Int {
         guard index.lineCount > 1, index.contentRange(ofLine: index.lineCount).length == 0 else { return index.lineCount }
         return index.lineCount - 1
+    }
+}
+
+/// The packet text for a spreadsheet cell or column note, read from the file's current contents.
+public enum CellExcerpt {
+    /// `description` is the anchor line for columns (`Column E "notes"`) or the `Cells:` value for cells
+    /// (`B2, E4`). `lines` holds one `line: value` per record for columns, or one `B2 (header): value` per cell.
+    public static func make(anchor: TextAnchor, cells: CellSelection, content: String, fileName: String) -> (description: String, lines: [String]) {
+        let table = CSVParser.parse(content, delimiter: CSVParser.delimiter(for: content, fileName: fileName))
+        func header(_ column: Int) -> String { column < table.header.count ? table.header[column] : "" }
+        func value(_ row: CSVRow, _ column: Int) -> String {
+            let field = column < row.fields.count ? row.fields[column] : ""
+            return field.replacingOccurrences(of: "\r\n", with: "\\n").replacingOccurrences(of: "\n", with: "\\n")
+        }
+        if cells.isColumns {
+            let names = cells.columns.map { column in
+                let name = header(column)
+                return name.isEmpty ? CellSelection.columnName(column) : "\(CellSelection.columnName(column)) \"\(PacketBuilder.escape(name))\""
+            }
+            let description = (cells.columns.count == 1 ? "Column " : "Columns ") + names.joined(separator: ", ")
+            let lines = table.rows.map { row in "\(row.firstLine): " + cells.columns.map { value(row, $0) }.joined(separator: " | ") }
+            return (description, lines)
+        }
+        var byLine: [Int: CSVRow] = [:]
+        for row in table.rows { byLine[row.firstLine] = row }
+        let lines = cells.cells.map { cell -> String in
+            let line = anchor.start.line + cell.lineOffset
+            let reference = "\(CellSelection.columnName(cell.column))\(line)"
+            let name = header(cell.column)
+            let label = name.isEmpty ? reference : "\(reference) (\(name))"
+            return "\(label): " + (byLine[line].map { value($0, cell.column) } ?? "")
+        }
+        return (cells.references(startLine: anchor.start.line), lines)
     }
 }

@@ -53,6 +53,6 @@ Over SSH run the same through the exec channel; pipe the packet into `ssh <host>
 
 ## Shared MCP server surface (what every agent sees)
 
-Tools: `list_pending_notes(host?, path?)`, `get_note(id)`, `resolve_note(id, outcome?, message?)`, `list_documents()`. Resources: `note://<id>/attachment/<n>` serving image/png. Keep tool names stable; the packet's closing line names `resolve_note` literally.
+Tools: `list_pending_notes(host?, path?)`, `get_note(id)`, `resolve_note(id, outcome?, message?)`, `list_documents()`, `open_in_viewer(path, line?, host?)` (host defaults to the session's: a remote registration URL is `http://127.0.0.1:<port>/mcp?host=<alias>`, quoted in the `mcp add` shell line). Resources: `note://<id>/attachment/<n>` serving image/png. Keep tool names stable; the packet's closing line names `resolve_note` literally.
 
 Remote agents reach the server through a reverse forward on the app's SSH control connection: `ssh -O forward -R <port>:127.0.0.1:<port> <host>`. Use the same port number on both ends so the agent config is identical everywhere.

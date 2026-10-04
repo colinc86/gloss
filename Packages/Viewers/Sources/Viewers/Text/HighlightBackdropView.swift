@@ -15,6 +15,43 @@ final class HighlightBackdropView: NSView {
         didSet { needsDisplay = true }
     }
 
+    /// The caret's location while nothing is selected and the editor has focus; its line gets a quiet full-width band.
+    var caretLocation: Int? {
+        didSet { if oldValue != caretLocation { needsDisplay = true } }
+    }
+
+    /// Indent guides for the lines around what is on screen, worked out when first drawn after a change or when
+    /// scrolling nears the edge of what was built.
+    private var guides: IndentGuides?
+    private var guidesWindow: ClosedRange<Int>?
+    /// The editor's line index (kept up to date on every edit), so guides read lines without rescanning the text.
+    var lineIndex: () -> LineIndex? = { nil }
+    private static let guideMargin = 200
+    var showsIndentGuides = true {
+        didSet { if oldValue != showsIndentGuides { needsDisplay = true } }
+    }
+
+    /// The text changed; guides are worked out again on the next draw.
+    func invalidateIndentGuides() {
+        guides = nil
+        guidesWindow = nil
+        needsDisplay = true
+    }
+
+    /// Hairlines quiet enough to sit under text without competing with it; the caret's block is a step stronger.
+    static let guideColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.08) : NSColor(white: 0, alpha: 0.07)
+    }
+    static let activeGuideColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.24) : NSColor(white: 0, alpha: 0.22)
+    }
+
+    static let currentLineColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.05)
+            : NSColor(white: 0, alpha: 0.04)
+    }
+
     override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -23,6 +60,7 @@ final class HighlightBackdropView: NSView {
     static func install(in textView: NSTextView) -> HighlightBackdropView {
         let backdrop = HighlightBackdropView(frame: textView.bounds)
         backdrop.textView = textView
+        backdrop.showsIndentGuides = Theme.showsIndentGuides
         backdrop.autoresizingMask = [.width, .height]
         backdrop.wantsLayer = true
         textView.addSubview(backdrop, positioned: .below, relativeTo: nil)
@@ -33,6 +71,13 @@ final class HighlightBackdropView: NSView {
         guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager else { return }
         let documentStart = contentManager.documentRange.location
         let inset = textView.textContainerInset
+        if let caret = caretLocation, let band = currentLineRect(caret, layoutManager: layoutManager, contentManager: contentManager), band.intersects(dirtyRect) {
+            Self.currentLineColor.setFill()
+            band.fill()
+        }
+        if showsIndentGuides {
+            drawIndentGuides(in: dirtyRect, layoutManager: layoutManager, contentManager: contentManager)
+        }
         for entry in entries where entry.range.length > 0 {
             guard let from = contentManager.location(documentStart, offsetBy: entry.range.location),
                   let to = contentManager.location(documentStart, offsetBy: entry.range.location + entry.range.length),
@@ -55,5 +100,66 @@ final class HighlightBackdropView: NSView {
                 return true
             }
         }
+    }
+
+    private func drawIndentGuides(in dirtyRect: NSRect, layoutManager: NSTextLayoutManager, contentManager: NSTextContentManager) {
+        guard let textView, let storage = textView.textStorage, let index = lineIndex(), index.lineCount > 0 else { return }
+        let inset = textView.textContainerInset
+        let documentStart = contentManager.documentRange.location
+        // The lines on screen, then guides for them plus a margin (rebuilt only near its edge or after an edit).
+        func line(atY y: CGFloat) -> Int {
+            guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y - inset.height))) else { return index.lineCount }
+            return index.position(forUTF16Offset: contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)).line
+        }
+        let visible = line(atY: visibleRect.minY)...max(line(atY: visibleRect.minY), line(atY: visibleRect.maxY))
+        let needed = max(1, visible.lowerBound - Self.guideMargin / 4)...min(index.lineCount, visible.upperBound + Self.guideMargin / 4)
+        if guides == nil || !(guidesWindow.map { $0.contains(needed.lowerBound) && $0.contains(needed.upperBound) } ?? false) {
+            let window = max(1, visible.lowerBound - Self.guideMargin)...min(index.lineCount, visible.upperBound + Self.guideMargin)
+            guides = IndentGuides(window: window, text: storage.mutableString, lineIndex: index)
+            guidesWindow = window
+        }
+        guard let guides, guides.levels.contains(where: { $0 > 0 }) else { return }
+        let space = (" " as NSString).size(withAttributes: [.font: textView.font ?? Theme.editorFont]).width
+        let active = caretLocation.flatMap { guides.covers($0) ? guides.activeGuide(aroundLine: guides.line(at: $0)) : nil }
+        let scale = window?.backingScaleFactor ?? 2
+        guard let first = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, dirtyRect.minY - inset.height))) else { return }
+        layoutManager.enumerateTextLayoutFragments(from: first.rangeInElement.location, options: []) { fragment in
+            let frame = fragment.layoutFragmentFrame
+            if frame.minY + inset.height > dirtyRect.maxY { return false }
+            let offset = contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)
+            guard guides.covers(offset) else { return true }
+            let line = guides.line(at: offset)
+            let count = guides.levels.indices.contains(line) ? guides.levels[line] : 0
+            guard count > 0, let row = fragment.textLineFragments.first else { return true }
+            // Column 0 is where the line's first character sits, whatever padding the container adds.
+            let origin = frame.minX + row.typographicBounds.minX + row.locationForCharacter(at: 0).x + inset.width
+            let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
+            let rowsHeight = height > 0 ? height : frame.height
+            for level in 0..<count {
+                let x = (origin + CGFloat(level * guides.unit) * space).rounded(.down) + 0.5 / scale
+                let isActive = active.map { $0.level == level && $0.lines.contains(line) } ?? false
+                (isActive ? Self.activeGuideColor : Self.guideColor).setFill()
+                NSRect(x: x, y: frame.minY + inset.height, width: 1 / scale * (isActive ? 2 : 1), height: rowsHeight).fill()
+            }
+            return true
+        }
+    }
+
+    /// The caret's paragraph (all its wrapped lines) across the whole view, in this view's coordinates. None on an
+    /// empty last line, which has no layout fragment of its own.
+    private func currentLineRect(_ caret: Int, layoutManager: NSTextLayoutManager, contentManager: NSTextContentManager) -> NSRect? {
+        guard let textView else { return nil }
+        let text = textView.string as NSString
+        var offset = caret
+        if caret >= text.length {
+            guard caret > 0, text.character(at: text.length - 1) != 0x0A else { return nil }
+            offset = text.length - 1
+        }
+        guard let location = contentManager.location(contentManager.documentRange.location, offsetBy: offset),
+              let fragment = layoutManager.textLayoutFragment(for: location) else { return nil }
+        let frame = fragment.layoutFragmentFrame
+        // Leave out the empty line fragment TextKit adds after a paragraph's newline.
+        let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
+        return NSRect(x: 0, y: frame.minY + textView.textContainerInset.height, width: bounds.width, height: height > 0 ? height : frame.height)
     }
 }

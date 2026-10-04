@@ -27,6 +27,8 @@ final class DocumentSession: Identifiable {
         case readOnlyLargeFile
         case tooLarge
         case reanchoring
+        /// The file is gone from its path (deleted, or moved away) while it is open here.
+        case deletedOnDisk
     }
 
     struct ConflictState {
@@ -42,7 +44,8 @@ final class DocumentSession: Identifiable {
     let id: String
     let hostID: HostID
     let path: String
-    let kind: DocumentKind
+    /// From the file name at first, then `.text` when an unknown extension turned out to hold text.
+    private(set) var kind: DocumentKind
     private let fileSystem: any FileSystemProvider
     private let noteStore: NoteStore
 
@@ -50,6 +53,10 @@ final class DocumentSession: Identifiable {
     private(set) var state: State = .loading
     /// Rendered/source toggle for markdown documents; nil for every other kind.
     private(set) var markdown: MarkdownViewerController?
+    /// Rendered/source toggle for HTML documents; nil for every other kind.
+    private(set) var html: HTMLViewerController?
+    /// Whichever rendered view this document has.
+    var rendered: (any RenderedDocumentController)? { markdown ?? html }
     private(set) var fingerprintAtOpen: Fingerprint?
     private(set) var attributesAtOpen: FileAttributes?
     /// The text as it was on disk when opened or last saved: the base for three-way merges.
@@ -80,6 +87,9 @@ final class DocumentSession: Identifiable {
 
     /// Where crops and page renders for this session's notes are written.
     let attachmentDirectory: URL
+
+    /// The explorer root holding this file, when one is open; rendered HTML may read files only inside it.
+    @ObservationIgnored var resourceRoot: () -> String? = { nil }
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot) {
         self.id = "\(hostID.rawValue):\(path)"
@@ -120,6 +130,24 @@ final class DocumentSession: Identifiable {
 
     // MARK: Open and reload
 
+    /// A failed open as a sentence for the viewer, not a Swift error dump.
+    nonisolated static func openFailure(_ error: any Error) -> String {
+        switch error as? FileSystemError {
+        case .notFound: "The file isn't there. It may have been moved, renamed, or deleted."
+        case .permissionDenied: "You don't have permission to read this file."
+        case .notADirectory: "Part of this path isn't a folder."
+        case .io(let detail): "The file couldn't be read: \(detail)"
+        default: error.localizedDescription
+        }
+    }
+
+    /// Tries again after a failed open (a dropped connection, a file that was briefly missing).
+    func retryOpen() async {
+        guard case .failed = state else { return }
+        state = .loading
+        await open()
+    }
+
     func open() async {
         do {
             let attributes = try await fileSystem.stat(path)
@@ -154,6 +182,16 @@ final class DocumentSession: Identifiable {
                 observeNotes()
                 return
             }
+            // An extension nobody listed (jsonl, a log rotated to .1, a config with a made-up suffix) is still
+            // worth opening as text when its bytes look like text; only files too big to edit go to QuickLook unread.
+            var sniffed: (Data, Fingerprint)?
+            if kind == .file, attributes.size <= Self.readOnlyThreshold {
+                let read = try await fileSystem.readWithFingerprint(path)
+                if DocumentKindDetector.looksLikeText(read.0) {
+                    kind = .text
+                    sniffed = read
+                }
+            }
             guard kind == .text || kind == .code || kind == .markdown || kind == .csv else {
                 document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: attributes.fingerprint)
                 fingerprintAtOpen = attributes.fingerprint
@@ -178,7 +216,12 @@ final class DocumentSession: Identifiable {
                 state = .unsupported(.file)
                 return
             }
-            let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
+            let (data, fingerprint): (Data, Fingerprint)
+            if let sniffed {
+                (data, fingerprint) = sniffed
+            } else {
+                (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
+            }
             let text = decode(data)
             fingerprintAtOpen = fingerprint
             baseText = text
@@ -190,12 +233,24 @@ final class DocumentSession: Identifiable {
             controller.onTextChange = { [weak self] in self?.isDirty = true }
             controller.onEdit = { [weak self] _, _ in self?.liveRangesDidShift() }
             controller.onGutterClick = { [weak self] line, noteID in self?.gutterClicked(line: line, noteID: noteID) }
-            if kind == .markdown { markdown = MarkdownViewerController(source: controller) }
+            if kind == .markdown {
+                let folder = hostID == .local ? URL(fileURLWithPath: (path as NSString).deletingLastPathComponent, isDirectory: true) : nil
+                markdown = MarkdownViewerController(source: controller, baseURL: folder)
+            } else if HTMLViewerController.handles(path: path) {
+                let fileSystem = fileSystem
+                let viewer = HTMLViewerController(source: controller, documentPath: path, resourceRoot: { [weak self] in self?.resourceRoot() }) { resource in
+                    // Check the size first: a page's video should not be pulled over SFTP only to be refused.
+                    guard try await fileSystem.stat(resource).size <= HTMLViewerController.maximumResourceSize else { throw URLError(.dataLengthExceedsMaximum) }
+                    return try await fileSystem.read(resource)
+                }
+                viewer.isLocal = hostID == .local
+                html = viewer
+            }
             state = .text(controller)
             startWatching()
             observeNotes()
         } catch {
-            state = .failed("\(error)")
+            state = .failed(Self.openFailure(error))
             Log.viewer.error("open \(self.path, privacy: .public) failed: \(error, privacy: .public)")
         }
     }
@@ -223,7 +278,7 @@ final class DocumentSession: Identifiable {
             fingerprintAtOpen = fingerprint
             baseText = text
             controller.replaceAll(with: text)
-            markdown?.syncWithSourceIfReplaced()
+            rendered?.syncWithSourceIfReplaced()
             isDirty = false
             banner = nil
             conflict = nil
@@ -231,6 +286,23 @@ final class DocumentSession: Identifiable {
             invalidatedNotes = []
             try await noteStore.updateFingerprint(document?.id ?? DocumentID.new(), fingerprint)
             await reanchorAll(in: text, hash: fingerprint.hash ?? "")
+        } catch {
+            lastError = "Reload failed: \(error)"
+        }
+    }
+
+    /// Rebuilds the grid from disk and re-anchors its notes, so cell and row notes follow inserted or removed rows
+    /// instead of tinting (and sending) whatever record now sits at their old lines.
+    private func reloadCSV() async {
+        do {
+            let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
+            let text = decode(data)
+            fingerprintAtOpen = fingerprint
+            baseText = text
+            state = .csv(CSVGridController(text: text, fileName: fileName))
+            if let document { try await noteStore.updateFingerprint(document.id, fingerprint) }
+            // Grid anchors hash the text itself (see `CSVGridController.selectionAnchor`).
+            await reanchorAll(in: text, hash: Data(text.utf8).sha256Hex)
         } catch {
             lastError = "Reload failed: \(error)"
         }
@@ -244,6 +316,9 @@ final class DocumentSession: Identifiable {
 
     /// Saves unless the file changed underneath; then `conflict` is set and the sheet decides.
     func save() async {
+        // A save already in flight (⌘S on a slow remote file, then Save All) is waited for, not skipped: skipping
+        // left the document dirty and made Save All report it as unsaved a moment before it was.
+        for _ in 0..<600 where isSaving { try? await Task.sleep(for: .milliseconds(50)) }
         guard let controller = textController, !isReadOnly, !isSaving else { return }
         isSaving = true
         defer { isSaving = false }
@@ -261,8 +336,11 @@ final class DocumentSession: Identifiable {
                 }
             }
             try await write(controller.text)
+        } catch FileSystemError.notFound {
+            // Deleted since it was opened: the banner offers Save Here, which writes it back on purpose.
+            banner = .deletedOnDisk
         } catch {
-            lastError = "Save failed: \(error)"
+            lastError = "Save failed: \(Self.openFailure(error))"
             Log.viewer.error("save \(self.path, privacy: .public) failed: \(error, privacy: .public)")
         }
     }
@@ -288,7 +366,7 @@ final class DocumentSession: Identifiable {
         baseText = conflict.theirsText
         fingerprintAtOpen = conflict.theirsFingerprint
         controller.replaceAll(with: text)
-        markdown?.syncWithSourceIfReplaced()
+        rendered?.syncWithSourceIfReplaced()
         liveRanges = [:]
         invalidatedNotes = []
         do { try await write(text) } catch { lastError = "Save failed: \(error)" }
@@ -349,8 +427,22 @@ final class DocumentSession: Identifiable {
     }
 
     func handleExternalChange() async {
-        if csvController != nil || { if case .quickLook = state { return true } else { return false } }() {
-            // Rebuild the grid or preview from disk; notes re-anchor through the text path on the next open.
+        // A file that vanished says so instead of quietly showing what it held. Editors that save by writing a new
+        // file and renaming it over the old one leave the path empty for a moment, so look twice before saying it.
+        if await isMissingOnDisk() {
+            try? await Task.sleep(for: .milliseconds(300))
+            if await isMissingOnDisk() {
+                banner = .deletedOnDisk
+                return
+            }
+        }
+        if banner == .deletedOnDisk { banner = reanchoringNoteID == nil ? nil : .reanchoring }
+        if csvController != nil {
+            guard let expected = fingerprintAtOpen, case .changed = try? await fileSystem.checkForChanges(at: path, since: expected) else { return }
+            await reloadCSV()
+            return
+        }
+        if case .quickLook = state {
             guard let expected = fingerprintAtOpen, case .changed = try? await fileSystem.checkForChanges(at: path, since: expected) else { return }
             await open()
             return
@@ -373,6 +465,35 @@ final class DocumentSession: Identifiable {
             }
         } catch {
             Log.viewer.error("external change check failed: \(error, privacy: .public)")
+        }
+    }
+
+    private func isMissingOnDisk() async -> Bool {
+        do {
+            _ = try await fileSystem.stat(path)
+            return false
+        } catch let error as FileSystemError {
+            if case .notFound = error { return true }
+            return false
+        } catch {
+            return false
+        }
+    }
+
+    /// Writes the open text back to the path it was deleted from.
+    func putBack() async {
+        guard let controller = textController, !isReadOnly else { return }
+        // The file may be back already (git checkout, an agent rewrite) before the watcher noticed: then this is
+        // an ordinary save, with its conflict check, not a blind write over what came back.
+        if !(await isMissingOnDisk()) {
+            banner = reanchoringNoteID == nil ? nil : .reanchoring
+            await save()
+            return
+        }
+        do {
+            try await write(controller.text)
+        } catch {
+            lastError = "Could not save \(fileName): \(error.localizedDescription)"
         }
     }
 
@@ -468,23 +589,27 @@ final class DocumentSession: Identifiable {
     /// Pushes note ranges into the editor, preferring live (edited) ranges over stored anchors.
     private func syncHighlights() {
         if let csv = csvController {
+            csv.cellSelections = Dictionary(notes.compactMap { note -> (NoteID, CellSelection)? in
+                guard case .text(let anchor) = note.anchor, let cells = anchor.cells else { return nil }
+                return (note.id, cells)
+            }, uniquingKeysWith: { first, _ in first })
             csv.highlights = notes.compactMap { note in
                 guard case .text(let anchor) = note.anchor else { return nil }
-                return TextHighlight(id: note.id, range: csv.lineIndex.range(for: anchor), color: note.color, state: note.state)
+                return TextHighlight(id: note.id, range: csv.lineIndex.range(for: anchor), color: note.color, state: note.displayState)
             }
             return
         }
         if let pdf = pdfController {
             pdf.highlights = notes.compactMap { note in
                 guard case .pdf(let anchor) = note.anchor else { return nil }
-                return PDFHighlight(id: note.id, page: anchor.page, bounds: anchor.bounds?.cgRect, text: anchor.text, color: note.color, state: note.state)
+                return PDFHighlight(id: note.id, page: anchor.page, bounds: anchor.bounds?.cgRect, text: anchor.text, color: note.color, state: note.displayState)
             }
             return
         }
         if let image = imageController {
             image.highlights = notes.compactMap { note in
                 guard case .image(let anchor) = note.anchor else { return nil }
-                return ImageHighlight(id: note.id, rect: CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h), color: note.color, state: note.state, needsReview: needsReview.contains(note.id))
+                return ImageHighlight(id: note.id, rect: CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h), color: note.color, state: note.displayState, needsReview: needsReview.contains(note.id))
             }
             return
         }
@@ -502,7 +627,7 @@ final class DocumentSession: Identifiable {
                 range = index.range(for: anchor)
             }
             highlights.append(TextHighlight(
-                id: note.id, range: range, color: note.color, state: note.state,
+                id: note.id, range: range, color: note.color, state: note.displayState,
                 needsReview: needsReview.contains(note.id), isInvalidated: invalidatedNotes.contains(note.id)
             ))
         }
@@ -572,8 +697,8 @@ final class DocumentSession: Identifiable {
     var selectionAffordanceRect: CGRect? {
         guard noteEditor == nil, reanchoringNoteID == nil else { return nil }
         if let csv = csvController {
-            guard csv.selectionRange != nil else { return nil }
-            return csv.rectProvider(csv.selectedRows)
+            guard csv.hasSelection else { return nil }
+            return csv.rectProvider(csv.selection)
         }
         if let pdf = pdfController {
             guard let anchor = pdf.selectionAnchor else { return nil }
@@ -585,9 +710,10 @@ final class DocumentSession: Identifiable {
             return image.rect(forPixelRect: selection)
         }
         if let controller = textController {
-            if let markdown, markdown.mode == .rendered {
-                guard let mapping = markdown.renderedSelectionMapping, mapping.source.length > 0 else { return nil }
-                return markdown.rect(forSource: mapping.source)
+            if let rendered, rendered.isShowingRendered {
+                // A caret inside a link or code span maps to the whole span's source; only a real selection counts.
+                guard rendered.hasRenderedSelection, let mapping = rendered.renderedSelectionMapping, mapping.source.length > 0 else { return nil }
+                return rendered.rect(forSource: mapping.source)
             }
             guard controller.selection.length > 0 else { return nil }
             return controller.rect(for: controller.selection)
@@ -602,9 +728,8 @@ final class DocumentSession: Identifiable {
             return
         }
         if let csv = csvController {
-            guard let range = csv.selectionRange else { return }
-            let anchor = ReAnchorer.make(from: range, in: csv.text, index: csv.lineIndex, hash: Data(csv.text.utf8).sha256Hex)
-            let rect = csv.rectProvider(csv.selectedRows) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
+            guard let anchor = csv.selectionAnchor() else { return }
+            let rect = csv.rectProvider(csv.selection) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
             noteEditor = NoteEditorState(anchor: .text(anchor), body: "", color: lastUsedColor, anchorRect: rect)
             return
         }
@@ -623,8 +748,8 @@ final class DocumentSession: Identifiable {
         }
         if let controller = textController {
             var range = controller.selection
-            if let markdown, markdown.mode == .rendered {
-                guard let mapping = markdown.renderedSelectionMapping else { return }
+            if let rendered, rendered.isShowingRendered {
+                guard let mapping = rendered.renderedSelectionMapping else { return }
                 range = mapping.source
             }
             if range.length == 0 {
@@ -632,7 +757,7 @@ final class DocumentSession: Identifiable {
             }
             guard range.length > 0 else { return }
             let anchor = ReAnchorer.make(from: range, in: controller.text, index: controller.lineIndex, hash: Data(controller.text.utf8).sha256Hex)
-            let rect = markdown?.rect(forSource: range) ?? controller.rect(for: range) ?? .zero
+            let rect = rendered?.rect(forSource: range) ?? controller.rect(for: range) ?? .zero
             noteEditor = NoteEditorState(anchor: .text(anchor), body: "", color: lastUsedColor, anchorRect: rect)
         } else {
             noteEditor = NoteEditorState(anchor: .wholeFile, body: "", color: lastUsedColor, anchorRect: CGRect(x: 40, y: 40, width: 1, height: 1))
@@ -645,7 +770,7 @@ final class DocumentSession: Identifiable {
         banner = .reanchoring
         if let controller = textController, case .text(let anchor) = note.anchor {
             let range = controller.lineIndex.contentRange(ofLine: anchor.start.line)
-            if let markdown { markdown.scroll(toSource: range) } else { controller.scroll(to: range) }
+            if let rendered { rendered.scroll(toSource: range, select: true) } else { controller.scroll(to: range) }
         }
     }
 
@@ -659,7 +784,7 @@ final class DocumentSession: Identifiable {
         var newAnchor: Anchor?
         if let controller = textController {
             var range = controller.selection
-            if let markdown, markdown.mode == .rendered, let mapping = markdown.renderedSelectionMapping { range = mapping.source }
+            if let rendered, rendered.isShowingRendered, let mapping = rendered.renderedSelectionMapping { range = mapping.source }
             if range.length > 0 {
                 newAnchor = .text(ReAnchorer.make(from: range, in: controller.text, index: controller.lineIndex, hash: Data(controller.text.utf8).sha256Hex))
             }
@@ -667,8 +792,8 @@ final class DocumentSession: Identifiable {
             newAnchor = .image(anchor)
         } else if let pdf = pdfController, let anchor = pdf.selectionAnchor {
             newAnchor = .pdf(anchor)
-        } else if let csv = csvController, let range = csv.selectionRange {
-            newAnchor = .text(ReAnchorer.make(from: range, in: csv.text, index: csv.lineIndex, hash: Data(csv.text.utf8).sha256Hex))
+        } else if let csv = csvController, let anchor = csv.selectionAnchor() {
+            newAnchor = .text(anchor)
         }
         guard let newAnchor else { return }
         cancelReanchor()
@@ -694,7 +819,7 @@ final class DocumentSession: Identifiable {
         }
         if let controller = textController, case .text = note.anchor,
            let range = controller.highlights.first(where: { $0.id == note.id })?.range,
-           let found = markdown?.rect(forSource: range) ?? controller.rect(for: range) {
+           let found = rendered?.rect(forSource: range) ?? controller.rect(for: range) {
             rect = found
         }
         noteEditor = NoteEditorState(existingID: note.id, anchor: note.anchor, body: note.body, color: note.color, anchorRect: rect)
@@ -715,13 +840,25 @@ final class DocumentSession: Identifiable {
                 if case .pdf(let anchor) = state.anchor, let pdf = pdfController {
                     try await savePageRender(of: anchor, from: pdf, for: note.id)
                 }
-                imageController?.selection = nil
-                pdfController?.clearSelection()
+                clearSelection()
             }
         } catch {
             lastError = "Saving the note failed: \(error)"
         }
         noteEditor = nil
+    }
+
+    /// Drops the viewer's selection after a note was made from it, so the Add Note button goes away and the
+    /// note's own highlight shows where it sits.
+    private func clearSelection() {
+        imageController?.selection = nil
+        pdfController?.clearSelection()
+        csvController?.deselectAll()
+        if let rendered, rendered.isShowingRendered {
+            rendered.collapseRenderedSelection()
+        } else {
+            textController?.collapseSelection()
+        }
     }
 
     /// Renders the page region (or the whole page for a text selection) at 2x and records it on the note.
@@ -758,7 +895,8 @@ final class DocumentSession: Identifiable {
     }
 
     /// Scrolls the viewer to a note and selects its range.
-    func reveal(_ note: Note) {
+    /// Scrolls to a note. `select` also selects its range and focuses the viewer; browsing from the panel does not.
+    func reveal(_ note: Note, select: Bool = true) {
         if let pdf = pdfController, case .pdf(let anchor) = note.anchor {
             pdf.selectedNoteID = note.id
             pdf.scroll(toPage: anchor.page, bounds: anchor.bounds?.cgRect)
@@ -770,11 +908,131 @@ final class DocumentSession: Identifiable {
         }
         guard let controller = textController, case .text = note.anchor,
               let range = controller.highlights.first(where: { $0.id == note.id })?.range else { return }
-        if let markdown { markdown.scroll(toSource: range) } else { controller.scroll(to: range) }
+        if let rendered { rendered.scroll(toSource: range, select: select) } else { controller.scroll(to: range, select: select) }
+    }
+
+    // MARK: Stepping through notes (⌘' and ⇧⌘')
+
+    /// The note last reached with Next or Previous Note; the next step goes on from it while it is still where the
+    /// caret is.
+    private(set) var steppedNoteID: NoteID?
+    /// The source editor's selection when the step was taken; once it moves, the next step starts from the caret.
+    private var selectionAtStep: NSRange?
+
+    /// This document's open notes in reading order, each with a key for its place: text by offset, PDF by page then
+    /// top to bottom, images in the order they were made. Orphans and whole-file notes have no place and are left out.
+    var steppableNotes: [(id: NoteID, key: Double)] {
+        let open = notes.filter { ($0.state != .resolved || $0.resolveOutcome == .needsInput) && $0.state != .orphaned }
+        let keyed: [(id: NoteID, key: Double)] = open.enumerated().compactMap { index, note in
+            switch note.anchor {
+            case .text:
+                guard let range = textController?.highlights.first(where: { $0.id == note.id })?.range else { return nil }
+                return (note.id, Double(range.location))
+            case .pdf(let anchor):
+                return (note.id, Double(anchor.page) * 1_000_000 - (anchor.bounds?.cgRect.maxY ?? 999_999))
+            case .image:
+                return (note.id, Double(index))
+            case .wholeFile:
+                return nil
+            }
+        }
+        return keyed.sorted { $0.key < $1.key }
+    }
+
+    /// Where a step goes: on from the note last stepped to, or else from the caret's offset, wrapping at either end.
+    nonisolated static func step(from caret: Double?, current: NoteID?, in ordered: [(id: NoteID, key: Double)], forward: Bool) -> NoteID? {
+        guard !ordered.isEmpty else { return nil }
+        if let current, let index = ordered.firstIndex(where: { $0.id == current }) {
+            return ordered[(index + (forward ? 1 : ordered.count - 1)) % ordered.count].id
+        }
+        guard let caret else { return (forward ? ordered.first : ordered.last)?.id }
+        return forward
+            ? (ordered.first { $0.key > caret } ?? ordered.first)?.id
+            : (ordered.last { $0.key < caret } ?? ordered.last)?.id
+    }
+
+    /// The stepped note, until the caret moves (in the source editor, a caret moved elsewhere starts afresh).
+    private var currentSteppedNoteID: NoteID? {
+        guard let steppedNoteID else { return nil }
+        if let controller = textController, rendered == nil {
+            return controller.selection == selectionAtStep ? steppedNoteID : nil
+        }
+        return steppedNoteID
+    }
+
+    /// "2 of 5" for the status bar while a stepped-to note is current.
+    var stepPosition: (index: Int, count: Int)? {
+        guard let id = currentSteppedNoteID else { return nil }
+        let ordered = steppableNotes
+        return ordered.firstIndex { $0.id == id }.map { ($0 + 1, ordered.count) }
+    }
+
+    /// Goes to the next or previous open note in this document; returns it so the notes panel can follow.
+    @discardableResult
+    func stepNote(forward: Bool) -> Note? {
+        let caret: Double? = (textController != nil && rendered == nil) ? Double(textController?.selection.location ?? 0) : nil
+        guard let id = Self.step(from: caret, current: currentSteppedNoteID, in: steppableNotes, forward: forward),
+              let note = notes.first(where: { $0.id == id }) else {
+            NSSound.beep()
+            return nil
+        }
+        steppedNoteID = id
+        selectionAtStep = textController?.selection
+        // Shown, not selected: selecting would float Add Note over a note that already exists.
+        reveal(note, select: false)
+        return note
+    }
+
+    /// Shows the Go to Line sheet (⌘L).
+    var isGoToLinePresented = false
+
+    /// Parses what the Go to Line field takes: `12`, `12:4`, or `12,4` (line, then optional 1-based column).
+    nonisolated static func parseGoToLine(_ input: String) -> (line: Int, column: Int?)? {
+        let parts = input.trimmingCharacters(in: .whitespaces).split(omittingEmptySubsequences: false, whereSeparator: { $0 == ":" || $0 == "," }).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard (1...2).contains(parts.count), let line = Int(parts[0]), line > 0 else { return nil }
+        if parts.count == 2 {
+            guard let column = Int(parts[1]), column > 0 else { return nil }
+            return (line, column)
+        }
+        return (line, nil)
+    }
+
+    /// Scrolls to a line, selecting it, or puts the caret at `column` on it. Lines past the end land on the last.
+    func goTo(line: Int, column: Int?) {
+        guard let controller = textController else { return }
+        let index = controller.lineIndex
+        let content = index.contentRange(ofLine: line)
+        var range = content
+        if let column {
+            var location = content.location + min(column - 1, content.length)
+            // Never between the halves of a surrogate pair or inside a composed character (typing there splits it).
+            if location < content.location + content.length {
+                location = (controller.text as NSString).rangeOfComposedCharacterSequence(at: location).location
+            }
+            range = NSRange(location: location, length: 0)
+        }
+        if let html, html.isShowingRendered {
+            html.scroll(toSource: range.length == 0 ? content : range, select: true)
+            return
+        }
+        guard let markdown, markdown.mode == .rendered else {
+            if let rendered { rendered.scroll(toSource: range, select: true) } else { controller.scroll(to: range) }
+            return
+        }
+        // The rendered view maps only text that is shown: a caret, a blank line, or markup that renders to nothing
+        // maps to no rendered range, and the jump did nothing. Use the character at the caret, else the next line
+        // that renders.
+        var target = range.length == 0 && range.location < content.location + content.length ? NSRange(location: range.location, length: 1) : range
+        var current = line
+        while markdown.map.renderedRanges(forSource: target).isEmpty, current < index.lineCount {
+            current += 1
+            target = index.contentRange(ofLine: current)
+        }
+        markdown.scroll(toSource: target)
     }
 
     func toggleMarkdownMode() {
-        markdown?.toggle()
+        rendered?.toggle()
     }
 
     private func gutterClicked(line: Int, noteID: NoteID?) {

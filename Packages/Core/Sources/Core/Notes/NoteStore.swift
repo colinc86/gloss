@@ -113,12 +113,13 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// Finds or creates the document row and refreshes its kind and fingerprint.
+    /// Finds or creates the document row and refreshes its kind and fingerprint. `.file` is what the extension
+    /// alone says; it never replaces a kind the viewer learned by reading the bytes.
     public func upsertDocument(hostID: HostID, path: String, kind: DocumentKind, fingerprint: Fingerprint) async throws -> Document {
         let fingerprint = Fingerprint(mtime: fingerprint.mtime.map(Self.rounded), size: fingerprint.size, hash: fingerprint.hash)
         return try await queue.write { db in
             if var existing = try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == path).fetchOne(db) {
-                existing.kind = kind.rawValue
+                if kind != .file || existing.kind == DocumentKind.file.rawValue { existing.kind = kind.rawValue }
                 existing.lastHash = fingerprint.hash
                 existing.lastMtime = fingerprint.mtime
                 existing.lastSize = fingerprint.size
@@ -180,9 +181,10 @@ public struct NoteStore: Sendable {
                 request = request.filter(sql: "document.host_id = ?", arguments: [hostID.rawValue])
             }
             if let pathPrefix {
-                // Exact file, or inside the directory. substr() keeps it case-sensitive and needs no escaping.
+                // Exact file, or inside the directory. substr() keeps it case-sensitive and needs no escaping. It counts
+                // characters (code points), not bytes, so the length must too or non-ASCII directories never match.
                 let directory = pathPrefix.hasSuffix("/") ? pathPrefix : pathPrefix + "/"
-                request = request.filter(sql: "document.path = ? OR substr(document.path, 1, ?) = ?", arguments: [pathPrefix, directory.utf8.count, directory])
+                request = request.filter(sql: "document.path = ? OR substr(document.path, 1, ?) = ?", arguments: [pathPrefix, directory.unicodeScalars.count, directory])
             }
             let rows = try request.asRequest(of: NoteWithDocument.self).fetchAll(db)
             return try rows
@@ -244,6 +246,30 @@ public struct NoteStore: Sendable {
         _ = try await queue.write { db in try NoteRecord.deleteOne(db, key: id.rawValue) }
     }
 
+    /// Deletes a note and returns everything the delete removed (the note, its attachment rows, its send links),
+    /// so `restore` can put it back exactly. Attachment files stay on disk; the sweep keeps young files.
+    public func deleteNoteForUndo(_ id: NoteID) async throws -> DeletedNote? {
+        try await queue.write { db in
+            guard let note = try NoteRecord.fetchOne(db, key: id.rawValue) else { return nil }
+            let attachments = try AttachmentRecord.filter(Column("note_id") == id.rawValue).fetchAll(db)
+            let sends = try SendNoteRecord.filter(Column("note_id") == id.rawValue).fetchAll(db)
+            _ = try NoteRecord.deleteOne(db, key: id.rawValue)
+            return DeletedNote(note: note, attachments: attachments, sends: sends)
+        }
+    }
+
+    /// Puts a deleted note back with its id, attachments, and send history (sends that still exist).
+    public func restore(_ deleted: DeletedNote) async throws {
+        try await queue.write { db in
+            guard try DocumentRecord.exists(db, key: deleted.note.documentId) else {
+                throw NoteStoreError.documentNotFound(DocumentID(rawValue: deleted.note.documentId))
+            }
+            try deleted.note.insert(db)
+            for attachment in deleted.attachments { try attachment.insert(db) }
+            for link in deleted.sends where try SendRecord.exists(db, key: link.sendId) { try link.insert(db) }
+        }
+    }
+
     /// `sent` → `resolved`, or `draft` → `resolved` when the user resolves by hand.
     public func resolve(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, at date: Date = Date()) async throws {
         let date = Self.rounded(date)
@@ -264,6 +290,52 @@ public struct NoteStore: Sendable {
     }
 
     /// `orphaned` → `draft` once the user has placed the anchor again.
+    /// The user takes a resolved note back: it becomes a draft again and the agent's outcome is cleared. The only
+    /// way out of `resolved`; `restoreDraft` stays limited to orphans.
+    public func reopen(_ id: NoteID, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
+            let current = NoteState(rawValue: record.state) ?? .draft
+            guard current == .resolved else { throw NoteStoreError.illegalTransition(from: current, to: .draft) }
+            record.state = NoteState.draft.rawValue
+            record.resolveOutcome = nil
+            record.resolveMessage = nil
+            record.updatedAt = date
+            try record.update(db)
+        }
+    }
+
+    /// The labels an answered question is written with, so the app can show the exchange as a conversation.
+    public static let askedLabel = "Agent asked:"
+    public static let answerLabel = "Answer:"
+
+    /// The comment with the agent's question and the person's answer added after a blank line.
+    public static func body(_ body: String, answering question: String?, with answer: String) -> String {
+        let question = question?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return body + "\n\n" + (question.isEmpty ? "" : "\(askedLabel) \(question)\n") + "\(answerLabel) \(answer)"
+    }
+
+    /// The person answers a question an agent resolved the note with: in one write, the question and answer are added
+    /// to the comment as it is now (not as some view last saw it), and the note becomes a draft again. Throws
+    /// `illegalTransition` if the note is no longer waiting for an answer, so nothing is half applied.
+    public func answer(_ id: NoteID, with answer: String, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
+            let current = NoteState(rawValue: record.state) ?? .draft
+            guard current == .resolved, record.resolveOutcome == ResolveOutcome.needsInput.rawValue else {
+                throw NoteStoreError.illegalTransition(from: current, to: .draft)
+            }
+            record.body = Self.body(record.body, answering: record.resolveMessage, with: answer)
+            record.state = NoteState.draft.rawValue
+            record.resolveOutcome = nil
+            record.resolveMessage = nil
+            record.updatedAt = date
+            try record.update(db)
+        }
+    }
+
     public func restoreDraft(_ id: NoteID, anchor: Anchor, at date: Date = Date()) async throws {
         try await updateAnchor(id, anchor: anchor, state: .draft, at: date)
     }
@@ -336,15 +408,22 @@ public struct NoteStore: Sendable {
 
     // MARK: Attachments
 
-    public func addAttachment(noteID: NoteID, kind: AttachmentKind, localPath: String, width: Int, height: Int) async throws -> Attachment {
+    public func addAttachment(noteID: NoteID, kind: AttachmentKind, localPath: String, width: Int, height: Int, at date: Date = Date()) async throws -> Attachment {
         try await queue.write { db in
             let record = AttachmentRecord(
                 id: AttachmentID.new().rawValue, noteId: noteID.rawValue, kind: kind.rawValue,
                 localPath: localPath, width: width, height: height
             )
             try record.insert(db)
+            // Touch the note so observers (the notes panel's thumbnails) see the attachment arrive.
+            try db.execute(sql: "UPDATE note SET updated_at = ? WHERE id = ?", arguments: [Self.rounded(date), noteID.rawValue])
             return Attachment(record: try Self.refetch(record, db))
         }
+    }
+
+    /// Every file path an attachment row points at, for sweeping files whose note is gone.
+    public func allAttachmentPaths() async throws -> Set<String> {
+        try await queue.read { db in Set(try String.fetchAll(db, sql: "SELECT local_path FROM attachment")) }
     }
 
     public func attachments(for noteID: NoteID) async throws -> [Attachment] {
@@ -393,8 +472,17 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// The newest send of a note, without reading packet texts.
     public func lastSend(for noteID: NoteID) async throws -> SendSummary? {
-        try await sends(for: noteID).first
+        try await queue.read { db in
+            try Row.fetchOne(db, sql: """
+                SELECT send.id, send.transport, send.target_json, send.sent_at, send.outcome
+                FROM send JOIN send_note ON send_note.send_id = send.id
+                WHERE send_note.note_id = ? ORDER BY send.sent_at DESC LIMIT 1
+                """, arguments: [noteID.rawValue]).map {
+                SendSummary(id: SendID(rawValue: $0["id"]), transport: $0["transport"], targetJSON: $0["target_json"], sentAt: $0["sent_at"], outcome: $0["outcome"])
+            }
+        }
     }
 
     // MARK: Staged files
@@ -564,4 +652,14 @@ extension KnownTarget {
     init(record: TargetRecord) {
         self.init(id: TargetID(rawValue: record.id), hostID: HostID(rawValue: record.hostId), transport: record.transport, identityJSON: record.identityJson, label: record.label, lastUsedAt: record.lastUsedAt)
     }
+}
+
+/// What deleting a note removed, kept so the delete can be undone.
+public struct DeletedNote: Sendable, Equatable {
+    public let note: NoteRecord
+    public let attachments: [AttachmentRecord]
+    public let sends: [SendNoteRecord]
+    public var id: NoteID { NoteID(rawValue: note.id) }
+
+    public static func == (lhs: DeletedNote, rhs: DeletedNote) -> Bool { lhs.note.id == rhs.note.id }
 }

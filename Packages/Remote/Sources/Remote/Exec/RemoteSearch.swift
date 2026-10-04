@@ -12,21 +12,49 @@ public struct RemoteSearchHit: Sendable, Hashable {
 public enum RemoteSearch {
     public static let maxMatchesPerFile = 200
 
-    public static func script(pattern: String, root: String, tools: RemoteTools) -> String {
+    /// The pattern is literal text unless `regex` is set (typing `foo(` or `[String]` used to be a regex error
+    /// that showed as no matches). Case is ignored unless the pattern has a capital letter (smart case).
+    public static func script(pattern: String, root: String, tools: RemoteTools, regex: Bool = false) -> String {
         if tools.rg {
-            return "rg --json -n --no-messages --max-count \(maxMatchesPerFile) --max-filesize 2M -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+            return "rg --json -n --no-messages --max-count \(maxMatchesPerFile) --max-filesize 2M \(ripgrepFlags(regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
         }
-        return "grep -rnI --exclude-dir=.git -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+        return "grep -rnI --exclude-dir=.git \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+    }
+
+    /// rg and grep exit 2 both for a bad pattern and when any file under the root is unreadable, so a search that
+    /// found nothing with status 2 is checked again against `/dev/null`: only a 2 from that means the pattern
+    /// itself is invalid.
+    public static func patternCheckScript(pattern: String, tools: RemoteTools, regex: Bool) -> String {
+        if tools.rg {
+            return "rg --no-messages \(ripgrepFlags(regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- /dev/null"
+        }
+        return "grep -s \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) /dev/null"
+    }
+
+    /// Whether the host's tool accepts the pattern.
+    public static func patternIsValid(_ pattern: String, regex: Bool, over connection: SSHConnection) async -> Bool {
+        guard regex, let tools = try? await connection.tools(),
+              let result = try? await connection.exec(patternCheckScript(pattern: pattern, tools: tools, regex: regex), timeout: .seconds(10)) else { return true }
+        return result.exitStatus != 2
+    }
+
+    /// Search flags shared by the local and remote searches.
+    public static func ripgrepFlags(regex: Bool) -> [String] {
+        (regex ? [] : ["--fixed-strings"]) + ["--smart-case"]
+    }
+
+    public static func grepFlags(pattern: String, regex: Bool) -> [String] {
+        [regex ? "-E" : "-F"] + (pattern.contains(where: \.isUppercase) ? [] : ["-i"])
     }
 
     /// Streams hits as they arrive; cancelling the consumer terminates the remote command.
-    public static func run(pattern: String, root: String, over connection: SSHConnection) -> AsyncThrowingStream<RemoteSearchHit, any Error> {
+    public static func run(pattern: String, root: String, regex: Bool = false, over connection: SSHConnection) -> AsyncThrowingStream<RemoteSearchHit, any Error> {
         AsyncThrowingStream { continuation in
             let running = Mutex<ChildProcess?>(nil)
             let task = Task {
                 do {
                     let tools = try await connection.tools()
-                    let process = try await connection.execStreaming(script(pattern: pattern, root: root, tools: tools))
+                    let process = try await connection.execStreaming(script(pattern: pattern, root: root, tools: tools, regex: regex))
                     running.withLock { $0 = process }
                     if Task.isCancelled { process.terminate() }
                     var pending = Data()

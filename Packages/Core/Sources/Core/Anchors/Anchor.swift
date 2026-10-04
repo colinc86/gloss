@@ -27,17 +27,83 @@ public struct TextAnchor: Codable, Hashable, Sendable {
     public var after: String
     /// SHA-256 of the file when the anchor was made. Optional for rows written before this field existed.
     public var hash: String?
+    /// Spreadsheet cells or columns the note is about. The text range still covers the records' source lines (the
+    /// header line for whole columns), so re-anchoring and excerpts keep working; nil for ordinary text notes.
+    public var cells: CellSelection?
 
-    public init(start: TextPosition, end: TextPosition, text: String, before: String, after: String, hash: String? = nil) {
+    public init(start: TextPosition, end: TextPosition, text: String, before: String, after: String, hash: String? = nil, cells: CellSelection? = nil) {
         self.start = start
         self.end = end
         self.text = text
         self.before = before
         self.after = after
         self.hash = hash
+        self.cells = cells
     }
 
     public var isSingleLine: Bool { start.line == end.line }
+}
+
+/// A set of spreadsheet cells, or whole columns, inside a CSV text anchor.
+public struct CellSelection: Codable, Hashable, Sendable {
+    /// Whole columns, 0-based and sorted. When non-empty the anchor sits on the header line and `cells` is empty.
+    public var columns: [Int]
+    /// Individual cells, sorted by line then column.
+    public var cells: [CellRef]
+    /// Header names of `columns` when the note was made, in the same order; re-anchoring finds columns by name.
+    public var headers: [String]?
+
+    public init(columns: [Int] = [], cells: [CellRef] = [], headers: [String]? = nil) {
+        let order = columns.indices.sorted { columns[$0] < columns[$1] }
+        self.columns = order.map { columns[$0] }
+        self.headers = headers.map { names in order.map { $0 < names.count ? names[$0] : "" } }
+        self.cells = cells.sorted()
+    }
+
+    public var isColumns: Bool { !columns.isEmpty }
+
+    /// `A`, `B`, … `Z`, `AA` for a 0-based column.
+    public static func columnName(_ column: Int) -> String {
+        var name = ""
+        var value = column + 1
+        while value > 0 {
+            let remainder = (value - 1) % 26
+            name = String(UnicodeScalar(UInt8(65 + remainder))) + name
+            value = (value - 1) / 26
+        }
+        return name
+    }
+
+    /// Spreadsheet references relative to an anchor starting at `startLine`: `B2`, `B2:C4` for a full rectangle,
+    /// `B2, E4` otherwise. Row numbers are the record's first source line, which is the spreadsheet row whenever
+    /// no field spans lines.
+    public func references(startLine: Int) -> String {
+        if isColumns { return columns.map(Self.columnName).joined(separator: ", ") }
+        let lines = Set(cells.map(\.lineOffset))
+        let columnSet = Set(cells.map(\.column))
+        // A full block of consecutive lines and columns collapses to a range.
+        if cells.count > 1, lines.count * columnSet.count == cells.count,
+           let minColumn = columnSet.min(), let maxColumn = columnSet.max(), maxColumn - minColumn + 1 == columnSet.count,
+           let minLine = lines.min(), let maxLine = lines.max(), maxLine - minLine + 1 == lines.count {
+            return "\(Self.columnName(minColumn))\(startLine + minLine):\(Self.columnName(maxColumn))\(startLine + maxLine)"
+        }
+        return cells.map { "\(Self.columnName($0.column))\(startLine + $0.lineOffset)" }.joined(separator: ", ")
+    }
+}
+
+/// One cell: its record's first source line relative to the anchor's start line, and its 0-based column.
+public struct CellRef: Codable, Hashable, Sendable, Comparable {
+    public var lineOffset: Int
+    public var column: Int
+
+    public init(lineOffset: Int, column: Int) {
+        self.lineOffset = lineOffset
+        self.column = column
+    }
+
+    public static func < (lhs: CellRef, rhs: CellRef) -> Bool {
+        (lhs.lineOffset, lhs.column) < (rhs.lineOffset, rhs.column)
+    }
 }
 
 /// A rectangle in the original image's pixel space, origin top-left.
@@ -168,7 +234,13 @@ public enum Anchor: Hashable, Sendable {
     public var summary: String {
         switch self {
         case .text(let anchor):
-            anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)"
+            if let cells = anchor.cells {
+                cells.isColumns
+                    ? (cells.columns.count == 1 ? "Column " : "Columns ") + cells.references(startLine: anchor.start.line)
+                    : (cells.cells.count == 1 ? "Cell " : "Cells ") + cells.references(startLine: anchor.start.line)
+            } else {
+                anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)"
+            }
         case .image(let anchor):
             "Region \(anchor.x),\(anchor.y) \(anchor.w)x\(anchor.h)"
         case .pdf(let anchor):

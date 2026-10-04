@@ -29,6 +29,125 @@ public enum ReAnchorer {
     // MARK: Text
 
     public static func text(_ anchor: TextAnchor, in newContent: String, newHash: String) -> ReAnchorResult {
+        guard let cells = anchor.cells else { return lineText(anchor, in: newContent, newHash: newHash) }
+        if let hash = anchor.hash, hash == newHash { return .unchanged }
+        if cells.isColumns { return columns(anchor, cells: cells, in: newContent, newHash: newHash) }
+        // Cells point at records by line offset; follow each record line from the old span into the new one.
+        let result = lineText(anchor, in: newContent, newHash: newHash)
+        let moved: TextAnchor
+        var review: Bool
+        switch result {
+        case .moved(.text(let text)): (moved, review) = (text, false)
+        case .movedNeedsReview(.text(let text)): (moved, review) = (text, true)
+        default: return result
+        }
+        let oldLines = normalizeNewlines(anchor.text).components(separatedBy: "\n")
+        let newLines = moved.text.components(separatedBy: "\n")
+        guard let map = lineMap(oldLines, newLines) else {
+            // Too large to align: keep the offsets but ask for a look.
+            var kept = moved
+            kept.cells = cells
+            return .movedNeedsReview(.text(kept))
+        }
+        var remapped: [CellRef] = []
+        for cell in cells.cells {
+            guard let line = map.lines[cell.lineOffset] else {
+                review = true
+                continue
+            }
+            if map.changed.contains(cell.lineOffset) { review = true }
+            remapped.append(CellRef(lineOffset: line, column: cell.column))
+        }
+        guard !remapped.isEmpty else { return .orphaned }
+        // The span may now start before the first remaining cell; keep offsets relative to the new start.
+        var rebuilt = moved
+        rebuilt.cells = CellSelection(cells: remapped)
+        return review ? .movedNeedsReview(.text(rebuilt)) : .moved(.text(rebuilt))
+    }
+
+    /// Old line index → new line index for lines that survived, by longest common subsequence. Lines left
+    /// unmatched between two matches are paired by position when both gaps have the same length (an edited row),
+    /// and reported in `changed`. Nil when the spans are too large to align.
+    static func lineMap(_ old: [String], _ new: [String]) -> (lines: [Int: Int], changed: Set<Int>)? {
+        if old == new { return (Dictionary(uniqueKeysWithValues: old.indices.map { ($0, $0) }), []) }
+        guard old.count * new.count <= alignmentLimit else { return nil }
+        var table = Array(repeating: Array(repeating: 0, count: new.count + 1), count: old.count + 1)
+        for i in stride(from: old.count - 1, through: 0, by: -1) {
+            for j in stride(from: new.count - 1, through: 0, by: -1) {
+                table[i][j] = old[i] == new[j] ? table[i + 1][j + 1] + 1 : max(table[i + 1][j], table[i][j + 1])
+            }
+        }
+        var pairs: [(Int, Int)] = []
+        var i = 0, j = 0
+        while i < old.count, j < new.count {
+            if old[i] == new[j] {
+                pairs.append((i, j))
+                i += 1
+                j += 1
+            } else if table[i + 1][j] >= table[i][j + 1] {
+                i += 1
+            } else {
+                j += 1
+            }
+        }
+        var lines: [Int: Int] = [:]
+        var changed: Set<Int> = []
+        var previous = (-1, -1)
+        for pair in pairs + [(old.count, new.count)] {
+            let oldGap = pair.0 - previous.0 - 1
+            if oldGap > 0, oldGap == pair.1 - previous.1 - 1 {
+                for offset in 1...oldGap {
+                    lines[previous.0 + offset] = previous.1 + offset
+                    changed.insert(previous.0 + offset)
+                }
+            }
+            if pair.0 < old.count { lines[pair.0] = pair.1 }
+            previous = pair
+        }
+        return (lines, changed)
+    }
+
+    /// Old × new line pairs compared when aligning spans; beyond it the comparison is skipped (about 32 MB).
+    static let alignmentLimit = 4_000_000
+
+    /// Whole-column notes follow the header record and find each column by its name.
+    static func columns(_ anchor: TextAnchor, cells: CellSelection, in newContent: String, newHash: String) -> ReAnchorResult {
+        let normalized = normalizeNewlines(newContent)
+        let index = LineIndex(normalized)
+        // The header is the first record; a prefix is enough to parse it.
+        let prefix = String(normalized.prefix(65_536))
+        guard let header = CSVParser.parse(prefix, delimiter: CSVParser.delimiter(for: prefix, fileName: ""), hasHeader: false).rows.first else { return .orphaned }
+        let names = cells.headers ?? []
+        var columns: [Int] = []
+        var keptNames: [String] = []
+        var review = false
+        for (position, column) in cells.columns.enumerated() {
+            let name = position < names.count ? names[position] : nil
+            if let name, column < header.fields.count, header.fields[column] == name {
+                columns.append(column)
+            } else if let name, let found = header.fields.indices.first(where: { header.fields[$0] == name && !columns.contains($0) }) {
+                columns.append(found)
+                // A duplicate name could be either column.
+                if header.fields.filter({ $0 == name }).count > 1 { review = true }
+            } else if column < header.fields.count {
+                // Renamed (or no stored name): keep the position, but have the user confirm it.
+                columns.append(column)
+                review = true
+            } else {
+                review = true
+                continue
+            }
+            keptNames.append(header.fields[columns.last!])
+        }
+        guard !columns.isEmpty else { return .orphaned }
+        let start = index.contentRange(ofLine: 1).location
+        let endRange = index.contentRange(ofLine: header.lastLine)
+        var rebuilt = make(from: NSRange(location: start, length: endRange.location + endRange.length - start), in: normalized, index: index, hash: newHash)
+        rebuilt.cells = CellSelection(columns: columns, headers: keptNames)
+        return review ? .movedNeedsReview(.text(rebuilt)) : .moved(.text(rebuilt))
+    }
+
+    static func lineText(_ anchor: TextAnchor, in newContent: String, newHash: String) -> ReAnchorResult {
         if let hash = anchor.hash, hash == newHash { return .unchanged }
 
         let normalized = normalizeNewlines(newContent)
@@ -162,6 +281,17 @@ public enum ReAnchorer {
         let x = oldLines.map { $0.trimmingCharacters(in: .whitespaces) }
         let y = newLines.map { $0.trimmingCharacters(in: .whitespaces) }
         guard !x.isEmpty, !y.isEmpty else { return 0 }
+        guard x.count * y.count <= alignmentLimit else {
+            // Too large for a table: count shared lines instead (an upper bound on the common subsequence).
+            var counts: [String: Int] = [:]
+            for line in x { counts[line, default: 0] += 1 }
+            var shared = 0
+            for line in y where (counts[line] ?? 0) > 0 {
+                counts[line]! -= 1
+                shared += 1
+            }
+            return Double(shared) / Double(max(x.count, y.count))
+        }
         var table = Array(repeating: Array(repeating: 0, count: y.count + 1), count: x.count + 1)
         for i in 1...x.count {
             for j in 1...y.count {

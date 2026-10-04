@@ -48,7 +48,7 @@ public nonisolated enum GrammarCatalog {
     nonisolated private static let extensions: [String: String] = [
         "swift": "swift",
         "md": "markdown", "markdown": "markdown", "mdown": "markdown", "mkd": "markdown", "mdx": "markdown",
-        "json": "json", "jsonc": "json",
+        "json": "json", "jsonc": "json", "jsonl": "json", "ndjson": "json",
         "sh": "bash", "bash": "bash", "zsh": "bash", "bashrc": "bash", "zshrc": "bash",
         "py": "python", "pyi": "python",
         "c": "c", "h": "c",

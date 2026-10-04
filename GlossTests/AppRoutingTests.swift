@@ -35,6 +35,34 @@ struct AppRoutingTests {
         await model.shutDown()
     }
 
+    /// Quitting saves unsaved documents first (it used to drop them); the ones that cannot be saved are reported.
+    @Test func saveAllWritesUnsavedDocumentsAndReportsFailures() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-saveall-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "one\n".write(toFile: "\(root)/a.txt", atomically: true, encoding: .utf8)
+        try "two\n".write(toFile: "\(root)/b.txt", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        for name in ["a.txt", "b.txt"] {
+            model.openDocument(hostID: .local, path: "\(root)/\(name)")
+            await waitUntil { model.activeSession?.textController != nil }
+        }
+        #expect(model.unsavedSessions.isEmpty)
+        for name in ["a.txt", "b.txt"] {
+            model.openDocument(hostID: .local, path: "\(root)/\(name)")
+            let controller = try #require(model.activeSession?.textController)
+            controller.viewDidChangeText(controller.text + "edited\n")
+        }
+        #expect(Set(model.unsavedSessions.map(\.fileName)) == ["a.txt", "b.txt"])
+        // b.txt changes on disk behind the editor: its save stops at the conflict sheet instead of overwriting.
+        try "changed elsewhere\n".write(toFile: "\(root)/b.txt", atomically: true, encoding: .utf8)
+        let failed = await model.saveAll()
+        #expect(try String(contentsOfFile: "\(root)/a.txt", encoding: .utf8) == "one\nedited\n")
+        #expect(failed.map(\.fileName) == ["b.txt"], "the conflicted document is reported, not overwritten")
+        #expect(try String(contentsOfFile: "\(root)/b.txt", encoding: .utf8) == "changed elsewhere\n")
+        await model.shutDown()
+    }
+
     @Test func markdownNoteProjectsOntoTheRenderedText() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-md-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
@@ -55,5 +83,34 @@ struct AppRoutingTests {
             #expect((markdown.rendered.string as NSString).substring(with: range) == "Gloss is a native app.")
         }
         await model.shutDown()
+    }
+}
+
+@MainActor
+struct VisibleDraftsTests {
+    /// Send sends what you see: with a colour filter on, only drafts in those colours.
+    @Test func sendTakesOnlyTheFilteredColours() async throws {
+        let root = NSTemporaryDirectory() + "gloss-visible-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "one\ntwo\n".write(toFile: "\(root)/a.txt", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        let path = "\(root)/a.txt".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        model.openDocument(hostID: .local, path: "\(root)/a.txt")
+        for (line, color) in [(1, "blue"), (2, "pink")] {
+            await URLRouter.handle(URL(string: "gloss://note?host=local&path=\(path)&line=\(line)&text=n\(line)&color=\(color)")!, model: model)
+        }
+        for _ in 0..<100 where (model.activeSession?.notes.count ?? 0) < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(model.visibleDrafts.count == 2)
+        model.notesPanel.colorFilter = [.blue]
+        #expect(model.visibleDrafts.map(\.body) == ["n1"])
+        model.notesPanel.colorFilter = []
+        model.notesPanel.searchText = "n2"
+        #expect(model.visibleDrafts.map(\.body) == ["n2"], "search narrows Send too")
+        model.notesPanel.searchText = ""
+        model.notesPanel.filter = .sent
+        #expect(model.visibleDrafts.isEmpty, "a tab that shows no drafts sends none")
+        model.showNotesPanel = false
+        #expect(model.visibleDrafts.count == 2, "with the panel closed, nothing is filtered")
     }
 }

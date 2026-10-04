@@ -38,6 +38,16 @@ struct SchemaTests {
         #expect(hosts.first?.kind == .local)
     }
 
+    @Test func addingAnAttachmentTouchesItsNote() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/a.png", kind: .image, fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "x", color: .yellow, at: Date(timeIntervalSince1970: 1_000))
+        _ = try await store.addAttachment(noteID: note.id, kind: .crop, localPath: "/tmp/c.png", width: 1, height: 1)
+        let touched = try #require(try await store.note(note.id))
+        #expect(touched.updatedAt > note.updatedAt, "the panel refreshes the card when its crop arrives")
+        #expect(touched.createdAt == note.createdAt)
+    }
+
     @Test func foreignKeysAreEnforcedAndCascade() async throws {
         let database = try AppDatabase.inMemory()
         let store = NoteStore(database: database)

@@ -23,12 +23,76 @@ final class LineNumberGutterView: NSView {
 
     func updateWidth() {
         let digits = max(3, String(controller?.lineIndex.lineCount ?? 1).count)
-        let width = CGFloat(digits) * 7 + 22
+        let width = CGFloat(digits) * 7 + 26   // room for three note lanes before the numbers
         if abs(gutterWidth - width) > 0.5 {
             gutterWidth = width
             superview?.needsLayout = true
         }
         needsDisplay = true
+    }
+
+    /// The note bar under the pointer, drawn wider; hovering a bar also shows that note's peek.
+    private var hoveredNoteID: NoteID?
+    private var hoverTracking: NSTrackingArea?
+
+    /// Lanes for note bars: notes whose lines overlap sit side by side, up to `maxLanes`.
+    static let maxLanes = 3
+    static let barWidth: CGFloat = 3
+    static let laneGap: CGFloat = 2
+
+    /// Assigns each highlight (by start and end line) the first lane free at its start; extras share the last lane.
+    static func lanes(for spans: [(id: NoteID, start: Int, end: Int)]) -> [NoteID: Int] {
+        var laneEnds: [Int] = []
+        var result: [NoteID: Int] = [:]
+        for span in spans.sorted(by: { ($0.start, $0.end) < ($1.start, $1.end) }) {
+            if let free = laneEnds.firstIndex(where: { $0 < span.start }) {
+                laneEnds[free] = span.end
+                result[span.id] = free
+            } else if laneEnds.count < maxLanes {
+                laneEnds.append(span.end)
+                result[span.id] = laneEnds.count - 1
+            } else {
+                laneEnds[maxLanes - 1] = max(laneEnds[maxLanes - 1], span.end)
+                result[span.id] = maxLanes - 1
+            }
+        }
+        return result
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let hit = markerRects.last { $0.rect.contains(point) }?.noteID
+        guard hit != hoveredNoteID else { return }
+        hoveredNoteID = hit
+        needsDisplay = true
+        if let hit, let range = controller?.highlights.first(where: { $0.id == hit })?.range {
+            controller?.hover(at: range.location)
+        } else {
+            controller?.hover(at: nil)
+        }
+        if hit != nil { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoveredNoteID != nil {
+            hoveredNoteID = nil
+            needsDisplay = true
+            controller?.hover(at: nil)
+        }
+        NSCursor.arrow.set()
+    }
+
+    /// Carries the editor's current-line band across the gutter, so number and line read as one row.
+    var showsCurrentLine = false {
+        didSet { if oldValue != showsCurrentLine { needsDisplay = true } }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -41,11 +105,13 @@ final class LineNumberGutterView: NSView {
         let visible = textView.visibleRect
         let inset = textView.textContainerInset
         let attributes: [NSAttributedString.Key: Any] = [.font: Theme.gutterFont, .foregroundColor: NSColor.tertiaryLabelColor]
-        let currentAttributes: [NSAttributedString.Key: Any] = [.font: Theme.gutterFont, .foregroundColor: NSColor.secondaryLabelColor]
+        let currentAttributes: [NSAttributedString.Key: Any] = [.font: Theme.gutterFont, .foregroundColor: NSColor.labelColor]
         let currentLine = controller.lineIndex.position(forUTF16Offset: controller.selection.location).line
-        let markersByLine = Dictionary(grouping: controller.highlights) { controller.lineIndex.position(forUTF16Offset: $0.range.location).line }
         let documentStart = contentManager.documentRange.location
 
+        // Each visible line's vertical extent, for bars spanning several lines.
+        var lineFrames: [Int: (top: CGFloat, bottom: CGFloat)] = [:]
+        var firstVisible = Int.max, lastVisible = 0
         let topPoint = CGPoint(x: 0, y: max(0, visible.minY - inset.height))
         let startLocation = layoutManager.textLayoutFragment(for: topPoint)?.rangeInElement.location ?? documentStart
         layoutManager.enumerateTextLayoutFragments(from: startLocation, options: [.ensuresLayout]) { fragment in
@@ -55,18 +121,55 @@ final class LineNumberGutterView: NSView {
             let offset = contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)
             let line = controller.lineIndex.position(forUTF16Offset: offset).line
             let firstLineHeight = fragment.textLineFragments.first?.typographicBounds.height ?? frame.height
+            if line == currentLine, showsCurrentLine, controller.selection.length == 0 {
+                let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
+                HighlightBackdropView.currentLineColor.setFill()
+                NSRect(x: 0, y: y, width: bounds.width, height: height > 0 ? height : frame.height).fill()
+            }
+            lineFrames[line] = (y, y + frame.height)
+            firstVisible = min(firstVisible, line)
+            lastVisible = max(lastVisible, line)
             let label = NSAttributedString(string: String(line), attributes: line == currentLine ? currentAttributes : attributes)
             let size = label.size()
             label.draw(at: NSPoint(x: gutterWidth - size.width - 6, y: y + (firstLineHeight - size.height) / 2))
-            if let marks = markersByLine[line] {
-                for (index, mark) in marks.prefix(3).enumerated() {
-                    let dot = NSRect(x: 4 + CGFloat(index) * 6, y: y + firstLineHeight / 2 - 3, width: 6, height: 6)
-                    Theme.color(for: mark.color).withAlphaComponent(mark.state == .resolved ? 0.4 : 1).setFill()
-                    NSBezierPath(ovalIn: dot).fill()
-                    markerRects.append((NSRect(x: 0, y: y, width: gutterWidth, height: firstLineHeight), mark.id))
-                }
-            }
             return true
+        }
+        guard firstVisible <= lastVisible else { return }
+
+        // Note bars: one per note, spanning its lines, in lanes when notes overlap.
+        let spans = controller.highlights.filter { !$0.isInvalidated }.map { highlight -> (id: NoteID, start: Int, end: Int) in
+            let (start, end) = controller.lineIndex.positions(for: highlight.range)
+            // A range ending at column 1 of the next line does not cover that line.
+            let last = end.line > start.line && end.col <= 1 ? end.line - 1 : end.line
+            return (highlight.id, start.line, max(start.line, last))
+        }
+        let lanes = Self.lanes(for: spans)
+        for span in spans where span.end >= firstVisible && span.start <= lastVisible {
+            guard let highlight = controller.highlights.first(where: { $0.id == span.id }) else { continue }
+            let topLine = max(span.start, firstVisible), bottomLine = min(span.end, lastVisible)
+            guard let top = (topLine...bottomLine).lazy.compactMap({ lineFrames[$0]?.top }).first,
+                  let bottom = (topLine...bottomLine).reversed().lazy.compactMap({ lineFrames[$0]?.bottom }).first else { continue }
+            let hovered = span.id == hoveredNoteID
+            let lane = CGFloat(lanes[span.id] ?? 0)
+            let width = Self.barWidth + (hovered ? 1.5 : 0)
+            let bar = NSRect(x: 3 + lane * (Self.barWidth + Self.laneGap) - (hovered ? 0.75 : 0), y: top + 2, width: width, height: max(4, bottom - top - 4))
+            let color = Theme.color(for: highlight.color)
+            let path = NSBezierPath(roundedRect: bar, xRadius: width / 2, yRadius: width / 2)
+            switch highlight.state {
+            case .orphaned:
+                color.withAlphaComponent(0.8).setStroke()
+                path.lineWidth = 1
+                path.setLineDash([2, 2], count: 2, phase: 0)
+                path.stroke()
+            case .resolved:
+                color.withAlphaComponent(hovered ? 0.6 : 0.3).setFill()
+                path.fill()
+            default:
+                color.withAlphaComponent(hovered || highlight.needsReview ? 1 : 0.85).setFill()
+                path.fill()
+            }
+            // Generous hit area: the lane plus a little either side, over the whole span.
+            markerRects.append((NSRect(x: bar.minX - 2, y: top, width: bar.width + 4, height: bottom - top), span.id))
         }
     }
 
@@ -74,7 +177,8 @@ final class LineNumberGutterView: NSView {
         guard let controller, let textView, let layoutManager = textView.textLayoutManager,
               let contentManager = layoutManager.textContentManager else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if let hit = markerRects.first(where: { $0.rect.contains(point) }) {
+        if let hit = markerRects.last(where: { $0.rect.contains(point) }) {
+            controller.dismissPeek()
             let location = controller.highlights.first { $0.id == hit.noteID }?.range.location ?? 0
             controller.onGutterClick(controller.lineIndex.position(forUTF16Offset: location).line, hit.noteID)
             return
@@ -90,13 +194,16 @@ final class LineNumberGutterView: NSView {
 public final class TextEditorContainerView: NSView {
     let gutter: LineNumberGutterView
     let scrollView: NSScrollView
+    let ruler: OverviewRulerView
 
-    init(gutter: LineNumberGutterView, scrollView: NSScrollView) {
+    init(gutter: LineNumberGutterView, scrollView: NSScrollView, ruler: OverviewRulerView) {
         self.gutter = gutter
         self.scrollView = scrollView
+        self.ruler = ruler
         super.init(frame: .zero)
         addSubview(gutter)
         addSubview(scrollView)
+        addSubview(ruler)
     }
 
     @available(*, unavailable)
@@ -106,6 +213,10 @@ public final class TextEditorContainerView: NSView {
         super.layout()
         let width = gutter.gutterWidth
         gutter.frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
-        scrollView.frame = NSRect(x: width, y: 0, width: max(0, bounds.width - width), height: bounds.height)
+        // The overview ruler takes room only while the file has notes.
+        let rulerWidth = ruler.hasMarks ? OverviewRulerView.width : 0
+        ruler.isHidden = rulerWidth == 0
+        scrollView.frame = NSRect(x: width, y: 0, width: max(0, bounds.width - width - rulerWidth), height: bounds.height)
+        ruler.frame = NSRect(x: bounds.width - rulerWidth, y: 0, width: rulerWidth, height: bounds.height)
     }
 }

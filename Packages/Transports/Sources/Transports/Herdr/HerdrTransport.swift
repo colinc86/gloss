@@ -115,7 +115,7 @@ public actor HerdrTransport: Transport {
         return await out
     }
 
-    nonisolated static func target(for agent: HerdrAgentInfo, hostID: HostID, hostLabel: String?) -> AgentTarget? {
+    public nonisolated static func target(for agent: HerdrAgentInfo, hostID: HostID, hostLabel: String?) -> AgentTarget? {
         guard let kind = agent.agent, !kind.isEmpty else { return nil }
         let identity = HerdrTargetIdentity(paneID: agent.paneID, agent: kind, name: agent.name)
         let json = (try? JSONEncoder().encode(identity)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -135,6 +135,12 @@ public actor HerdrTransport: Transport {
     public func deliver(_ packet: Packet, attachments: [StagedAttachment], to target: AgentTarget) async throws -> DeliveryReceipt {
         guard let identity = Self.identity(from: target) else { throw DeliveryError.targetUnavailable("not a Herdr pane") }
         if target.hostID == .local { routes[.local] = .socket(path: localSocketPath) }
+        // A reconnected host has no cached route until the next discovery; the forwarded socket (what follow
+        // mode is already using) is resolved here so a target adopted from a focus event can be delivered to.
+        if routes[target.hostID] == nil, let entry = await registry.all().first(where: { $0.hostID == target.hostID }),
+           let path = await forwardedSocket(for: entry) {
+            routes[target.hostID] = .socket(path: path)
+        }
         guard let route = routes[target.hostID] else { throw DeliveryError.targetUnavailable("host has no Herdr route; refresh targets") }
         do {
             switch route {

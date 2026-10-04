@@ -13,7 +13,8 @@ public struct MCPDependencies: Sendable {
     /// A whole-file draft note from the Herdr plugin on a host where `open` cannot reach the app.
     public var createDraft: @Sendable (_ host: String, _ path: String?, _ cwd: String?, _ text: String) async throws -> NoteID
     /// Opens a file in the viewer, for the plugin's link handler on a host.
-    public var openDocument: @Sendable (_ host: String, _ path: String) async throws -> Void = { _, _ in }
+    /// Opens a file on a host, scrolled to a 1-based line when one is given.
+    public var openDocument: @Sendable (_ host: String, _ path: String, _ line: Int?) async throws -> Void = { _, _, _ in }
     public var appVersion: String
 
     public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
@@ -71,11 +72,22 @@ public actor MCPServer {
         listener.map { URL(string: "http://127.0.0.1:\($0.port)/mcp")! }
     }
 
-    public static func snippets(port: Int) -> MCPConfigSnippets {
-        let url = "http://127.0.0.1:\(port)/mcp"
+    /// The registration URL. A remote host's agents carry `?host=<alias>`, so tools that take a path know which
+    /// machine it is on without the agent having to say.
+    public static func url(port: Int, host: String? = nil) -> String {
+        let base = "http://127.0.0.1:\(port)/mcp"
+        guard let host, !host.isEmpty, host != "local" else { return base }
+        var components = URLComponents()
+        components.queryItems = [URLQueryItem(name: "host", value: host)]
+        return base + (components.percentEncodedQuery.map { "?\($0)" } ?? "")
+    }
+
+    public static func snippets(port: Int, host: String? = nil) -> MCPConfigSnippets {
+        let url = url(port: port, host: host)
+        let shellURL = url.contains("?") ? "'" + url.replacingOccurrences(of: "'", with: "'\\''") + "'" : url
         return MCPConfigSnippets(
-            claudeCommand: "claude mcp add -s user --transport http \(serverName) \(url)",
-            codexCommand: "codex mcp add \(serverName) --url \(url)",
+            claudeCommand: "claude mcp add -s user --transport http \(serverName) \(shellURL)",
+            codexCommand: "codex mcp add \(serverName) --url \(shellURL)",
             opencodeJSON: "\"mcp\": { \"\(serverName)\": { \"type\": \"remote\", \"url\": \"\(url)\", \"enabled\": true } }",
             mcpJSON: "{ \"mcpServers\": { \"\(serverName)\": { \"type\": \"http\", \"url\": \"\(url)\" } } }"
         )
@@ -129,7 +141,7 @@ public actor MCPServer {
     private func route(_ request: HTTPRequest, query: [String: String]) async -> HTTPResponse {
         switch (request.method.uppercased(), request.path ?? "/") {
         case (_, "/mcp"):
-            return await handleMCP(request)
+            return await handleMCP(request, host: query["host"].flatMap { $0.isEmpty ? nil : $0 } ?? "local")
         case ("GET", "/health"):
             return .data(Data("ok\n".utf8), headers: ["Content-Type": "text/plain"])
         case ("GET", "/hook/claude"):
@@ -144,7 +156,8 @@ public actor MCPServer {
                 return .error(statusCode: 400, MCPError.invalidParams("path is required"))
             }
             do {
-                try await dependencies.openDocument(object["host"] as? String ?? "local", path)
+                let line = (object["line"] as? Int).flatMap { $0 > 0 ? $0 : nil }
+                try await dependencies.openDocument(object["host"] as? String ?? "local", path, line)
                 return .ok(headers: ["Content-Length": "0"])
             } catch {
                 return .error(statusCode: 500, MCPError.internalError("\(error)"))
@@ -154,7 +167,8 @@ public actor MCPServer {
         }
     }
 
-    private func handleMCP(_ request: HTTPRequest) async -> HTTPResponse {
+    /// `host` is where the session's agent runs (from the registration URL); it is fixed when the session starts.
+    private func handleMCP(_ request: HTTPRequest, host: String) async -> HTTPResponse {
         if let id = request.header("Mcp-Session-Id"), let session = sessions[id] {
             sessions[id]?.lastUsed = Date()
             let response = await session.transport.handleRequest(request)
@@ -171,7 +185,7 @@ public actor MCPServer {
         }
         let id = UUID().uuidString
         let transport = StatefulHTTPServerTransport(sessionIDGenerator: FixedSessionID(id), logger: nil)
-        let server = await makeServer()
+        let server = await makeServer(agentHost: host)
         do {
             try await server.start(transport: transport)
         } catch {
@@ -237,6 +251,12 @@ public actor MCPServer {
             annotations: .init(idempotentHint: true)
         ),
         Tool(
+            name: "open_in_viewer",
+            description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another.",
+            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "line": ["type": "integer", "minimum": 1], "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"]], "required": ["path"], "additionalProperties": false],
+            annotations: .init(readOnlyHint: true, idempotentHint: true, openWorldHint: false)
+        ),
+        Tool(
             name: "list_documents",
             description: "Documents that currently have notes, with counts per state.",
             inputSchema: ["type": "object", "properties": [:], "additionalProperties": false],
@@ -245,15 +265,15 @@ public actor MCPServer {
     ]
 
     /// Handlers are registered before the server starts, so the first `tools/list` can never race them.
-    private func makeServer() async -> Server {
+    private func makeServer(agentHost: String) async -> Server {
         let server = Server(
             name: Self.serverName, version: dependencies.appVersion,
-            instructions: "Notes the user attached to files. Call list_pending_notes, act on each, then resolve_note.",
+            instructions: "Notes the user attached to files. Call list_pending_notes, act on each, then resolve_note. To point the user at code, call open_in_viewer with a path and line.",
             capabilities: .init(resources: .init(subscribe: false, listChanged: false), tools: .init(listChanged: false))
         )
         let dependencies = dependencies
         await server.withMethodHandler(ListTools.self) { _ in ListTools.Result(tools: Self.toolSchemas) }
-        await server.withMethodHandler(CallTool.self) { params in try await Self.callTool(params, dependencies: dependencies) }
+        await server.withMethodHandler(CallTool.self) { params in try await Self.callTool(params, dependencies: dependencies, agentHost: agentHost) }
         await server.withMethodHandler(ListResources.self) { _ in ListResources.Result(resources: try await Self.resources(dependencies: dependencies)) }
         await server.withMethodHandler(ReadResource.self) { params in try await Self.readResource(uri: params.uri, dependencies: dependencies) }
         return server
@@ -263,7 +283,7 @@ public actor MCPServer {
         .text(text: string, annotations: nil, _meta: nil)
     }
 
-    nonisolated static func callTool(_ params: CallTool.Parameters, dependencies: MCPDependencies) async throws -> CallTool.Result {
+    nonisolated static func callTool(_ params: CallTool.Parameters, dependencies: MCPDependencies, agentHost: String = "local") async throws -> CallTool.Result {
         let store = dependencies.noteStore
         let arguments = params.arguments ?? [:]
         switch params.name {
@@ -308,6 +328,23 @@ public actor MCPServer {
             }
             try await store.resolve(id, outcome: outcome, message: arguments["message"]?.stringValue)
             return CallTool.Result(content: [text("resolved \(raw)")])
+        case "open_in_viewer":
+            guard let path = arguments["path"]?.stringValue, path.hasPrefix("/") else {
+                return CallTool.Result(content: [text("path must be absolute")], isError: true)
+            }
+            let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
+            if host != "local", try await hostID(named: host, store: store) == nil {
+                return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
+            }
+            var line: Int?
+            if let raw = arguments["line"] {
+                guard let value = raw.intValue ?? raw.doubleValue.flatMap({ $0.isFinite ? Int(exactly: $0.rounded(.down)) : nil }) ?? raw.stringValue.flatMap({ Int($0) }), value > 0 else {
+                    return CallTool.Result(content: [text("line must be a positive integer")], isError: true)
+                }
+                line = value
+            }
+            try await dependencies.openDocument(host, path, line)
+            return CallTool.Result(content: [text("showing \(host):\(path)\(line.map { " at line \($0)" } ?? "")")])
         case "list_documents":
             let documents = try await store.documentsWithNotes()
             let hosts = Dictionary(uniqueKeysWithValues: try await store.hosts().map { ($0.id, $0.name) })

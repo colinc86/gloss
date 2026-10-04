@@ -31,10 +31,11 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 
 - **Host picker.** Hosts come from `~/.ssh/config` plus `local`. Selecting a host opens or reuses one SSH control connection. Reconnects are automatic after sleep or a network change.
 - **Roots.** Each host remembers its recent roots. You can type a path, pick a recent one, or jump to the cwd of a Herdr pane. Multiple roots can be open as tabs in the sidebar.
-- **Tree.** Lazy loading per directory, dotfiles toggled, gitignore-aware dimming when a `.gitignore` is present, file type icons. Expanding a remote directory is one SFTP round trip.
-- **Follow mode.** When connected to Herdr, the tree can follow the focused pane: focus an agent on `workbox` and the tree switches to that host and that pane's working directory. Agent status shows beside the root as a badge.
+- **Tree.** Lazy loading per directory, dotfiles toggled, gitignore-aware dimming when a `.gitignore` is present, file type icons. Expanding a remote directory is one SFTP round trip. Reveal in Explorer (⌘⇧J) selects the open document in the tree, expanding folders on the way and opening its folder as a root when none contains it.
+- **Unknown file types.** A file whose extension nobody listed (`.jsonl`, a rotated log, a config with its own suffix) opens in the text editor when its first bytes are text and it is under the 2 MB editing limit; only binary or larger files go to QuickLook.
+- **Follow mode.** The tree follows the focused Herdr pane: focus an agent on `workbox` and the tree switches to that host and that pane's working directory, connecting the host first if needed, and the agent becomes the send target. Switching machines in Herdr switches the tree the same way. Picking a Herdr or tmux agent in the target picker also opens its working directory. Agent status shows beside the root as a badge.
 - **File operations.** New file, new folder, rename, move, duplicate, delete to trash locally, delete with confirmation remotely, reveal in Finder for local, copy path, copy relative path.
-- **Search.** Filename filter in the tree. Content search uses ripgrep locally and `rg` or `grep` over the exec channel remotely, with results opening at the matched line.
+- **Search.** Filename filter in the tree. Content search uses ripgrep locally and `rg` or `grep` over the exec channel remotely, with results opening at the matched line. Open Quickly (⌘P) fuzzy-finds any file under the selected root, local or remote (`rg --files` or `find`, skipping `.git` and `node_modules`), ranking file-name and word-start matches first. Queries are plain text unless the `.*` toggle makes them regular expressions; case is ignored unless the query has a capital letter; an invalid regular expression says so instead of showing no matches.
 - **Freshness.** Local trees watch FSEvents. Remote trees refresh on focus, on manual refresh, and on a timer while a directory is visible.
 
 ## Viewers and editing
@@ -45,12 +46,12 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 | Markdown | Toggle between rendered and source | Source range, mapped from either view | Yes, in source view |
 | Images (PNG, JPEG, HEIC, GIF, WebP, SVG) | Zoomable image view with region overlay | Rectangle in original pixel space | No |
 | PDF | PDFKit | Text selection or page region | No |
-| CSV and TSV | Grid view | Cell range | No in milestone 1 |
+| CSV and TSV | Grid view | Rows (line range), a cell, a block, scattered cells, or whole columns; stored as a text anchor over the records' lines plus a cell list | No in milestone 1 |
 | Everything else | QuickLook | Whole file | No |
 
 **Markdown toggle.** The rendered view is built from swift-markdown's syntax tree, which carries a source range for every node. Rendered text is an attributed string whose runs carry those ranges, so a selection in the rendered view maps straight back to source bytes. Notes are stored in source coordinates and appear in both views.
 
-**Editing.** Text and markdown documents are editable in place with undo, find and replace, and tree-sitter structural selection. Note anchors shift with edits as they happen.
+**Editing.** Text and markdown documents are editable in place with undo, find and replace, tree-sitter structural selection, and Go to Line (⌘L, `line` or `line:column`). Syntax highlighting is incremental, so a keystroke re-highlights only what changed. Embedded languages (markdown inline text and fenced code, Rust macro bodies) are highlighted in documents up to 24 KB and corrected in the background after a pause in typing; larger documents skip them so typing stays fast, and highlighting stops above 1 MB. Note anchors shift with edits as they happen.
 
 **Saving.** Local saves are atomic writes. Remote saves write a temp file in the same directory and rename over the original, preserving mode bits. Before any save the app compares current mtime and size (and hash on mismatch) with the values read at open time; on a difference it shows a three-way diff instead of overwriting.
 
@@ -65,9 +66,9 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 | PDF region | Page index, bounds in page points, selected text if any, page count | Same page and text present: keep. Otherwise search nearby pages for the text |
 | Whole file | Path and file hash | Always valid while the file exists |
 
-**Creating a note.** Select a range or drag a rectangle, then press the shortcut or click the gutter marker. A popover takes the comment with markdown. Notes show as colored highlights in the viewer and as cards in the notes panel, grouped by document.
+**Creating a note.** Select a range or drag a rectangle, then click the floating Add Note button (or press the shortcut). A popover takes the comment with markdown: Return saves, Shift-Return (or Option-Return) adds a line, Escape cancels. Notes show as colored highlights in the viewer and as cards in the notes panel, grouped by document. The panel filters by state, color, and a text search over note bodies, file names, and resolve messages, and sorts by position in the file, newest, oldest, color, or state; the sort order is remembered.
 
-**Lifecycle.** draft → sent → resolved, plus orphaned. Sent notes record target, transport, and time. Resolved notes were marked done by an agent through MCP or by hand. Orphaned notes lost their anchor and need a glance before resending.
+**Lifecycle.** draft → sent → resolved, plus orphaned. Sent notes record target, transport, and time, and each card shows where its latest send went and when (or why it failed). A resolved card shows the agent's resolve message, and Reopen as Draft (card context menu) takes it back. In the notes panel, Return shows the selected note in the viewer and Delete removes it at once, with Undo in a toast and in Edit › Undo; each card's context menu reveals, edits, sends, copies the note as a packet or its comment or path, resolves, and deletes. Resolved notes were marked done by an agent through MCP or by hand. Orphaned notes lost their anchor and need a glance before resending.
 
 **Scope.** Notes live in the app database, keyed by host and absolute path, never in the file. They persist across restarts and survive agent edits.
 
@@ -100,7 +101,7 @@ Notes: 2. Mark each resolved with the gloss MCP tool when done.
 
 **Choosing a target.** The send menu lists every live agent the app can see: Herdr panes on each connected host with agent kind and status, OpenCode servers, and mapped tmux panes. Last used target per root is the default; Cmd-Enter sends to it.
 
-**Individually or in bulk.** Each note card has its own send button. The panel header sends all draft notes for the current document, or across documents, as one packet.
+**Individually or in bulk.** Each note card has its own send button. The panel header's Send (⌘↩) sends the current document's drafts the panel shows (its state tab, colours, and search all apply; with the panel closed, all of the document's drafts) as one packet; Send All Drafts (⇧⌘↩, in the ⋯ menu) sends every draft across documents. What you see is what goes to the agent, and Copy Packet for Document (⇧⌘C) copies the same notes (decided 2026-10-03, for human-in-the-loop control).
 
 **Attachments.** Crops and PDF page renders are PNG. Local targets: Application Support cache. Remote targets: uploaded over SFTP to a per-send temp directory on that host before delivery.
 
@@ -111,16 +112,16 @@ Notes: 2. Mark each resolved with the gloss MCP tool when done.
 | Transport | Direction | Covers | How it works |
 | --- | --- | --- | --- |
 | Herdr socket | Push | Any agent in a Herdr pane, local or remote | NDJSON over the Unix socket. `agent.list` discovers targets, `agent.prompt` submits with bracketed paste, `events.subscribe` drives follow mode and status badges. Remote servers reached by forwarding their socket over the app's SSH connection |
-| MCP server | Pull and resolve | Claude Code, Codex, OpenCode | Streamable HTTP on localhost. Tools: `list_pending_notes`, `get_note`, `resolve_note`, `list_documents`. Attachments as resources. Port reverse-forwarded for remote agents; the app writes each agent's config line on request |
+| MCP server | Pull and resolve | Claude Code, Codex, OpenCode | Streamable HTTP on localhost. Tools: `list_pending_notes`, `get_note`, `resolve_note`, `list_documents`, and `open_in_viewer` (an agent shows the user a file at a line). Attachments as resources. Port reverse-forwarded for remote agents, whose registration URL carries `?host=<alias>` so paths resolve on their machine; the app writes each agent's config line on request |
 | Claude Code hook | Pull | Claude Code | `UserPromptSubmit` hook drains draft notes under the session's cwd into `additionalContext` (10,000 char limit); drained notes become `sent` and stay reachable through MCP until resolved, so they are not re-injected on every prompt |
 | Codex hook | Pull | Codex | Same shape via `hooks.json`; experimental, needs the hooks feature flag |
 | OpenCode API | Push | OpenCode launched with a fixed port | `POST /session/:id/message` with text and image parts |
 | tmux | Push | Any agent in a tmux pane without Herdr | bracketed paste over the exec channel; pane chosen once per host |
 | Clipboard | Manual | Anything, including bare mosh or ssh | Packet as text; attachments by path |
 
-**Herdr plugin.** Ships with the app and is installed from Settings → Hooks, locally or on a connected host: the bundle is copied to `~/.config/gloss/herdr-plugin/` and linked with `herdr plugin link`. A keybinding (snippet shown in Settings; the app never edits Herdr's config) sends selected pane text to Gloss as a note; a link handler opens `file://` links printed by an agent in the viewer. On this Mac the script calls the app's URL scheme; on a host it posts to the app's `/plugin/note` endpoint through the reverse-forwarded port.
+**Herdr plugin.** Ships with the app and is installed from Settings → Hooks, locally or on a connected host: the bundle is copied to `~/.config/gloss/herdr-plugin/` and linked with `herdr plugin link`. A keybinding (snippet shown in Settings; the app never edits Herdr's config) sends selected pane text to Gloss as a note; a link handler opens `file://` links and `path:line[:col]` locations printed by an agent in the viewer, scrolled to that line (also `file://…#L12`); `gloss://open` and `/plugin/open` take an optional `line`. On this Mac the script calls the app's URL scheme; on a host it posts to the app's `/plugin/note` endpoint through the reverse-forwarded port.
 
-**Herdr follow mode.** Subscribes to `pane.focused` and `pane.agent_status_changed` on every connected Herdr server. The focused pane's `foreground_cwd` becomes the suggested root. Remote: `~/.config/herdr/herdr.sock` forwarded to a local socket on the existing control connection.
+**Herdr follow mode.** Subscribes to `pane.focused` and `pane.agent_status_changed` on every connected Herdr server. The focused pane's `foreground_cwd` becomes the root and the pane becomes the send target. Remote: `~/.config/herdr/herdr.sock` forwarded to a local socket on the existing control connection. Herdr's socket API has no notion of machines (each server only knows its own panes), so which server the Herdr client is showing comes from its state files, `~/.local/state/herdr/client/endpoint-selection.json` and `endpoints.json`, watched with FSEvents; a machine's ssh `target` is matched to the app host of the same name, which is connected on demand, and only that server's focus events reach the tree. Without those files every server's events apply.
 
 ## Architecture and technology
 

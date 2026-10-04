@@ -32,6 +32,8 @@ public final class ImageViewerController {
     public let image: DecodedImage
     /// Rectangle being drawn or just drawn, in pixel space; nil when nothing is selected.
     public var selection: CGRect?
+    /// Bumped on each copy, for the toolbar's brief "Copied".
+    public internal(set) var copyCount = 0
     public var highlights: [ImageHighlight] = [] {
         didSet { onHighlightsChange() }
     }
@@ -49,6 +51,9 @@ public final class ImageViewerController {
     public init(image: DecodedImage) {
         self.image = image
     }
+
+    /// The current zoom level (1 = actual pixels), for the toolbar's readout.
+    public internal(set) var magnification: CGFloat = 1
 
     public func zoom(_ command: ZoomCommand) {
         pendingZoom = command

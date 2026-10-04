@@ -11,8 +11,6 @@ final class FileNode: NSObject {
     var children: [FileNode]?
     var isLoading = false
     var isIgnored = false
-    /// How many notes the document holds, for the badge.
-    var noteCount = 0
 
     init(hostID: HostID, entry: DirectoryEntry, parent: FileNode?) {
         self.hostID = hostID
@@ -42,8 +40,15 @@ final class FileNode: NSObject {
                 inserted.append(node)
             }
         }
-        children = merged
+        children = merged.sorted(by: Self.treeOrder)
         return (inserted, Array(existing.values))
+    }
+
+    /// Folders (and links to folders) first, then names the way Finder orders them: case-insensitive, with
+    /// numbers compared by value (`file2` before `file10`).
+    static func treeOrder(_ lhs: FileNode, _ rhs: FileNode) -> Bool {
+        if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+        return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
     }
 
     /// Children after the dotfile toggle and the name filter.

@@ -95,6 +95,17 @@ ssh -o ControlPath=<cp> -O forward -L <local-sock-path>:/home/<user>/.config/her
 Use `-o StreamLocalBindUnlink=yes` on the master so a stale local socket file is replaced. Fallbacks, in order: `herdr agent list --json` over the exec channel, then `herdr --machine <profile> agent list --json` locally when `herdr machine list --json` has a profile for that host (profile `asus` exists on this Mac).
 Herdr's own `[remote] manage_ssh_config` only affects Herdr's attach connection; it does not interfere with ours.
 
+## Machines (verified on 0.9.3, 2026-10-02)
+
+The socket API has no machine methods: each server knows only its own panes, and switching machines in the client
+fires nothing on the local socket. The client persists its choice under `~/.local/state/herdr/client/`
+(`$XDG_STATE_HOME/herdr/client` when set): `endpoint-selection.json` is `{"version":1,"selected_profile":null}` for
+this Mac or a profile naming the machine id (serialised from a Rust enum, `{"ssh":"<id>"}` or `"ssh:<id>"`), and
+`endpoints.json` lists `{"id","label","target","session","enabled"}` per saved ssh machine, where `target` is the
+ssh destination (the alias from `~/.ssh/config`). `herdr machine list --json` prints the same with a `selected`
+flag. `HerdrMachineWatcher` watches that directory; follow mode connects the app host named like `target` and
+gates focus events to the selected server.
+
 ## Plugins
 
 Verified on 0.9.3 (2026-10-02): `herdr plugin link <dir>` validates the manifest and warns when top-level

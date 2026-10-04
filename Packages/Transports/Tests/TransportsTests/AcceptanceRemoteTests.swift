@@ -75,7 +75,10 @@ struct AcceptanceRemoteTests {
                 text = try await client.paneRead(pane, source: "visible", lines: 60)
                 if text.contains("resolve_note") { break }
             }
-            #expect(text.contains("Attachment: \(agentPath)") && text.contains("Region: x=10 y=20 w=300 h=120"), "\(text)")
+            // The pane is narrow (a fifth of the window), so long lines such as the attachment path wrap in the
+            // visible text; match against it with the wraps removed.
+            let unwrapped = text.replacingOccurrences(of: "\n", with: "")
+            #expect(unwrapped.contains("Attachment: \(agentPath)") && unwrapped.contains("Region: x=10 y=20 w=300 h=120"), "\(text)")
             let present = try await connection.exec("test -s \(ShellQuote.single(agentPath)) && echo yes")
             #expect(present.stdoutText == "yes\n", "the crop exists on the host at the path the packet names")
         } catch {

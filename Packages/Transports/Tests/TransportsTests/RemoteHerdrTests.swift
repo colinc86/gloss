@@ -37,7 +37,13 @@ struct RemoteHerdrTests {
                     return nil
                 } ?? nil
                 await service.stop()
-                #expect(first?.hostID == hostID && first?.path != nil, "the initial agent list seeds a follow event")
+                // The seed is the focused agent pane; a host whose focused pane is a plain shell seeds nothing.
+                let focusedAgent = try await HerdrClient(socketPath: socket).agentList().first { $0.focused == true && $0.agent != nil }
+                if let focusedAgent {
+                    #expect(first?.hostID == hostID && first?.paneID == focusedAgent.paneID && first?.info != nil, "the focused agent pane seeds a follow event")
+                } else {
+                    #expect(first == nil, "no agent pane has focus, so nothing seeds the stream")
+                }
             }
         } catch {
             await manager.disconnectAll()

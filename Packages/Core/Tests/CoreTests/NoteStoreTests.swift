@@ -52,6 +52,11 @@ struct NoteStoreTests {
         await #expect(throws: NoteStoreError.illegalTransition(from: .resolved, to: .resolved)) {
             try await store.resolve(note.id)
         }
+        try await store.reopen(note.id)
+        let reopened = try await store.note(note.id)
+        #expect(reopened?.state == .draft && reopened?.resolveOutcome == nil && reopened?.resolveMessage == nil)
+        await #expect(throws: NoteStoreError.illegalTransition(from: .draft, to: .draft)) { try await store.reopen(note.id) }
+        try await store.resolve(note.id)
 
         try await store.markOrphaned(note.id)
         #expect(try await store.note(note.id)?.state == .orphaned)
@@ -68,6 +73,27 @@ struct NoteStoreTests {
         _ = try await store.recordSend(transport: "herdr", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .failed("agent blocked"))
         #expect(try await store.note(note.id)?.state == .draft)
         #expect(try await store.lastSend(for: note.id)?.outcome == "failed: agent blocked")
+        let later = Date().addingTimeInterval(60)
+        _ = try await store.recordSend(transport: "tmux", targetJSON: #"{"t":1}"#, packetText: "p2", noteIDs: [note.id], outcome: .delivered, at: later)
+        let other = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "b", color: .blue)
+        _ = try await store.recordSend(transport: "herdr", targetJSON: "{}", packetText: "p3", noteIDs: [other.id], outcome: .delivered, at: later.addingTimeInterval(60))
+        let last = try #require(try await store.lastSend(for: note.id))
+        #expect(last.transport == "tmux" && last.outcome == "delivered" && last.targetJSON == #"{"t":1}"#, "the newest send of this note, not of another")
+        #expect(abs(last.sentAt.timeIntervalSince(later)) < 1)
+        #expect(try await store.sends(for: note.id).count == 2)
+    }
+
+    @Test func pathPrefixMatchesNonASCIIDirectories() async throws {
+        let store = try makeStore()
+        let accented = try await store.upsertDocument(hostID: .local, path: "/Users/c/Café Notes/plan.md", kind: .markdown, fingerprint: Fingerprint())
+        let emoji = try await store.upsertDocument(hostID: .local, path: "/Users/c/🚀 launch/a.txt", kind: .text, fingerprint: Fingerprint())
+        let sibling = try await store.upsertDocument(hostID: .local, path: "/Users/c/Café Notes2/x.md", kind: .markdown, fingerprint: Fingerprint())
+        _ = try await store.createNote(documentID: accented.id, anchor: .wholeFile, body: "a", color: .yellow)
+        _ = try await store.createNote(documentID: emoji.id, anchor: .wholeFile, body: "b", color: .yellow)
+        _ = try await store.createNote(documentID: sibling.id, anchor: .wholeFile, body: "c", color: .yellow)
+        #expect(try await store.pendingNotes(pathPrefix: "/Users/c/Café Notes").map(\.note.body) == ["a"])
+        #expect(try await store.pendingNotes(pathPrefix: "/Users/c/🚀 launch/").map(\.note.body) == ["b"])
+        #expect(try await store.pendingNotes(pathPrefix: "/Users/c/Café Notes/plan.md").map(\.note.body) == ["a"], "an exact file still matches")
     }
 
     @Test func pendingNotesFilterByHostAndPathPrefix() async throws {
@@ -164,5 +190,26 @@ struct NoteStoreTests {
         #expect(resolved.state == .resolved)
         #expect(resolved.resolveOutcome == .needsInput)
         #expect(resolved.resolveMessage == "Which TTL?")
+    }
+}
+
+struct NoteUndoTests {
+    @Test func aDeletedNoteComesBackWithItsAttachmentsAndSends() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/undo.md", kind: .markdown, fingerprint: Fingerprint(mtime: Date(timeIntervalSince1970: 1), size: 1, hash: "h"))
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "keep me", color: .pink)
+        _ = try await store.addAttachment(noteID: note.id, kind: .crop, localPath: "/tmp/crop.png", width: 10, height: 10)
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+
+        let deleted = try #require(try await store.deleteNoteForUndo(note.id))
+        #expect(try await store.attachments(for: note.id).isEmpty)
+        #expect(try await store.lastSend(for: note.id) == nil)
+
+        try await store.restore(deleted)
+        let notes = try await store.documentsWithNotes().flatMap(\.notes)
+        #expect(notes.map(\.id) == [note.id])
+        #expect(notes.first?.body == "keep me" && notes.first?.color == .pink)
+        #expect(try await store.attachments(for: note.id).count == 1)
+        #expect(try await store.lastSend(for: note.id) != nil)
     }
 }

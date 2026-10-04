@@ -8,13 +8,21 @@ public struct FollowEvent: Sendable, Equatable {
     public var path: String?
     public var agent: String?
     public var status: String?
+    /// The full pane description when the event came from `agent.list` or `pane.get`, so the app can make the
+    /// pane a send target; nil for status-only events.
+    public var info: HerdrAgentInfo?
 
-    public init(hostID: HostID, paneID: String, path: String?, agent: String?, status: String?) {
+    public init(hostID: HostID, paneID: String, path: String?, agent: String?, status: String?, info: HerdrAgentInfo? = nil) {
         self.hostID = hostID
         self.paneID = paneID
         self.path = path
         self.agent = agent
         self.status = status
+        self.info = info
+    }
+
+    public init(hostID: HostID, pane: HerdrAgentInfo) {
+        self.init(hostID: hostID, paneID: pane.paneID, path: pane.currentDirectory, agent: pane.agent, status: pane.agentStatus, info: pane)
     }
 }
 
@@ -60,8 +68,9 @@ public actor HerdrFollowService {
     /// One subscription lifetime. Returns true when the server closed it normally (no backoff needed).
     private func runOnce() async -> Bool {
         let agents = (try? await client.agentList()) ?? []
-        for agent in agents where agent.agent != nil {
-            continuation.yield(FollowEvent(hostID: hostID, paneID: agent.paneID, path: agent.currentDirectory, agent: agent.agent, status: agent.agentStatus))
+        // Seed with the pane that has focus now; listing every agent would open a root for each of them.
+        for agent in agents where agent.agent != nil && agent.focused == true {
+            continuation.yield(FollowEvent(hostID: hostID, pane: agent))
         }
         var subscriptions: [[String: String]] = [["type": "pane.focused"], ["type": "pane.closed"], ["type": "pane.created"], ["type": "pane.agent_detected"]]
         subscriptions += agents.map { ["type": "pane.agent_status_changed", "pane_id": $0.paneID] }
@@ -70,7 +79,7 @@ public actor HerdrFollowService {
                 switch event.event {
                 case "pane_focused":
                     guard let paneID = event.paneID, let pane = try? await client.paneGet(paneID) else { continue }
-                    continuation.yield(FollowEvent(hostID: hostID, paneID: paneID, path: pane.currentDirectory, agent: pane.agent, status: pane.agentStatus))
+                    continuation.yield(FollowEvent(hostID: hostID, pane: pane))
                 case "pane_agent_status_changed":
                     guard let paneID = event.paneID else { continue }
                     continuation.yield(FollowEvent(hostID: hostID, paneID: paneID, path: nil, agent: event.agent, status: event.agentStatus))

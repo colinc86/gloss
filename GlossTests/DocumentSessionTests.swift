@@ -37,6 +37,76 @@ struct DocumentSessionTests {
         session.close()
     }
 
+    @Test func unknownExtensionsOpenAsTextWhenTheBytesAreText() async throws {
+        let (directory, path) = try makeFile("{\"a\":1}\n{\"a\":2}\n", name: "events.weird")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let session = try makeSession(path: path)
+        await session.open()
+        #expect(session.kind == .text)
+        let controller = try #require(session.textController, "a text file with an unlisted extension is editable")
+        #expect(controller.text.hasPrefix("{\"a\":1}") && controller.isEditable)
+        #expect(session.document?.kind == .text, "the sniffed kind is what the store records")
+        session.close()
+
+        let binary = "\(directory)/blob.weird"
+        try Data((0..<512).map { UInt8($0 % 31 + 1) }).write(to: URL(fileURLWithPath: binary))
+        let other = try makeSession(path: binary)
+        await other.open()
+        #expect(other.kind == .file && other.textController == nil, "binary bytes stay with QuickLook")
+        if case .quickLook = other.state {} else { Issue.record("expected QuickLook for a binary file, got \(other.state)") }
+        other.close()
+    }
+
+    @Test func parsesGoToLineInput() {
+        #expect(DocumentSession.parseGoToLine("12")! == (12, nil))
+        #expect(DocumentSession.parseGoToLine(" 12:4 ")! == (12, 4))
+        #expect(DocumentSession.parseGoToLine("12,4")! == (12, 4))
+        for bad in ["", "0", "-3", "abc", "12:", "12:0", "1:2:3"] {
+            #expect(DocumentSession.parseGoToLine(bad) == nil, "\(bad) is refused")
+        }
+    }
+
+    @Test func goToLineSelectsTheLineOrPlacesTheCaret() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n", name: "a.txt")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let session = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        session.goTo(line: 2, column: nil)
+        #expect(controller.pendingScroll == controller.lineIndex.contentRange(ofLine: 2))
+        session.goTo(line: 3, column: 3)
+        #expect(controller.pendingScroll == NSRange(location: controller.lineIndex.contentRange(ofLine: 3).location + 2, length: 0))
+        session.goTo(line: 2, column: 99)
+        #expect(controller.pendingScroll == NSRange(location: controller.lineIndex.contentRange(ofLine: 2).location + 3, length: 0), "a column past the end lands at the line end")
+        session.close()
+    }
+
+    @Test func goToLineNeverSplitsAnEmoji() async throws {
+        let (directory, path) = try makeFile("a😀b\n", name: "e.txt")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let session = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        session.goTo(line: 1, column: 3)   // UTF-16 offset 2 is the second half of the emoji
+        #expect(controller.pendingScroll == NSRange(location: 1, length: 0), "the caret snaps to the emoji's start")
+        session.close()
+    }
+
+    @Test func goToLineInRenderedMarkdownLandsOnSomethingShown() async throws {
+        let (directory, path) = try makeFile("# Title\n\nFirst paragraph.\n\nSecond paragraph.\n", name: "r.md")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let session = try makeSession(path: path)
+        await session.open()
+        let markdown = try #require(session.markdown)
+        markdown.mode = .rendered
+        let before = markdown.pendingRenderedScrollVersion
+        session.goTo(line: 2, column: nil)   // a blank line: renders to nothing
+        #expect(markdown.pendingRenderedScrollVersion == before + 1, "the jump goes to the next line that renders")
+        session.goTo(line: 3, column: 4)     // a caret inside a paragraph
+        #expect(markdown.pendingRenderedScrollVersion == before + 2)
+        session.close()
+    }
+
     @Test func detectsConflictAndMergesNonOverlappingEdits() async throws {
         let (directory, path) = try makeFile("one\ntwo\nthree\nfour\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -106,5 +176,13 @@ struct DocumentSessionTests {
         #expect(session.banner == .readOnlyLargeFile)
         #expect(session.textController?.isEditable == false)
         session.close()
+    }
+}
+
+struct OpenFailureMessageTests {
+    @Test func fileErrorsReadAsSentences() {
+        #expect(DocumentSession.openFailure(FileSystemError.notFound("/x")).hasPrefix("The file isn't there."))
+        #expect(DocumentSession.openFailure(FileSystemError.permissionDenied("/x")) == "You don't have permission to read this file.")
+        #expect(DocumentSession.openFailure(FileSystemError.io("timed out")).hasSuffix("timed out"))
     }
 }

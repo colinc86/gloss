@@ -21,6 +21,30 @@ final class SendCoordinator {
     private(set) var lastOutcome: String?
     private(set) var lastError: String?
     private(set) var lastTarget: AgentTarget?
+    /// The send in flight (how many notes, to whom), for the panel's progress toast.
+    private(set) var inFlight: (count: Int, target: AgentTarget)?
+    /// The last send's outcome, for the panel's toast; cleared when the toast goes away.
+    private(set) var lastResult: SendResult?
+
+    struct SendResult: Equatable, Identifiable {
+        let id = UUID()
+        let noteIDs: [NoteID]
+        let target: AgentTarget
+        /// Nil when delivered.
+        let failure: String?
+
+        static func == (lhs: SendResult, rhs: SendResult) -> Bool { lhs.id == rhs.id }
+    }
+
+    func clearResult() { lastResult = nil }
+
+    /// Sends the last result's notes to the same target again.
+    func retry() async {
+        guard let result = lastResult else { return }
+        await send(noteIDs: result.noteIDs, to: result.target)
+    }
+    /// Bumped when a send attempt finishes, delivered or not; note cards refetch their latest send on it.
+    private(set) var completedSends = 0
     /// Days before staged remote directories are removed.
     var stagedFileExpiryDays = 7
 
@@ -59,14 +83,26 @@ final class SendCoordinator {
             }
             for await targets in group { found.append(contentsOf: targets) }
         }
-        targets = found.sorted { ($0.transport.rawValue, $0.label) < ($1.transport.rawValue, $1.label) }
+        // Transport order is the delivery priority (Herdr first, clipboard last); agents sort by label within one.
+        targets = found.sorted { (Self.priority($0.transport), $0.label) < (Self.priority($1.transport), $1.label) }
         if lastTarget == nil { lastTarget = await restoreLastTarget() }
     }
 
+    private static func priority(_ kind: TransportKind) -> Int {
+        TransportKind.allCases.firstIndex(of: kind) ?? TransportKind.allCases.count
+    }
+
+    /// The target used last time when it is still around, else the first agent found; the clipboard only when
+    /// nothing else is, so the picker never shows "Clipboard" beside a list of live agents.
     private func restoreLastTarget() async -> AgentTarget? {
+        let fallback = targets.first { $0.transport != .clipboard } ?? targets.first
         guard let stored = try? await noteStore.setting("send.lastTarget"), let data = stored.data(using: .utf8),
-              let target = try? JSONDecoder().decode(AgentTarget.self, from: data) else { return targets.first }
-        return targets.first { $0.id == target.id } ?? target
+              let target = try? JSONDecoder().decode(AgentTarget.self, from: data) else { return fallback }
+        if let live = targets.first(where: { $0.id == target.id }) { return live }
+        // A remote agent whose host is not connected yet becomes live after connecting; anything else that
+        // discovery no longer sees is gone, and a live agent is a better default than a dead one.
+        let awaitingHost = target.hostID != .local && fileSystemProvider(target.hostID) == nil
+        return awaitingHost && target.transport != .clipboard ? target : fallback
     }
 
     func rememberTarget(_ target: AgentTarget) {
@@ -86,10 +122,17 @@ final class SendCoordinator {
         guard !noteIDs.isEmpty, !isSending else { return }
         guard let transport = transports.first(where: { $0.kind == target.transport }) else {
             lastError = "No transport for \(target.transport.displayName)"
+            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: lastError)
             return
         }
         isSending = true
-        defer { isSending = false }
+        inFlight = (noteIDs.count, target)
+        lastResult = nil
+        defer {
+            isSending = false
+            inFlight = nil
+            completedSends += 1
+        }
         lastError = nil
         let sendID = SendID.new()
         do {
@@ -105,6 +148,7 @@ final class SendCoordinator {
                     try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
                 }
                 lastOutcome = "Sent \(packet.noteIDs.count) note\(packet.noteIDs.count == 1 ? "" : "s") to \(target.label)" + (receipt.detail.map { " (\($0))" } ?? "")
+                lastResult = SendResult(noteIDs: packet.noteIDs, target: target, failure: nil)
                 rememberTarget(target)
             } catch {
                 let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error)"))
@@ -115,6 +159,7 @@ final class SendCoordinator {
             }
         } catch {
             lastError = "Send failed: \(error)"
+            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: (error as? LocalizedError)?.errorDescription ?? "\(error)")
             Log.transport.error("send failed: \(error, privacy: .public)")
         }
     }
@@ -173,6 +218,7 @@ final class SendCoordinator {
         var result: [PacketNote] = []
         for (note, document) in notes {
             var excerpt: [String] = []
+            var cellDescription: String?
             if case .text(let anchor) = note.anchor {
                 let key = "\(document.hostID.rawValue):\(document.path)"
                 if contents[key] == nil {
@@ -182,7 +228,13 @@ final class SendCoordinator {
                         contents[key] = try await readText(hostID: document.hostID, path: document.path) ?? ""
                     }
                 }
-                excerpt = ExcerptExtractor.lines(for: anchor, in: contents[key] ?? "")
+                if let cells = anchor.cells {
+                    let made = CellExcerpt.make(anchor: anchor, cells: cells, content: contents[key] ?? "", fileName: (document.path as NSString).lastPathComponent)
+                    excerpt = made.lines
+                    cellDescription = made.description
+                } else {
+                    excerpt = ExcerptExtractor.lines(for: anchor, in: contents[key] ?? "")
+                }
             } else if case .pdf(let anchor) = note.anchor, let text = anchor.text {
                 excerpt = text.components(separatedBy: "\n")
             }
@@ -195,7 +247,7 @@ final class SendCoordinator {
             result.append(PacketNote(
                 noteID: note.id, agentPath: document.path, source: PacketSource(kind: document.kind), anchor: note.anchor,
                 comment: note.body, excerptLines: excerpt, selectedText: selectedText,
-                attachmentAgentPath: staged.first { $0.noteID == note.id }?.agentPath
+                attachmentAgentPath: staged.first { $0.noteID == note.id }?.agentPath, cellDescription: cellDescription
             ))
         }
         return result
@@ -209,5 +261,26 @@ final class SendCoordinator {
 
     private func targetJSON(_ target: AgentTarget) -> String {
         (try? JSONEncoder().encode(target)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+}
+
+extension AgentTarget {
+    /// Whether the agent works in `path` on `hostID`: its directory is the folder or inside it. A parent folder does
+    /// not count; an agent started in `~` would otherwise match every project. Only transports that report a
+    /// directory match.
+    nonisolated func runs(inHost hostID: HostID, path: String) -> Bool {
+        guard self.hostID == hostID, transport == .herdr || transport == .tmux || transport == .opencode,
+              let directory = detail, directory.hasPrefix("/") else { return false }
+        func contains(_ outer: String, _ inner: String) -> Bool {
+            let outer = outer.count > 1 && outer.hasSuffix("/") ? String(outer.dropLast()) : outer
+            let inner = inner.count > 1 && inner.hasSuffix("/") ? String(inner.dropLast()) : inner
+            return inner == outer || inner.hasPrefix(outer == "/" ? "/" : outer + "/")
+        }
+        if contains(path, directory) { return true }
+        // Local folders can be reached through symlinks (`/tmp` is `/private/tmp`).
+        guard hostID == .local else { return false }
+        let resolvedDirectory = URL(fileURLWithPath: directory).resolvingSymlinksInPath().path
+        let resolvedPath = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return contains(resolvedPath, resolvedDirectory)
     }
 }

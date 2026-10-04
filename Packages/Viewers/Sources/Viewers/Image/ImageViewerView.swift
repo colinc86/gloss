@@ -16,6 +16,8 @@ public struct ImageViewerView: NSViewRepresentable {
     public func makeNSView(context: Context) -> NSScrollView {
         let canvas = ImageCanvasView(controller: controller)
         let scroll = NSScrollView()
+        // Centres an image smaller than the pane instead of pinning it to the top-left corner.
+        scroll.contentView = CenteringClipView()
         scroll.documentView = canvas
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
@@ -23,10 +25,13 @@ public struct ImageViewerView: NSViewRepresentable {
         scroll.allowsMagnification = true
         scroll.minMagnification = 0.05
         scroll.maxMagnification = 32
-        scroll.backgroundColor = .windowBackgroundColor
+        // A quiet backdrop that separates the picture from the window, whatever its colours.
+        scroll.backgroundColor = .underPageBackgroundColor
         scroll.drawsBackground = true
         context.coordinator.attach(canvas: canvas, scrollView: scroll)
-        DispatchQueue.main.async { context.coordinator.fit() }
+        // On open, shrink a large image to fit but show a small one at actual size (centred), as Preview does:
+        // enlarging a 360-pixel diagram to fill the pane only blurs it.
+        DispatchQueue.main.async { context.coordinator.fitWithoutEnlarging() }
         return scroll
     }
 
@@ -45,6 +50,9 @@ public struct ImageViewerView: NSViewRepresentable {
         private weak var scrollView: NSScrollView?
         private var appliedZoom = 0
         private var observer: (any NSObjectProtocol)?
+        private var frameObserver: (any NSObjectProtocol)?
+        /// Until the user zooms, the image keeps fitting the pane as it settles and resizes.
+        private var autoFit = true
 
         init(controller: ImageViewerController) {
             self.controller = controller
@@ -58,14 +66,29 @@ public struct ImageViewerView: NSViewRepresentable {
                 return canvas.topLeftWindowRect(rect)
             }
             controller.onHighlightsChange = { [weak canvas] in canvas?.needsDisplay = true }
-            observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scrollView, queue: .main) { [weak canvas] _ in
-                MainActor.assumeIsolated { canvas?.needsDisplay = true }
+            observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scrollView, queue: .main) { [weak self, weak canvas] _ in
+                MainActor.assumeIsolated {
+                    self?.autoFit = false   // a pinch is a choice
+                    self?.publishMagnification()
+                    canvas?.needsDisplay = true
+                }
+            }
+            // The first fit can run before the pane has its final size (opening into an existing window); refit
+            // whenever the size changes while the zoom is still automatic.
+            scrollView.postsFrameChangedNotifications = true
+            frameObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scrollView, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.autoFit else { return }
+                    self.fitWithoutEnlarging()
+                }
             }
         }
 
         func detach() {
             if let observer { NotificationCenter.default.removeObserver(observer) }
+            if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
             observer = nil
+            frameObserver = nil
         }
 
         func sync() {
@@ -84,9 +107,26 @@ public struct ImageViewerView: NSViewRepresentable {
             apply(.fit)
         }
 
+        func fitWithoutEnlarging() {
+            guard let scrollView, let canvas, scrollView.contentSize.width > 1, scrollView.contentSize.height > 1 else { return }
+            scrollView.magnify(toFit: canvas.bounds)
+            if scrollView.magnification > 1 {
+                scrollView.setMagnification(1, centeredAt: CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY))
+            }
+            canvas.needsDisplay = true
+            publishMagnification()
+        }
+
+        private func publishMagnification() {
+            guard let scrollView, abs(controller.magnification - scrollView.magnification) > 0.001 else { return }
+            controller.magnification = scrollView.magnification
+        }
+
         private func apply(_ command: ImageViewerController.ZoomCommand) {
             guard let scrollView, let canvas else { return }
             let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
+            // Any zoom command but Fit hands the zoom level to the user.
+            autoFit = command == .fit
             switch command {
             case .fit:
                 scrollView.magnify(toFit: canvas.bounds)
@@ -98,6 +138,7 @@ public struct ImageViewerView: NSViewRepresentable {
                 scrollView.setMagnification(max(scrollView.minMagnification, scrollView.magnification / 1.5), centeredAt: center)
             }
             canvas.needsDisplay = true
+            publishMagnification()
         }
     }
 }
@@ -112,26 +153,70 @@ public struct ImageViewerPane: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Text("\(controller.image.width) × \(controller.image.height)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            ViewerToolbar {
+                Label("\(controller.image.width) × \(controller.image.height) px", systemImage: "photo")
                 if let selection = controller.selection {
-                    Text("Region \(Int(selection.minX)),\(Int(selection.minY)) \(Int(selection.width))×\(Int(selection.height))")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    Text("Region \(Int(selection.minX)), \(Int(selection.minY)) · \(Int(selection.width)) × \(Int(selection.height))")
+                        .foregroundStyle(.primary)
+                        .transition(.opacity)
                 }
-                Spacer()
-                Button("Fit") { controller.zoom(.fit) }.keyboardShortcut("0", modifiers: [.command])
-                Button("100%") { controller.zoom(.actualSize) }.keyboardShortcut("1", modifiers: [.command])
-                Button { controller.zoom(.zoomOut) } label: { Image(systemName: "minus.magnifyingglass") }.keyboardShortcut("-", modifiers: [.command])
-                Button { controller.zoom(.zoomIn) } label: { Image(systemName: "plus.magnifyingglass") }.keyboardShortcut("=", modifiers: [.command])
+            } trailing: {
+                CopiedBadge(count: controller.copyCount)
+                ZStack(alignment: .trailing) {
+                    if controller.selection != nil {
+                        ToolHints([ToolHint(keys: ["⌘", "C"], "Copy", explained: "Copy the region as an image"), ToolHint(keys: ["esc"], "Clear", explained: "Clear the region"), ToolHint(symbol: "rectangle.dashed", "Drag again to redraw", explained: "Drag again to draw a new region")])
+                            .transition(.opacity)
+                    } else {
+                        ToolHints([ToolHint(symbol: "rectangle.dashed", "Drag a region")]
+                                  + (controller.highlights.isEmpty ? [] : [ToolHint(symbol: "cursorarrow.click", "Click a note to open it")]))
+                            .transition(.opacity)
+                    }
+                }
+                ToolGroup {
+                    Button { controller.zoom(.zoomOut) } label: { Image(systemName: "minus") }
+                        .keyboardShortcut("-", modifiers: [.command])
+                        .help("Zoom out")
+                    ToolDivider()
+                    Button { controller.zoom(.actualSize) } label: {
+                        Text("\(Int((controller.magnification * 100).rounded()))%")
+                            .monospacedDigit()
+                            .frame(minWidth: 38)
+                            .contentTransition(.numericText(value: controller.magnification))
+                    }
+                    .keyboardShortcut("1", modifiers: [.command])
+                    .help("Actual size")
+                    ToolDivider()
+                    Button { controller.zoom(.zoomIn) } label: { Image(systemName: "plus") }
+                        .keyboardShortcut("=", modifiers: [.command])
+                        .help("Zoom in")
+                }
+                .animation(Motion.snappy, value: controller.magnification)
+                ToolGroup {
+                    Button { controller.zoom(.fit) } label: {
+                        ViewThatFits(in: .horizontal) {
+                            Label("Fit", systemImage: "arrow.down.right.and.arrow.up.left").fixedSize()
+                            Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        }
+                    }
+                    .accessibilityLabel("Fit")
+                        .keyboardShortcut("0", modifiers: [.command])
+                        .help("Fit the image to the pane")
+                }
             }
-            .buttonStyle(.borderless)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            Divider()
+            .animation(Motion.smooth, value: controller.selection == nil)
             ImageViewerView(controller: controller)
         }
+    }
+}
+
+/// Keeps a document smaller than the visible area centred in it (both axes), for images and other canvases.
+final class CenteringClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        guard let document = documentView else { return rect }
+        let frame = document.frame
+        if rect.width > frame.width { rect.origin.x = (frame.width - rect.width) / 2 }
+        if rect.height > frame.height { rect.origin.y = (frame.height - rect.height) / 2 }
+        return rect
     }
 }

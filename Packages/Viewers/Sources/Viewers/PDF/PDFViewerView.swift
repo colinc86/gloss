@@ -14,31 +14,29 @@ final class PDFRegionOverlay: NSView {
         return super.hitTest(point)
     }
 
+    // Flipped like the image canvas, so both draw regions with the same `RegionStyle` code; every conversion goes
+    // through `convert(_:from:)`, which accounts for it.
+    override var isFlipped: Bool { true }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let controller, let pdfView else { return }
+        let unit: CGFloat = 1   // the overlay is not magnified; PDFView scales the page under it
         for highlight in controller.highlights {
             guard let bounds = highlight.bounds, let page = controller.document.page(at: highlight.page) else { continue }
             let rect = convert(pdfView.convert(bounds, from: page), from: pdfView)
-            let color = Theme.color(for: highlight.color)
-            let path = NSBezierPath(rect: rect)
-            color.withAlphaComponent(highlight.state == .resolved ? 0.08 : 0.2).setFill()
-            path.fill()
-            color.setStroke()
-            path.lineWidth = highlight.id == controller.selectedNoteID ? 2.5 : 1.5
-            if highlight.state == .orphaned { path.setLineDash([4, 3], count: 2, phase: 0) }
-            path.stroke()
+            RegionStyle.drawNote(rect, color: highlight.color, state: highlight.state, selected: highlight.id == controller.selectedNoteID, unit: unit)
         }
         if let region = controller.region, let page = controller.document.page(at: region.page) {
             let rect = convert(pdfView.convert(region.bounds, from: page), from: pdfView)
-            NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
-            rect.fill()
-            NSColor.controlAccentColor.setStroke()
-            NSBezierPath(rect: rect).stroke()
+            RegionStyle.drawSelection(rect, in: bounds, unit: unit, label: "\(Int(region.bounds.width)) × \(Int(region.bounds.height)) pt")
         }
     }
 
     override func mouseDown(with event: NSEvent) {
         guard let controller, let pdfView else { return }
+        // The overlay sits beside the PDF view, not above it in the responder chain: hand focus to the PDF view so
+        // ⌘C (region copy) reaches it.
+        window?.makeFirstResponder(pdfView)
         let viewPoint = pdfView.convert(event.locationInWindow, from: nil)
         if let hit = controller.highlights.last(where: { highlight in
             guard let bounds = highlight.bounds, let page = controller.document.page(at: highlight.page) else { return false }
@@ -71,8 +69,40 @@ final class PDFRegionOverlay: NSView {
     }
 }
 
+/// A PDFView whose Copy takes a drawn region as an image; with no region it copies selected text as usual.
+final class RegionCopyingPDFView: PDFView {
+    weak var regionController: PDFViewerController?
+
+    override func copy(_ sender: Any?) {
+        guard let controller = regionController, let region = controller.region,
+              let rendered = controller.renderPNG(page: region.page, bounds: region.bounds) else {
+            return super.copy(sender)
+        }
+        let item = NSPasteboardItem()
+        item.setData(rendered.data, forType: .png)
+        if let image = NSImage(data: rendered.data), let tiff = image.tiffRepresentation { item.setData(tiff, forType: .tiff) }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([item])
+        controller.copyCount += 1
+    }
+
+    /// PDFKit's `validateMenuItem:` (Objective-C, not visible to Swift); everything except Copy still goes to it, so
+    /// zoom limits, page navigation, and the display-mode checkmarks keep working.
+    private typealias Validate = @convention(c) (AnyObject, Selector, NSMenuItem) -> ObjCBool
+    private static let pdfKitValidate: Validate? = {
+        let selector = NSSelectorFromString("validateMenuItem:")
+        guard let method = class_getInstanceMethod(PDFView.self, selector) else { return nil }
+        return unsafeBitCast(method_getImplementation(method), to: Validate.self)
+    }()
+
+    @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(copy(_:)) { return regionController?.region != nil || currentSelection != nil }
+        return Self.pdfKitValidate?(self, NSSelectorFromString("validateMenuItem:"), menuItem).boolValue ?? true
+    }
+}
+
 public final class PDFContainerView: NSView {
-    let pdfView = PDFView()
+    let pdfView = RegionCopyingPDFView()
     let overlay = PDFRegionOverlay()
 
     override public init(frame: NSRect) {
@@ -111,8 +141,14 @@ public struct PDFViewerView: NSViewRepresentable {
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = .windowBackgroundColor
+        // Pages as sheets on the under-page backdrop, as in Preview and the image viewer: a page's edge is part of
+        // what is being annotated.
+        pdfView.backgroundColor = .underPageBackgroundColor
+        pdfView.displaysPageBreaks = true
+        pdfView.pageShadowsEnabled = true
+        pdfView.pageBreakMargins = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         container.overlay.controller = controller
+        container.pdfView.regionController = controller
         container.overlay.pdfView = pdfView
         context.coordinator.attach(container: container)
         return container
@@ -229,26 +265,106 @@ public struct PDFViewerPane: View {
     public var body: some View {
         @Bindable var controller = controller
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("Page \(controller.currentPage + 1) of \(controller.pageCount)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+            ViewerToolbar {
+                if controller.pageCount > 1 {
+                    ThumbnailsToggle(isOn: $controller.showsThumbnails)
+                }
+                Label("Page \(controller.currentPage + 1) of \(controller.pageCount)", systemImage: "doc.richtext")
+                    .contentTransition(.numericText(value: Double(controller.currentPage)))
                 if let region = controller.region {
-                    Text("Region \(Int(region.bounds.minX)),\(Int(region.bounds.minY)) \(Int(region.bounds.width))×\(Int(region.bounds.height)) pt")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    Text("Region \(Int(region.bounds.width)) × \(Int(region.bounds.height)) pt")
+                        .foregroundStyle(.primary)
+                        .transition(.opacity)
                 }
-                Spacer()
-                Toggle(isOn: $controller.regionMode) {
-                    Label("Region", systemImage: "rectangle.dashed")
+            } trailing: {
+                CopiedBadge(count: controller.copyCount)
+                ZStack(alignment: .trailing) {
+                    if controller.regionMode {
+                        ToolHints(controller.region == nil
+                                  ? [ToolHint(symbol: "rectangle.dashed", "Drag a region on a page")]
+                                  : [ToolHint(keys: ["⌘", "C"], "Copy"), ToolHint(symbol: "rectangle.dashed", "Drag again to redraw")])
+                            .transition(.opacity)
+                    }
                 }
-                .toggleStyle(.button)
-                .help("Drag a rectangle on a page instead of selecting text")
+                ModeSwitch([
+                    .init(false, "Text", symbol: "text.cursor"),
+                    .init(true, "Region", symbol: "rectangle.dashed"),
+                ], selection: $controller.regionMode)
+                .help("Select text, or drag a rectangle on a page")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            Divider()
-            PDFViewerView(controller: controller)
+            .animation(Motion.smooth, value: controller.currentPage)
+            .animation(Motion.smooth, value: controller.regionMode)
+            .animation(Motion.smooth, value: controller.region == nil)
+            HStack(spacing: 0) {
+                if controller.showsThumbnails && controller.pageCount > 1 {
+                    PDFThumbnailColumn(controller: controller)
+                        .transition((AnyTransition.move(edge: .leading).combined(with: .opacity)).calmed)
+                    Divider()
+                }
+                PDFViewerView(controller: controller)
+                    .overlay(alignment: .bottom) { PagePill(page: controller.currentPage, count: controller.pageCount) }
+            }
+            .animation(Motion.smooth, value: controller.showsThumbnails)
+        }
+    }
+}
+
+/// Shows or hides the page thumbnails; drawn filled while they show, as toggles here say what is true now.
+struct ThumbnailsToggle: View {
+    @Binding var isOn: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        Button { isOn.toggle() } label: {
+            Image(systemName: isOn ? "sidebar.squares.left" : "sidebar.left")
+                .contentTransition(.symbolEffect(.replace))
+                .foregroundStyle(isOn ? Color.accentColor : (hovering ? .primary : .secondary))
+                .frame(width: 22, height: 20)
+                .background(hovering ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(Motion.snappy, value: hovering)
+        .help(isOn ? "Hide page thumbnails" : "Show page thumbnails")
+        .accessibilityLabel("Page thumbnails")
+        .accessibilityValue(isOn ? "Shown" : "Hidden")
+    }
+}
+
+/// "3 / 12" floating over the bottom of the document while the pages move, as Preview does; it fades out once
+/// scrolling settles. Not on open (the toolbar already says where you are), and never for one page.
+struct PagePill: View {
+    let page: Int
+    let count: Int
+    @State private var visible = false
+    @State private var appearedAt = Date()
+
+    var body: some View {
+        ZStack {
+            if visible {
+                Text("\(page + 1) / \(count)")
+                    .font(.callout.weight(.semibold).monospacedDigit())
+                    .contentTransition(.numericText(value: Double(page)))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .glassEffect(.regular, in: Capsule())
+                    .transition((AnyTransition.opacity.combined(with: .offset(y: Motion.isReduced ? 0 : 6))).calmed)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.bottom, 18)
+        .animation(Motion.smooth, value: visible)
+        .animation(Motion.snappy, value: page)
+        .allowsHitTesting(false)
+        .onAppear { appearedAt = Date() }
+        .task(id: page) {
+            // Opening (including a jump straight to a note's page) settles within a moment; only later moves count.
+            guard Date().timeIntervalSince(appearedAt) > 0.8, count > 1 else { return }
+            visible = true
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard !Task.isCancelled else { return }
+            visible = false
         }
     }
 }

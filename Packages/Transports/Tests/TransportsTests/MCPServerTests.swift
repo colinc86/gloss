@@ -67,6 +67,92 @@ struct MCPServerTests {
         return (reply, http?.value(forHTTPHeaderField: "Mcp-Session-Id"), http?.statusCode ?? 0)
     }
 
+    /// `open_in_viewer` opens on the session's host (from the registration URL) unless the call names another.
+    @Test func openInViewerUsesTheSessionHost() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-open-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        _ = try await store.upsertHost(name: "asus", kind: .ssh)
+        let opened = OpenLog()
+        var dependencies = Self.dependencies(store: store)
+        dependencies.openDocument = { host, path, line in await opened.record("\(host)|\(path)|\(line.map(String.init) ?? "-")") }
+        let server = MCPServer(dependencies: dependencies, port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
+        try await server.start()
+        let port = try #require(await server.port)
+        defer { Task { await server.stop() } }
+        func call(_ base: URL, _ arguments: [String: Any]) async throws -> (text: String, isError: Bool) {
+            let initialize = try await Self.rpc(base, session: nil, body: ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-06-18", "capabilities": [:], "clientInfo": ["name": "test", "version": "1"]]])
+            let session = try #require(initialize.session)
+            _ = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "method": "notifications/initialized"])
+            let reply = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": ["name": "open_in_viewer", "arguments": arguments]])
+            let result = reply.reply?["result"] as? [String: Any]
+            return (((result?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "", result?["isError"] as? Bool ?? false)
+        }
+        let local = URL(string: "http://127.0.0.1:\(port)")!
+        let remote = URL(string: "http://127.0.0.1:\(port)/?host=asus")!
+        #expect(try await call(local, ["path": "/tmp/a.swift", "line": 12]).text == "showing local:/tmp/a.swift at line 12")
+        #expect(try await call(local, ["path": "/tmp/a.swift"]).isError == false)
+        #expect(try await call(local, ["path": "relative.swift"]).isError, "relative paths are refused")
+        #expect(try await call(local, ["path": "/tmp/a.swift", "line": 0]).isError, "lines are 1-based")
+        #expect(try await call(local, ["path": "/tmp/a.swift", "line": 1e300]).isError, "an absurd number is refused, not a crash")
+        #expect(try await call(local, ["path": "/tmp/a.swift", "host": "nowhere"]).isError, "unknown hosts are refused")
+        // The session URL's host is the default; a host in the call wins.
+        #expect(try await call(remote, ["path": "/home/colin/x.py", "line": 3]).text == "showing asus:/home/colin/x.py at line 3")
+        #expect(try await call(remote, ["path": "/Users/c/y.md", "host": "local"]).text == "showing local:/Users/c/y.md")
+        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-"])
+    }
+
+    /// The hook finds notes under a non-ASCII working directory, encoded the way `curl --data-urlencode` sends it.
+    @Test func hookFindsNotesUnderNonASCIIDirectories() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/Café Notes/plan.md", kind: .markdown, fingerprint: Fingerprint())
+        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "tighten the intro", color: .yellow)
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-hook-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let port = try #require(await server.port)
+        let url = try #require(URL(string: "http://127.0.0.1:\(port)/hook/claude?cwd=%2Ftmp%2FCaf%C3%A9+Notes&host=local"))
+        let (data, _) = try await URLSession.shared.data(from: url)
+        let hook = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let context = ((hook?["hookSpecificOutput"] as? [String: Any])?["additionalContext"] as? String) ?? ""
+        #expect(context.contains("tighten the intro") && context.contains("/tmp/Café Notes/plan.md"))
+    }
+
+    /// A body over the 8 MB cap is refused with 413 and the connection closed, and the server keeps serving.
+    @Test func anOversizedBodyIsRefused() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-big-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let port = try #require(await server.port)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/plugin/note")!)
+        request.httpMethod = "POST"
+        request.httpBody = Data(repeating: 0x61, count: 9 * 1024 * 1024)
+        let status = await withCheckedContinuation { (continuation: CheckedContinuation<Int, Never>) in
+            URLSession.shared.dataTask(with: request) { _, response, _ in
+                continuation.resume(returning: (response as? HTTPURLResponse)?.statusCode ?? -1)
+            }.resume()
+        }
+        // The client may see the 413 or, having its upload cut off, no response at all; it must never be accepted.
+        #expect(status == 413 || status == -1, "status \(status)")
+        let (_, health) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/health")!)
+        #expect((health as? HTTPURLResponse)?.statusCode == 200, "the server still answers")
+    }
+
+    @Test func registrationURLsCarryTheHostAlias() {
+        #expect(MCPServer.url(port: 47831) == "http://127.0.0.1:47831/mcp")
+        #expect(MCPServer.url(port: 47831, host: "local") == "http://127.0.0.1:47831/mcp")
+        #expect(MCPServer.url(port: 47831, host: "my box") == "http://127.0.0.1:47831/mcp?host=my%20box")
+        #expect(MCPServer.snippets(port: 47831, host: "asus").claudeCommand == "claude mcp add -s user --transport http gloss 'http://127.0.0.1:47831/mcp?host=asus'")
+    }
+
     @Test func servesToolsResourcesAndHooksOverHTTP() async throws {
         let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -88,7 +174,7 @@ struct MCPServerTests {
 
             let tools = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": [:]])
             let names = ((tools.reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
-            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "list_documents"])
+            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "list_documents", "open_in_viewer"])
 
             let pending = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "list_pending_notes", "arguments": ["host": "local", "path": "/tmp/demo"]]])
             let listing = (((pending.reply?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
@@ -156,4 +242,9 @@ struct MCPServerTests {
         await server.stop()
         #expect(!FileManager.default.fileExists(atPath: portFile.path))
     }
+}
+
+private actor OpenLog {
+    private(set) var lines: [String] = []
+    func record(_ line: String) { lines.append(line) }
 }

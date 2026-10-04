@@ -10,6 +10,52 @@ final class ImageCanvasView: NSView {
         self.controller = controller
         super.init(frame: NSRect(x: 0, y: 0, width: controller.image.width, height: controller.image.height))
         wantsLayer = true
+        // The picture lies on the canvas like a sheet, as Preview and Pixelmator set theirs (NSView's own shadow:
+        // AppKit owns a layer-backed view's layer properties).
+        updateShadow(magnification: 1)
+    }
+
+    private var shadowMagnification: CGFloat = 0
+
+    /// The shadow is in canvas points, which zoom with the picture; keep it the same on screen.
+    private func updateShadow(magnification: CGFloat) {
+        guard magnification != shadowMagnification else { return }
+        shadowMagnification = magnification
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.24)
+        shadow.shadowBlurRadius = 10 / magnification
+        shadow.shadowOffset = NSSize(width: 0, height: -2 / magnification)
+        self.shadow = shadow
+    }
+
+    /// Whether the picture has transparent areas worth showing as a checkerboard.
+    static func hasAlpha(_ image: CGImage) -> Bool {
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: false
+        default: true
+        }
+    }
+
+    /// Quiet checker squares behind transparent pixels, 8 screen points whatever the zoom.
+    private func drawCheckerboard(in rect: CGRect, unit: CGFloat, context: CGContext) {
+        let side = 8 * unit
+        let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // Whole squares are laid down; the clip keeps the last row and column from spilling past the picture.
+        context.saveGState()
+        context.clip(to: rect)
+        defer { context.restoreGState() }
+        context.setFillColor(NSColor(white: dark ? 0.20 : 1, alpha: 1).cgColor)
+        context.fill(rect)
+        var squares: [CGRect] = []
+        let firstColumn = Int(floor(rect.minX / side)), lastColumn = Int(ceil(rect.maxX / side))
+        let firstRow = Int(floor(rect.minY / side)), lastRow = Int(ceil(rect.maxY / side))
+        for row in firstRow..<lastRow {
+            for column in firstColumn..<lastColumn where (row + column) % 2 == 0 {
+                squares.append(CGRect(x: CGFloat(column) * side, y: CGFloat(row) * side, width: side, height: side))
+            }
+        }
+        context.setFillColor(NSColor(white: dark ? 0.25 : 0.93, alpha: 1).cgColor)
+        context.fill(squares)
     }
 
     @available(*, unavailable)
@@ -22,6 +68,10 @@ final class ImageCanvasView: NSView {
         let image = controller.image.cgImage
         let magnification = enclosingScrollView?.magnification ?? 1
         context.interpolationQuality = magnification >= 4 ? .none : .high
+        updateShadow(magnification: magnification)
+        if Self.hasAlpha(image) {
+            drawCheckerboard(in: dirtyRect.intersection(bounds), unit: 1 / magnification, context: context)
+        }
         // The context is flipped; undo it for the image so it is not drawn upside down.
         context.saveGState()
         context.translateBy(x: 0, y: bounds.height)
@@ -29,29 +79,14 @@ final class ImageCanvasView: NSView {
         context.draw(image, in: bounds)
         context.restoreGState()
 
+        // Everything is sized in screen points: divide by the magnification so strokes, handles, and labels look
+        // the same at any zoom.
+        let unit = 1 / magnification
         for highlight in controller.highlights {
-            let color = Theme.color(for: highlight.color)
-            let path = NSBezierPath(rect: highlight.rect)
-            path.lineWidth = max(1, 1.5 / magnification)
-            color.withAlphaComponent(highlight.state == .resolved ? 0.08 : 0.2).setFill()
-            path.fill()
-            color.setStroke()
-            if highlight.state == .orphaned { path.setLineDash([4, 3], count: 2, phase: 0) }
-            path.stroke()
-            if highlight.id == controller.selectedNoteID {
-                NSColor.controlAccentColor.setStroke()
-                let outer = NSBezierPath(rect: highlight.rect.insetBy(dx: -2 / magnification, dy: -2 / magnification))
-                outer.lineWidth = 2 / magnification
-                outer.stroke()
-            }
+            RegionStyle.drawNote(highlight.rect, color: highlight.color, state: highlight.state, selected: highlight.id == controller.selectedNoteID, unit: unit)
         }
-        if let selection = controller.selection {
-            let path = NSBezierPath(rect: selection)
-            path.lineWidth = max(1, 1.5 / magnification)
-            NSColor.controlAccentColor.withAlphaComponent(0.15).setFill()
-            path.fill()
-            NSColor.controlAccentColor.setStroke()
-            path.stroke()
+        if let selection = controller.selection, selection.width >= 1, selection.height >= 1 {
+            RegionStyle.drawSelection(selection, in: bounds, unit: unit, label: "\(Int(selection.width)) × \(Int(selection.height)) px")
         }
     }
 
@@ -103,4 +138,19 @@ final class ImageCanvasView: NSView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// Edit › Copy (⌘C): the selected region, or the whole picture when nothing is selected, as PNG and TIFF so it
+    /// pastes into chats, issues, and image editors alike.
+    @objc func copy(_ sender: Any?) {
+        guard let controller else { return }
+        let image = controller.selection.flatMap { ImageDecoder.crop(controller.image, to: $0) } ?? controller.image.cgImage
+        let item = NSPasteboardItem()
+        if let png = ImageDecoder.pngData(image) { item.setData(png, forType: .png) }
+        if let tiff = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height)).tiffRepresentation {
+            item.setData(tiff, forType: .tiff)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([item])
+        controller.copyCount += 1
+    }
 }

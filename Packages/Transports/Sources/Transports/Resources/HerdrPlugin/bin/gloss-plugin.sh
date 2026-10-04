@@ -43,12 +43,23 @@ fi
 case "$mode" in
 open)
     path="$clicked"
+    line=""
+    # `file:///x.swift#L12` (editor links) carries the line in the fragment.
+    case "$path" in file://*\#L[0-9]*) line=$(printf '%s' "$path" | sed -n 's/^.*#L\([0-9][0-9]*\).*$/\1/p') ;; esac
     case "$path" in file://*) path=$(printf '%s' "$path" | python3 -c 'import sys,urllib.parse; print(urllib.parse.unquote(urllib.parse.urlparse(sys.stdin.read()).path), end="")' 2>/dev/null) ;; esac
     [ -n "$path" ] || path="$text"
     [ -n "$path" ] || exit 0
+    # Agents print locations as `path:12` or `path:12:7`; the suffix becomes the line to jump to.
+    if [ -z "$line" ]; then
+        # The file name must hold a non-digit, so `12:30` and `/dir/12:30` stay names while `file2:10` is file2 at line 10.
+        loc='^\(\(.*/\)\{0,1\}[^/]*[^0-9:/][^/:]*\):\([0-9][0-9]*\)\(:[0-9][0-9]*\)\{0,1\}$'
+        line=$(printf '%s' "$path" | sed -n "s|$loc|\\3|p")
+        [ -n "$line" ] && path=$(printf '%s' "$path" | sed "s|$loc|\\1|")
+    fi
     case "$path" in /*) ;; *) path="$cwd/$path" ;; esac
     if [ "$transport" = url ]; then
         url="gloss://open?host=$(encode "$host")&path=$(encode "$path")"
+        [ -n "$line" ] && url="$url&line=$line"
         [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$url"; exit 0; }
         open "$url" >/dev/null 2>&1
         exit 0
@@ -58,7 +69,7 @@ open)
         [ -r "$f" ] && port=$(head -n 1 "$f" | tr -cd '0-9') && [ -n "$port" ] && break
     done
     [ -n "$port" ] || exit 0
-    body=$(python3 -c 'import json,sys; print(json.dumps({"host": sys.argv[1], "path": sys.argv[2]}))' "$host" "$path") || exit 0
+    body=$(python3 -c 'import json,sys; d={"host": sys.argv[1], "path": sys.argv[2]}; sys.argv[3] and d.update(line=int(sys.argv[3])); print(json.dumps(d))' "$host" "$path" "$line") || exit 0
     [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$body"; exit 0; }
     command -v curl >/dev/null 2>&1 || exit 0
     curl -sf -m 3 -X POST -H 'Content-Type: application/json' --data-binary "$body" "http://127.0.0.1:$port/plugin/open" >/dev/null 2>&1

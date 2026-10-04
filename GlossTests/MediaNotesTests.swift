@@ -93,3 +93,34 @@ struct MediaNotesTests {
         session.close()
     }
 }
+
+struct AttachmentSweepTests {
+    @Test func removesOnlyOldUnreferencedFilesAndExpiredSendFolders() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-sweep-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let notes = base.appendingPathComponent("notes")
+        let staged = base.appendingPathComponent("staged")
+        try FileManager.default.createDirectory(at: notes.appendingPathComponent("doc"), withIntermediateDirectories: true)
+        let now = Date()
+        func file(_ url: URL, age: TimeInterval) throws {
+            try Data([1]).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-age)], ofItemAtPath: url.path)
+        }
+        let kept = notes.appendingPathComponent("doc/kept.png")
+        let orphan = notes.appendingPathComponent("doc/orphan.png")
+        let fresh = notes.appendingPathComponent("doc/fresh.png")
+        try file(kept, age: 86_400)
+        try file(orphan, age: 86_400)
+        try file(fresh, age: 60)
+        let oldSend = staged.appendingPathComponent("s_old")
+        let newSend = staged.appendingPathComponent("s_new")
+        for folder in [oldSend, newSend] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-10 * 86_400)], ofItemAtPath: oldSend.path)
+        let removed = AttachmentCache.sweep(notesRoot: notes, stagedRoot: staged, referenced: [kept.path], stagedExpiry: 7 * 86_400, now: now)
+        #expect(removed.noteFiles == 1 && removed.sendFolders == 1)
+        #expect(FileManager.default.fileExists(atPath: kept.path), "a referenced crop stays")
+        #expect(!FileManager.default.fileExists(atPath: orphan.path), "a crop whose note is gone is removed")
+        #expect(FileManager.default.fileExists(atPath: fresh.path), "a crop younger than an hour may not have its row yet")
+        #expect(!FileManager.default.fileExists(atPath: oldSend.path) && FileManager.default.fileExists(atPath: newSend.path))
+    }
+}

@@ -82,7 +82,9 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
                 pending = nil
                 let head = HTTPResponseHead(version: .http1_1, status: .payloadTooLarge, headers: ["Content-Length": "0", "Connection": "close"])
                 context.write(wrapOutboundOut(.head(head)), promise: nil)
-                context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in context.close(promise: nil) }
+                // The completion runs on this channel's event loop; NIOLoopBound checks that rather than assuming it.
+                let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+                context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in bound.value.close(promise: nil) }
                 return
             }
             pending?.body.writeBuffer(&buffer)

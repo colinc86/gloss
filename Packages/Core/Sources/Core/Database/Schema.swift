@@ -100,6 +100,10 @@ public enum Schema {
             try db.execute(sql: "ALTER TABLE host ADD COLUMN options_json TEXT")
             try db.execute(sql: "UPDATE host SET origin = 'local' WHERE kind = 'local'")
         }
+        migrator.registerMigration("v3-send-note-index") { db in
+            // Note cards look up their latest send by note; the primary key leads with send_id.
+            try db.execute(sql: "CREATE INDEX IF NOT EXISTS send_note_note ON send_note(note_id)")
+        }
         return migrator
     }
 }

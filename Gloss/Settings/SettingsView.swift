@@ -1,7 +1,9 @@
 import AppKit
 import Core
+import OSLog
 import SwiftUI
 import Transports
+import Viewers
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
@@ -10,73 +12,351 @@ struct SettingsView: View {
         @Bindable var settings = model.settings
         TabView {
             Form {
-                Toggle("Open the last root on launch", isOn: $settings.openLastRootOnLaunch)
-                Toggle("Show hidden files by default", isOn: $settings.showDotfilesByDefault)
+                Section {
+                    Toggle(isOn: $settings.openLastRootOnLaunch) {
+                        Text("Reopen the last folder")
+                        Text("When the app starts, it opens the folder you had open last, on whichever host it lives, with the file that was in front.")
+                    }
+                    Toggle(isOn: $settings.showsQuestionsOnDock) {
+                        Text("Show agent questions on the Dock icon")
+                        Text("A badge counts notes an agent answered with a question, so you see them from any app.")
+                    }
+                    Toggle(isOn: $settings.showDotfilesByDefault) {
+                        Text("Show hidden files")
+                        Text("Dotfiles appear in the file tree from the start; the eye under the tree switches them until you quit.")
+                    }
+                }
             }
+            .formStyle(.grouped)
+            .frame(height: 236)
             .tabItem { Label("General", systemImage: "gear") }
 
             Form {
-                Slider(value: $settings.editorFontSize, in: 9...20, step: 0.5) {
-                    Text("Font size: \(settings.editorFontSize, specifier: "%.1f")")
+                Section {
+                    LabeledContent("Font size") {
+                        HStack(spacing: DS.Space.m) {
+                            Slider(value: $settings.editorFontSize, in: 9...20, step: 0.5)
+                                .frame(width: 200)
+                            Text("\(settings.editorFontSize, specifier: "%.1f") pt")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 48, alignment: .trailing)
+                                .contentTransition(.numericText(value: settings.editorFontSize))
+                        }
+                    }
+                    Toggle(isOn: $settings.wrapLines) {
+                        Text("Wrap long lines")
+                        Text("Off, long lines run on and the editor scrolls sideways.")
+                    }
+                    Toggle(isOn: $settings.showIndentGuides) {
+                        Text("Show indent guides")
+                        Text("A faint line at each indentation level; the block around the caret is stronger.")
+                    }
+                } footer: {
+                    EditorPreview(fontSize: settings.editorFontSize, wraps: settings.wrapLines, guides: settings.showIndentGuides)
                 }
-                Toggle("Wrap long lines", isOn: $settings.wrapLines)
-                Text("Font changes apply to documents opened afterwards.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
+            .formStyle(.grouped)
+            .frame(height: 330)
+            .animation(DS.Motion.snappy, value: settings.editorFontSize)
+            .animation(DS.Motion.smooth, value: settings.showIndentGuides)
             .tabItem { Label("Editor", systemImage: "text.alignleft") }
 
-            Form {
-                LabeledContent("Last target") {
-                    Text(model.send.lastTarget?.label ?? "none").foregroundStyle(.secondary)
-                }
-                TextField("MCP port", value: $settings.mcpPort, format: .number.grouping(.never))
-                if let status = model.mcpStatus {
-                    Text(status).font(.caption).foregroundStyle(.red)
-                } else {
-                    Text("Listening on 127.0.0.1:\(String(settings.mcpPort)). A port change applies after relaunch.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                MCPSnippetRow(title: "Claude Code", text: MCPServer.snippets(port: settings.mcpPort).claudeCommand)
-                MCPSnippetRow(title: "Codex", text: MCPServer.snippets(port: settings.mcpPort).codexCommand)
-                MCPSnippetRow(title: "OpenCode config", text: MCPServer.snippets(port: settings.mcpPort).opencodeJSON)
-                TextField("OpenCode servers", text: $settings.opencodeServers)
-                Text("Comma separated base URLs.").font(.caption).foregroundStyle(.secondary)
-            }
-            .tabItem { Label("Agents", systemImage: "paperplane") }
+            AgentsSettings(settings: settings)
+                .frame(height: 560)
+                .tabItem { Label("Agents", systemImage: "paperplane") }
 
             HostsSettings()
+                .frame(height: 440)
                 .tabItem { Label("Hosts", systemImage: "network") }
 
             HooksSettings()
+                .frame(height: 390)
                 .tabItem { Label("Hooks", systemImage: "link") }
 
             AttachmentsSettings(settings: settings)
+                .frame(height: 380)
                 .tabItem { Label("Attachments", systemImage: "photo.on.rectangle") }
         }
-        .frame(width: 560, height: 360)
-        .padding()
+        // Each tab sets its own height and the window resizes to it, as System Settings does.
+        .frame(width: 600)
     }
 }
 
-/// One copyable registration line for an agent.
-private struct MCPSnippetRow: View {
-    let title: String
-    let text: String
+/// A few lines of code at the chosen size, so the slider shows what it does instead of describing it.
+private struct EditorPreview: View {
+    let fontSize: Double
+    let wraps: Bool
+    let guides: Bool
 
     var body: some View {
-        LabeledContent(title) {
-            HStack(spacing: 4) {
-                Text(text).font(.caption.monospaced()).textSelection(.enabled).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            Text(verbatim: "func pace(_ leg: Leg) -> Double {")
+            HangingLine(text: "    leg.minutes / max(leg.km, 0.1)   // minutes per kilometre, never dividing by zero",
+                        fontSize: fontSize, wraps: wraps)
+                // The guide the editor would draw at the first indentation level, the caret's block, so stronger.
+                .overlay(alignment: .leading) {
+                    if guides {
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.22))
+                            .frame(width: 1)
+                            .transition(.opacity)
+                    }
+                }
+            Text(verbatim: "}")
+        }
+        .font(.system(size: fontSize, design: .monospaced))
+        .foregroundStyle(.primary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DS.Space.m)
+        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
+        .overlay(alignment: .bottomTrailing) {
+            Text("Open documents change as you adjust these")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .padding(DS.Space.s)
+        }
+        .padding(.top, DS.Space.s)
+        .accessibilityLabel("Preview of the editor font at \(fontSize, specifier: "%.1f") points")
+    }
+}
+
+/// One preview line laid out as the editor lays it out: wrapped rows continue at the line's indentation plus one step
+/// (`SourceTextView.wrapIndent`), which SwiftUI's `Text` cannot do, so an AppKit label draws it.
+private struct HangingLine: NSViewRepresentable {
+    let text: String
+    let fontSize: Double
+    let wraps: Bool
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: "")
+        field.isSelectable = false
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        let space = (" " as NSString).size(withAttributes: [.font: font]).width
+        let style = NSMutableParagraphStyle()
+        style.headIndent = SourceTextView.wrapIndent(forLine: text, spaceWidth: space, tabWidth: NSParagraphStyle.default.defaultTabInterval, limit: .greatestFiniteMagnitude)
+        style.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
+        field.maximumNumberOfLines = wraps ? 0 : 1
+        field.attributedStringValue = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style])
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView field: NSTextField, context: Context) -> CGSize? {
+        let width = proposal.width ?? 400
+        field.preferredMaxLayoutWidth = width
+        return CGSize(width: width, height: field.fittingSize.height)
+    }
+}
+
+/// How agents reach the app: the MCP server's state and port, one copyable registration per agent, OpenCode's
+/// servers, and where notes go now.
+private struct AgentsSettings: View {
+    @Environment(AppModel.self) private var model
+    @Bindable var settings: SettingsStore
+
+    var body: some View {
+        let port = model.mcpListeningPort ?? settings.mcpPort
+        let snippets = MCPServer.snippets(port: port)
+        let status = Self.status(error: model.mcpStatus, listening: model.mcpListeningPort, configured: settings.mcpPort)
+        Form {
+            Section {
+                LabeledContent("Status") {
+                    HStack(spacing: DS.Space.s) {
+                        Circle()
+                            .fill(status.color)
+                            .frame(width: 7, height: 7)
+                        Text(status.text)
+                            .foregroundStyle(status.color == .red ? Color.red : Color.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+                TextField("Port", value: $settings.mcpPort, format: .number.grouping(.never))
+                    .monospacedDigit()
+            } header: {
+                Text("MCP server")
+            } footer: {
+                Text("Agents read and resolve notes through this server. A port change applies after relaunch.")
+            }
+            Section {
+                SnippetCard(agent: "Claude Code", text: snippets.claudeCommand)
+                SnippetCard(agent: "Codex", text: snippets.codexCommand)
+                SnippetCard(agent: "OpenCode", caption: "opencode.json", text: snippets.opencodeJSON)
+            } header: {
+                Text("Connect an agent")
+            } footer: {
+                Text("Run the command once in a terminal (or add the JSON to OpenCode's config). Hooks are installed from the Hooks tab.")
+            }
+            Section {
+                TextField("Servers", text: $settings.opencodeServers)
+            } header: {
+                Text("OpenCode")
+            } footer: {
+                Text("Base URLs of running OpenCode servers, separated by commas.")
+            }
+            Section("Sending") {
+                LabeledContent("Notes go to") {
+                    Text(model.send.lastTarget?.label ?? "No agent chosen yet")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+extension AgentsSettings {
+    /// What the server is doing: failed, not started yet, listening where the setting says, or listening on the old
+    /// port until a relaunch.
+    static func status(error: String?, listening: Int?, configured: Int) -> (color: Color, text: String) {
+        if let error { return (.red, error) }
+        guard let listening else { return (.orange, "Starting…") }
+        if listening != configured { return (.orange, "Listening on \(String(listening)); relaunch to use \(String(configured))") }
+        return (.green, "Listening on 127.0.0.1:\(String(listening))")
+    }
+}
+
+/// One agent's registration: its name, a Copy button that confirms itself, and the text in a code box.
+private struct SnippetCard: View {
+    let agent: String
+    var caption: String?
+    let text: String
+    @State private var copied = false
+    @State private var resetCopied: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(spacing: DS.Space.s) {
+                Text(agent).fontWeight(.medium)
+                if let caption {
+                    Text(caption).font(.caption.monospaced()).foregroundStyle(.secondary)
+                }
+                Spacer()
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
+                    copied = true
+                    // A second click restarts the confirmation instead of letting the first one cut it short.
+                    resetCopied?.cancel()
+                    resetCopied = Task {
+                        try? await Task.sleep(for: .seconds(1.6))
+                        if !Task.isCancelled { copied = false }
+                    }
                 } label: {
-                    Image(systemName: "doc.on.doc")
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .contentTransition(.symbolEffect(.replace))
+                        .foregroundStyle(copied ? Color.green : Color.accentColor)
+                        .frame(minWidth: 64, alignment: .trailing)
                 }
                 .buttonStyle(.borderless)
-                .help("Copy")
+                .animation(DS.Motion.snappy, value: copied)
+                .help("Copy the \(agent) registration")
+            }
+            // A command is never wrapped (a break mid-URL reads as two commands): each line stays whole and the box
+            // scrolls sideways, its trailing edge fading to say there is more, as code blocks do on GitHub and Linear.
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(text)
+                    .font(.system(size: 11, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize()
+                    .padding(DS.Space.s)
+                    .padding(.trailing, DS.Space.l)
+            }
+            .mask {
+                HStack(spacing: 0) {
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 20)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
+        }
+        .padding(.vertical, DS.Space.xxs)
+    }
+}
+
+/// One host: a server icon with its connection state as a dot, its name and address, and where it comes from
+/// (an ssh config alias, or added here and editable).
+private struct HostRow: View {
+    let name: String
+    let detail: String
+    let status: HostsModel.Status
+    let fromSSHConfig: Bool
+    let edit: (() -> Void)?
+    let remove: (() -> Void)?
+    @State private var hovering = false
+
+    private var state: (color: Color, label: String) {
+        switch status {
+        case .connected: (.green, "Connected")
+        case .connecting, .waitingForAgent: (.orange, "Connecting")
+        case .reconnecting: (.orange, "Reconnecting")
+        case .failed(let message): (.red, "Failed: \(message)")
+        case .idle: (Color.secondary.opacity(0.5), "Not connected")
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: DS.Space.m) {
+            Image(systemName: "server.rack")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 26)
+                .overlay(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(state.color)
+                        .frame(width: 8, height: 8)
+                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                        .offset(x: 3, y: 2)
+                }
+                .help(state.label)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).fontWeight(.medium)
+                // An alias's address lives in the ssh config, so its line says how it is doing instead.
+                Text(fromSSHConfig ? state.label : "\(detail) · \(state.label)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .contentTransition(.opacity)
+            }
+            Spacer(minLength: DS.Space.m)
+            if fromSSHConfig {
+                Text("ssh config")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, DS.Space.s)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                    .help("Comes from ~/.ssh/config; edit it there")
+            }
+            if let edit {
+                Button("Edit", action: edit).buttonStyle(.borderless)
+            }
+            if let remove {
+                Button(action: remove) {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(hovering ? Color.red : Color.secondary)
+                .help("Remove \(name)")
+                .accessibilityLabel("Remove \(name)")
             }
         }
+        .padding(.vertical, DS.Space.xxs)
+        .onHover { hovering = $0 }
+        .animation(DS.Motion.snappy, value: hovering)
+        .animation(DS.Motion.smooth, value: state.label)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(state.label)
     }
 }
 
@@ -85,33 +365,54 @@ private struct MCPSnippetRow: View {
 private struct HostsSettings: View {
     @Environment(AppModel.self) private var model
     @State private var editing: HostDraft?
+    @State private var removing: HostsModel.Entry?
 
     var body: some View {
         @Bindable var hosts = model.hosts
         Form {
             Section {
                 ForEach(model.hosts.entries.filter { $0.kind == .ssh }) { entry in
-                    LabeledContent(entry.name) {
-                        HStack(spacing: 8) {
-                            Text(describe(entry)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            if entry.origin == .manual {
-                                Button("Edit") { editing = HostDraft(entry: entry) }
-                                Button("Remove", role: .destructive) { Task { try? await model.hosts.remove(entry.id) } }
-                            }
-                        }
-                    }
+                    HostRow(name: entry.name, detail: describe(entry), status: model.hosts.status(for: entry.id),
+                            fromSSHConfig: entry.origin == .sshConfig,
+                            edit: entry.origin == .manual ? { editing = HostDraft(entry: entry) } : nil,
+                            remove: entry.origin == .manual ? { removing = entry } : nil)
                 }
-                Button("Add Host…") { editing = HostDraft() }
+                Button {
+                    editing = HostDraft()
+                } label: {
+                    Label("Add Host…", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
             } header: {
                 Text("Hosts")
             } footer: {
                 Text("A host is any machine `ssh` can reach. Added hosts store the host name, user, port, and key here; everything else (ProxyJump, agents, options) still comes from your ssh config.")
             }
             Section {
-                Toggle("Also list the Host aliases in ~/.ssh/config", isOn: $hosts.importsSSHConfig)
+                Toggle(isOn: $hosts.importsSSHConfig) {
+                    Text("List the hosts in ~/.ssh/config")
+                    Text("Every `Host` alias without wildcards appears in the host menu, connecting with your own ssh settings.")
+                }
             }
         }
         .formStyle(.grouped)
+        .animation(DS.Motion.smooth, value: model.hosts.entries.map(\.id))
+        .confirmationDialog("Remove \(removing?.name ?? "this host")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+            Button("Remove Host", role: .destructive) {
+                if let entry = removing {
+                    Task {
+                        do { try await model.hosts.remove(entry.id) } catch { Log.app.error("removing host failed: \(error, privacy: .public)") }
+                    }
+                }
+                removing = nil
+            }
+        } message: {
+            // Removing a host deletes its row, and the database cascades to its folders, documents, and notes.
+            let notes = removing.map { entry in model.notesPanel.groups.filter { $0.document.hostID == entry.id }.reduce(0) { $0 + $1.notes.count } } ?? 0
+            Text(notes == 0
+                 ? "Its settings and recent folders are deleted from the app. Your ssh config is not touched."
+                 : "Its settings, recent folders, and \(notes) note\(notes == 1 ? "" : "s") on its files are deleted from the app. This can't be undone. Your ssh config is not touched.")
+        }
         .sheet(item: $editing) { draft in
             HostEditor(draft: draft) { name, options in
                 Task { try? await model.hosts.save(id: draft.hostID, name: name, options: options) }
@@ -121,7 +422,7 @@ private struct HostsSettings: View {
 
     private func describe(_ entry: HostsModel.Entry) -> String {
         switch entry.origin {
-        case .sshConfig: return "from ~/.ssh/config"
+        case .sshConfig: return "Alias in ~/.ssh/config"
         case .manual:
             let options = entry.options ?? HostOptions()
             var parts: [String] = []
@@ -224,9 +525,21 @@ private struct HooksSettings: View {
                         row(agent: agent, hostID: hostID)
                     }
                     if model.hooks.status[HooksModel.Key(hostID: hostID, agent: .herdrPlugin)] == .installed {
-                        MCPSnippetRow(title: "Herdr keybinding (config.toml)", text: HookInstaller.keybindingSnippet)
+                        SnippetCard(agent: "Herdr keybinding", caption: "config.toml", text: HookInstaller.keybindingSnippet)
                     }
                 }
+            }
+            Section {
+            } footer: {
+                // Said where the decision is made: what Install touches, and how to undo it.
+                Label {
+                    Text("Nothing changes until you press Install. Before editing an agent's settings file, Gloss saves a copy beside it (*.gloss-backup-…, the last three kept); Remove takes out only what was added.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "lock.shield")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
             if let report = model.hooks.lastReport {
                 Text(report).font(.caption).foregroundStyle(.secondary)
@@ -241,50 +554,185 @@ private struct HooksSettings: View {
 
     private func row(agent: HookAgent, hostID: HostID) -> some View {
         let key = HooksModel.Key(hostID: hostID, agent: agent)
-        let status = model.hooks.status[key]
-        return LabeledContent(agent.displayName) {
-            HStack(spacing: 8) {
-                Text(describe(status)).foregroundStyle(.secondary).font(.caption)
-                Button(status == .installed ? "Reinstall" : "Install") {
-                    Task { await model.hooks.install(agent, on: hostID) }
-                }
-                Button("Remove") {
-                    Task { await model.hooks.uninstall(agent, on: hostID) }
-                }
-                .disabled(status == nil || status == .notInstalled)
-            }
-            .disabled(model.hooks.busy.contains(key))
+        return IntegrationRow(
+            agent: agent,
+            status: model.hooks.status[key],
+            isBusy: model.hooks.busy.contains(key),
+            install: { Task { await model.hooks.install(agent, on: hostID) } },
+            remove: { Task { await model.hooks.uninstall(agent, on: hostID) } }
+        )
+    }
+}
+
+/// One agent integration: what it does, whether it is set up, and the one action that moves it forward. Remove
+/// appears only when there is something to remove.
+private struct IntegrationRow: View {
+    let agent: HookAgent
+    let status: HookStatus?
+    let isBusy: Bool
+    let install: () -> Void
+    let remove: () -> Void
+
+    private var symbol: String {
+        switch agent {
+        case .claude: "sparkle"
+        case .codex: "chevron.left.forwardslash.chevron.right"
+        case .opencode: "curlybraces"
+        case .herdrPlugin: "rectangle.split.2x1"
         }
     }
 
-    private func describe(_ status: HookStatus?) -> String {
-        switch status {
-        case nil: "checking…"
-        case .notInstalled: "not installed"
-        case .installed: "installed"
-        case .outdated(let reason): "outdated: \(reason)"
+    private var purpose: String {
+        switch agent {
+        case .claude: "Hands drafts to Claude Code with each prompt and registers the MCP tools."
+        case .codex: "Hands drafts to Codex with each prompt and registers the MCP tools."
+        case .opencode: "Registers the MCP tools so OpenCode can read and resolve notes."
+        case .herdrPlugin: "A Herdr keybinding that turns selected terminal text into a note."
         }
     }
+
+    private var pill: (label: String, symbol: String, tint: Color) {
+        switch status {
+        case nil: ("Checking", "ellipsis", .secondary)
+        case .notInstalled: ("Not set up", "circle.dashed", .secondary)
+        case .installed: ("Installed", "checkmark.circle.fill", .green)
+        case .outdated: ("Update available", "arrow.triangle.2.circlepath", .orange)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: DS.Space.m) {
+            Image(systemName: symbol)
+                .font(.body.weight(.medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 30, height: 30)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: DS.Space.s) {
+                    Text(agent.displayName).font(.body.weight(.medium))
+                    StatusPill(label: pill.label, symbol: pill.symbol, tint: pill.tint)
+                        .id(pill.label)
+                        .transition((AnyTransition.scale(scale: 0.85).combined(with: .opacity)).calmed)
+                }
+                Text(outdatedReason ?? purpose)
+                    .font(.caption)
+                    .foregroundStyle(outdatedReason == nil ? Color.secondary : Color.orange)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: DS.Space.s)
+            if isBusy {
+                ProgressView().controlSize(.small)
+            } else {
+                if status == .installed || isOutdated {
+                    InlineIconButton(title: "Remove \(agent.displayName) integration", symbol: "trash", role: .destructive, emphasized: true, action: remove)
+                }
+                switch status {
+                case .notInstalled?:
+                    // Four optional, independent choices: none shouts. Update stays prominent, the one row asking for it.
+                    Button("Install", action: install).buttonStyle(.glass)
+                case .outdated?:
+                    Button("Update", action: install).buttonStyle(.glassProminent)
+                case .installed?:
+                    Button("Reinstall", action: install)
+                case nil:
+                    EmptyView()
+                }
+            }
+        }
+        .padding(.vertical, DS.Space.xs)
+        .animation(DS.Motion.smooth, value: pill.label)
+        .animation(DS.Motion.snappy, value: isBusy)
+    }
+
+    private var isOutdated: Bool { if case .outdated = status { true } else { false } }
+    private var outdatedReason: String? { if case .outdated(let reason) = status { reason } else { nil } }
 }
 
 private struct AttachmentsSettings: View {
     @Bindable var settings: SettingsStore
-    @State private var cacheSize: Int64 = 0
+    @State private var notesSize: Int64 = 0
+    @State private var sentSize: Int64 = 0
+    @State private var confirmingClear = false
 
     var body: some View {
         Form {
-            LabeledContent("Cache location") {
-                Text(AttachmentCache.root.path).font(.caption).textSelection(.enabled)
+            Section {
+                StorageRow(title: "Crops and page renders", size: notesSize, folder: AttachmentCache.notesRoot)
+            } header: {
+                Text("Note images")
+            } footer: {
+                Text("What image and PDF notes point at. Each file goes when its note is deleted.")
             }
-            LabeledContent("Cache size") {
-                Text(ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
-            }
-            Stepper("Remote staged files expire after \(settings.stagedFileExpiryDays) days", value: $settings.stagedFileExpiryDays, in: 1...90)
-            Button("Clear Cache") {
-                SettingsStore.clearAttachmentCache()
-                cacheSize = SettingsStore.attachmentCacheSize()
+            Section {
+                StorageRow(title: "Copies made for agents", size: sentSize, folder: AttachmentCache.root)
+                Stepper(value: $settings.stagedFileExpiryDays, in: 1...90) {
+                    HStack {
+                        Text("Keep for")
+                        Spacer()
+                        Text("\(settings.stagedFileExpiryDays) day\(settings.stagedFileExpiryDays == 1 ? "" : "s")")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .contentTransition(.numericText(value: Double(settings.stagedFileExpiryDays)))
+                    }
+                }
+                Button("Clear Sent Copies…", role: .destructive) { confirmingClear = true }
+                    .disabled(sentSize == 0)
+            } header: {
+                Text("Sent copies")
+            } footer: {
+                Text("Each send copies its images where the agent can read them. Remote hosts keep theirs for the same number of days.")
             }
         }
-        .task { cacheSize = SettingsStore.attachmentCacheSize() }
+        .formStyle(.grouped)
+        .animation(DS.Motion.snappy, value: settings.stagedFileExpiryDays)
+        .animation(DS.Motion.smooth, value: sentSize)
+        .confirmationDialog("Clear the copies made for agents?", isPresented: $confirmingClear) {
+            Button("Clear Sent Copies", role: .destructive) {
+                Task {
+                    await Task.detached(priority: .userInitiated) { SettingsStore.clearAttachmentCache() }.value
+                    await refresh()
+                }
+            }
+        } message: {
+            Text("An agent still working on a recent send may lose access to its images. Note images stay.")
+        }
+        .task { await refresh() }
+    }
+
+    /// Walking the folders touches every file; done off the main thread so a big cache can't stall the window.
+    private func refresh() async {
+        let sizes = await Task.detached(priority: .userInitiated) {
+            (SettingsStore.folderSize(AttachmentCache.notesRoot), SettingsStore.attachmentCacheSize())
+        }.value
+        notesSize = sizes.0
+        sentSize = sizes.1
+    }
+}
+
+/// A folder's size, with a button to show it in Finder (its path in the tooltip, not the row).
+private struct StorageRow: View {
+    let title: String
+    let size: Int64
+    let folder: URL
+
+    var body: some View {
+        LabeledContent(title) {
+            HStack(spacing: DS.Space.m) {
+                Text(size == 0 ? "Empty" : ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText(value: Double(size)))
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                } label: {
+                    Image(systemName: "magnifyingglass.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("Show in Finder: \(folder.path)")
+                .accessibilityLabel("Show \(title) in Finder")
+                .disabled(!FileManager.default.fileExists(atPath: folder.path))
+            }
+        }
     }
 }

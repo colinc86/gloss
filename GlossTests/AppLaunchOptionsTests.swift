@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Gloss
 
@@ -8,6 +9,24 @@ struct AppLaunchOptionsTests {
         #expect(options.host == "local")
         #expect(options.open == nil)
         #expect(options.resetDatabase == false)
+    }
+
+    @Test func aTestHostUsesAThrowawayDatabase() {
+        let hosted = AppLaunchOptions(arguments: ["/app"], environment: ["XCTestConfigurationFilePath": "/tmp/x.xctestconfiguration"])
+        #expect(hosted.isTestHost && hosted.resetDatabase)
+        let normal = AppLaunchOptions(arguments: ["/app", "--root", "/r"], environment: ["HOME": "/Users/c"])
+        #expect(!normal.isTestHost && !normal.resetDatabase && normal.root == "/r")
+    }
+
+    /// This very process is a hosted test run, so the app it launched must not have touched the real state.
+    @Test @MainActor func theRunningTestHostSkippedStartup() {
+        #expect(AppLaunchOptions(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment).isTestHost)
+    }
+
+    @Test func appearanceTakesOnlyDarkOrLight() {
+        #expect(AppLaunchOptions(arguments: ["/app", "--appearance", "Dark"]).appearance == "dark")
+        #expect(AppLaunchOptions(arguments: ["/app", "--appearance=light"]).appearance == "light")
+        #expect(AppLaunchOptions(arguments: ["/app", "--appearance", "sepia"]).appearance == nil)
     }
 
     @Test func parsesEveryOption() {

@@ -36,6 +36,9 @@ public final class TextEditorController {
     /// Where to scroll next; the view consumes it.
     public var pendingScroll: NSRange?
     public var pendingScrollVersion = 0
+    /// Whether the pending scroll also selects the range and focuses the editor. Browsing notes from the panel
+    /// passes false so the list keeps the keyboard and no Add Note button pops up over an existing note.
+    public private(set) var pendingScrollSelects = true
     /// Syntax highlighting, when a grammar exists for the document's language.
     @ObservationIgnored public private(set) var highlighter: Highlighter?
     /// Set by the view; invalidates rendering attributes for a range (nil = everything).
@@ -45,6 +48,54 @@ public final class TextEditorController {
 
     public func rect(for range: NSRange) -> CGRect? {
         rectProvider(range)
+    }
+
+    // MARK: Note peek
+
+    /// The note under the pointer, shown as a peek card after a short rest; nil when none.
+    public private(set) var peek: TextHighlight?
+    /// Whether the pointer is on the peek card itself (it stays while it is).
+    @ObservationIgnored public var isPeekHovered = false {
+        didSet { if !isPeekHovered { schedulePeekHide() } else { peekTask?.cancel() } }
+    }
+    @ObservationIgnored private var peekTask: Task<Void, Never>?
+    @ObservationIgnored private var hoveredNoteID: NoteID?
+    /// Rest before a peek appears, so skimming over highlights does not flash cards.
+    static let peekDelay: Duration = .milliseconds(450)
+
+    /// The pointer is over `index` (nil: over nothing). Shows the note there after a rest, hides when it leaves.
+    public func hover(at index: Int?) {
+        let highlight = index.flatMap { index in
+            highlights.last { !$0.isInvalidated && $0.state != .orphaned && NSLocationInRange(index, $0.range) }
+        }
+        guard highlight?.id != hoveredNoteID else { return }
+        hoveredNoteID = highlight?.id
+        peekTask?.cancel()
+        guard let highlight else {
+            schedulePeekHide()
+            return
+        }
+        peekTask = Task { [weak self] in
+            // Moving from one note straight to another switches at once; a fresh hover waits.
+            if self?.peek == nil { try? await Task.sleep(for: Self.peekDelay) }
+            guard !Task.isCancelled else { return }
+            self?.peek = highlight
+        }
+    }
+
+    public func dismissPeek() {
+        peekTask?.cancel()
+        hoveredNoteID = nil
+        peek = nil
+    }
+
+    private func schedulePeekHide() {
+        peekTask?.cancel()
+        peekTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self, !self.isPeekHovered, self.hoveredNoteID == nil else { return }
+            self.peek = nil
+        }
     }
 
     /// Called after the text storage processed an edit, in pre-edit coordinates.
@@ -102,11 +153,37 @@ public final class TextEditorController {
         }
         onEdit(edit, replacementLength)
         if highlighter != nil { onRenderingInvalidation(nil) }
+        if highlighter?.mayBeStale == true { scheduleHighlightRebuild() }
     }
 
-    public func scroll(to range: NSRange) {
+    @ObservationIgnored private var rebuildTask: Task<Void, Never>?
+
+    /// Once typing pauses, rebuilds embedded-language highlighting off the main actor and adopts it when the text
+    /// has not changed meanwhile (see `Highlighter.backgroundRebuild`).
+    private func scheduleHighlightRebuild() {
+        rebuildTask?.cancel()
+        rebuildTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self, let highlighter = self.highlighter, let job = highlighter.backgroundRebuild() else { return }
+            let rebuild = await Task.detached(priority: .utility) { job() }.value
+            guard !Task.isCancelled, let rebuild, highlighter.adopt(rebuild) else { return }
+            self.onRenderingInvalidation(nil)
+        }
+    }
+
+    public func scroll(to range: NSRange, select: Bool = true) {
         pendingScroll = range
+        pendingScrollSelects = select
         pendingScrollVersion += 1
+    }
+
+    /// Collapses the selection to its end. The view applies it through the scroll request (the range is on screen,
+    /// so nothing moves) and reports the new selection back.
+    public func collapseSelection() {
+        guard selection.length > 0 else { return }
+        let end = NSRange(location: selection.location + selection.length, length: 0)
+        selection = end
+        scroll(to: end)
     }
 
     public var selectionPosition: (start: TextPosition, end: TextPosition) {

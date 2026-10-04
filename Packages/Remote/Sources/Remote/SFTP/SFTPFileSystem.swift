@@ -219,6 +219,7 @@ public struct SFTPFileSystem: FileSystemProvider {
             let task = Task {
                 var lastFile: (UInt64?, UInt32?)?
                 var lastListing: [String: (UInt64?, UInt32?)]?
+                var missing = false
                 while !Task.isCancelled {
                     do {
                         let client = try await channel.client()
@@ -237,8 +238,16 @@ public struct SFTPFileSystem: FileSystemProvider {
                         } else {
                             let current = (attributes.size, attributes.mtime)
                             if let previous = lastFile, previous != current { continuation.yield(.changed([path])) }
+                            // Back after being missing: the viewer clears its "Deleted on disk" banner and reloads.
+                            if missing { continuation.yield(.changed([path])) }
                             lastFile = current
                         }
+                        missing = false
+                    } catch let status as SFTPStatus where status.code == .noSuchFile {
+                        // Gone: say so once (the viewer shows "Deleted on disk"), not on every tick.
+                        if !missing { continuation.yield(.changed([path])) }
+                        missing = true
+                        lastFile = nil
                     } catch {
                         // Connection hiccups: try again next tick.
                     }

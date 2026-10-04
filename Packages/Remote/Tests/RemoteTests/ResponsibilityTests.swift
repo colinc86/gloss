@@ -18,4 +18,18 @@ struct ResponsibilityTests {
         print("RESPONSIBILITY child=\(process.processIdentifier) responsible=\(responsible) self=\(getpid()) selfResponsible=\(ours)")
         #expect(responsible == process.processIdentifier, "child \(process.processIdentifier) is attributed to \(responsible)")
     }
+
+    /// The app ignores SIGTERM to turn it into a clean quit; children must not inherit that, or `terminate()`
+    /// would do nothing to ssh and every other tool.
+    @Test func childrenGetDefaultTerminationSignals() async throws {
+        let previous = signal(SIGTERM, SIG_IGN)
+        defer { signal(SIGTERM, previous) }
+        let child = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sleep", arguments: ["30"]))
+        try await Task.sleep(for: .milliseconds(100))
+        let started = Date()
+        child.terminate()
+        let code = try await child.exitCode
+        #expect(Date().timeIntervalSince(started) < 1.5, "SIGTERM ends the child at once instead of waiting for the SIGKILL follow-up")
+        #expect(code != 0)
+    }
 }
