@@ -64,4 +64,134 @@ public actor AtlassianClient {
     public func status() async throws -> AtlassianStatus {
         AtlassianStatus(user: try await myself(), confluenceReachable: await confluenceReachable())
     }
+
+    // MARK: Jira
+
+    private static let issueFields = "summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project"
+
+    private func object(_ reply: HTTPReply) throws -> [String: Any] {
+        guard let object = try? JSONSerialization.jsonObject(with: reply.data) as? [String: Any] else { throw IntegrationError.malformed("not a JSON object") }
+        return object
+    }
+
+    private func date(_ value: Any?) -> Date? {
+        guard let string = value as? String else { return nil }
+        let data = Data("\"\(string)\"".utf8)
+        return try? JSONDecoder.integrations.decode(Date.self, from: data)
+    }
+
+    static func issue(from object: [String: Any]) throws -> JiraIssue {
+        guard let key = object["key"] as? String, let id = object["id"] as? String, let fields = object["fields"] as? [String: Any] else {
+            throw IntegrationError.malformed("issue without key or fields")
+        }
+        func name(_ field: String) -> String? { (fields[field] as? [String: Any])?["name"] as? String }
+        func display(_ field: String) -> String? { (fields[field] as? [String: Any])?["displayName"] as? String }
+        let decoder = JSONDecoder.integrations
+        func date(_ field: String) -> Date? {
+            guard let string = fields[field] as? String else { return nil }
+            return try? decoder.decode(Date.self, from: Data("\"\(string)\"".utf8))
+        }
+        let description = (fields["description"] as? [String: Any]).map(ADFMarkdown.markdown(from:))
+        let comments = ((fields["comment"] as? [String: Any])?["comments"] as? [[String: Any]] ?? []).compactMap { comment -> JiraIssue.Comment? in
+            guard let id = comment["id"] as? String else { return nil }
+            let body = (comment["body"] as? [String: Any]).map(ADFMarkdown.markdown(from:)) ?? ""
+            let created = (comment["created"] as? String).flatMap { try? decoder.decode(Date.self, from: Data("\"\($0)\"".utf8)) } ?? Date(timeIntervalSince1970: 0)
+            return JiraIssue.Comment(id: id, author: (comment["author"] as? [String: Any])?["displayName"] as? String ?? "someone", created: created, body: body)
+        }
+        return JiraIssue(
+            key: key, id: id, summary: fields["summary"] as? String ?? "", issueType: name("issuetype") ?? "Issue", status: name("status") ?? "",
+            priority: name("priority"), assignee: display("assignee"), reporter: display("reporter"), labels: fields["labels"] as? [String] ?? [],
+            parentKey: (fields["parent"] as? [String: Any])?["key"] as? String, created: date("created") ?? Date(timeIntervalSince1970: 0),
+            updated: date("updated") ?? Date(timeIntervalSince1970: 0), description: description, comments: comments.sorted { $0.created < $1.created },
+            projectKey: (fields["project"] as? [String: Any])?["key"] as? String ?? String(key.split(separator: "-").first ?? "")
+        )
+    }
+
+    public func issue(key: String) async throws -> JiraIssue {
+        try Self.issue(from: try object(try await http.get(url("rest/api/3/issue/\(key)", query: ["fields": Self.issueFields]), headers: headers)))
+    }
+
+    /// Issues matching a JQL query, newest first, following the new search API's page tokens.
+    public func searchIssues(jql: String, limit: Int = 50) async throws -> [JiraIssue.Summary] {
+        var results: [JiraIssue.Summary] = []
+        var token: String?
+        repeat {
+            var query = ["jql": jql, "maxResults": String(min(limit, 100)), "fields": "summary,status,issuetype,project,updated"]
+            if let token { query["nextPageToken"] = token }
+            let page = try object(try await http.get(url("rest/api/3/search/jql", query: query), headers: headers))
+            for issue in page["issues"] as? [[String: Any]] ?? [] {
+                guard let key = issue["key"] as? String, let fields = issue["fields"] as? [String: Any] else { continue }
+                results.append(JiraIssue.Summary(
+                    key: key, summary: fields["summary"] as? String ?? "", status: (fields["status"] as? [String: Any])?["name"] as? String ?? "",
+                    issueType: (fields["issuetype"] as? [String: Any])?["name"] as? String ?? "", projectKey: (fields["project"] as? [String: Any])?["key"] as? String ?? "",
+                    updated: date(fields["updated"]) ?? Date(timeIntervalSince1970: 0)
+                ))
+            }
+            token = page["isLast"] as? Bool == false ? page["nextPageToken"] as? String : nil
+        } while token != nil && results.count < limit
+        return Array(results.prefix(limit))
+    }
+
+    public func projects() async throws -> [JiraProject] {
+        let page = try object(try await http.get(url("rest/api/3/project/search", query: ["maxResults": "100", "orderBy": "name"]), headers: headers))
+        return (page["values"] as? [[String: Any]] ?? []).compactMap { value in
+            guard let id = value["id"] as? String, let key = value["key"] as? String else { return nil }
+            return JiraProject(id: id, key: key, name: value["name"] as? String ?? key)
+        }
+    }
+
+    nonisolated public func browseURL(forIssue key: String) -> URL { site.appendingPathComponent("browse/\(key)") }
+
+    // MARK: Confluence
+
+    public func spaces() async throws -> [ConfluenceSpace] {
+        let page = try object(try await http.get(url("wiki/api/v2/spaces", query: ["limit": "250", "sort": "name"]), headers: headers))
+        return (page["results"] as? [[String: Any]] ?? []).compactMap { value in
+            guard let id = Self.string(value["id"]), let key = value["key"] as? String else { return nil }
+            return ConfluenceSpace(id: id, key: key, name: value["name"] as? String ?? key)
+        }
+    }
+
+    static func string(_ value: Any?) -> String? {
+        if let string = value as? String { return string }
+        if let number = value as? Int { return String(number) }
+        return nil
+    }
+
+    func page(from value: [String: Any], body: Bool) -> ConfluencePage? {
+        guard let id = Self.string(value["id"]), let title = value["title"] as? String else { return nil }
+        let version = value["version"] as? [String: Any]
+        var markdown: String?
+        if body, let adf = ((value["body"] as? [String: Any])?["atlas_doc_format"] as? [String: Any])?["value"] as? String {
+            markdown = ADFMarkdown.markdown(fromJSON: Data(adf.utf8))
+        }
+        return ConfluencePage(
+            id: id, title: title, spaceId: Self.string(value["spaceId"]) ?? "", parentId: Self.string(value["parentId"]),
+            version: version?["number"] as? Int ?? 1, versionDate: date(version?["createdAt"]), authorId: version?["authorId"] as? String,
+            webPath: (value["_links"] as? [String: Any])?["webui"] as? String, body: markdown
+        )
+    }
+
+    /// A space's top-level pages, or a page's children.
+    public func pages(inSpace spaceId: String) async throws -> [ConfluencePage] {
+        let page = try object(try await http.get(url("wiki/api/v2/spaces/\(spaceId)/pages", query: ["depth": "root", "limit": "250", "sort": "title"]), headers: headers))
+        return (page["results"] as? [[String: Any]] ?? []).compactMap { self.page(from: $0, body: false) }
+    }
+
+    public func children(ofPage id: String) async throws -> [ConfluencePage] {
+        let page = try object(try await http.get(url("wiki/api/v2/pages/\(id)/children", query: ["limit": "250"]), headers: headers))
+        return (page["results"] as? [[String: Any]] ?? []).compactMap { self.page(from: $0, body: false) }
+    }
+
+    /// One page with its body as Markdown.
+    public func page(id: String) async throws -> ConfluencePage {
+        guard let page = page(from: try object(try await http.get(url("wiki/api/v2/pages/\(id)", query: ["body-format": "atlas_doc_format"]), headers: headers)), body: true) else {
+            throw IntegrationError.malformed("page without id or title")
+        }
+        return page
+    }
+
+    nonisolated public func pageURL(_ page: ConfluencePage) -> URL {
+        page.webPath.flatMap { URL(string: "wiki" + $0, relativeTo: site)?.absoluteURL } ?? site.appendingPathComponent("wiki/pages/\(page.id)")
+    }
 }
