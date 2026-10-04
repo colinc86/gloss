@@ -6,11 +6,12 @@ import Viewers
 
 @MainActor
 struct ChangeSteppingTests {
-    func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+    func waitUntil(_ condition: @escaping @MainActor () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
         for _ in 0..<100 {
             if condition() { return }
             try? await Task.sleep(for: .milliseconds(20))
         }
+        Issue.record("timed out waiting", sourceLocation: sourceLocation)
     }
 
     @Test func stepsThroughHunksFromTheCaretAndWraps() async throws {

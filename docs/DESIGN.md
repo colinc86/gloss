@@ -257,7 +257,7 @@ path. Dropping on the Dock icon is not supported yet.
   Everything is read-only; the status bar's lock explains "the live ticket or page. Ask your agent for changes."
   The breadcrumb leads with `Jira · PROJ` (its menu: Open in Jira, Copy Issue URL) or `Confluence · SPACE`. A
   document that changes at its source reloads with "Updated in Jira or Confluence" for eight seconds.
-- **Open Jira Issue or Confluence Page…** (File menu, ⌥⌘J; also the Atlassian host's menu entry and its empty
+- **Open Jira Issue or Confluence Page…** (File menu, ⌥⌘I; also the Atlassian host's menu entry and its empty
   state): the same panel as pull requests with a Jira / Confluence segment at the field's end. Jira lists the issues
   you are part of, newest change first, as `summary` then `KEY · type · status · updated 2 days ago`; Confluence
   lists the site's spaces. A typed key (`cp-12`, any case), a `/browse/KEY` URL or a page URL opens as is, even

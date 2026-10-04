@@ -74,7 +74,7 @@ struct AtlassianFileSystemTests {
         await #expect(throws: FileSystemError.notFound("/confluence/NOPE")) { try await fs.list("/confluence/NOPE") }
     }
 
-    @Test func watchingSeesAnUpdatedIssue() async throws {
+    @Test(.timeLimit(.minutes(1))) func watchingSeesAnUpdatedIssue() async throws {
         let stub = Stub()
         Self.serve(stub)
         let issueURL = "\(Self.site)/rest/api/3/issue/CP-7?fields=summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project"

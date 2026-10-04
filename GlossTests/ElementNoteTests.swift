@@ -8,11 +8,12 @@ import Viewers
 /// Element notes without a web view: the page's bridge is stood in for by calling the controller's hooks directly.
 @MainActor
 struct ElementNoteTests {
-    func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+    func waitUntil(_ condition: @escaping @MainActor () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
         for _ in 0..<100 {
             if condition() { return }
             try? await Task.sleep(for: .milliseconds(20))
         }
+        Issue.record("timed out waiting", sourceLocation: sourceLocation)
     }
 
     @Test func aPickOpensTheEditorAndCommitsAnElementNote() async throws {
@@ -79,7 +80,7 @@ struct ElementNoteTests {
         html.onPageChanged()
         await waitUntil { session.notes.first?.state == .draft }
         #expect(session.notes.first?.state == .draft)
-        #expect(session.notes.first?.anchor == .element(moved) || session.notes.first?.state == .draft)
+        #expect(session.notes.first?.anchor == .element(moved), "the element is back where the note last saw it")
         await model.shutDown()
     }
 }

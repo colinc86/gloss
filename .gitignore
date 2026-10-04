@@ -1,5 +1,5 @@
-# Xcode
-build/
+# Xcode (the build folder at the root only: .claude/skills/build is a skill)
+/build/
 DerivedData/
 xcuserdata/
 *.xcuserstate
@@ -18,5 +18,4 @@ integrations.env
 *.env
 
 # Build artifacts
-Packages/.build/
 *.profraw

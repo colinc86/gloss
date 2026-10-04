@@ -148,7 +148,7 @@ struct GitHubPullRequestFileSystemTests {
         #expect(title?.reference == "o/r #2" && title?.title == "Name the receiver" && title?.state == "merged")
     }
 
-    @Test func watchingSeesANewHead() async throws {
+    @Test(.timeLimit(.minutes(1))) func watchingSeesANewHead() async throws {
         let stub = Stub()
         Self.serve(stub)
         stub.respond(to: "\(Self.base)/repos/o/r/pulls/2", inOrder: [.json(Self.pullJSON(sha: "f00d123abcdef")), .json(Self.pullJSON(sha: "f00d123abcdef")), .json(Self.pullJSON(sha: "b222222222222", updated: "2026-10-03T12:00:00Z"))])
@@ -177,13 +177,15 @@ struct GitHubPullRequestFileSystemTests {
         #expect(fs.watch("/nowhere").makeAsyncIterator() != nil)
     }
 
-    @Test(.enabled(if: TestGates.githubToken != nil))
-    func liveMergedPullRequestReadsItsThreeFiles() async throws {
+    /// `GLOSS_LIVE_PULL_REQUEST=owner/repo#n` with a token in `integrations.env`: reads that pull request, read-only.
+    @Test(.enabled(if: TestGates.githubToken != nil && TestGates.livePullRequest != nil))
+    func livePullRequestReadsItsTree() async throws {
         let fs = GitHubPullRequestFileSystem(client: GitHubClient(token: try #require(TestGates.githubToken)))
-        let root = try await fs.list("/acme/widget-api/pull/2")
-        #expect(root.map(\.name) == ["Pull request.md", "Conversation.md", "changes", "pull-2.diff"])
-        let description = String(decoding: try await fs.read("/acme/widget-api/pull/2/Pull request.md"), as: UTF8.self)
-        #expect(description.contains("**acme/widget-api #2** · merged"))
+        let pull = try #require(TestGates.livePullRequest)
+        let root = try await fs.list(pull.root)
+        #expect(root.map(\.name) == ["Pull request.md", "Conversation.md", "changes", "pull-\(pull.number).diff"])
+        let description = String(decoding: try await fs.read(pull.root + "/Pull request.md"), as: UTF8.self)
+        #expect(description.contains("**\(pull.repository) #\(pull.number)**"))
         func walk(_ directory: String) async throws -> [String] {
             var files: [String] = []
             for entry in try await fs.list(directory) {
@@ -191,8 +193,8 @@ struct GitHubPullRequestFileSystemTests {
             }
             return files
         }
-        let changed = try await walk("/acme/widget-api/pull/2/changes")
-        #expect(changed.count == 3, "\(changed)")
+        let changed = try await walk(pull.root + "/changes")
+        #expect(!changed.isEmpty, "\(changed)")
         for file in changed {
             #expect(await fs.changes(forPath: file) != nil, "\(file) has a patch")
         }
