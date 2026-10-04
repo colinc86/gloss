@@ -12,7 +12,12 @@ struct AtlassianPathTests {
         for bad in ["CP--7", "-CP-7-", "CP-+7", "CP-", "1CP-7"] { #expect(!AtlassianPath.isIssueKey(bad), Comment(rawValue: bad)) }
         #expect(AtlassianPath("/confluence/ENG/100/Release plan.md") == .confluencePage(space: "ENG", id: "100", title: "Release plan"))
         #expect(AtlassianPath("/confluence/ENG/100") == .confluencePageFolder(space: "ENG", id: "100"))
-        for bad in ["/jira/CP/XX-7.md", "/jira/CP/CP-7", "/confluence/ENG/abc", "/x", "/jira/../CP"] { #expect(AtlassianPath(bad) == nil, Comment(rawValue: bad)) }
+        #expect(AtlassianPath("/confluence/ENG/100/101") == .confluencePageFolder(space: "ENG", id: "101", ancestors: ["100"]), "a child's folder nests in its parent's")
+        #expect(AtlassianPath("/confluence/ENG/100/101/Phase 1.md") == .confluencePage(space: "ENG", id: "101", title: "Phase 1", ancestors: ["100"]))
+        #expect(AtlassianPath("/confluence/ENG/100/101/Phase 1.md")?.pageID == "101")
+        #expect(AtlassianPath.confluencePageFolder(space: "ENG", id: "100").childFolder("101")?.path == "/confluence/ENG/100/101")
+        #expect(AtlassianPath("/jira/cp/cp-7.md") == .jiraIssue(project: "CP", key: "CP-7"), "keys are upper case however they were typed")
+        for bad in ["/jira/CP/XX-7.md", "/jira/CP/CP-7", "/confluence/ENG/abc", "/confluence/ENG/100/abc/x.md", "/x", "/jira/../CP"] { #expect(AtlassianPath(bad) == nil, Comment(rawValue: bad)) }
         let site = URL(string: "https://x.atlassian.net")!
         #expect(AtlassianPath.parse(reference: "cp-7", site: site) == .jiraIssue(project: "CP", key: "CP-7"))
         #expect(AtlassianPath.parse(reference: "https://x.atlassian.net/browse/CP-7?focused=1", site: site) == .jiraIssue(project: "CP", key: "CP-7"))
@@ -34,6 +39,7 @@ struct AtlassianFileSystemTests {
         stub.respond(to: "\(site)/wiki/api/v2/spaces/11/pages?depth=root&limit=250&sort=title", with: .json(#"{"results":[{"id":"100","title":"Release plan","spaceId":"11","version":{"number":7,"createdAt":"2026-10-03T12:00:00.000Z"},"_links":{"webui":"/spaces/ENG/pages/100/Release+plan"}}]}"#))
         stub.respond(to: "\(site)/wiki/api/v2/pages/100/children?limit=250", with: .json(#"{"results":[{"id":"101","title":"Phase 1/2","spaceId":"11","parentId":"100","version":{"number":2}}]}"#))
         stub.respond(to: "\(site)/wiki/api/v2/pages/100?body-format=atlas_doc_format", with: .json(#"{"id":"100","title":"Release plan","spaceId":"11","version":{"number":7,"createdAt":"2026-10-03T12:00:00.000Z"},"_links":{"webui":"/spaces/ENG/pages/100/Release+plan"},"body":{"atlas_doc_format":{"value":"{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Ship it.\"}]}]}"}}}"#))
+        stub.respond(to: "\(site)/wiki/api/v2/pages/100/ancestors", with: .json(#"{"results":[],"_links":{}}"#))
     }
 
     func provider(_ stub: Stub, poll: Duration = .seconds(10)) -> AtlassianFileSystem {
@@ -66,10 +72,16 @@ struct AtlassianFileSystemTests {
         #expect(root[0].path == "/confluence/ENG/100")
         let folder = try await fs.list("/confluence/ENG/100")
         #expect(folder.map(\.name) == ["Release plan.md", "Phase 1∕2"], "the page itself, then its children")
+        #expect(folder.map(\.path) == ["/confluence/ENG/100/Release plan.md", "/confluence/ENG/100/101"], "a child's folder sits under its parent's path, as the tree shows it")
         let text = String(decoding: try await fs.read("/confluence/ENG/100/Release plan.md"), as: UTF8.self)
         #expect(text == "# Release plan\n\n- **Confluence** · ENG · version 7 · 2026-10-03T12:00:00Z\n- <https://x.atlassian.net/wiki/spaces/ENG/pages/100/Release+plan>\n\nShip it.\n", Comment(rawValue: text))
         #expect(await fs.resource(for: "/confluence/ENG/100/Release plan.md") == PacketResource(url: URL(string: "https://x.atlassian.net/wiki/spaces/ENG/pages/100/Release+plan")!, details: ["Version: 7"]))
         #expect(await fs.documentPath(for: .confluencePageFolder(space: "ENG", id: "100")) == "/confluence/ENG/100/Release plan.md")
+        // A page URL names only the page; its ancestors put it where the tree has it.
+        stub.respond(to: "\(Self.site)/wiki/api/v2/pages/101/ancestors", with: .json(#"{"results":[{"id":"100","type":"page"},{"id":"9","type":"folder"}],"_links":{}}"#))
+        stub.respond(to: "\(Self.site)/wiki/api/v2/pages/101?body-format=atlas_doc_format", with: .json(#"{"id":"101","title":"Phase 1/2","spaceId":"11","parentId":"100","version":{"number":2},"body":{"atlas_doc_format":{"value":"{\"type\":\"doc\",\"content\":[]}"}}}"#))
+        #expect(await fs.documentPath(for: .confluencePageFolder(space: "ENG", id: "101")) == "/confluence/ENG/100/101/Phase 1∕2.md")
+        #expect(await fs.documentPath(for: .confluencePage(space: "ENG", id: "101", title: "Old name")) == "/confluence/ENG/100/101/Phase 1∕2.md", "a path from before a rename comes back with today's")
         #expect(try await fs.read("/confluence/ENG/100/Other.md") == Data(text.utf8), "the title in the path is cosmetic: a renamed page keeps its notes")
         await #expect(throws: FileSystemError.notFound("/confluence/NOPE")) { try await fs.list("/confluence/NOPE") }
     }

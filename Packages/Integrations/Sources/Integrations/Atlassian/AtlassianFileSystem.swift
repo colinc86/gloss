@@ -122,10 +122,12 @@ public actor AtlassianFileSystem: FileSystemProvider {
         }
     }
 
-    private func entries(for pages: [ConfluencePage], space: String) -> [DirectoryEntry] {
+    /// Page folders, named by title; their paths nest under `parent`'s, so the tree's paths follow its nesting.
+    private func entries(for pages: [ConfluencePage], space: String, under parent: AtlassianPath?) -> [DirectoryEntry] {
         pages.map { page in
             pageTitles[page.id] = page
-            return DirectoryEntry(name: AtlassianPath.fileTitle(page.title), path: AtlassianPath.confluencePageFolder(space: space, id: page.id).path, kind: .directory, mtime: page.versionDate, mode: 0o555)
+            let folder = parent?.childFolder(page.id) ?? .confluencePageFolder(space: space, id: page.id)
+            return DirectoryEntry(name: AtlassianPath.fileTitle(page.title), path: folder.path, kind: .directory, mtime: page.versionDate, mode: 0o555)
         }
         .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
@@ -143,8 +145,8 @@ public actor AtlassianFileSystem: FileSystemProvider {
             }
         case .confluenceSpace(let key):
             let space = try await space(key)
-            do { return entries(for: try await client.pages(inSpace: space.id), space: key) } catch { throw Self.fileSystemError(error, path: directory) }
-        case .confluencePageFolder(let space, let id):
+            do { return entries(for: try await client.pages(inSpace: space.id), space: key, under: nil) } catch { throw Self.fileSystemError(error, path: directory) }
+        case .confluencePageFolder(let space, let id, let ancestors):
             // The folder's own document is named from what a listing already said about the page, so expanding a
             // folder fetches its children only; the body comes when the document opens.
             let own: (title: String, size: Int64?, mtime: Date?)
@@ -157,8 +159,9 @@ public actor AtlassianFileSystem: FileSystemProvider {
                 own = (document.page.title, Int64(document.data.count), document.page.versionDate)
             }
             let title = AtlassianPath.fileTitle(own.title)
-            var entries = [DirectoryEntry(name: title + ".md", path: AtlassianPath.confluencePage(space: space, id: id, title: title).path, kind: .file, size: own.size, mtime: own.mtime, mode: 0o444)]
-            do { entries += self.entries(for: try await client.children(ofPage: id), space: space) } catch { throw Self.fileSystemError(error, path: directory) }
+            var entries = [DirectoryEntry(name: title + ".md", path: AtlassianPath.confluencePage(space: space, id: id, title: title, ancestors: ancestors).path, kind: .file, size: own.size, mtime: own.mtime, mode: 0o444)]
+            let folder = AtlassianPath.confluencePageFolder(space: space, id: id, ancestors: ancestors)
+            do { entries += self.entries(for: try await client.children(ofPage: id), space: space, under: folder) } catch { throw Self.fileSystemError(error, path: directory) }
             return entries
         case .jiraIssue, .confluencePage:
             throw FileSystemError.notADirectory(directory)
@@ -179,10 +182,10 @@ public actor AtlassianFileSystem: FileSystemProvider {
         case .jiraIssue(let project, let key):
             let document = try await issueDocument(key, project: project)
             return FileAttributes(kind: .file, size: Int64(document.data.count), mtime: document.issue.updated, mode: 0o444)
-        case .confluencePageFolder(let space, let id):
+        case .confluencePageFolder(let space, let id, _):
             let document = try await pageDocument(id, space: space)
             return FileAttributes(kind: .directory, size: 0, mtime: document.page.versionDate ?? Date(timeIntervalSince1970: 0), mode: 0o555)
-        case .confluencePage(let space, let id, _):
+        case .confluencePage(let space, let id, _, _):
             // The title in the path is cosmetic: a renamed page keeps its document and its notes.
             let document = try await pageDocument(id, space: space)
             return FileAttributes(kind: .file, size: Int64(document.data.count), mtime: document.page.versionDate ?? Date(timeIntervalSince1970: 0), mode: 0o444)
@@ -193,7 +196,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
         switch try parse(path) {
         case .jiraIssue(let project, let key):
             return try await issueDocument(key, project: project).data
-        case .confluencePage(let space, let id, _):
+        case .confluencePage(let space, let id, _, _):
             return try await pageDocument(id, space: space).data
         default:
             throw FileSystemError.notFound(path)
@@ -257,7 +260,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
         case .jiraIssue(let project, let key):
             guard let previous = issues[key], let fresh = try? await issueDocument(key, project: project, refresh: true) else { return }
             changed = fresh.issue.updated != previous.issue.updated || fresh.data != previous.data
-        case .confluencePage(let space, let id, _):
+        case .confluencePage(let space, let id, _, _):
             guard let previous = pages[id], let fresh = try? await pageDocument(id, space: space, refresh: true) else { return }
             changed = fresh.page.version != previous.page.version
         default:
@@ -279,7 +282,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
                 return PacketResource(url: client.browseURL(forIssue: key), details: ["Comment: \(client.browseURL(forIssue: key).absoluteString)?focusedCommentId=\(comment.id)"])
             }
             return PacketResource(url: client.browseURL(forIssue: key), details: ["Field: description", "Updated: \(AtlassianMarkdown.stamp(document.issue.updated))"])
-        case .confluencePage(let space, let id, _)?:
+        case .confluencePage(let space, let id, _, _)?:
             guard let document = try? await pageDocument(id, space: space) else { return nil }
             return PacketResource(url: client.pageURL(document.page), details: ["Version: \(document.page.version)"])
         default:
@@ -287,14 +290,16 @@ public actor AtlassianFileSystem: FileSystemProvider {
         }
     }
 
-    /// The document a page URL or an issue key opens: `/confluence/<space>/<id>/<Title>.md` needs the title.
+    /// The document a page URL or an issue key opens, at the path the tree shows it: a page needs its title and
+    /// its ancestors (asked of Confluence), so revealing it walks the tree's own folders. A path made before a
+    /// rename or a move comes back with today's title and place.
     public func documentPath(for reference: AtlassianPath) async -> String? {
         switch reference {
         case .jiraIssue: return reference.path
-        case .confluencePageFolder(let space, let id):
+        case .confluencePageFolder(let space, let id, _), .confluencePage(let space, let id, _, _):
             guard let document = try? await pageDocument(id, space: space) else { return nil }
-            return AtlassianPath.confluencePage(space: space, id: id, title: AtlassianPath.fileTitle(document.page.title)).path
-        case .confluencePage: return reference.path
+            let ancestors = (try? await client.ancestors(ofPage: id)) ?? []
+            return AtlassianPath.confluencePage(space: space, id: id, title: AtlassianPath.fileTitle(document.page.title), ancestors: ancestors).path
         default: return nil
         }
     }
@@ -303,7 +308,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
     public func title(for path: String) async -> String? {
         switch AtlassianPath(path) {
         case .jiraIssue(let project, let key)?: return (try? await issueDocument(key, project: project)).map { "\(key) · \($0.issue.summary)" }
-        case .confluencePage(let space, let id, _)?: return (try? await pageDocument(id, space: space)).map { "\($0.page.title) · version \($0.page.version)" }
+        case .confluencePage(let space, let id, _, _)?: return (try? await pageDocument(id, space: space)).map { "\($0.page.title) · version \($0.page.version)" }
         default: return nil
         }
     }

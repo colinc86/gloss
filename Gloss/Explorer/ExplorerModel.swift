@@ -339,7 +339,9 @@ final class ExplorerModel {
             // A listing already under way (the user just expanded this folder) is waited for, not skipped.
             for _ in 0..<200 where node.isLoading { try? await Task.sleep(for: .milliseconds(25)) }
             if !node.isLoaded { await loadChildren(of: node) }
-            guard let child = node.children?.first(where: { $0.name == component }) else { break }
+            // By the path's own component, not the shown name: a Confluence page's folder is named by its title
+            // and addressed by its id.
+            guard let child = node.children?.first(where: { ($0.path as NSString).lastPathComponent == component }) else { break }
             if child.entry.isHidden, !showDotfiles { showDotfiles = true }
             // The tree shows only names matching the filter; a filter hiding the target would make the reveal a no-op.
             if !filter.isEmpty, !child.isDirectory, !child.name.localizedCaseInsensitiveContains(filter) { filter = "" }

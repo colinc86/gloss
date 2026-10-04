@@ -193,6 +193,14 @@ public actor AtlassianClient {
         try await results(startingAt: url("wiki/api/v2/pages/\(id)/children", query: ["limit": "250"])).compactMap { self.page(from: $0, body: false) }
     }
 
+    /// A page's ancestor pages, the space's top-level page first. Folders and other content types in between are
+    /// left out: the tree lists pages only.
+    public func ancestors(ofPage id: String) async throws -> [String] {
+        try await results(startingAt: url("wiki/api/v2/pages/\(id)/ancestors")).compactMap { value in
+            (value["type"] as? String ?? "page") == "page" ? Self.string(value["id"]) : nil
+        }
+    }
+
     /// One page with its body as Markdown.
     public func page(id: String) async throws -> ConfluencePage {
         guard let page = page(from: try object(try await http.get(url("wiki/api/v2/pages/\(id)", query: ["body-format": "atlas_doc_format"]), headers: headers)), body: true) else {

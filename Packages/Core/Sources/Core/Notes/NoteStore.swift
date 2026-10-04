@@ -198,6 +198,23 @@ public struct NoteStore: Sendable {
     }
 
     /// Documents that have at least one note, with their notes in reading order.
+    /// Moves a document's notes to another path on the same host (the thing it names was renamed or moved): the
+    /// row takes the new path, or, when the new path already has a row, its notes join that row and the old one
+    /// goes. One transaction.
+    public func relocateDocument(hostID: HostID, from oldPath: String, to newPath: String) async throws {
+        guard oldPath != newPath else { return }
+        try await queue.write { db in
+            guard var old = try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == oldPath).fetchOne(db) else { return }
+            if let target = try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == newPath).fetchOne(db) {
+                try db.execute(sql: "UPDATE note SET document_id = ? WHERE document_id = ?", arguments: [target.id, old.id])
+                _ = try old.delete(db)
+            } else {
+                old.path = newPath
+                try old.update(db)
+            }
+        }
+    }
+
     public func documentsWithNotes() async throws -> [(document: Document, notes: [Note])] {
         try await queue.read { db in
             let documents = try DocumentRecord

@@ -407,6 +407,14 @@ final class AppModel {
             Task { if let reference = AtlassianPath(path) { await openAtlassian(reference) } }
             return
         }
+        if hostID == .atlassian, AtlassianPath(path)?.pageID != nil, !canonicalPages.contains(path) {
+            // A page is opened at the path the tree shows it today, its notes from earlier paths with it.
+            Task {
+                let canonical = await canonicalConfluencePath(path)
+                openDocument(hostID: .atlassian, path: canonical)
+            }
+            return
+        }
         guard let fileSystem = fileSystems[hostID] else {
             if hostID == .github {
                 // No token saved: the picker says where it goes instead of nothing happening.
@@ -514,6 +522,24 @@ final class AppModel {
         await hosts.setVirtualHost(.atlassian, name: "atlassian", kind: .atlassian, enabled: credentials != nil)
     }
 
+    /// Confluence page paths known to be where the tree shows the page today.
+    @ObservationIgnored private var canonicalPages: Set<String> = []
+
+    /// Where a Confluence page is today (its title and ancestors may have changed since `path` was made), with
+    /// the notes made on any earlier path of the same page moved there, so a renamed or moved page keeps them.
+    func canonicalConfluencePath(_ path: String) async -> String {
+        guard let reference = AtlassianPath(path), let id = reference.pageID, let provider = atlassianDocuments,
+              let canonical = await provider.documentPath(for: reference) else { return path }
+        let earlier = ((try? await noteStore.documentsWithNotes()) ?? []).map(\.document).filter { document in
+            document.hostID == .atlassian && document.path != canonical && AtlassianPath(document.path)?.pageID == id
+        }
+        for document in earlier {
+            try? await noteStore.relocateDocument(hostID: .atlassian, from: document.path, to: canonical)
+        }
+        canonicalPages.insert(canonical)
+        return canonical
+    }
+
     /// The Atlassian provider, for what the viewer asks beyond files.
     var atlassianDocuments: AtlassianFileSystem? { fileSystems[.atlassian] as? AtlassianFileSystem }
 
@@ -534,9 +560,10 @@ final class AppModel {
             if let line { openDocument(hostID: .atlassian, path: reference.path, line: line) } else { openDocument(hostID: .atlassian, path: reference.path) }
         case .jiraProject, .confluenceSpace:
             await explorer.openRoot(hostID: .atlassian, path: reference.path)
-        case .confluencePageFolder(let space, _), .confluencePage(let space, _, _):
+        case .confluencePageFolder(let space, _, _), .confluencePage(let space, _, _, _):
             await explorer.openRoot(hostID: .atlassian, path: AtlassianPath.confluenceSpace(space).path)
-            guard let document = await provider.documentPath(for: reference) else { return }
+            guard await provider.documentPath(for: reference) != nil else { return }
+            let document = await canonicalConfluencePath(reference.path)
             if let line { openDocument(hostID: .atlassian, path: document, line: line) } else { openDocument(hostID: .atlassian, path: document) }
         default:
             break
@@ -681,8 +708,9 @@ final class AppModel {
     /// Opens at a line: selected for a jump (a link, an agent pointing somewhere), or just the caret at its start
     /// when resuming, so the reopened file doesn't greet you with a selection and an Add Note button.
     func openDocument(hostID: HostID, path: String, line: Int, select: Bool = true) {
-        if hostID == .atlassian, let reference = AtlassianPath(path), case .confluencePageFolder = reference {
-            // A page URL names the page's folder; the document inside it opens once its title is known.
+        if hostID == .atlassian, let reference = AtlassianPath(path), reference.pageID != nil, !canonicalPages.contains(path) {
+            // A page URL names the page's folder, and a page path may be from before a rename or a move: the
+            // document opens at today's path once that is known.
             Task { await openAtlassian(reference, line: line) }
             return
         }
@@ -774,7 +802,7 @@ final class AppModel {
         if hostID == .atlassian, let reference = AtlassianPath(path) {
             switch reference {
             case .jiraIssue(let project, _): await explorer.openRoot(hostID: hostID, path: AtlassianPath.jiraProject(project).path)
-            case .confluencePage(let space, _, _), .confluencePageFolder(let space, _): await explorer.openRoot(hostID: hostID, path: AtlassianPath.confluenceSpace(space).path)
+            case .confluencePage(let space, _, _, _), .confluencePageFolder(let space, _, _): await explorer.openRoot(hostID: hostID, path: AtlassianPath.confluenceSpace(space).path)
             default: break
             }
             return

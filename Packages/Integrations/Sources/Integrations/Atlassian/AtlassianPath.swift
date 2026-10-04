@@ -1,15 +1,17 @@
 import Foundation
 
-/// A path on the `atlassian` host: `/jira/<PROJECT>/<KEY>.md` is an issue, `/confluence/<SPACE>/<page id>/<Title>.md`
-/// a page, with a page's children listed inside its folder. Anything else is not served.
+/// A path on the `atlassian` host: `/jira/<PROJECT>/<KEY>.md` is an issue; `/confluence/<SPACE>/<ancestor ids…>/<page id>`
+/// is a page's folder, holding `<Title>.md` (the page) and its child pages' folders. A page is its id: the ancestors
+/// and the title in a path are where it was and what it was called when the path was made, and a path from before a
+/// rename or a move still reads the page. Anything else is not served.
 public enum AtlassianPath: Equatable, Sendable {
     case jiraRoot
     case jiraProject(String)
     case jiraIssue(project: String, key: String)
     case confluenceRoot
     case confluenceSpace(String)
-    case confluencePageFolder(space: String, id: String)
-    case confluencePage(space: String, id: String, title: String)
+    case confluencePageFolder(space: String, id: String, ancestors: [String] = [])
+    case confluencePage(space: String, id: String, title: String, ancestors: [String] = [])
 
     public init?(_ path: String) {
         let parts = path.split(separator: "/").map(String.init)
@@ -18,25 +20,32 @@ public enum AtlassianPath: Equatable, Sendable {
         case "jira":
             switch parts.count {
             case 1: self = .jiraRoot
+            // Keys are upper case in Jira; a path typed in lower case names the same issue.
             case 2:
                 guard Self.isProjectKey(parts[1]) else { return nil }
-                self = .jiraProject(parts[1])
+                self = .jiraProject(parts[1].uppercased())
             case 3:
-                guard parts[2].hasSuffix(".md") else { return nil }
-                let key = String(parts[2].dropLast(3))
-                guard Self.isIssueKey(key), key.hasPrefix(parts[1] + "-") else { return nil }
-                self = .jiraIssue(project: parts[1], key: key)
+                guard parts[2].lowercased().hasSuffix(".md") else { return nil }
+                let key = String(parts[2].dropLast(3)).uppercased()
+                guard Self.isIssueKey(key), key.hasPrefix(parts[1].uppercased() + "-") else { return nil }
+                self = .jiraIssue(project: parts[1].uppercased(), key: key)
             default: return nil
             }
         case "confluence":
             switch parts.count {
             case 1: self = .confluenceRoot
             case 2: self = .confluenceSpace(parts[1])
-            case 3: guard parts[2].allSatisfy(\.isNumber) else { return nil }; self = .confluencePageFolder(space: parts[1], id: parts[2])
-            case 4:
-                guard parts[2].allSatisfy(\.isNumber), parts[3].hasSuffix(".md") else { return nil }
-                self = .confluencePage(space: parts[1], id: parts[2], title: String(parts[3].dropLast(3)))
-            default: return nil
+            default:
+                let isID = { (part: String) in !part.isEmpty && part.allSatisfy { $0.isASCII && $0.isNumber } }
+                if parts.last!.hasSuffix(".md") {
+                    let folder = Array(parts[2..<(parts.count - 1)])
+                    guard let id = folder.last, folder.allSatisfy(isID) else { return nil }
+                    self = .confluencePage(space: parts[1], id: id, title: String(parts.last!.dropLast(3)), ancestors: Array(folder.dropLast()))
+                } else {
+                    let folder = Array(parts[2...])
+                    guard let id = folder.last, folder.allSatisfy(isID) else { return nil }
+                    self = .confluencePageFolder(space: parts[1], id: id, ancestors: Array(folder.dropLast()))
+                }
             }
         default: return nil
         }
@@ -49,9 +58,23 @@ public enum AtlassianPath: Equatable, Sendable {
         case .jiraIssue(let project, let key): "/jira/\(project)/\(key).md"
         case .confluenceRoot: "/confluence"
         case .confluenceSpace(let space): "/confluence/\(space)"
-        case .confluencePageFolder(let space, let id): "/confluence/\(space)/\(id)"
-        case .confluencePage(let space, let id, let title): "/confluence/\(space)/\(id)/\(title).md"
+        case .confluencePageFolder(let space, let id, let ancestors): "/confluence/\(space)" + (ancestors + [id]).map { "/" + $0 }.joined()
+        case .confluencePage(let space, let id, let title, let ancestors): "/confluence/\(space)" + (ancestors + [id]).map { "/" + $0 }.joined() + "/\(title).md"
         }
+    }
+
+    /// The Confluence page a path is about, whatever its ancestors or title in the path.
+    public var pageID: String? {
+        switch self {
+        case .confluencePageFolder(_, let id, _), .confluencePage(_, let id, _, _): id
+        default: nil
+        }
+    }
+
+    /// The same page's folder, or the folder of a child page listed inside it.
+    public func childFolder(_ id: String) -> AtlassianPath? {
+        guard case .confluencePageFolder(let space, let parent, let ancestors) = self else { return nil }
+        return .confluencePageFolder(space: space, id: id, ancestors: ancestors + [parent])
     }
 
     /// `PROJ-123`: a project key, one dash, digits.

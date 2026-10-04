@@ -111,7 +111,7 @@ struct OpenAtlassianSheet: View {
     static func describe(_ reference: AtlassianPath) -> String {
         switch reference {
         case .jiraIssue(_, let key): "Open \(key)"
-        case .confluencePageFolder(let space, let id): "Open page \(id) in \(space)"
+        case .confluencePageFolder(let space, let id, _): "Open page \(id) in \(space)"
         case .confluenceSpace(let space): "Open space \(space)"
         default: "Open \(reference.path)"
         }

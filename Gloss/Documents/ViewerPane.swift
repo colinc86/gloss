@@ -287,7 +287,7 @@ private struct StatusBar: View {
                                 }
                             }
                         }
-                case .confluencePage(let space, _, _):
+                case .confluencePage(let space, _, _, _):
                     Label("Confluence · \(space)", systemImage: "doc.text")
                         .labelStyle(.titleAndIcon)
                         .foregroundStyle(.secondary)

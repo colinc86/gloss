@@ -19,7 +19,7 @@ struct ContentView: View {
         case .atlassian:
             switch AtlassianPath(session.path) {
             case .jiraIssue(let project, _)?: "Jira · \(project)"
-            case .confluencePage(let space, _, _)?: "Confluence · \(space)"
+            case .confluencePage(let space, _, _, _)?: "Confluence · \(space)"
             default: "Atlassian"
             }
         default: hosts.entry(for: session.hostID)?.name ?? ""

@@ -213,3 +213,22 @@ struct NoteUndoTests {
         #expect(try await store.lastSend(for: note.id) != nil)
     }
 }
+
+struct RelocateDocumentTests {
+    @Test func notesFollowAMovedDocument() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let old = try await store.upsertDocument(hostID: .atlassian, path: "/confluence/ENG/101/Old name.md", kind: .markdown, fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: old.id, anchor: .wholeFile, body: "keep me", color: .yellow)
+        try await store.relocateDocument(hostID: .atlassian, from: old.path, to: "/confluence/ENG/100/101/New name.md")
+        let moved = try #require(try await store.document(hostID: .atlassian, path: "/confluence/ENG/100/101/New name.md"))
+        #expect(moved.id == old.id, "the row moves when nothing is at the new path")
+        #expect(try await store.note(note.id)?.documentID == old.id)
+
+        // When the new path already has a row (opened there before), the notes join it.
+        let elsewhere = try await store.upsertDocument(hostID: .atlassian, path: "/confluence/ENG/101/Older.md", kind: .markdown, fingerprint: Fingerprint())
+        let second = try await store.createNote(documentID: elsewhere.id, anchor: .wholeFile, body: "me too", color: .blue)
+        try await store.relocateDocument(hostID: .atlassian, from: elsewhere.path, to: moved.path)
+        #expect(try await store.note(second.id)?.documentID == moved.id)
+        #expect(try await store.document(hostID: .atlassian, path: "/confluence/ENG/101/Older.md") == nil)
+    }
+}
