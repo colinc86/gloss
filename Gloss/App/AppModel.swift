@@ -157,7 +157,7 @@ final class AppModel {
             let firstRegistration = self.fileSystems[hostID] == nil
             self.fileSystems[hostID] = fileSystem
             self.connections[hostID] = connection
-            let alias = self.hosts.entry(for: hostID)?.name ?? hostID.rawValue
+            let alias = self.hosts.entry(for: hostID)?.alias ?? hostID.rawValue
             Task {
                 await self.connectionRegistry.register(connection, alias: alias, for: hostID)
                 if let tools = try? await connection.tools(), !tools.home.isEmpty { self.hostHomes[hostID] = tools.home }
@@ -1005,7 +1005,7 @@ final class AppModel {
             mcpStatus = nil
             mcpListeningPort = settings.mcpPort
             for (hostID, connection) in connections {
-                await forwardMCPPort(to: connection, alias: hosts.entry(for: hostID)?.name ?? hostID.rawValue)
+                await forwardMCPPort(to: connection, alias: hosts.entry(for: hostID)?.alias ?? hostID.rawValue)
             }
         } catch {
             mcpStatus = "MCP server could not bind port \(settings.mcpPort): \(error)"

@@ -165,7 +165,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 
 | Table | Key columns | Purpose |
 | --- | --- | --- |
-| `host` | `id`, `name`, `kind` (local, ssh; milestone 2 adds web, github, atlassian with fixed ids `h_web`, `h_github`, `h_atlassian`), `last_connected_at`, `origin` (local, ssh_config, manual), `options_json` (HostName, User, Port, IdentityFile for app-added hosts) | Hosts used |
+| `host` | `id`, `name`, `kind` (local, ssh; milestone 2 adds web, github, atlassian with fixed ids `h_web`, `h_github`, `h_atlassian`), `last_connected_at`, `origin` (local, ssh_config, manual), `options_json` (HostName, User, Port, IdentityFile for app-added hosts; `alias` for an ssh config alias listed under another name, e.g. `github` listed as `github-ssh` because the integration host owns `github`) | Hosts used |
 | `root` | `id`, `host_id`, `path`, `last_opened_at`, `pinned` | Recent and pinned roots |
 | `document` | `id`, `host_id`, `path`, `kind` (text, code, markdown, image, pdf, csv, file; milestone 2 adds web, whose path is a URL), `last_hash`, `last_mtime`, `last_size` | File identity and conflict fingerprint |
 | `note` | `id`, `document_id`, `anchor_json`, `anchor_type`, `body`, `state`, `created_at`, `updated_at`, `color` | Note with typed anchor and state |

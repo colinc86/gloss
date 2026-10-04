@@ -123,7 +123,11 @@ public enum Schema {
                     SELECT id, name, kind, last_connected_at, origin, options_json FROM host;
                 DROP TABLE host;
                 ALTER TABLE host_new RENAME TO host;
-                UPDATE host SET name = name || '-ssh' WHERE name IN ('web', 'github', 'atlassian');
+                """)
+            // An ssh alias that took a name the integration hosts need moves to the first free `<name>-ssh` (a
+            // database may hold `web-ssh` already) and remembers its alias, which is what ssh is still given.
+            try Self.moveAliasesOffVirtualNames(db)
+            try db.execute(sql: """
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES
                     ('h_web', 'web', 'web', NULL, 'local', NULL),
                     ('h_github', 'github', 'github', NULL, 'local', NULL),
@@ -162,6 +166,30 @@ public enum Schema {
                 CREATE INDEX note_document_state ON note(document_id, state);
                 """)
         }
+        migrator.registerMigration("v5-host-alias") { db in
+            // Databases migrated before v4 kept the real alias: an ssh row renamed to `github-ssh` there learns that
+            // its alias is `github`, so ssh is given the name it knows.
+            try Self.moveAliasesOffVirtualNames(db)
+        }
         return migrator
+    }
+
+    /// The names the integration hosts own.
+    static let virtualHostNames = ["web", "github", "atlassian"]
+
+    /// Moves ssh rows off the integration hosts' names (first free `<name>-ssh`) and records each one's real alias
+    /// in its options, including rows an earlier version already renamed without recording it.
+    static func moveAliasesOffVirtualNames(_ db: Database) throws {
+        for name in virtualHostNames {
+            for row in try Row.fetchAll(db, sql: "SELECT id, name, options_json FROM host WHERE kind = 'ssh' AND (name = ? OR (name = ? AND origin = 'ssh_config'))", arguments: [name, name + "-ssh"]) {
+                let id: String = row["id"]
+                let current: String = row["name"]
+                var options = (row["options_json"] as String?).flatMap { try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) } ?? HostOptions()
+                if options.alias == nil { options.alias = name }
+                let json = String(decoding: try JSONEncoder().encode(options), as: UTF8.self)
+                let newName = current == name ? try NoteStore.freeName(for: name, suffix: "ssh", db) : current
+                try db.execute(sql: "UPDATE host SET name = ?, options_json = ? WHERE id = ?", arguments: [newName, json, id])
+            }
+        }
     }
 }

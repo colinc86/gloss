@@ -17,6 +17,10 @@ final class HostsModel {
         var origin: HostOrigin = .sshConfig
         var options: HostOptions?
 
+        /// What ssh is given: the config alias, which differs from the name for an alias called like an
+        /// integration host (`github` listed as `github-ssh`).
+        var alias: String { options?.alias ?? name }
+
         var sshArguments: [String] {
             guard let options else { return [] }
             return SSHConnection.arguments(hostName: options.hostName, user: options.user, port: options.port, identityFile: options.identityFile)
@@ -47,7 +51,9 @@ final class HostsModel {
     func diagnostics(for hostID: HostID) async -> String {
         guard let entry = entry(for: hostID), entry.kind == .ssh else { return "" }
         var lines: [String] = ["Host: \(entry.name)" + (entry.origin == .manual ? " (added in Settings)" : " (from ~/.ssh/config)")]
-        if let resolved = await SSHConfig.resolve(entry.name) {
+        // The caption the design asks for: an alias listed under another name says what ssh calls it.
+        if entry.alias != entry.name { lines.append("ssh alias: \(entry.alias)") }
+        if let resolved = await SSHConfig.resolve(entry.alias) {
             lines.append("Destination: \(resolved.user.map { $0 + "@" } ?? "")\(resolved.hostName):\(resolved.port)")
             lines.append("Key agent: \(resolved.identityAgent ?? (ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"] ?? "none"))")
         }
@@ -116,9 +122,9 @@ final class HostsModel {
             case .manual:
                 list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .manual, options: host.options))
             case .sshConfig:
-                let stillListed = importsSSHConfigStored && aliases.contains(host.name)
+                let stillListed = importsSSHConfigStored && aliases.contains(host.options?.alias ?? host.name)
                 let hasNotes = documents.contains { $0.document.hostID == host.id }
-                if stillListed || hasNotes { list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .sshConfig)) }
+                if stillListed || hasNotes { list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .sshConfig, options: host.options)) }
             case .local:
                 continue
             }
@@ -177,7 +183,7 @@ final class HostsModel {
     func connect(_ hostID: HostID) async -> String? {
         guard let entry = entry(for: hostID), entry.kind == .ssh else { return nil }
         do {
-            let connection = try await manager.connection(for: hostID, alias: entry.name, options: entry.sshArguments)
+            let connection = try await manager.connection(for: hostID, alias: entry.alias, options: entry.sshArguments)
             let fileSystem = fileSystems[hostID] ?? SFTPFileSystem(hostID: hostID, connection: connection)
             fileSystems[hostID] = fileSystem
             try? await noteStore.markHostConnected(hostID)
@@ -198,7 +204,7 @@ final class HostsModel {
     func acceptNewHostKey(_ hostID: HostID) async -> String? {
         pendingHostKey = nil
         guard let entry = entry(for: hostID) else { return nil }
-        if let connection = try? await manager.connection(for: hostID, alias: entry.name, connect: false) {
+        if let connection = try? await manager.connection(for: hostID, alias: entry.alias, connect: false) {
             await connection.setAcceptNewHostKey(true)
         }
         return await connect(hostID)

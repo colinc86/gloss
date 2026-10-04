@@ -35,12 +35,16 @@ public struct HostOptions: Codable, Sendable, Hashable {
     public var user: String = ""
     public var port: Int?
     public var identityFile: String = ""
+    /// The `~/.ssh/config` alias, when the host's name had to differ from it: an alias called `github`, `atlassian`
+    /// or `web` is listed as `github-ssh` (those names are the integration hosts'), and ssh is still given `github`.
+    public var alias: String?
 
-    public init(hostName: String = "", user: String = "", port: Int? = nil, identityFile: String = "") {
+    public init(hostName: String = "", user: String = "", port: Int? = nil, identityFile: String = "", alias: String? = nil) {
         self.hostName = hostName
         self.user = user
         self.port = port
         self.identityFile = identityFile
+        self.alias = alias
     }
 
     public var isEmpty: Bool { hostName.isEmpty && user.isEmpty && port == nil && identityFile.isEmpty }

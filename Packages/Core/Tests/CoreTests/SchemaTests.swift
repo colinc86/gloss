@@ -44,7 +44,12 @@ struct SchemaTests {
         #expect(HostID(validating: "h_nope") == nil)
         let alias = try await store.upsertHost(name: "github", kind: .ssh)
         #expect(alias.name == "github-ssh" && alias.kind == .ssh, "an ssh alias never merges with the GitHub host")
+        #expect(alias.options?.alias == "github", "ssh is still given the alias it knows")
         #expect(try await store.upsertHost(name: "github", kind: .ssh).id == alias.id)
+        // A host somebody added as web-ssh does not stand in for the alias web.
+        _ = try await store.saveHost(id: nil, name: "web-ssh", options: HostOptions(hostName: "10.0.0.9"))
+        let web = try await store.upsertHost(name: "web", kind: .ssh)
+        #expect(web.name == "web-ssh-2" && web.options?.alias == "web")
     }
 
     /// The milestone 2 migration rebuilds host, document and note to widen their CHECK constraints; every row written
@@ -58,6 +63,8 @@ struct SchemaTests {
             try db.execute(sql: """
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01HOST', 'asus', 'ssh', '2026-10-01 10:00:00', 'manual', '{"user":"colin"}');
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01GITH', 'github', 'ssh', NULL, 'ssh_config', NULL);
+                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01WEB1', 'web', 'ssh', NULL, 'ssh_config', NULL);
+                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01WEB2', 'web-ssh', 'ssh', NULL, 'manual', '{"hostName":"10.0.0.9","user":"","identityFile":""}');
                 INSERT INTO root (id, host_id, path, last_opened_at, pinned) VALUES ('r_1', 'h_01HOST', '/home/colin', '2026-10-01 10:00:00', 1);
                 INSERT INTO document (id, host_id, path, kind, last_hash, last_mtime, last_size) VALUES ('d_1', 'h_01HOST', '/home/colin/a.md', 'markdown', 'abc', '2026-10-01 10:00:00', 12);
                 INSERT INTO note (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message)
@@ -79,8 +86,13 @@ struct SchemaTests {
             #expect(before[index] == after[index], "\(table) rows survive the rebuild")
         }
         try queue.read { (db: Database) throws in
-            #expect(try rows(db, "host").count == before[0].count + 3, "the three virtual hosts are added, nothing else changes")
+            #expect(try rows(db, "host").count == before[0].count + 3, "the three virtual hosts are added, no host is lost")
             #expect(try String.fetchOne(db, sql: "SELECT name FROM host WHERE id = 'h_01GITH'") == "github-ssh", "an ssh alias that took a virtual host's name is renamed, not lost")
+            let options = { (id: String) in try String.fetchOne(db, sql: "SELECT options_json FROM host WHERE id = ?", arguments: [id]).flatMap { try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) } }
+            #expect(try options("h_01GITH")?.alias == "github", "it remembers the alias ssh knows it by")
+            #expect(try String.fetchOne(db, sql: "SELECT name FROM host WHERE id = 'h_01WEB1'") == "web-ssh-2", "web-ssh was taken, so the next free name")
+            #expect(try options("h_01WEB1")?.alias == "web")
+            #expect(try options("h_01WEB2")?.alias == nil && options("h_01WEB2")?.hostName == "10.0.0.9", "an app-added host that happens to be called web-ssh is left alone")
             #expect(try String.fetchOne(db, sql: "SELECT kind FROM host WHERE name = 'github'") == "github")
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
             #expect(try Row.fetchOne(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'note_document_state'") != nil)
