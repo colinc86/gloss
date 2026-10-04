@@ -18,6 +18,7 @@ The app is for one person working across a local Mac and several remote hosts, w
 | Concept | What it is | Example |
 | --- | --- | --- |
 | Host | A machine the app can read files from: the local Mac, an SSH host imported from `~/.ssh/config`, or one added in Settings → Hosts | `local`, `workbox` |
+| Virtual host (milestone 2) | A read-only source that is not a machine but is browsed, viewed and annotated exactly like one: `github` serves pull requests, `atlassian` serves Jira issues and Confluence pages as Markdown, `web` serves live pages by URL | `github:/colinc86/repo/pull/123`, `atlassian:/jira/PROJ/PROJ-123.md`, `web:https://example.com/docs/` |
 | Root | A directory on a host that the explorer is showing | `workbox:/home/colin/proj` |
 | Document | One file opened in the viewer, identified by host and absolute path | `workbox:/home/colin/proj/PLAN.md` |
 | Anchor | A typed description of a subset of a document | lines 40 to 52; a rectangle in pixel space; page 3 region |
@@ -48,6 +49,8 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 | PDF | PDFKit | Text selection or page region | No |
 | CSV and TSV | Grid view | Rows (line range), a cell, a block, scattered cells, or whole columns; stored as a text anchor over the records' lines plus a cell list | No in milestone 1 |
 | Everything else | QuickLook | Whole file | No |
+| Web page (milestone 2) | WebKit in the app's own review browser: file-backed pages, live URLs, and dev servers on remote hosts through an ssh port forward; links stay in the app | Text range, or a DOM element | File-backed: yes, in source view. Live: no (source shows the current DOM) |
+| Pull request file (milestone 2) | The code editor showing the file at the PR's head commit with changed lines tinted and a hunk stepper | Character range with real file line numbers | No |
 
 **Markdown toggle.** The rendered view is built from swift-markdown's syntax tree, which carries a source range for every node. Rendered text is an attributed string whose runs carry those ranges, so a selection in the rendered view maps straight back to source bytes. Notes are stored in source coordinates and appear in both views.
 
@@ -65,6 +68,7 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 | Image region | Rectangle in original pixel coordinates, original width and height, image hash | Image unchanged: keep. Dimensions changed: scale proportionally and flag for review |
 | PDF region | Page index, bounds in page points, selected text if any, page count | Same page and text present: keep. Otherwise search nearby pages for the text |
 | Whole file | Path and file hash | Always valid while the file exists |
+| Element (milestone 2) | A CSS selector (id, `data-testid`, or an `nth-of-type` path; never class names), tag, trimmed text, an outerHTML snippet, the rect in page coordinates, the source line for file-backed pages, DOM hash | Selector hit with the same tag: keep (flag for review if the text changed). Otherwise one text match: move and flag. Several: nearest rect, flagged. None: orphaned |
 
 **Creating a note.** Select a range or drag a rectangle, then click the floating Add Note button (or press the shortcut). A popover takes the comment with markdown: Return saves, Shift-Return (or Option-Return) adds a line, Escape cancels. Notes show as colored highlights in the viewer and as cards in the notes panel, grouped by document. The panel filters by state, color, and a text search over note bodies, file names, and resolve messages, and sorts by position in the file, newest, oldest, color, or state; the sort order is remembered.
 
@@ -77,6 +81,8 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 Send loop: highlight → write a note (draft) → build packet (text, grouped by file) → stage attachments (crops via SFTP) → deliver (Herdr, MCP, hooks, tmux) → agent works → agent resolves via the MCP `resolve_note` tool → note resolved, highlight fades, file reloads.
 
 **Packet format.** See the `context-packet` skill for the normative grammar. One header per file, then one block per note; excerpts blockquoted and truncated head and tail past 40 lines; attachments referenced by absolute path on the machine the agent runs on; closing line names the note ids and the resolve tool.
+
+Milestone 2 adds sources `web`, `pull_request`, `jira` and `confluence`. A live web page's `File:` line is its URL. Pull requests, issues and pages keep their virtual path in `File:` and add a `Resource:` line with the canonical URL (`https://github.com/o/r/pull/123`, `https://<site>/browse/PROJ-123`, the Confluence page URL) plus `Path: Sources/App.swift at 0f3a9c1` for a PR file, `Field: description` or `Comment: <url>` for an issue or PR body, and `Version: 7` for a page, so the agent can act on the real thing with its own tools. Element notes carry `Element: <selector>`, `Text:`, `Rect:`, `Line` when the page is a file, a blockquoted `Snippet:` of the element's HTML, and a PNG crop attachment.
 
 ```markdown
 File: /home/colin/proj/docs/PLAN.md
@@ -119,6 +125,14 @@ Notes: 2. Mark each resolved with the gloss MCP tool when done.
 | tmux | Push | Any agent in a tmux pane without Herdr | bracketed paste over the exec channel; pane chosen once per host |
 | Clipboard | Manual | Anything, including bare mosh or ssh | Packet as text; attachments by path |
 
+**Read integrations (milestone 2).** Settings → Integrations takes API keys that the app uses only to read; every change to a pull request, ticket or page is made by the agent with its own tools (the GitHub and Atlassian MCP servers, `gh`, or whatever the user installed). Keys live in the Keychain, never in the database or a file. Each integration has a Test connection button that reports the signed-in account and what the key can see.
+
+| Integration | Credential | What the app reads | Shown as |
+| --- | --- | --- | --- |
+| GitHub | Personal access token (read scopes are enough; the client never issues anything but GET) | Pull requests: metadata, description, review and issue comments, changed files at the head commit, the unified diff | A root `github:/owner/repo/pull/N` with `Pull request.md`, `Conversation.md`, `changes/…`, `pull-N.diff`; polled for a new head commit while open |
+| Atlassian | Site URL, email, API token | Jira issues (fields, description, comments) and Confluence pages (body and version), converted from the Atlassian document format to Markdown | `atlassian:/jira/PROJ/PROJ-123.md` and `atlassian:/confluence/SPACE/<id> <title>.md`; polled for a new version while open |
+| Web | None | Any URL in the review browser; `localhost` on a remote host through a port forward on the app's ssh connection | `web:<url>`, or a document of the ssh host when proxied |
+
 **Herdr plugin.** Ships with the app and is installed from Settings → Hooks, locally or on a connected host: the bundle is copied to `~/.config/gloss/herdr-plugin/` and linked with `herdr plugin link`. A keybinding (snippet shown in Settings; the app never edits Herdr's config) sends selected pane text to Gloss as a note; a link handler opens `file://` links and `path:line[:col]` locations printed by an agent in the viewer, scrolled to that line (also `file://…#L12`); `gloss://open` and `/plugin/open` take an optional `line`. On this Mac the script calls the app's URL scheme; on a host it posts to the app's `/plugin/note` endpoint through the reverse-forwarded port.
 
 **Herdr follow mode.** Subscribes to `pane.focused` and `pane.agent_status_changed` on every connected Herdr server. The focused pane's `foreground_cwd` becomes the root and the pane becomes the send target. Remote: `~/.config/herdr/herdr.sock` forwarded to a local socket on the existing control connection. Herdr's socket API has no notion of machines (each server only knows its own panes), so which server the Herdr client is showing comes from its state files, `~/.local/state/herdr/client/endpoint-selection.json` and `endpoints.json`, watched with FSEvents; a machine's ssh `target` is matched to the app host of the same name, which is connected on demand, and only that server's focus events reach the tree. Without those files every server's events apply.
@@ -151,9 +165,9 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 
 | Table | Key columns | Purpose |
 | --- | --- | --- |
-| `host` | `id`, `name`, `kind` (local or ssh), `last_connected_at`, `origin` (local, ssh_config, manual), `options_json` (HostName, User, Port, IdentityFile for app-added hosts) | Hosts used |
+| `host` | `id`, `name`, `kind` (local, ssh; milestone 2 adds web, github, atlassian with fixed ids `h_web`, `h_github`, `h_atlassian`), `last_connected_at`, `origin` (local, ssh_config, manual), `options_json` (HostName, User, Port, IdentityFile for app-added hosts) | Hosts used |
 | `root` | `id`, `host_id`, `path`, `last_opened_at`, `pinned` | Recent and pinned roots |
-| `document` | `id`, `host_id`, `path`, `kind`, `last_hash`, `last_mtime`, `last_size` | File identity and conflict fingerprint |
+| `document` | `id`, `host_id`, `path`, `kind` (text, code, markdown, image, pdf, csv, file; milestone 2 adds web, whose path is a URL), `last_hash`, `last_mtime`, `last_size` | File identity and conflict fingerprint |
 | `note` | `id`, `document_id`, `anchor_json`, `anchor_type`, `body`, `state`, `created_at`, `updated_at`, `color` | Note with typed anchor and state |
 | `attachment` | `id`, `note_id`, `kind`, `local_path`, `width`, `height` | Crops and page renders |
 | `send` | `id`, `target_json`, `transport`, `packet_text`, `sent_at`, `outcome` | Delivery history |
@@ -162,7 +176,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 | `target` | `id`, `host_id`, `transport`, `identity_json`, `label`, `last_used_at` | Known agent targets |
 | `setting` | `key`, `value` | Preferences |
 
-**Anchor JSON.** Text `{start:{line,col}, end:{line,col}, text, before, after, hash?}`. Image `{x, y, w, h, imageW, imageH, hash?}`. PDF `{page, bounds:{x,y,w,h}, text, pageCount}`. Whole file `{}`. `hash` is the SHA-256 of the file at anchor time (optional for backward compatibility; `col` counts UTF-16 units, `page` is 0-based in storage and printed 1-based).
+**Anchor JSON.** Text `{start:{line,col}, end:{line,col}, text, before, after, hash?}`. Image `{x, y, w, h, imageW, imageH, hash?}`. PDF `{page, bounds:{x,y,w,h}, text, pageCount}`. Whole file `{}`. Element (milestone 2) `{selector, tag, text, html, rect:{x,y,w,h}, line?, hash?}` with `anchor_type = element`. `hash` is the SHA-256 of the file at anchor time (optional for backward compatibility; `col` counts UTF-16 units, `page` is 0-based in storage and printed 1-based).
 
 **Note states.** `draft`, `sent`, `resolved`, `orphaned`. draft→sent on delivery; sent→resolved by MCP or by hand; any→orphaned when re-anchoring fails; orphaned→draft when the anchor is fixed.
 
@@ -190,9 +204,38 @@ Milestone 1 is the whole product. Done means every check passes on the local Mac
 - [ ] Press a Herdr keybinding with text selected in an agent pane and see it arrive in the app as a note — plugin linked and its URL verified; binding the key in Herdr's config is the user's step (snippet in Settings)
 - [x] Open a QuickLook-only file, such as a `.numbers` document, and attach a whole-file note — Phase 2
 
+## Milestone 2
+
+Milestone 2 (scoped 2026-10-03) runs the same loop, select → note → send → see the reply, over things that are not files on a disk: web pages the agent builds, GitHub pull requests, and Jira tickets and Confluence pages. Three decisions shape it:
+
+- **The app reads, the agent writes.** The app fetches and renders with the user's own API keys and never calls a write endpoint. Packets name the exact resource (URL, PR and head commit, issue key and field, page id and version) so the agent changes the real thing with its own tools. What the app shows is always the live resource, so after the agent edits a ticket the note's document updates and the note re-anchors or flags itself, exactly as a file does today.
+- **Integrations are hosts.** A pull request, a Jira project or a Confluence space is a root on a virtual host with a tree the explorer already knows how to show; its documents open in the existing viewers (Markdown for descriptions, tickets and pages; the code editor for changed files), and notes are keyed by host and path like any other. Nothing about documents, anchors, the notes panel, the packet or the MCP tools is duplicated.
+- **The browser is for reviewing.** WebKit is the engine; the app is the browser around it. Links to files open the file, links to pages navigate in place with Back/Forward and an address field, `localhost` on a remote host is reached through a port forward on the app's existing ssh connection. There are no bookmarks, saved passwords, extensions or downloads.
+
+**Build order.** Review browser → Integrations tab and GitHub pull requests → Jira and Confluence. Each phase ends with a live check and a review.
+
+**Credentials in development.** `integrations.env` at the repo root holds real keys. It is gitignored and never committed. In testing the keys only read; test notes go to the clipboard target, never to an agent with GitHub or Atlassian tools; a debug-only launch option loads the file into the Keychain so no key is ever typed into the app by a script.
+
+**Acceptance checks.** Ticked when verified; the note will say how.
+
+- [ ] Open a local HTML file, click a relative link to another file and an absolute link to a web page: the file opens as a document with the explorer following, the page loads in place, and Back returns to the file
+- [ ] Open `http://localhost:3000` on a remote host while the dev server runs only there: the page loads through the app's ssh connection, relative links and hot reload work, and the document is stored against that host so the packet's `File:` line is right on the agent's machine
+- [ ] Turn on Element Notes, click a button on a page, write a note, send it to the clipboard: the packet carries the selector, the HTML snippet, the rect and a PNG crop of the element, and the note draws as an outline on the page
+- [ ] Change the page under an element note (rename the id, keep the text): the note moves and is flagged for review; remove the element: the note is orphaned
+- [ ] Enter a GitHub token and an Atlassian site, email and token in Settings → Integrations, press Test connection on each: the status line names the account and what it can see; a wrong token says so
+- [ ] Open a pull request by URL or `owner/repo#123`: `Pull request.md`, `Conversation.md`, the changed files at the head commit with changed lines tinted and a hunk stepper, and the whole diff appear as a root; a note on a changed line produces `Resource:` and `Path: … at <sha>` in the packet
+- [ ] Push a new commit to the PR while a changed file is open: the file reloads, notes re-anchor, and a notice names the new head
+- [ ] Open a Jira issue by key: description and comments render as Markdown with the fields in a header; a note on a description line produces `Resource: …/browse/KEY` and `Field: description`
+- [ ] Open a Confluence page by URL: the body renders as Markdown with the version in the header; a note produces `Resource:` and `Version:`
+- [ ] Have the agent change a ticket while it is open: the document updates, the notes re-anchor, and the notice names the editor and the new version (user: needs a real agent with Atlassian tools)
+- [ ] `open_in_viewer` with a PR, issue or page URL opens it (an agent can say "look at this")
+- [ ] Every request the app makes with an integration key during a full live session is a GET (checked in the request log)
+
 ## Non-goals, risks, and open questions
 
 **Non-goals for milestone 1.** Not a terminal. Not a git client (status dimming only). Not an IDE (no LSP, debugging, builds). No remote helper daemon. No editing of images, PDFs, spreadsheets. No iOS, no multi-user sync.
+
+**Non-goals for milestone 2.** Not a general browser (no bookmarks, passwords, extensions, downloads). The app never writes to GitHub, Jira or Confluence. No side-by-side diff viewer. No editing of tickets or pages in the app. Absolute `fetch("http://localhost:…")` calls inside a proxied page reach this Mac, not the remote host; relative requests work.
 
 **Risks.**
 

@@ -12,3 +12,11 @@ CLAUDE.local.md
 
 # macOS
 .DS_Store
+
+# Credentials for the integrations (real keys; never committed)
+integrations.env
+*.env
+
+# Build artifacts
+Packages/.build/
+*.profraw
