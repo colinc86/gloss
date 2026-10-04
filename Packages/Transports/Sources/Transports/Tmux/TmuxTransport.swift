@@ -57,10 +57,19 @@ public actor TmuxTransport: Transport {
 
     /// `-d` deletes the buffer as part of the paste; when the paste itself fails (wrong target) the buffer is
     /// deleted explicitly, so nothing is ever left on the user's tmux server.
+    ///
+    /// The pane is asked what it runs at the moment of sending, and a shell is refused: a pane remembered while an
+    /// agent ran in it may now be a bare shell, where the paste and its Enter would run the packet's lines (file
+    /// excerpts from any repository among them) as commands.
     nonisolated static func deliverScript(tmux: String, target: String) -> String {
         let quoted = ShellQuote.single(target)
-        return "b=\"cc-$$\"; \(tmux) load-buffer -b \"$b\" - && { \(tmux) paste-buffer -p -d -b \"$b\" -t \(quoted) || { \(tmux) delete-buffer -b \"$b\" 2>/dev/null; false; }; } && \(tmux) send-keys -t \(quoted) Enter"
+        let shells = shellCommands.sorted().joined(separator: "|")
+        let guardShell = "c=$(\(tmux) display-message -p -t \(quoted) '#{pane_current_command}') || exit 1; case \"${c#-}\" in \(shells)) echo \"the pane runs $c, not an agent\" >&2; exit 3 ;; esac; "
+        return guardShell + "b=\"cc-$$\"; \(tmux) load-buffer -b \"$b\" - && { \(tmux) paste-buffer -p -d -b \"$b\" -t \(quoted) || { \(tmux) delete-buffer -b \"$b\" 2>/dev/null; false; }; } && \(tmux) send-keys -t \(quoted) Enter"
     }
+
+    /// Commands that are shells: a packet is never typed into one.
+    nonisolated static let shellCommands: Set<String> = ["sh", "bash", "zsh", "fish", "dash", "ksh", "mksh", "tcsh", "csh", "nu", "xonsh", "elvish", "pwsh", "login"]
 
     nonisolated static func parsePanes(_ text: String) -> [TmuxPane] {
         text.split(separator: "\n").compactMap { line in
@@ -104,7 +113,7 @@ public actor TmuxTransport: Transport {
         }
         guard result.exitStatus == 0 else {
             let text = result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.contains("can't find") || text.contains("no server") { throw DeliveryError.targetUnavailable(text) }
+            if text.contains("can't find") || text.contains("no server") || result.exitStatus == 3 { throw DeliveryError.targetUnavailable(text) }
             throw DeliveryError.failed(text.isEmpty ? "tmux exited \(result.exitStatus)" : text)
         }
         return DeliveryReceipt(detail: "pasted into \(pane.target)")
