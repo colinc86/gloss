@@ -40,13 +40,15 @@ struct ExplorerSidebar: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
-                    Label(pickedHost == .github ? "No pull request open" : "No folder open", systemImage: pickedHost == .github ? "arrow.triangle.pull" : "folder.badge.plus")
+                    Label(pickedHost == .github ? "No pull request open" : pickedHost == .atlassian ? "No issue or page open" : "No folder open", systemImage: pickedHost == .github ? "arrow.triangle.pull" : pickedHost == .atlassian ? "square.stack.3d.up" : "folder.badge.plus")
                 } description: {
                     // On this Mac the welcome screen beside it carries the button; one first step, not two.
-                    Text(pickedHost == .local ? "Its files appear here." : pickedHost == .github ? "Its description, conversation and changed files appear here." : "Connect to browse \(hostName(pickedHost))'s files.")
+                    Text(pickedHost == .local ? "Its files appear here." : pickedHost == .github ? "Its description, conversation and changed files appear here." : pickedHost == .atlassian ? "A project's issues or a space's pages appear here." : "Connect to browse \(hostName(pickedHost))'s files.")
                 } actions: {
                     if pickedHost == .github {
                         Button("Open Pull Request…") { model.presentOpenPullRequest() }
+                    } else if pickedHost == .atlassian {
+                        Button("Open Issue or Page…") { model.presentOpenAtlassian() }
                     } else if pickedHost != .local {
                         Button("Connect") { openFolder() }
                     }
@@ -104,24 +106,28 @@ struct ExplorerSidebar: View {
                     model.pickedHost = entry.id
                     if entry.id == .github {
                         model.presentOpenPullRequest()
+                    } else if entry.id == .atlassian {
+                        model.presentOpenAtlassian()
                     } else if entry.id != .local {
                         Task { await model.openRemoteRoot(hostID: entry.id) }
                     }
                 } label: {
-                    Label(entry.id == .github ? "GitHub" : entry.name, systemImage: entry.kind == .local ? "desktopcomputer" : entry.id == .github ? "arrow.triangle.pull" : statusIcon(entry.id))
+                    Label(entry.id == .github ? "GitHub" : entry.id == .atlassian ? "Atlassian" : entry.name, systemImage: entry.kind == .local ? "desktopcomputer" : entry.id == .github ? "arrow.triangle.pull" : entry.id == .atlassian ? "square.stack.3d.up" : statusIcon(entry.id))
                 }
             }
             Divider()
             // ⇧⌘O belongs to File › Open Folder…; two bindings for one key made the menu bar's win silently.
             if pickedHost == .github {
                 Button("Open Pull Request…") { model.presentOpenPullRequest() }
+            } else if pickedHost == .atlassian {
+                Button("Open Jira Issue or Confluence Page…") { model.presentOpenAtlassian() }
             } else {
                 Button("Open Folder on \(hostName(pickedHost))…") { openFolder() }
             }
             SettingsLink { Text("Manage Hosts…") }
         } label: {
             // This Mac is the default and the icon says so; a remote host names itself, since which one matters.
-            Label(pickedHost == .local ? "local" : pickedHost == .github ? "GitHub" : hostName(pickedHost), systemImage: pickedHost == .local ? "desktopcomputer" : pickedHost == .github ? "arrow.triangle.pull" : statusIcon(pickedHost))
+            Label(pickedHost == .local ? "local" : pickedHost == .github ? "GitHub" : pickedHost == .atlassian ? "Atlassian" : hostName(pickedHost), systemImage: pickedHost == .local ? "desktopcomputer" : pickedHost == .github ? "arrow.triangle.pull" : pickedHost == .atlassian ? "square.stack.3d.up" : statusIcon(pickedHost))
                 .labelStyle(.titleAndIcon)
         }
         .help(pickedHost == .local ? "Browsing this Mac. Choose another host…" : "Browsing \(hostName(pickedHost)). Choose another host…")
@@ -142,6 +148,8 @@ struct ExplorerSidebar: View {
             model.explorer.chooseRootWithPanel(hostID: .local)
         } else if pickedHost == .github {
             model.presentOpenPullRequest()
+        } else if pickedHost == .atlassian {
+            model.presentOpenAtlassian()
         } else {
             let home = model.hostHomes[pickedHost] ?? ""
             remotePathPrompt = RemotePathPrompt(hostID: pickedHost, hostName: hostName(pickedHost), initialPath: home)

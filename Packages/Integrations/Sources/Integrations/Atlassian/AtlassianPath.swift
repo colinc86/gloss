@@ -18,7 +18,9 @@ public enum AtlassianPath: Equatable, Sendable {
         case "jira":
             switch parts.count {
             case 1: self = .jiraRoot
-            case 2: self = .jiraProject(parts[1])
+            case 2:
+                guard Self.isProjectKey(parts[1]) else { return nil }
+                self = .jiraProject(parts[1])
             case 3:
                 guard parts[2].hasSuffix(".md") else { return nil }
                 let key = String(parts[2].dropLast(3))
@@ -52,11 +54,18 @@ public enum AtlassianPath: Equatable, Sendable {
         }
     }
 
+    /// `PROJ-123`: a project key, one dash, digits.
     public static func isIssueKey(_ text: String) -> Bool {
-        let parts = text.split(separator: "-")
-        guard parts.count == 2, !parts[0].isEmpty, parts[0].allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }), parts[0].first?.isLetter == true,
-              Int(parts[1]) != nil else { return false }
+        let parts = text.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 2, isProjectKey(String(parts[0])), !parts[1].isEmpty, parts[1].allSatisfy({ $0.isASCII && $0.isNumber }) else { return false }
         return true
+    }
+
+    /// A project key as Jira forms them: a letter, then letters, digits or underscores. It goes into JQL unquoted
+    /// nowhere, but a path component that is not a key is refused before any request is made.
+    public static func isProjectKey(_ text: String) -> Bool {
+        guard let first = text.first, first.isLetter else { return false }
+        return text.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
     }
 
     /// A title as a file name: no slashes, trimmed, never empty.

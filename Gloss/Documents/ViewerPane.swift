@@ -115,7 +115,7 @@ private struct BannerView: View {
     let session: DocumentSession
 
     var body: some View {
-        let style = Self.style(banner)
+        let style = Self.style(banner, session: session)
         Notice(kind: style.kind, symbol: style.symbol, title: style.title, detail: style.detail, pulses: banner == .reanchoring) {
             switch banner {
             case .externalChange:
@@ -164,7 +164,7 @@ private struct BannerView: View {
         }
     }
 
-    static func style(_ banner: DocumentSession.Banner) -> (kind: NoticeKind, symbol: String, title: String, detail: String) {
+    static func style(_ banner: DocumentSession.Banner, session: DocumentSession) -> (kind: NoticeKind, symbol: String, title: String, detail: String) {
         switch banner {
         case .externalChange:
             (.warning, "exclamationmark.arrow.triangle.2.circlepath", "Changed on disk", "The file was saved elsewhere while you have unsaved edits here.")
@@ -179,7 +179,8 @@ private struct BannerView: View {
         case .deletedOnDisk:
             (.warning, "trash", "Deleted on disk", "This file is no longer at its path. Its notes stay until you delete them.")
         case .resourceUpdated:
-            (.info, "arrow.triangle.2.circlepath", "Pull request updated", "Something changed on GitHub; this document reloaded and its notes followed.")
+            (.info, "arrow.triangle.2.circlepath", session.hostID == .atlassian ? "Updated in Jira or Confluence" : "Pull request updated",
+             session.hostID == .atlassian ? "The ticket or page changed at its source; this document reloaded and its notes followed." : "Something changed on GitHub; this document reloaded and its notes followed.")
         }
     }
 }
@@ -247,7 +248,7 @@ private struct StatusBar: View {
 
     private var breadcrumb: some View {
         HStack(spacing: DS.Space.xxs) {
-            if session.hostID != .local, session.hostID != .github, let host = model.hosts.entry(for: session.hostID)?.name {
+            if session.hostID != .local, !session.hostID.isVirtual, let host = model.hosts.entry(for: session.hostID)?.name {
                 Label(session.kind == .web ? "via \(host)" : host, systemImage: "network")
                     .labelStyle(.titleAndIcon)
                     .padding(.trailing, DS.Space.xs)
@@ -270,6 +271,31 @@ private struct StatusBar: View {
                     Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary)
                 }
             }
+            if session.hostID == .atlassian, let reference = AtlassianPath(session.path) {
+                switch reference {
+                case .jiraIssue(let project, let key):
+                    Label("Jira · \(project)", systemImage: "ticket")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                        .contextMenu {
+                            if let site = model.integrations.atlassian?.site {
+                                Button("Open \(key) in Jira") { NSWorkspace.shared.open(site.appendingPathComponent("browse/\(key)")) }
+                                Button("Copy Issue URL") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(site.appendingPathComponent("browse/\(key)").absoluteString, forType: .string)
+                                    model.flashCopied("URL copied")
+                                }
+                            }
+                        }
+                case .confluencePage(let space, _, _):
+                    Label("Confluence · \(space)", systemImage: "doc.text")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.secondary)
+                default:
+                    EmptyView()
+                }
+                Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary)
+            }
             if session.kind == .web {
                 // A page's address, not folders: nothing here to reveal in the explorer.
                 Label(session.fileName, systemImage: "globe")
@@ -284,8 +310,10 @@ private struct StatusBar: View {
                         }
                     }
             }
-            // A pull request's number is in its label already; the crumbs start below the root.
-            let crumbs = session.kind == .web ? [] : (session.hostID == .github ? Array(segments.dropFirst()) : segments)
+            // A pull request's number is in its label already; the crumbs start below the root. A Confluence page's
+            // folder is its id and its document already carries the title, so only the document shows.
+            let crumbs = session.kind == .web ? [] : session.hostID == .github ? Array(segments.dropFirst())
+                : session.hostID == .atlassian ? Array(segments.suffix(1)) : segments
             ForEach(Array(crumbs.enumerated()), id: \.offset) { index, segment in
                 if index > 0 {
                     Image(systemName: "chevron.compact.right")

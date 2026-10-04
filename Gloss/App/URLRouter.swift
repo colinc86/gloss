@@ -1,4 +1,5 @@
 import Core
+import Integrations
 import Foundation
 import OSLog
 
@@ -26,7 +27,7 @@ enum URLRouter {
         return FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory) && !isDirectory.boolValue
     }
 
-    nonisolated static func parse(_ url: URL, hosts: [String: HostID]) -> Route? {
+    nonisolated static func parse(_ url: URL, hosts: [String: HostID], atlassianSite: URL? = nil) -> Route? {
         guard url.scheme?.lowercased() == "gloss", let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         var query: [String: String] = [:]
         for item in components.queryItems ?? [] { query[item.name] = item.value }
@@ -36,8 +37,16 @@ enum URLRouter {
         case "open":
             let line = query["line"].flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
             if let text = query["url"], let url = URL(string: text) {
-                // A pull request URL opens on the github host; a web address opens in the browser.
+                // A pull request URL opens on the github host, an issue or page of the saved Atlassian site on the
+                // atlassian host (a Confluence page by its folder: opening finds the document); any other web
+                // address opens in the browser.
                 if let resolved = AppModel.resolveResourceURL(url) { return .open(hostID: .github, path: resolved.path, line: line) }
+                if let atlassianSite, let reference = AtlassianPath.parse(reference: text, site: atlassianSite) {
+                    switch reference {
+                    case .jiraIssue, .confluencePageFolder, .confluencePage: return .open(hostID: .atlassian, path: reference.path, line: line)
+                    default: break
+                    }
+                }
                 if DocumentKindDetector.isWebURL(text) { return .open(hostID: hostID, path: text, line: nil) }
                 return nil
             }
@@ -56,7 +65,7 @@ enum URLRouter {
 
     static func handle(_ url: URL, model: AppModel) async {
         let hosts = Dictionary(uniqueKeysWithValues: ((try? await model.noteStore.hosts()) ?? []).map { ($0.name, $0.id) })
-        guard let route = parse(url, hosts: hosts) else {
+        guard let route = parse(url, hosts: hosts, atlassianSite: model.integrations.atlassian?.site) else {
             Log.app.error("Unhandled URL: \(url.absoluteString, privacy: .public)")
             return
         }

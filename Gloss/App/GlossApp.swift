@@ -70,6 +70,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Button { model.presentOpenPullRequest() } label: { Label("Open Pull Request…", systemImage: "arrow.triangle.pull") }
                 .keyboardShortcut("p", modifiers: [.command, .option])
+            Button { model.presentOpenAtlassian() } label: { Label("Open Jira Issue or Confluence Page…", systemImage: "ticket") }
+                .keyboardShortcut("j", modifiers: [.command, .option])
         }
         CommandGroup(replacing: .saveItem) {
             // Replacing the save group also took Close with it; ⌘W closes whichever window is in front.

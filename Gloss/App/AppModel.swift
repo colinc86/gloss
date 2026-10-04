@@ -1,6 +1,7 @@
 import AppKit
 import Core
 import Foundation
+import os
 import Observation
 import OSLog
 import Integrations
@@ -24,6 +25,7 @@ final class AppModel {
     let integrations: IntegrationsModel
     let quickOpen = QuickOpenModel()
     let pullRequestPicker = PullRequestPickerModel()
+    let atlassianPicker = AtlassianPickerModel()
     /// The one web view, shared by every HTML document and live page.
     let browser = WebBrowserController()
     let launchOptions: AppLaunchOptions
@@ -128,7 +130,11 @@ final class AppModel {
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
         send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
         send.packetResourceProvider = { [weak self] hostID, path, line in
-            hostID == .github ? await self?.pullRequests?.resource(for: path, line: line) : nil
+            switch hostID {
+            case .github: await self?.pullRequests?.resource(for: path, line: line)
+            case .atlassian: await self?.atlassianDocuments?.resource(for: path, line: line)
+            default: nil
+            }
         }
         send.register(herdrTransport)
         send.register(TmuxTransport(registry: connectionRegistry))
@@ -210,6 +216,7 @@ final class AppModel {
         }
         quickOpen.onOpen = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
         pullRequestPicker.onOpen = { [weak self] pull in Task { await self?.openPullRequest(pull) } }
+        atlassianPicker.onOpen = { [weak self] reference in Task { await self?.openAtlassian(reference) } }
     }
 
     // MARK: Follow mode
@@ -369,10 +376,19 @@ final class AppModel {
             trimSessions()
             return
         }
+        if hostID == .atlassian, case .confluencePageFolder? = AtlassianPath(path) {
+            // A page URL names the page's folder; the document inside it needs the page's title.
+            Task { if let reference = AtlassianPath(path) { await openAtlassian(reference) } }
+            return
+        }
         guard let fileSystem = fileSystems[hostID] else {
             if hostID == .github {
                 // No token saved: the picker says where it goes instead of nothing happening.
                 presentOpenPullRequest()
+                return
+            }
+            if hostID == .atlassian {
+                presentOpenAtlassian()
                 return
             }
             Task {
@@ -417,6 +433,55 @@ final class AppModel {
             for tab in explorer.tabs where tab.hostID == .github { explorer.closeTab(tab.id) }
         }
         await hosts.setVirtualHost(.github, name: "github", kind: .github, enabled: integrations.github != nil)
+        let site = integrations.atlassian?.site
+        let previousSite = atlassianSite.withLock { previous in
+            defer { previous = site }
+            return previous
+        }
+        if let client = integrations.atlassianClient {
+            fileSystems[.atlassian] = AtlassianFileSystem(client: client)
+        } else {
+            fileSystems[.atlassian] = nil
+        }
+        if previousSite != nil, site != previousSite {
+            // Another site, or none: the open issues and pages were that site's and their paths mean nothing here.
+            for (key, session) in sessions where session.hostID == .atlassian {
+                session.close()
+                sessions[key] = nil
+                if activeSession === session { activeSession = nil }
+            }
+            for tab in explorer.tabs where tab.hostID == .atlassian { explorer.closeTab(tab.id) }
+        }
+        await hosts.setVirtualHost(.atlassian, name: "atlassian", kind: .atlassian, enabled: integrations.atlassian != nil)
+    }
+
+    /// The Atlassian provider, for what the viewer asks beyond files.
+    var atlassianDocuments: AtlassianFileSystem? { fileSystems[.atlassian] as? AtlassianFileSystem }
+
+    func presentOpenAtlassian(_ product: AtlassianPickerModel.Product? = nil) {
+        atlassianPicker.present(client: integrations.atlassianClient, product: product)
+    }
+
+    /// Opens an issue (its project as the root), a space, or a page (its space as the root) from a reference.
+    func openAtlassian(_ reference: AtlassianPath, line: Int? = nil) async {
+        guard let provider = atlassianDocuments else {
+            presentOpenAtlassian()
+            return
+        }
+        pickedHost = .atlassian
+        switch reference {
+        case .jiraIssue(let project, _):
+            await explorer.openRoot(hostID: .atlassian, path: AtlassianPath.jiraProject(project).path)
+            if let line { openDocument(hostID: .atlassian, path: reference.path, line: line) } else { openDocument(hostID: .atlassian, path: reference.path) }
+        case .jiraProject, .confluenceSpace:
+            await explorer.openRoot(hostID: .atlassian, path: reference.path)
+        case .confluencePageFolder(let space, _), .confluencePage(let space, _, _):
+            await explorer.openRoot(hostID: .atlassian, path: AtlassianPath.confluenceSpace(space).path)
+            guard let document = await provider.documentPath(for: reference) else { return }
+            if let line { openDocument(hostID: .atlassian, path: document, line: line) } else { openDocument(hostID: .atlassian, path: document) }
+        default:
+            break
+        }
     }
 
     /// The PR provider, for what the viewer asks beyond files (changed lines, the packet's resource).
@@ -442,6 +507,20 @@ final class AppModel {
     nonisolated static func resolveResourceURL(_ url: URL) -> (host: String, path: String)? {
         guard let pull = PullRequestPath.parse(reference: url.absoluteString) else { return nil }
         return ("github", pull.isRoot ? pull.root + "/" + PullRequestPath.descriptionName : pull.path)
+    }
+
+    /// The saved Atlassian site, readable off the main actor by the MCP server's URL resolver.
+    nonisolated private let atlassianSite = OSAllocatedUnfairLock<URL?>(initialState: nil)
+
+    /// A pull request, issue or page URL as the host and path it opens under: Atlassian URLs count only for the
+    /// saved site. A Confluence page resolves to its folder; opening it finds the page's document.
+    nonisolated func resolveURL(_ url: URL) -> (host: String, path: String)? {
+        if let github = Self.resolveResourceURL(url) { return github }
+        guard let site = atlassianSite.withLock({ $0 }), let reference = AtlassianPath.parse(reference: url.absoluteString, site: site) else { return nil }
+        switch reference {
+        case .jiraIssue, .confluencePageFolder, .confluencePage: return ("atlassian", reference.path)
+        default: return nil
+        }
     }
 
     // MARK: Web pages
@@ -529,6 +608,11 @@ final class AppModel {
     /// Opens at a line: selected for a jump (a link, an agent pointing somewhere), or just the caret at its start
     /// when resuming, so the reopened file doesn't greet you with a selection and an Add Note button.
     func openDocument(hostID: HostID, path: String, line: Int, select: Bool = true) {
+        if hostID == .atlassian, let reference = AtlassianPath(path), case .confluencePageFolder = reference {
+            // A page URL names the page's folder; the document inside it opens once its title is known.
+            Task { await openAtlassian(reference, line: line) }
+            return
+        }
         openDocument(hostID: hostID, path: path)
         guard let session = sessions["\(hostID.rawValue):\(path)"] else { return }
         Task {
@@ -612,6 +696,14 @@ final class AppModel {
         if explorer.tabs.contains(where: { $0.hostID == hostID && ExplorerModel.inRootSpelling(path, root: $0.path, hostID: hostID) != nil }) { return }
         if hostID == .github, let pull = PullRequestPath(path) {
             await explorer.openRoot(hostID: hostID, path: pull.root)
+            return
+        }
+        if hostID == .atlassian, let reference = AtlassianPath(path) {
+            switch reference {
+            case .jiraIssue(let project, _): await explorer.openRoot(hostID: hostID, path: AtlassianPath.jiraProject(project).path)
+            case .confluencePage(let space, _, _), .confluencePageFolder(let space, _): await explorer.openRoot(hostID: hostID, path: AtlassianPath.confluenceSpace(space).path)
+            default: break
+            }
             return
         }
         await explorer.openRoot(hostID: hostID, path: PathUtilities.parent(of: path))
@@ -808,7 +900,7 @@ final class AppModel {
             },
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         )
-        dependencies.resolveURL = { Self.resolveResourceURL($0) }
+        dependencies.resolveURL = { [weak self] url in self?.resolveURL(url) }
         dependencies.openDocument = { [weak self] host, path, line in
             let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
             guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }

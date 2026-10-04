@@ -249,6 +249,18 @@ path. Dropping on the Dock icon is not supported yet.
   the pull symbol. The field narrows the open pull requests you are involved in by every word typed (`repo`, `#12`,
   a word of the title); a pasted URL or `owner/repo#123` shows one "Open owner/repo #123" row and opens as is, even
   without a token. Rows read title first, then `owner/repo #n · draft · updated 3 days ago`.
+- **Jira and Confluence roots** (milestone 2): with an Atlassian site saved, the host menu lists Atlassian
+  (`square.stack.3d.up`) after GitHub. A Jira project opens as a root named `Jira · PROJ` (ticket symbol) holding
+  the issues you are assigned, reported or watch as `PROJ-123.md`; a Confluence space as `Confluence · SPACE`
+  (page symbol) holding its pages, each a folder named by its title that holds `<Title>.md` and the child pages.
+  Everything is read-only; the status bar's lock explains "the live ticket or page. Ask your agent for changes."
+  The breadcrumb leads with `Jira · PROJ` (its menu: Open in Jira, Copy Issue URL) or `Confluence · SPACE`. A
+  document that changes at its source reloads with "Updated in Jira or Confluence" for eight seconds.
+- **Open Jira Issue or Confluence Page…** (File menu, ⌥⌘J; also the Atlassian host's menu entry and its empty
+  state): the same panel as pull requests with a Jira / Confluence segment at the field's end. Jira lists the issues
+  you are part of, newest change first, as `summary` then `KEY · type · status · updated 2 days ago`; Confluence
+  lists the site's spaces. A typed key (`cp-12`, any case), a `/browse/KEY` URL or a page URL opens as is, even
+  before the lists arrive or without a key saved.
 
 ### Notes
 
@@ -445,7 +457,7 @@ path. Dropping on the Dock icon is not supported yet.
   under the notes (green bars, red ticks for deletions), clickable. The status bar reads "3 changes" with ⌃/⌄
   steppers, "2 of 3" while stepping; Notes › Next Change (⌥⌘↓) and Previous Change (⌥⌘↑) walk the hunks from the
   caret and wrap, landing each with the find indicator. A reload after a new commit shows "Pull request updated" for
-  eight seconds.
+  eight seconds (an Atlassian document says "Updated in Jira or Confluence").
 - **Overview ruler** (`OverviewRulerView`): a 12 pt strip at the editor's trailing edge, shown only while the file
   has notes, that maps the whole file as Xcode's issue markers and VS Code's overview ruler do. Each note is a tick in
   its colour at its place (a multi-line note spans its lines): drafts solid, sent at 70%, resolved at 35%, orphaned

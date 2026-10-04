@@ -19,7 +19,11 @@ final class SendCoordinator {
 
     /// The packet's `Source:` for a document: a virtual host names the resource kind, a file its document kind.
     nonisolated static func source(for document: Document) -> PacketSource {
-        document.hostID == .github ? .pullRequest : PacketSource(kind: document.kind)
+        switch document.hostID {
+        case .github: .pullRequest
+        case .atlassian: document.path.hasPrefix("/confluence/") ? .confluence : .jira
+        default: PacketSource(kind: document.kind)
+        }
     }
 
     private(set) var targets: [AgentTarget] = []

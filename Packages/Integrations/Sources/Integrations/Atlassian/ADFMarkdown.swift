@@ -45,7 +45,9 @@ public enum ADFMarkdown {
             }.joined(separator: "\n")
         case "codeBlock":
             let language = attrs["language"] as? String ?? ""
-            return "```" + language + "\n" + plainText(children) + "\n```"
+            let code = plainText(children)
+            let fence = code.contains("```") ? "````" : "```"
+            return fence + language + "\n" + code + "\n" + fence
         case "blockquote":
             return render(blocks: children, context: context).joined(separator: "\n\n").split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
         case "panel":
@@ -106,7 +108,12 @@ public enum ADFMarkdown {
                 return "- Row \(index + 1): " + items.joined(separator: " · ")
             }.joined(separator: "\n")
         }
-        let text = cells.map { row in row.map { cell in inline((cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]] ?? []).replacingOccurrences(of: "|", with: "\\|") } }
+        let text = cells.map { row in row.map { cell in
+            inline((cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]] ?? [])
+                .replacingOccurrences(of: "|", with: "\\|")
+                .replacingOccurrences(of: "  \n", with: "<br>")
+                .replacingOccurrences(of: "\n", with: " ")
+        } }
         let width = text.map(\.count).max() ?? 0
         var lines: [String] = []
         for (index, row) in text.enumerated() {

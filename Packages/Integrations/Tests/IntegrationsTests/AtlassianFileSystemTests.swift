@@ -7,6 +7,9 @@ struct AtlassianPathTests {
     @Test func parsesTreePathsAndReferences() {
         #expect(AtlassianPath("/jira/CP/CP-7.md") == .jiraIssue(project: "CP", key: "CP-7"))
         #expect(AtlassianPath("/jira/CP") == .jiraProject("CP"))
+        #expect(AtlassianPath("/jira/A1_2") == .jiraProject("A1_2"))
+        #expect(AtlassianPath("/jira/CP OR assignee is not EMPTY") == nil, "a root is a project key, never JQL")
+        for bad in ["CP--7", "-CP-7-", "CP-+7", "CP-", "1CP-7"] { #expect(!AtlassianPath.isIssueKey(bad), Comment(rawValue: bad)) }
         #expect(AtlassianPath("/confluence/ENG/100/Release plan.md") == .confluencePage(space: "ENG", id: "100", title: "Release plan"))
         #expect(AtlassianPath("/confluence/ENG/100") == .confluencePageFolder(space: "ENG", id: "100"))
         for bad in ["/jira/CP/XX-7.md", "/jira/CP/CP-7", "/confluence/ENG/abc", "/x", "/jira/../CP"] { #expect(AtlassianPath(bad) == nil, Comment(rawValue: bad)) }
@@ -26,7 +29,7 @@ struct AtlassianFileSystemTests {
 
     static func serve(_ stub: Stub, updated: String = "2026-10-03T12:00:00.000+0100") {
         stub.respond(to: "\(site)/rest/api/3/issue/CP-7?fields=summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project", with: .json(AtlassianReadTests.issueJSON.replacingOccurrences(of: "2026-10-03T12:00:00.000+0100", with: updated)))
-        stub.respond(to: "\(site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated&jql=project%20%3D%20CP%20AND%20(assignee%20%3D%20currentUser()%20OR%20reporter%20%3D%20currentUser()%20OR%20watcher%20%3D%20currentUser())%20ORDER%20BY%20updated%20DESC&maxResults=50", with: .json(#"{"issues":[{"key":"CP-7","fields":{"summary":"Name the receiver","status":{"name":"In Progress"},"issuetype":{"name":"Task"},"project":{"key":"CP"},"updated":"2026-10-03T12:00:00.000+0100"}}],"isLast":true}"#))
+        stub.respond(to: "\(site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated&jql=project%20%3D%20%22CP%22%20AND%20(assignee%20%3D%20currentUser()%20OR%20reporter%20%3D%20currentUser()%20OR%20watcher%20%3D%20currentUser())%20ORDER%20BY%20updated%20DESC&maxResults=50", with: .json(#"{"issues":[{"key":"CP-7","fields":{"summary":"Name the receiver","status":{"name":"In Progress"},"issuetype":{"name":"Task"},"project":{"key":"CP"},"updated":"2026-10-03T12:00:00.000+0100"}}],"isLast":true}"#))
         stub.respond(to: "\(site)/wiki/api/v2/spaces?limit=250&sort=name", with: .json(#"{"results":[{"id":"11","key":"ENG","name":"Engineering"}]}"#))
         stub.respond(to: "\(site)/wiki/api/v2/spaces/11/pages?depth=root&limit=250&sort=title", with: .json(#"{"results":[{"id":"100","title":"Release plan","spaceId":"11","version":{"number":7,"createdAt":"2026-10-03T12:00:00.000Z"},"_links":{"webui":"/spaces/ENG/pages/100/Release+plan"}}]}"#))
         stub.respond(to: "\(site)/wiki/api/v2/pages/100/children?limit=250", with: .json(#"{"results":[{"id":"101","title":"Phase 1/2","spaceId":"11","parentId":"100","version":{"number":2}}]}"#))
@@ -47,8 +50,8 @@ struct AtlassianFileSystemTests {
         #expect(try await fs.stat("/jira/CP/CP-7.md").mtime == ISO8601DateFormatter().date(from: "2026-10-03T11:00:00Z"))
         let url = URL(string: "https://x.atlassian.net/browse/CP-7")!
         #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 12) == PacketResource(url: url, details: ["Field: description", "Updated: 2026-10-03T11:00:00Z"]))
-        #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 17) == PacketResource(url: url, details: ["Comment: 1"]))
-        #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 20) == PacketResource(url: url, details: ["Comment: 2"]))
+        #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 17) == PacketResource(url: url, details: ["Comment: https://x.atlassian.net/browse/CP-7?focusedCommentId=1"]))
+        #expect(await fs.resource(for: "/jira/CP/CP-7.md", line: 20) == PacketResource(url: url, details: ["Comment: https://x.atlassian.net/browse/CP-7?focusedCommentId=2"]))
         #expect(await fs.title(for: "/jira/CP/CP-7.md") == "CP-7 · Name the receiver")
         await #expect(throws: FileSystemError.permissionDenied("/jira/CP/x")) { try await fs.makeDirectory("/jira/CP/x") }
         #expect(Set(stub.recorded.map { $0.httpMethod ?? "" }) == ["GET"])
@@ -67,7 +70,7 @@ struct AtlassianFileSystemTests {
         #expect(text == "# Release plan\n\n- **Confluence** · ENG · version 7 · 2026-10-03T12:00:00Z\n- <https://x.atlassian.net/wiki/spaces/ENG/pages/100/Release+plan>\n\nShip it.\n", Comment(rawValue: text))
         #expect(await fs.resource(for: "/confluence/ENG/100/Release plan.md") == PacketResource(url: URL(string: "https://x.atlassian.net/wiki/spaces/ENG/pages/100/Release+plan")!, details: ["Version: 7"]))
         #expect(await fs.documentPath(for: .confluencePageFolder(space: "ENG", id: "100")) == "/confluence/ENG/100/Release plan.md")
-        await #expect(throws: FileSystemError.notFound("/confluence/ENG/100/Other.md")) { try await fs.read("/confluence/ENG/100/Other.md") }
+        #expect(try await fs.read("/confluence/ENG/100/Other.md") == Data(text.utf8), "the title in the path is cosmetic: a renamed page keeps its notes")
         await #expect(throws: FileSystemError.notFound("/confluence/NOPE")) { try await fs.list("/confluence/NOPE") }
     }
 

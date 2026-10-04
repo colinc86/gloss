@@ -55,6 +55,7 @@ struct NotesPanel: View {
                             DocumentGroupHeader(document: group.document, count: group.notes.count, place: places[group.document.path],
                                                 host: group.document.hostID == .local || group.document.hostID == .web ? nil
                                                     : group.document.hostID == .github ? PullRequestPath(group.document.path).map { "\($0.repository) #\($0.number)" }
+                                                    : group.document.hostID == .atlassian ? (group.document.path.hasPrefix("/jira/") ? "Jira" : "Confluence")
                                                     : (model.hosts.entry(for: group.document.hostID)?.name).map { group.document.kind == .web ? "via \($0)" : $0 } ?? "remote",
                                                 open: { model.openDocument(hostID: group.document.hostID, path: group.document.path) })
                         }
@@ -753,7 +754,7 @@ private struct DocumentGroupHeader: View {
                 .opacity(hovering ? 1 : 0)
                 .offset(x: hovering ? 0 : -4)
             if let host {
-                Label(host, systemImage: document.hostID == .github ? "arrow.triangle.pull" : "network")
+                Label(host, systemImage: document.hostID == .github ? "arrow.triangle.pull" : document.hostID == .atlassian ? (document.path.hasPrefix("/jira/") ? "ticket" : "doc.text") : "network")
                     .labelStyle(.titleAndIcon)
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)

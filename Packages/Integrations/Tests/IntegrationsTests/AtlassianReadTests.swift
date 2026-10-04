@@ -34,6 +34,15 @@ struct AtlassianReadTests {
         #expect(issues[1].status == "To Do" && issues[1].issueType == "Task")
     }
 
+    @Test func listingsFollowTheNextLink() async throws {
+        let stub = Stub()
+        stub.respond(to: "\(Self.site)/wiki/api/v2/spaces?limit=250&sort=name", with: .json(#"{"results":[{"id":"11","key":"ENG","name":"Engineering","type":"global"}],"_links":{"next":"/wiki/api/v2/spaces?cursor=abc&limit=250&sort=name"}}"#))
+        stub.respond(to: "\(Self.site)/wiki/api/v2/spaces?cursor=abc&limit=250&sort=name", with: .json(#"{"results":[{"id":"12","key":"OPS","name":"Operations","type":"personal"}],"_links":{}}"#))
+        let spaces = try await client(stub).spaces()
+        #expect(spaces.map(\.key) == ["ENG", "OPS"])
+        #expect(spaces.map(\.isPersonal) == [false, true])
+    }
+
     @Test func readsSpacesPagesAndAPageBody() async throws {
         let stub = Stub()
         stub.respond(to: "\(Self.site)/wiki/api/v2/spaces?limit=250&sort=name", with: .json(#"{"results":[{"id":"11","key":"ENG","name":"Engineering","type":"global"}]}"#))

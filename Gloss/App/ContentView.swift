@@ -1,5 +1,6 @@
 import AppKit
 import Core
+import Integrations
 import SwiftUI
 import Viewers
 
@@ -9,6 +10,21 @@ struct ContentView: View {
     @State private var panelShown = false
     @State private var window = WindowReference()
     @Environment(\.openWindow) private var openWindow
+
+    /// The host under the title: an ssh alias, `owner/repo #12`, `Jira · PROJ`, `Confluence · SPACE`; nothing on this Mac.
+    static func subtitle(for session: DocumentSession, hosts: HostsModel) -> String {
+        switch session.hostID {
+        case .local: ""
+        case .github: PullRequestPath(session.path).map { "\($0.repository) #\($0.number)" } ?? "GitHub"
+        case .atlassian:
+            switch AtlassianPath(session.path) {
+            case .jiraIssue(let project, _)?: "Jira · \(project)"
+            case .confluencePage(let space, _, _)?: "Confluence · \(space)"
+            default: "Atlassian"
+            }
+        default: hosts.entry(for: session.hostID)?.name ?? ""
+        }
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -20,7 +36,7 @@ struct ContentView: View {
                     ViewerPane(session: session)
                         .id(session.id)
                         .navigationTitle(session.fileName)
-                        .navigationSubtitle(session.hostID == .local ? "" : (model.hosts.entry(for: session.hostID)?.name ?? ""))
+                        .navigationSubtitle(Self.subtitle(for: session, hosts: model.hosts))
                 } else if model.explorer.tabs.isEmpty {
                     WelcomeView()
                 } else {
@@ -72,6 +88,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: Binding(get: { model.pullRequestPicker.isPresented }, set: { if !$0 { model.pullRequestPicker.dismiss() } })) {
             OpenPullRequestSheet()
+        }
+        .sheet(isPresented: Binding(get: { model.atlassianPicker.isPresented }, set: { if !$0 { model.atlassianPicker.dismiss() } })) {
+            OpenAtlassianSheet()
         }
         .sheet(isPresented: Binding(get: { model.quickOpen.isPresented }, set: { if !$0 { model.quickOpen.dismiss() } })) {
             QuickOpenSheet()

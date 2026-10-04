@@ -57,8 +57,11 @@ final class FileCellView: NSTableCellView {
     func configure(with node: FileNode, mark: NoteMark? = nil, folderCount: Int = 0, holdsActive: Bool = false, animated: Bool = false) {
         // A pull request's root is its number on disk; it reads as the pull request.
         let isPullRoot = node.hostID == .github && node.parent == nil
-        nameField.stringValue = isPullRoot ? (PullRequestPath(node.path).map { "\($0.repo) #\($0.number)" } ?? node.name) : node.name
-        let symbol = isPullRoot ? "arrow.triangle.pull" : (node.isDirectory ? "folder" : "doc")
+        let isAtlassianRoot = node.hostID == .atlassian && node.parent == nil
+        nameField.stringValue = isPullRoot ? (PullRequestPath(node.path).map { "\($0.repo) #\($0.number)" } ?? node.name)
+            : isAtlassianRoot ? (SwitcherEntry.atlassianLabel(node.path) ?? node.name) : node.name
+        let symbol = isPullRoot ? "arrow.triangle.pull" : isAtlassianRoot ? (node.path.hasPrefix("/jira") ? "ticket" : "doc.text")
+            : (node.hostID == .atlassian && node.isDirectory ? "doc.text" : node.isDirectory ? "folder" : "doc")
         iconView.image = node.hostID == .local
             ? NSWorkspace.shared.icon(forFile: node.path)
             : NSImage(systemSymbolName: symbol, accessibilityDescription: nil)

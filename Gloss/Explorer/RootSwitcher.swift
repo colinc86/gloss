@@ -20,15 +20,16 @@ struct RootSwitcher: View {
         } label: {
             HStack(spacing: DS.Space.s) {
                 if let tab = explorer.selectedTab {
-                    Image(systemName: tab.hostID == .local ? "folder.fill" : tab.hostID == .github ? "arrow.triangle.pull" : "network")
+                    Image(systemName: tab.hostID == .local ? "folder.fill" : tab.hostID == .github ? "arrow.triangle.pull" : tab.hostID == .atlassian ? "square.stack.3d.up" : "network")
                         .foregroundStyle(Color.accentColor)
                         .contentTransition(.symbolEffect(.replace))
-                    if tab.hostID != .local, tab.hostID != .github {
+                    if tab.hostID != .local, !tab.hostID.isVirtual {
                         Text(hostName(tab.hostID))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.teal)
                     }
-                    Text(tab.hostID == .github ? (PullRequestPath(tab.path).map { "\($0.repository) #\($0.number)" } ?? tab.title) : tab.title)
+                    Text(tab.hostID == .github ? (PullRequestPath(tab.path).map { "\($0.repository) #\($0.number)" } ?? tab.title)
+                         : tab.hostID == .atlassian ? (SwitcherEntry.atlassianLabel(tab.path) ?? tab.title) : tab.title)
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -103,7 +104,17 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
     let section: Section
     var title: String {
         if hostID == .github, let pull = PullRequestPath(path) { return "\(pull.repository) #\(pull.number)" }
+        if hostID == .atlassian, let label = Self.atlassianLabel(path) { return label }
         return (path as NSString).lastPathComponent
+    }
+
+    /// `Jira · CP` or `Confluence · ENG` for an Atlassian root.
+    nonisolated static func atlassianLabel(_ path: String) -> String? {
+        switch AtlassianPath(path) {
+        case .jiraProject(let project)?: "Jira · \(project)"
+        case .confluenceSpace(let space)?: "Confluence · \(space)"
+        default: nil
+        }
     }
 
     /// The sections in order, filtered by `query` (name first, then anywhere in the path; case-insensitive).
@@ -225,7 +236,8 @@ private struct RootSwitcherList: View {
         let explorer = model.explorer
         let isOpen = entry.section == .open
         let tab = explorer.tabs.first { $0.id == entry.id }
-        return RootRow(title: entry.title, path: entry.hostID == .github ? "pull request" : entry.path, host: entry.hostID == .local ? nil : entry.hostID == .github ? "GitHub" : hostName(entry.hostID),
+        return RootRow(title: entry.title, path: entry.hostID == .github ? "pull request" : entry.hostID == .atlassian ? "Atlassian" : entry.path,
+                       host: entry.hostID == .local ? nil : entry.hostID == .github ? "GitHub" : entry.hostID == .atlassian ? "Atlassian" : hostName(entry.hostID),
                        isCurrent: isOpen && explorer.selectedTabID == entry.id, isOpen: isOpen, isHighlighted: highlighted,
                        pinned: entry.pinned, notes: tab.map { explorer.folderCountForRoot($0) } ?? 0,
                        choose: { choose(entry) },

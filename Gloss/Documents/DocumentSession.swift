@@ -120,6 +120,7 @@ final class DocumentSession: Identifiable {
     var readOnlyReason: String {
         switch hostID {
         case .github: "Read-only: a pull request's file at its head commit. Ask your agent for changes."
+        case .atlassian: "Read-only: the live ticket or page. Ask your agent for changes."
         case .web: "Read-only: the page's current DOM"
         default: "Read-only: the file is too large to edit here"
         }

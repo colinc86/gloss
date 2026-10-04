@@ -15,7 +15,7 @@ public struct AtlassianStatus: Sendable, Equatable {
 /// Reads Jira issues and Confluence pages from one Atlassian Cloud site with an API token. GET only, like the
 /// GitHub client: the app shows the live ticket or page, the agent edits it with its own tools.
 public actor AtlassianClient {
-    public let site: URL
+    public nonisolated let site: URL
     private let http: GetOnlyHTTP
     private let authorization: String
 
@@ -144,11 +144,23 @@ public actor AtlassianClient {
 
     // MARK: Confluence
 
+    /// Every result of a v2 listing, following `_links.next` (a path under the site) until there is none.
+    private func results(startingAt first: URL) async throws -> [[String: Any]] {
+        var url = first
+        var all: [[String: Any]] = []
+        for _ in 0..<40 {
+            let page = try object(try await http.get(url, headers: headers))
+            all += page["results"] as? [[String: Any]] ?? []
+            guard let next = (page["_links"] as? [String: Any])?["next"] as? String, let nextURL = URL(string: next, relativeTo: site)?.absoluteURL, nextURL != url else { break }
+            url = nextURL
+        }
+        return all
+    }
+
     public func spaces() async throws -> [ConfluenceSpace] {
-        let page = try object(try await http.get(url("wiki/api/v2/spaces", query: ["limit": "250", "sort": "name"]), headers: headers))
-        return (page["results"] as? [[String: Any]] ?? []).compactMap { value in
+        return try await results(startingAt: url("wiki/api/v2/spaces", query: ["limit": "250", "sort": "name"])).compactMap { value in
             guard let id = Self.string(value["id"]), let key = value["key"] as? String else { return nil }
-            return ConfluenceSpace(id: id, key: key, name: value["name"] as? String ?? key)
+            return ConfluenceSpace(id: id, key: key, name: value["name"] as? String ?? key, isPersonal: value["type"] as? String == "personal")
         }
     }
 
@@ -174,13 +186,11 @@ public actor AtlassianClient {
 
     /// A space's top-level pages, or a page's children.
     public func pages(inSpace spaceId: String) async throws -> [ConfluencePage] {
-        let page = try object(try await http.get(url("wiki/api/v2/spaces/\(spaceId)/pages", query: ["depth": "root", "limit": "250", "sort": "title"]), headers: headers))
-        return (page["results"] as? [[String: Any]] ?? []).compactMap { self.page(from: $0, body: false) }
+        try await results(startingAt: url("wiki/api/v2/spaces/\(spaceId)/pages", query: ["depth": "root", "limit": "250", "sort": "title"])).compactMap { self.page(from: $0, body: false) }
     }
 
     public func children(ofPage id: String) async throws -> [ConfluencePage] {
-        let page = try object(try await http.get(url("wiki/api/v2/pages/\(id)/children", query: ["limit": "250"]), headers: headers))
-        return (page["results"] as? [[String: Any]] ?? []).compactMap { self.page(from: $0, body: false) }
+        try await results(startingAt: url("wiki/api/v2/pages/\(id)/children", query: ["limit": "250"])).compactMap { self.page(from: $0, body: false) }
     }
 
     /// One page with its body as Markdown.

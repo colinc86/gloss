@@ -2,9 +2,9 @@
 
 Native macOS app: file explorer on the left, viewer on the right, annotate any region of any file and send the notes to Claude Code, Codex, or OpenCode. Replaces what was lost moving from Orca to Warp and Herdr. The product description with scope, data model, and milestone 1 acceptance checks lives at https://claude.ai/code/artifact/01a13d3e-5f5a-491b-b910-b5f1a57cc70c and is mirrored in @docs/PRODUCT.md.
 
-## State (2026-10-02)
+## State (2026-10-04)
 
-Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, anchored notes, the clipboard, tmux, Herdr, MCP, hook, and OpenCode transports, SSH/SFTP remote editing, the Herdr plugin, and the hardening pass. The acceptance checks in `docs/PRODUCT.md` are ticked with how each was verified; the two that need a real agent session are left to the user. Open items live only in `docs/PRODUCT.md` and the git log, not here.
+Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, anchored notes, the clipboard, tmux, Herdr, MCP, hook, and OpenCode transports, SSH/SFTP remote editing, the Herdr plugin, and the hardening pass. Milestone 2 (the review browser with element notes and remote dev-server tunnels, GitHub pull requests as roots with tinted changed lines, Jira issues and Confluence pages as read-only Markdown, Settings → Integrations) is built and reviewed on `main`. The acceptance checks in `docs/PRODUCT.md` are ticked with how each was verified; the ones that need a real agent session are left to the user. Open items live only in `docs/PRODUCT.md` and the git log, not here.
 
 ## Settled decisions (do not re-litigate)
 
@@ -15,6 +15,8 @@ Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, a
 - Child processes are spawned with `posix_spawn` (close-on-exec defaults, responsibility disclaimed), never Foundation's `Process`.
 - Transport priority: Herdr socket, MCP server, Claude Code and Codex hooks, OpenCode HTTP API, tmux, clipboard. See `herdr-api` and `agent-integrations`. Hooks drain draft notes only; drained notes become `sent` and stay reachable through MCP until resolved.
 - Packet format is fixed by the `context-packet` skill. Every transport emits the same text.
+- The app reads, the agent writes. Integrations (GitHub, Atlassian, live web pages) are virtual hosts (`github`, `atlassian`, `web`) serving read-only `FileSystemProvider`s, so documents, notes, the packet and the MCP tools are not duplicated. The `Integrations` clients issue GET only (a test asserts it); the packet's `Resource:` line names the pull request, issue or page so the agent changes it with its own tools. Keys live in the Keychain, entered in Settings → Integrations or loaded in debug builds with `--integrations-env`.
+- `integrations.env` at the repo root holds real keys: gitignored, never committed, used only to read while testing; test notes go to the clipboard target, never to an agent with GitHub or Atlassian tools.
 - Markdown viewer toggles rendered and source; anchors are stored in source coordinates. Text and markdown are editable; images, PDFs, spreadsheets are not.
 - Notes are created from a floating "Add Note" button beside the selection in every viewer; ⌘⇧N is a secondary shortcut, never the only path.
 - Agent hooks, MCP registration, and the Herdr plugin are installed only from Settings → Hooks, with backups, never silently.
@@ -23,7 +25,7 @@ Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, a
 ## Layout
 
 - `Gloss/` app target: `App/` (model, routes, launch options), `Explorer/`, `Documents/` (sessions, viewer pane, conflict sheet), `Notes/`, `Services/` (hosts, hooks, send coordinator), `Settings/`.
-- `Packages/Core` (ids, schema, note store, anchors, packet builder, local file system), `Packages/Remote` (child processes, ssh config, ControlMaster, SFTP, exec, search, staging), `Packages/Transports` (connection registry, tmux, Herdr, MCP server, hooks installer and script, OpenCode, Herdr plugin bundle), `Packages/Viewers` (text, markdown, image, PDF, CSV, QuickLook). Each has its own tests.
+- `Packages/Core` (ids, schema, note store, anchors, packet builder, local file system), `Packages/Remote` (child processes, ssh config, ControlMaster, SFTP, exec, search, staging), `Packages/Transports` (connection registry, tmux, Herdr, MCP server, hooks installer and script, OpenCode, Herdr plugin bundle), `Packages/Viewers` (text, markdown, image, PDF, CSV, QuickLook, the review browser), `Packages/Integrations` (GET-only GitHub and Atlassian clients, the pull request and Jira/Confluence file systems, ADF to Markdown). Each has its own tests.
 - `docs/` product and design notes plus release instructions. `.claude/skills/` holds the verified protocol references; read the relevant one before touching that area.
 
 ## Build and test

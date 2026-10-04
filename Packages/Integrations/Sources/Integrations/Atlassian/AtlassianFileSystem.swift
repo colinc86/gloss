@@ -27,9 +27,13 @@ public actor AtlassianFileSystem: FileSystemProvider {
     }
 
     private var issues: [String: IssueDocument] = [:]
-    private var issueLists: [String: [JiraIssue.Summary]] = [:]
-    private var spaces: [ConfluenceSpace]?
+    /// Listings live briefly: a root re-listed after this long asks Jira or Confluence again, so a newly assigned
+    /// issue or a new space shows up without re-saving the key.
+    private let listingLifetime: Duration = .seconds(30)
+    private var issueLists: [String: (list: [JiraIssue.Summary], fetchedAt: ContinuousClock.Instant)] = [:]
+    private var spaces: (list: [ConfluenceSpace], fetchedAt: ContinuousClock.Instant)?
     private var pages: [String: PageDocument] = [:]
+    /// Titles and versions seen in listings, so a folder names its own document without fetching the body.
     private var pageTitles: [String: ConfluencePage] = [:]
     private var pollers: [String: Poller] = [:]
     private var terminated: Set<UUID> = []
@@ -69,11 +73,11 @@ public actor AtlassianFileSystem: FileSystemProvider {
     }
 
     /// The issues the user is part of in a project, most recently updated first.
-    private func issueList(_ project: String, refresh: Bool = false) async throws -> [JiraIssue.Summary] {
-        if !refresh, let cached = issueLists[project] { return cached }
+    private func issueList(_ project: String) async throws -> [JiraIssue.Summary] {
+        if let cached = issueLists[project], ContinuousClock.now - cached.fetchedAt < listingLifetime { return cached.list }
         do {
-            let list = try await client.searchIssues(jql: "project = \(project) AND (assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) ORDER BY updated DESC")
-            issueLists[project] = list
+            let list = try await client.searchIssues(jql: "project = \"\(project)\" AND (assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) ORDER BY updated DESC")
+            issueLists[project] = (list, .now)
             return list
         } catch {
             throw Self.fileSystemError(error, path: AtlassianPath.jiraProject(project).path)
@@ -83,10 +87,15 @@ public actor AtlassianFileSystem: FileSystemProvider {
     // MARK: Confluence
 
     private func space(_ key: String) async throws -> ConfluenceSpace {
-        if spaces == nil {
-            do { spaces = try await client.spaces() } catch { throw Self.fileSystemError(error, path: AtlassianPath.confluenceSpace(key).path) }
+        let known = spaces.flatMap { ContinuousClock.now - $0.fetchedAt < listingLifetime ? $0.list : nil }
+        let list: [ConfluenceSpace]
+        if let known {
+            list = known
+        } else {
+            do { list = try await client.spaces() } catch { throw Self.fileSystemError(error, path: AtlassianPath.confluenceSpace(key).path) }
+            spaces = (list, .now)
         }
-        guard let space = spaces?.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }) else { throw FileSystemError.notFound(AtlassianPath.confluenceSpace(key).path) }
+        guard let space = list.first(where: { $0.key.caseInsensitiveCompare(key) == .orderedSame }) else { throw FileSystemError.notFound(AtlassianPath.confluenceSpace(key).path) }
         return space
     }
 
@@ -126,8 +135,19 @@ public actor AtlassianFileSystem: FileSystemProvider {
             let space = try await space(key)
             do { return entries(for: try await client.pages(inSpace: space.id), space: key) } catch { throw Self.fileSystemError(error, path: directory) }
         case .confluencePageFolder(let space, let id):
-            let page = try await pageDocument(id, space: space)
-            var entries = [DirectoryEntry(name: AtlassianPath.fileTitle(page.page.title) + ".md", path: AtlassianPath.confluencePage(space: space, id: id, title: AtlassianPath.fileTitle(page.page.title)).path, kind: .file, size: Int64(page.data.count), mtime: page.page.versionDate, mode: 0o444)]
+            // The folder's own document is named from what a listing already said about the page, so expanding a
+            // folder fetches its children only; the body comes when the document opens.
+            let own: (title: String, size: Int64?, mtime: Date?)
+            if let document = pages[id] {
+                own = (document.page.title, Int64(document.data.count), document.page.versionDate)
+            } else if let page = pageTitles[id] {
+                own = (page.title, nil, page.versionDate)
+            } else {
+                let document = try await pageDocument(id, space: space)
+                own = (document.page.title, Int64(document.data.count), document.page.versionDate)
+            }
+            let title = AtlassianPath.fileTitle(own.title)
+            var entries = [DirectoryEntry(name: title + ".md", path: AtlassianPath.confluencePage(space: space, id: id, title: title).path, kind: .file, size: own.size, mtime: own.mtime, mode: 0o444)]
             do { entries += self.entries(for: try await client.children(ofPage: id), space: space) } catch { throw Self.fileSystemError(error, path: directory) }
             return entries
         case .jiraIssue, .confluencePage:
@@ -137,7 +157,11 @@ public actor AtlassianFileSystem: FileSystemProvider {
 
     public func stat(_ path: String) async throws -> FileAttributes {
         switch try parse(path) {
-        case .jiraRoot, .confluenceRoot, .jiraProject:
+        case .jiraRoot, .confluenceRoot:
+            return FileAttributes(kind: .directory, size: 0, mtime: Date(timeIntervalSince1970: 0), mode: 0o555)
+        case .jiraProject(let project):
+            // Ask Jira before the explorer records the root, so a mistyped project never becomes a tab.
+            _ = try await issueList(project)
             return FileAttributes(kind: .directory, size: 0, mtime: Date(timeIntervalSince1970: 0), mode: 0o555)
         case .confluenceSpace(let key):
             _ = try await space(key)
@@ -148,9 +172,9 @@ public actor AtlassianFileSystem: FileSystemProvider {
         case .confluencePageFolder(let space, let id):
             let document = try await pageDocument(id, space: space)
             return FileAttributes(kind: .directory, size: 0, mtime: document.page.versionDate ?? Date(timeIntervalSince1970: 0), mode: 0o555)
-        case .confluencePage(let space, let id, let title):
+        case .confluencePage(let space, let id, _):
+            // The title in the path is cosmetic: a renamed page keeps its document and its notes.
             let document = try await pageDocument(id, space: space)
-            guard AtlassianPath.fileTitle(document.page.title) == title else { throw FileSystemError.notFound(path) }
             return FileAttributes(kind: .file, size: Int64(document.data.count), mtime: document.page.versionDate ?? Date(timeIntervalSince1970: 0), mode: 0o444)
         }
     }
@@ -159,10 +183,8 @@ public actor AtlassianFileSystem: FileSystemProvider {
         switch try parse(path) {
         case .jiraIssue(let project, let key):
             return try await issueDocument(key, project: project).data
-        case .confluencePage(let space, let id, let title):
-            let document = try await pageDocument(id, space: space)
-            guard AtlassianPath.fileTitle(document.page.title) == title else { throw FileSystemError.notFound(path) }
-            return document.data
+        case .confluencePage(let space, let id, _):
+            return try await pageDocument(id, space: space).data
         default:
             throw FileSystemError.notFound(path)
         }
@@ -243,7 +265,8 @@ public actor AtlassianFileSystem: FileSystemProvider {
         case .jiraIssue(let project, let key)?:
             guard let document = try? await issueDocument(key, project: project) else { return PacketResource(url: client.browseURL(forIssue: key)) }
             if let line, let comment = document.comments.first(where: { $0.range.contains(line) }) {
-                return PacketResource(url: client.browseURL(forIssue: key), details: ["Comment: \(comment.id)"])
+                // Jira's deep link to one comment, so the agent (and a click) lands on it.
+                return PacketResource(url: client.browseURL(forIssue: key), details: ["Comment: \(client.browseURL(forIssue: key).absoluteString)?focusedCommentId=\(comment.id)"])
             }
             return PacketResource(url: client.browseURL(forIssue: key), details: ["Field: description", "Updated: \(AtlassianMarkdown.stamp(document.issue.updated))"])
         case .confluencePage(let space, let id, _)?:
