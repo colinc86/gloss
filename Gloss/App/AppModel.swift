@@ -127,6 +127,9 @@ final class AppModel {
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
         send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
+        send.packetResourceProvider = { [weak self] hostID, path, line in
+            hostID == .github ? await self?.pullRequests?.resource(for: path, line: line) : nil
+        }
         send.register(herdrTransport)
         send.register(TmuxTransport(registry: connectionRegistry))
         let settings = settings

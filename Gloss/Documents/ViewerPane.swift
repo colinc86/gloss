@@ -178,6 +178,8 @@ private struct BannerView: View {
             (.mode, "scope", "Placing a note", "Select its new range, then click Add Note.")
         case .deletedOnDisk:
             (.warning, "trash", "Deleted on disk", "This file is no longer at its path. Its notes stay until you delete them.")
+        case .resourceUpdated:
+            (.info, "arrow.triangle.2.circlepath", "Pull request updated", "Something changed on GitHub; this document reloaded and its notes followed.")
         }
     }
 }

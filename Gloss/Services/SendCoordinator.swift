@@ -14,6 +14,13 @@ final class SendCoordinator {
     @ObservationIgnored var fileSystemProvider: (HostID) -> (any FileSystemProvider)? = { _ in nil }
     /// Text of open documents, so excerpts reflect unsaved edits.
     @ObservationIgnored var openTextProvider: (HostID, String) -> String? = { _, _ in nil }
+    /// What a virtual host says a document is (a pull request's URL and file at its head), for the packet header.
+    @ObservationIgnored var packetResourceProvider: (HostID, String, Int?) async -> PacketResource? = { _, _, _ in nil }
+
+    /// The packet's `Source:` for a document: a virtual host names the resource kind, a file its document kind.
+    nonisolated static func source(for document: Document) -> PacketSource {
+        document.hostID == .github ? .pullRequest : PacketSource(kind: document.kind)
+    }
 
     private(set) var targets: [AgentTarget] = []
     private(set) var isDiscovering = false
@@ -186,7 +193,7 @@ final class SendCoordinator {
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
         // Excerpts only add length: when the packet without them already exceeds the cap, the builder will use
         // the summary form anyway, so reading every document (over SFTP, inside the hook's timeout) is skipped.
-        let headerOnly = notes.map { PacketNote(noteID: $0.note.id, agentPath: $0.document.path, source: PacketSource(kind: $0.document.kind), anchor: $0.note.anchor, comment: $0.note.body) }
+        let headerOnly = notes.map { PacketNote(noteID: $0.note.id, agentPath: $0.document.path, source: Self.source(for: $0.document), anchor: $0.note.anchor, comment: $0.note.body) }
         let packetNotes = PacketBuilder.build(headerOnly).text.count > PacketBuilder.hookDefaultLimit
             ? headerOnly
             : try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged)
@@ -250,10 +257,14 @@ final class SendCoordinator {
                let line = excerpt.first, anchor.text != line, !anchor.text.isEmpty, !anchor.text.contains("\n") {
                 selectedText = anchor.text
             }
+            var firstLine: Int?
+            if case .text(let anchor) = note.anchor { firstLine = anchor.start.line }
+            let resource = document.hostID.isVirtual ? await packetResourceProvider(document.hostID, document.path, firstLine) : nil
             result.append(PacketNote(
-                noteID: note.id, agentPath: document.path, source: PacketSource(kind: document.kind), anchor: note.anchor,
+                noteID: note.id, agentPath: document.path, source: Self.source(for: document), anchor: note.anchor,
                 comment: note.body, excerptLines: excerpt, selectedText: selectedText,
-                attachmentAgentPath: staged.first { $0.noteID == note.id }?.agentPath, cellDescription: cellDescription
+                attachmentAgentPath: staged.first { $0.noteID == note.id }?.agentPath, cellDescription: cellDescription,
+                resource: resource?.url.absoluteString, resourceDetails: resource?.details ?? []
             ))
         }
         return result

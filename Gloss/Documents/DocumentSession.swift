@@ -29,6 +29,8 @@ final class DocumentSession: Identifiable {
         case reanchoring
         /// The file is gone from its path (deleted, or moved away) while it is open here.
         case deletedOnDisk
+        /// A virtual host's document changed at its source (a new commit on the pull request) and was reloaded.
+        case resourceUpdated
     }
 
     struct ConflictState {
@@ -415,6 +417,7 @@ final class DocumentSession: Identifiable {
             try await noteStore.updateFingerprint(document?.id ?? DocumentID.new(), fingerprint)
             await reanchorAll(in: text, hash: fingerprint.hash ?? "")
             refreshLineChanges()
+            if hostID.isVirtual, !discardingEdits { showResourceUpdated() }
         } catch {
             lastError = "Reload failed: \(error)"
         }
@@ -439,6 +442,15 @@ final class DocumentSession: Identifiable {
 
     func dismissBanner() {
         banner = nil
+    }
+
+    /// "Pull request updated" for a few seconds, long enough to notice, gone before it nags.
+    private func showResourceUpdated() {
+        banner = .resourceUpdated
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            if self?.banner == .resourceUpdated { self?.banner = nil }
+        }
     }
 
     // MARK: Save

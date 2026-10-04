@@ -239,6 +239,17 @@ path. Dropping on the Dock icon is not supported yet.
   button; it slides in and out from the top. Follow problems (Herdr not running, an unknown machine) stay in the
   status line.
 
+- **Pull request roots** (milestone 2): with a GitHub token saved, the host menu lists GitHub (`arrow.triangle.pull`)
+  after this Mac. A pull request opens as a root named `owner/repo #N` (root switcher, tree root, breadcrumb, notes
+  panel header all say so; the tree's root wears the pull symbol) holding `Pull request.md`, `Conversation.md`,
+  `changes/…` and `pull-N.diff`. Nothing on it can be made, renamed or removed, so the tree's menu offers none of
+  that; the status bar's lock explains "a pull request's file at its head commit". The sidebar's empty state for
+  GitHub leads to the picker, never to "Connect".
+- **Open Pull Request…** (File menu, ⌥⌘P; also the GitHub host's menu entry): the Open Quickly panel's shape with
+  the pull symbol. The field narrows the open pull requests you are involved in by every word typed (`repo`, `#12`,
+  a word of the title); a pasted URL or `owner/repo#123` shows one "Open owner/repo #123" row and opens as is, even
+  without a token. Rows read title first, then `owner/repo #n · draft · updated 3 days ago`.
+
 ### Notes
 
 - **Note card**: colour rail (3 pt, 4 pt when hovered or selected, faded when settled), anchor label with the anchor
@@ -427,6 +438,14 @@ path. Dropping on the Dock icon is not supported yet.
   40 pt or more, so narrowing the window never leaves a continuation with no room), follows typing just after
   each edit (never inside it: restyling there moved the caret to the next line on every keystroke), and is a
   paragraph attribute only: the text and every note anchor are untouched.
+- **Changed lines** (a pull request's file, milestone 2): rows the pull request added or rewrote are tinted green
+  across the whole width (`Theme.changeAddedBackground`, 10%, lighter than a resolved note so a green note on an added
+  line still reads), with a 2 pt green bar at the gutter's text edge as VS Code marks changed rows; a red hairline
+  across gutter and text marks where lines were taken out. The overview ruler shows hunks in a lane of their own
+  under the notes (green bars, red ticks for deletions), clickable. The status bar reads "3 changes" with ⌃/⌄
+  steppers, "2 of 3" while stepping; Notes › Next Change (⌥⌘↓) and Previous Change (⌥⌘↑) walk the hunks from the
+  caret and wrap, landing each with the find indicator. A reload after a new commit shows "Pull request updated" for
+  eight seconds.
 - **Overview ruler** (`OverviewRulerView`): a 12 pt strip at the editor's trailing edge, shown only while the file
   has notes, that maps the whole file as Xcode's issue markers and VS Code's overview ruler do. Each note is a tick in
   its colour at its place (a multi-line note spans its lines): drafts solid, sent at 70%, resolved at 35%, orphaned
