@@ -24,12 +24,16 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
 
     private final class Poller {
         var task: Task<Void, Never>?
-        var continuations: [UUID: AsyncStream<FileSystemEvent>.Continuation] = [:]
+        var continuations: [UUID: (continuation: AsyncStream<FileSystemEvent>.Continuation, isRoot: Bool)] = [:]
     }
 
     private var snapshots: [Key: Snapshot] = [:]
+    /// Fetches in flight, so callers arriving together share one set of requests.
+    private var inflight: [Key: Task<Snapshot, any Error>] = [:]
     private var contents: [String: Data] = [:]
     private var pollers: [Key: Poller] = [:]
+    /// Watchers whose stream ended before their registration ran.
+    private var terminated: Set<UUID> = []
 
     public init(client: GitHubClient, pollInterval: Duration = .seconds(10)) {
         self.client = client
@@ -49,18 +53,30 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     func snapshot(for path: PullRequestPath, refresh: Bool = false) async throws -> Snapshot {
         let key = key(path)
         if !refresh, let cached = snapshots[key] { return cached }
-        do {
+        if let running = inflight[key] { return try await running.value }
+        let client = client
+        let task = Task<Snapshot, any Error> {
             async let pull = client.pullRequest(owner: path.owner, repo: path.repo, number: path.number)
             async let files = client.pullRequestFiles(owner: path.owner, repo: path.repo, number: path.number)
             async let issueComments = client.issueComments(owner: path.owner, repo: path.repo, number: path.number)
             async let reviewComments = client.reviewComments(owner: path.owner, repo: path.repo, number: path.number)
             let (pullValue, fileValues, issues, reviews) = try await (pull, files, issueComments, reviewComments)
             let conversation = PullRequestMarkdown.conversation(issues)
-            let snapshot = Snapshot(
+            return Snapshot(
                 pull: pullValue, files: fileValues, issueComments: issues, reviewComments: reviews,
                 description: Data(PullRequestMarkdown.description(pullValue, files: fileValues, reviewComments: reviews, path: path).utf8),
                 conversation: Data(conversation.text.utf8), conversationLines: conversation.lines, diff: nil
             )
+        }
+        inflight[key] = task
+        defer { inflight[key] = nil }
+        do {
+            let snapshot = try await task.value
+            if let previous = snapshots[key], previous.pull.head.sha != snapshot.pull.head.sha {
+                // The old head's files are not coming back.
+                let stale = "\(previous.pull.head.sha):"
+                contents = contents.filter { !$0.key.hasPrefix(stale) }
+            }
             snapshots[key] = snapshot
             return snapshot
         } catch let error as IntegrationError {
@@ -89,12 +105,15 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     }
 
     private func diff(for path: PullRequestPath) async throws -> Data {
-        var snapshot = try await snapshot(for: path)
+        let snapshot = try await snapshot(for: path)
         if let diff = snapshot.diff { return diff }
         do {
             let data = Data(try await client.diff(owner: path.owner, repo: path.repo, number: path.number).utf8)
-            snapshot.diff = data
-            snapshots[key(path)] = snapshot
+            // The pull request may have moved on during the fetch: only the same head keeps this diff.
+            if var current = snapshots[key(path)], current.pull.head.sha == snapshot.pull.head.sha {
+                current.diff = data
+                snapshots[key(path)] = current
+            }
             return data
         } catch let error as IntegrationError {
             throw Self.fileSystemError(error, path: path.path)
@@ -121,6 +140,7 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
             ]
         }
         guard path.isChangesDirectory else { throw FileSystemError.notADirectory(directory) }
+        if let file = path.changedFile, presentFiles(snapshot).contains(where: { $0.filename == file }) { throw FileSystemError.notADirectory(directory) }
         let prefix = path.changedFile.map { $0 + "/" } ?? ""
         var names: [String: DirectoryEntry] = [:]
         for file in presentFiles(snapshot) where file.filename.hasPrefix(prefix) {
@@ -189,9 +209,14 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     }
 
     private func addWatcher(_ id: UUID, continuation: AsyncStream<FileSystemEvent>.Continuation, path: PullRequestPath) {
+        // The stream was dropped before this ran: nothing to feed, no poller to start.
+        if terminated.remove(id) != nil {
+            continuation.finish()
+            return
+        }
         let key = key(path)
         let poller = pollers[key] ?? Poller()
-        poller.continuations[id] = continuation
+        poller.continuations[id] = (continuation, path.isRoot)
         pollers[key] = poller
         if poller.task == nil {
             poller.task = Task { [weak self] in
@@ -206,7 +231,10 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
 
     private func removeWatcher(_ id: UUID, path: PullRequestPath) {
         let key = key(path)
-        guard let poller = pollers[key] else { return }
+        guard let poller = pollers[key], poller.continuations[id] != nil else {
+            terminated.insert(id)
+            return
+        }
         poller.continuations[id] = nil
         if poller.continuations.isEmpty {
             poller.task?.cancel()
@@ -220,9 +248,10 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         guard latest.head.sha != previous.pull.head.sha || latest.updatedAt != previous.pull.updatedAt else { return }
         guard let fresh = try? await snapshot(for: path, refresh: true), let poller = pollers[key] else { return }
         let changed = documentPaths(in: fresh, path: path) + documentPaths(in: previous, path: path)
-        for continuation in poller.continuations.values {
+        for (continuation, isRoot) in poller.continuations.values {
+            // Documents hear which paths changed; the root (the explorer) also re-lists the tree.
             continuation.yield(.changed(Array(Set(changed))))
-            continuation.yield(.rescan(path.root))
+            if isRoot { continuation.yield(.rescan(path.root)) }
         }
     }
 

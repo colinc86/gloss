@@ -13,7 +13,7 @@ struct PullRequestPathTests {
         #expect(PullRequestPath("/o/r/pull/12/Pull request.md")?.rest == "Pull request.md")
         #expect(PullRequestPath("/o/r/pull/12")?.diffName == "pull-12.diff")
         #expect(PullRequestPath("/o/r/pull/12")?.webURL == URL(string: "https://github.com/o/r/pull/12"))
-        for bad in ["/o/r", "/o/r/pulls/12", "/o/r/pull/x", "/o/r/pull/0", "/", "/o//pull/1"] {
+        for bad in ["/o/r", "/o/r/pulls/12", "/o/r/pull/x", "/o/r/pull/0", "/", "/o//pull/1", "/../../pull/1", "/o/./pull/1"] {
             #expect(PullRequestPath(bad) == nil, Comment(rawValue: bad))
         }
     }
@@ -76,8 +76,8 @@ struct GitHubPullRequestFileSystemTests {
     static func serve(_ stub: Stub, sha: String = "f00d123abcdef") {
         stub.respond(to: "\(base)/repos/o/r/pulls/2", with: .json(pullJSON(sha: sha)))
         stub.respond(to: "\(base)/repos/o/r/pulls/2/files?page=1&per_page=100", with: .json(#"[{"filename":"Sources/App.swift","status":"modified","additions":1,"deletions":1,"patch":"@@ -1,2 +1,2 @@\n-old\n+new\n ctx"},{"filename":"Sources/Deep/Nested.swift","status":"added","additions":2,"deletions":0,"patch":"@@ -0,0 +1,2 @@\n+a\n+b"},{"filename":"Gone.swift","status":"removed","additions":0,"deletions":4}]"#))
-        stub.respond(to: "\(base)/repos/o/r/issues/2/comments?per_page=100", with: .json(#"[{"id":1,"html_url":"https://github.com/o/r/pull/2#issuecomment-1","user":{"login":"sam"},"body":"Looks right.","created_at":"2026-10-03T11:00:00Z"}]"#))
-        stub.respond(to: "\(base)/repos/o/r/pulls/2/comments?per_page=100", with: .json(#"[{"id":2,"html_url":"https://github.com/o/r/pull/2#discussion_r2","user":{"login":"sam"},"body":"Rename this.","created_at":"2026-10-03T11:30:00Z","path":"Sources/App.swift","line":2,"side":"RIGHT"}]"#))
+        stub.respond(to: "\(base)/repos/o/r/issues/2/comments?page=1&per_page=100", with: .json(#"[{"id":1,"html_url":"https://github.com/o/r/pull/2#issuecomment-1","user":{"login":"sam"},"body":"Looks right.\r\n\r\nTwo more\nlines.","created_at":"2026-10-03T11:00:00Z"},{"id":3,"html_url":"https://github.com/o/r/pull/2#issuecomment-3","user":{"login":"colinc86"},"body":"Thanks.","created_at":"2026-10-03T11:10:00Z"}]"#))
+        stub.respond(to: "\(base)/repos/o/r/pulls/2/comments?page=1&per_page=100", with: .json(#"[{"id":2,"html_url":"https://github.com/o/r/pull/2#discussion_r2","user":{"login":"sam"},"body":"Rename this.","created_at":"2026-10-03T11:30:00Z","path":"Sources/App.swift","line":2,"side":"RIGHT"}]"#))
         stub.respond(to: "\(base)/repos/o/r/contents/Sources/App.swift?ref=\(sha)", with: .init(headers: ["Content-Type": "application/vnd.github.raw"], body: Data("new\nctx\n".utf8)))
         stub.respond(to: "\(base)/repos/o/r/contents/Sources/Deep/Nested.swift?ref=\(sha)", with: .init(headers: ["Content-Type": "application/vnd.github.raw"], body: Data("a\nb\n".utf8)))
         stub.respond(to: "\(base)/repos/o/r/pulls/2", with: .json(pullJSON(sha: sha)))
@@ -102,7 +102,8 @@ struct GitHubPullRequestFileSystemTests {
         let description = String(decoding: try await fs.read("/o/r/pull/2/Pull request.md"), as: UTF8.self)
         #expect(description.hasPrefix("# Name the receiver\n\n- **o/r #2** · merged · by @colinc86\n- `main` ← `fix` (f00d123) · +5 −5 in 3 files\n- Labels: infra\n- Reviewers: @sam\n- Removed: Gone.swift\n- <https://github.com/o/r/pull/2>\n\nWhy:\n\nbecause.\n\n## Reviews\n\n### Sources/App.swift:2 · @sam · 2026-10-03T11:30:00Z\nRename this.\n"), Comment(rawValue: description))
         let conversation = String(decoding: try await fs.read("/o/r/pull/2/Conversation.md"), as: UTF8.self)
-        #expect(conversation == "# Conversation\n\n### @sam · 2026-10-03T11:00:00Z\nLooks right.\n", Comment(rawValue: conversation))
+        #expect(conversation == "# Conversation\n\n### @sam · 2026-10-03T11:00:00Z\nLooks right.\n\nTwo more\nlines.\n\n### @colinc86 · 2026-10-03T11:10:00Z\nThanks.\n", Comment(rawValue: conversation))
+        await #expect(throws: FileSystemError.notADirectory("/o/r/pull/2/changes/Sources/App.swift")) { try await fs.list("/o/r/pull/2/changes/Sources/App.swift") }
         #expect(String(decoding: try await fs.read("/o/r/pull/2/changes/Sources/App.swift"), as: UTF8.self) == "new\nctx\n")
         #expect(try await fs.stat("/o/r/pull/2/changes/Sources/Deep").kind == .directory)
         #expect(try await fs.stat("/o/r/pull/2/changes/Sources/App.swift").size == 8)
@@ -112,6 +113,17 @@ struct GitHubPullRequestFileSystemTests {
         await #expect(throws: FileSystemError.notFound("/elsewhere")) { try await fs.list("/elsewhere") }
         #expect(Set(stub.recorded.map { $0.httpMethod ?? "" }) == ["GET"])
         #expect(stub.recorded.filter { $0.url!.path == "/repos/o/r/pulls/2" }.count == 1, "the pull request is fetched once for every document")
+
+        // Callers arriving together share the one fetch.
+        let other = Stub()
+        Self.serve(other)
+        let shared = provider(other)
+        async let a = shared.list("/o/r/pull/2")
+        async let b = shared.stat("/o/r/pull/2/Pull request.md")
+        async let c = shared.title(forRoot: "/o/r/pull/2")
+        _ = try await (a, b)
+        _ = await c
+        #expect(other.recorded.filter { $0.url!.path == "/repos/o/r/pulls/2" }.count == 1, "three concurrent callers, one fetch")
 
         // The same facts render the same bytes, so anchors in the Markdown stay put across re-renders.
         #expect(try await fs.read("/o/r/pull/2/Pull request.md") == Data(description.utf8))
@@ -128,6 +140,8 @@ struct GitHubPullRequestFileSystemTests {
         #expect(await fs.resource(for: "/o/r/pull/2/changes/Sources/App.swift") == PacketResource(url: url, details: ["Path: Sources/App.swift at f00d123"]))
         #expect(await fs.resource(for: "/o/r/pull/2/Pull request.md") == PacketResource(url: url, details: ["Field: description"]))
         #expect(await fs.resource(for: "/o/r/pull/2/Conversation.md", line: 4) == PacketResource(url: url, details: ["Comment: https://github.com/o/r/pull/2#issuecomment-1"]))
+        #expect(await fs.resource(for: "/o/r/pull/2/Conversation.md", line: 7) == PacketResource(url: url, details: ["Comment: https://github.com/o/r/pull/2#issuecomment-1"]), "a multi-line body is still the first comment")
+        #expect(await fs.resource(for: "/o/r/pull/2/Conversation.md", line: 10) == PacketResource(url: url, details: ["Comment: https://github.com/o/r/pull/2#issuecomment-3"]), "the second comment starts after the first's lines")
         #expect(await fs.resource(for: "/o/r/pull/2/Conversation.md", line: 1) == PacketResource(url: url, details: ["Field: conversation"]))
         #expect(await fs.resource(for: "/o/r/pull/2/pull-2.diff") == PacketResource(url: url))
         let title = await fs.title(forRoot: "/o/r/pull/2")
@@ -141,15 +155,23 @@ struct GitHubPullRequestFileSystemTests {
         stub.respond(to: "\(Self.base)/repos/o/r/contents/Sources/App.swift?ref=b222222222222", with: .init(headers: ["Content-Type": "application/vnd.github.raw"], body: Data("newer\nctx\n".utf8)))
         let fs = provider(stub, poll: .milliseconds(30))
         _ = try await fs.list("/o/r/pull/2")
-        var events: [FileSystemEvent] = []
-        let stream = fs.watch("/o/r/pull/2/changes/Sources/App.swift")
-        for await event in stream {
-            events.append(event)
-            if events.count == 2 { break }
+        // The root (the explorer) hears the change and re-lists; a document hears only the change.
+        var rootEvents: [FileSystemEvent] = []
+        var fileEvents: [FileSystemEvent] = []
+        let root = fs.watch("/o/r/pull/2")
+        let file = fs.watch("/o/r/pull/2/changes/Sources/App.swift")
+        for await event in root {
+            rootEvents.append(event)
+            if rootEvents.count == 2 { break }
         }
-        guard case .changed(let paths) = events[0] else { Issue.record("expected changed first"); return }
+        for await event in file {
+            fileEvents.append(event)
+            break
+        }
+        guard case .changed(let paths) = rootEvents[0] else { Issue.record("expected changed first"); return }
         #expect(paths.contains("/o/r/pull/2/changes/Sources/App.swift") && paths.contains("/o/r/pull/2/Pull request.md"))
-        #expect(events[1] == .rescan("/o/r/pull/2"))
+        #expect(rootEvents[1] == .rescan("/o/r/pull/2"))
+        #expect(fileEvents.first == rootEvents[0])
         #expect(String(decoding: try await fs.read("/o/r/pull/2/changes/Sources/App.swift"), as: UTF8.self) == "newer\nctx\n", "the head moved: content is read at the new sha")
         #expect(try await fs.stat("/o/r/pull/2").mtime == ISO8601DateFormatter().date(from: "2026-10-03T12:00:00Z"))
         #expect(fs.watch("/nowhere").makeAsyncIterator() != nil)

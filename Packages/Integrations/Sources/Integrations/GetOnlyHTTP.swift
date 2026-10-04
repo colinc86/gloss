@@ -41,7 +41,9 @@ public actor GetOnlyHTTP {
 
     private let session: URLSession
     private let log: Logger
-    private var cached: [URL: (etag: String, reply: HTTPReply)] = [:]
+    /// One representation per URL and Accept header: a pull request's JSON and its diff share a URL.
+    private struct CacheKey: Hashable { var url: URL; var accept: String }
+    private var cached: [CacheKey: (etag: String, reply: HTTPReply)] = [:]
 
     public init(session: URLSession = .shared, log: @escaping Logger = { _ in }) {
         self.session = session
@@ -52,8 +54,11 @@ public actor GetOnlyHTTP {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 30
+        // The app's own ETag handling is the only cache; URLCache would serve a poll from GitHub's max-age.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
-        if let cached = cached[url] { request.setValue(cached.etag, forHTTPHeaderField: "If-None-Match") }
+        let key = CacheKey(url: url, accept: headers["Accept"] ?? "")
+        if let cached = cached[key] { request.setValue(cached.etag, forHTTPHeaderField: "If-None-Match") }
         let data: Data
         let response: URLResponse
         do {
@@ -68,11 +73,13 @@ public actor GetOnlyHTTP {
             return (name.lowercased(), "\(value)")
         })
         log("GET \(url.absoluteString) → \(http.statusCode)")
-        if http.statusCode == 304, let cached = cached[url] { return cached.reply }
+        if http.statusCode == 304, let cached = cached[key] { return cached.reply }
         let reply = HTTPReply(status: http.statusCode, headers: lowered, data: data)
         switch http.statusCode {
         case 200..<300:
-            if let etag = lowered["etag"] { cached[url] = (etag, reply) }
+            // Raw file bodies are cached by their commit by the caller; holding them here too would keep every
+            // file of every pull request for the app's life.
+            if let etag = lowered["etag"], !key.accept.contains("raw") { cached[key] = (etag, reply) }
             return reply
         case 401:
             throw IntegrationError.unauthorized(Self.message(in: data) ?? "")

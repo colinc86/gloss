@@ -65,11 +65,11 @@ struct AppCommands: Commands {
             .keyboardShortcut("o", modifiers: [.command, .shift])
             Button { model.presentQuickOpen() } label: { Label("Open Quickly…", systemImage: "doc.text.magnifyingglass") }
                 .keyboardShortcut("p", modifiers: [.command])
+                .disabled(model.explorer.selectedTab == nil)
             Button { model.presentOpenLocation() } label: { Label("Open Location…", systemImage: "globe") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Button { model.presentOpenPullRequest() } label: { Label("Open Pull Request…", systemImage: "arrow.triangle.pull") }
                 .keyboardShortcut("p", modifiers: [.command, .option])
-                .disabled(model.explorer.selectedTab == nil)
         }
         CommandGroup(replacing: .saveItem) {
             // Replacing the save group also took Close with it; ⌘W closes whichever window is in front.

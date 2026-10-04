@@ -1162,6 +1162,7 @@ final class DocumentSession: Identifiable {
         Task { [weak self] in
             let changes = await provider(path)
             guard let self, self.textController === controller else { return }
+            if changes != controller.lineChanges { self.steppedHunk = nil }
             controller.lineChanges = changes
         }
     }
@@ -1172,11 +1173,19 @@ final class DocumentSession: Identifiable {
     }
 
     private(set) var steppedHunk: Int?
+    /// The selection when the hunk was stepped to; once it moves, the next step starts from the caret again.
+    private var selectionAtHunkStep: NSRange?
+
+    private var currentSteppedHunk: Int? {
+        guard let steppedHunk, let controller = textController, controller.selection == selectionAtHunkStep,
+              let count = controller.lineChanges?.hunks.count, steppedHunk < count else { return nil }
+        return steppedHunk
+    }
 
     /// "2 of 7" while a stepped-to hunk is current.
     var changePosition: (index: Int, count: Int)? {
-        guard let steppedHunk, let lineChanges = textController?.lineChanges else { return nil }
-        return (steppedHunk + 1, lineChanges.hunks.count)
+        guard let index = currentSteppedHunk, let lineChanges = textController?.lineChanges else { return nil }
+        return (index + 1, lineChanges.hunks.count)
     }
 
     /// Next or previous hunk, from the one last stepped to, else from the caret's line; wraps at either end.
@@ -1184,8 +1193,9 @@ final class DocumentSession: Identifiable {
     func stepChange(forward: Bool) -> Bool {
         guard let controller = textController, let changes = controller.lineChanges else { NSSound.beep(); return false }
         let caret = Double(controller.lineIndex.position(forUTF16Offset: controller.selection.location).line)
-        guard let index = Self.step(from: caret, current: steppedHunk, in: changeHunks, forward: forward) else { NSSound.beep(); return false }
+        guard let index = Self.step(from: caret, current: currentSteppedHunk, in: changeHunks, forward: forward) else { NSSound.beep(); return false }
         steppedHunk = index
+        selectionAtHunkStep = controller.selection
         let hunk = changes.hunks[index]
         controller.scroll(to: controller.lineIndex.contentRange(ofLine: hunk.lowerBound), select: false)
         return true

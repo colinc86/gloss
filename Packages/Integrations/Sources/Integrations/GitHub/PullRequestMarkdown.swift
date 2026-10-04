@@ -6,6 +6,11 @@ enum PullRequestMarkdown {
     /// `2026-10-03T11:30:00Z`: the same for every reader and locale, so the rendered text is stable.
     static func stamp(_ date: Date) -> String { date.formatted(.iso8601) }
 
+    /// A body as lines of the document, CRLF and trailing blanks gone.
+    static func bodyLines(_ body: String) -> [String] {
+        body.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+    }
+
     static func state(of pull: GitHubPullRequest) -> String {
         if pull.merged == true { return "merged" }
         if pull.state == "closed" { return "closed" }
@@ -41,7 +46,7 @@ enum PullRequestMarkdown {
                     lines.append("")
                     let where_ = comment.line ?? comment.originalLine
                     lines.append("### \(file)" + (where_.map { ":\($0)" } ?? "") + " · @\(comment.user.login) · \(stamp(comment.createdAt))")
-                    lines.append(comment.body.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+                    lines.append(contentsOf: bodyLines(comment.body))
                 }
             }
         }
@@ -59,7 +64,8 @@ enum PullRequestMarkdown {
         for comment in comments.sorted(by: { $0.createdAt < $1.createdAt }) {
             let start = lines.count + 1
             lines.append("### @\(comment.user.login) · \(stamp(comment.createdAt))")
-            lines.append(comment.body.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines))
+            // One array element per line, or the map would drift by every newline inside a body.
+            lines.append(contentsOf: bodyLines(comment.body))
             map.append((start...lines.count, comment.htmlUrl))
             lines.append("")
         }

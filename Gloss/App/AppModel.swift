@@ -370,6 +370,11 @@ final class AppModel {
             return
         }
         guard let fileSystem = fileSystems[hostID] else {
+            if hostID == .github {
+                // No token saved: the picker says where it goes instead of nothing happening.
+                presentOpenPullRequest()
+                return
+            }
             Task {
                 if await ensureConnected(hostID) { openDocument(hostID: hostID, path: path) }
             }

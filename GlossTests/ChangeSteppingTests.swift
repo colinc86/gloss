@@ -38,6 +38,11 @@ struct ChangeSteppingTests {
         #expect(session.changePosition?.index == 1, "wraps")
         session.stepChange(forward: false)
         #expect(session.changePosition?.index == 3)
+        // The caret moving elsewhere ends the run; the next step starts from the caret again.
+        controller.selection = NSRange(location: controller.lineIndex.contentRange(ofLine: 10).location, length: 0)
+        #expect(session.changePosition == nil)
+        session.stepChange(forward: true)
+        #expect(session.changePosition?.index == 2, "from line 10 the next hunk is the deletion at 12")
         await model.shutDown()
     }
 

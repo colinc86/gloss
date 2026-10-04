@@ -149,20 +149,31 @@ public actor GitHubClient {
         return String(decoding: reply.data, as: UTF8.self)
     }
 
-    /// A file's bytes at a commit.
+    /// A file's bytes at a commit. The path goes in unescaped: `appendingPathComponent` escapes spaces, `#`, `%`
+    /// and non-ASCII once (escaping first made `%20` into `%2520` and every such file a 404).
     public func fileContent(owner: String, repo: String, path: String, ref: String) async throws -> Data {
-        let escaped = path.split(separator: "/").map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }.joined(separator: "/")
-        return try await http.get(url("repos/\(owner)/\(repo)/contents/\(escaped)", query: ["ref": ref]), headers: headers(accept: "application/vnd.github.raw+json")).data
+        try await http.get(url("repos/\(owner)/\(repo)/contents/\(path)", query: ["ref": ref]), headers: headers(accept: "application/vnd.github.raw+json")).data
     }
 
     /// Conversation comments on the pull request (issue comments), oldest first.
     public func issueComments(owner: String, repo: String, number: Int) async throws -> [GitHubComment] {
-        try decode([GitHubComment].self, from: try await http.get(url("repos/\(owner)/\(repo)/issues/\(number)/comments", query: ["per_page": "100"]), headers: headers()))
+        try await pages("repos/\(owner)/\(repo)/issues/\(number)/comments")
     }
 
     /// Review comments, each on a file and line.
     public func reviewComments(owner: String, repo: String, number: Int) async throws -> [GitHubComment] {
-        try decode([GitHubComment].self, from: try await http.get(url("repos/\(owner)/\(repo)/pulls/\(number)/comments", query: ["per_page": "100"]), headers: headers()))
+        try await pages("repos/\(owner)/\(repo)/pulls/\(number)/comments")
+    }
+
+    /// Every page of a list endpoint, 100 at a time.
+    private func pages<T: Decodable>(_ path: String) async throws -> [T] {
+        var items: [T] = []
+        for page in 1...30 {
+            let batch = try decode([T].self, from: try await http.get(url(path, query: ["per_page": "100", "page": String(page)]), headers: headers()))
+            items.append(contentsOf: batch)
+            if batch.count < 100 { break }
+        }
+        return items
     }
 
     /// Open pull requests the user is involved in, most recently updated first.

@@ -25,8 +25,8 @@ struct GitHubClientTests {
         stub.respond(to: "\(base)/repos/o/r/pulls/7", with: .json(pr))
         stub.respond(to: "\(base)/repos/o/r/pulls/7/files?page=1&per_page=100", with: .json(#"[{"filename":"a.swift","status":"modified","additions":1,"deletions":0,"patch":"@@ -1 +1 @@\n-a\n+b"}]"#))
         stub.respond(to: "\(base)/repos/o/r/contents/Sources/App.swift?ref=abc", with: .init(headers: ["Content-Type": "application/vnd.github.raw"], body: Data("let x = 1\n".utf8)))
-        stub.respond(to: "\(base)/repos/o/r/issues/7/comments?per_page=100", with: .json(#"[{"id":1,"html_url":"https://github.com/o/r/pull/7#issuecomment-1","user":{"login":"b"},"body":"hi","created_at":"2026-10-03T10:00:00Z"}]"#))
-        stub.respond(to: "\(base)/repos/o/r/pulls/7/comments?per_page=100", with: .json(#"[{"id":2,"html_url":"https://github.com/o/r/pull/7#discussion_r2","user":{"login":"b"},"body":"here","created_at":"2026-10-03T10:00:00Z","path":"a.swift","line":3,"side":"RIGHT","diff_hunk":"@@ -1 +1 @@"}]"#))
+        stub.respond(to: "\(base)/repos/o/r/issues/7/comments?page=1&per_page=100", with: .json(#"[{"id":1,"html_url":"https://github.com/o/r/pull/7#issuecomment-1","user":{"login":"b"},"body":"hi","created_at":"2026-10-03T10:00:00Z"}]"#))
+        stub.respond(to: "\(base)/repos/o/r/pulls/7/comments?page=1&per_page=100", with: .json(#"[{"id":2,"html_url":"https://github.com/o/r/pull/7#discussion_r2","user":{"login":"b"},"body":"here","created_at":"2026-10-03T10:00:00Z","path":"a.swift","line":3,"side":"RIGHT","diff_hunk":"@@ -1 +1 @@"}]"#))
         stub.respond(to: "\(base)/search/issues?per_page=30&q=is:pr%20is:open%20involves:colinc86&sort=updated", with: .json(#"{"items":[{"number":7,"title":"T","state":"open","html_url":"https://github.com/o/r/pull/7","updated_at":"2026-10-03T10:00:00Z","repository_url":"https://api.github.com/repos/o/r"}]}"#))
         let client = client(stub)
         let pull = try await client.pullRequest(owner: "o", repo: "r", number: 7)
@@ -41,6 +41,35 @@ struct GitHubClientTests {
         let methods = Set(stub.recorded.map { $0.httpMethod ?? "" })
         #expect(methods == ["GET"], "the client can only read: \(methods)")
         #expect(stub.recorded.count == 6)
+    }
+
+    @Test func filePathsAreEscapedOnce() async throws {
+        let stub = Stub()
+        stub.respond(to: "\(base)/repos/o/r/contents/Docs/My%20File%231.md?ref=abc", with: .init(headers: ["Content-Type": "application/vnd.github.raw"], body: Data("hi".utf8)))
+        #expect(String(decoding: try await client(stub).fileContent(owner: "o", repo: "r", path: "Docs/My File#1.md", ref: "abc"), as: UTF8.self) == "hi")
+        #expect(stub.recorded.first?.cachePolicy == .reloadIgnoringLocalCacheData, "the app's ETags are the only cache")
+    }
+
+    @Test func commentsFollowEveryPage() async throws {
+        let stub = Stub()
+        let page = (1...100).map { #"{"id":\#($0),"html_url":"https://github.com/o/r/pull/7#issuecomment-\#($0)","user":{"login":"b"},"body":"c","created_at":"2026-10-03T10:00:00Z"}"# }.joined(separator: ",")
+        stub.respond(to: "\(base)/repos/o/r/issues/7/comments?page=1&per_page=100", with: .json("[\(page)]"))
+        stub.respond(to: "\(base)/repos/o/r/issues/7/comments?page=2&per_page=100", with: .json(#"[{"id":101,"html_url":"https://github.com/o/r/pull/7#issuecomment-101","user":{"login":"b"},"body":"last","created_at":"2026-10-03T10:00:00Z"}]"#))
+        let comments = try await client(stub).issueComments(owner: "o", repo: "r", number: 7)
+        #expect(comments.count == 101 && comments.last?.body == "last")
+    }
+
+    @Test func theCacheTellsRepresentationsApart() async throws {
+        let stub = Stub()
+        stub.respond(to: "\(base)/repos/o/r/pulls/7", with: .json(#"{"number":7,"title":"T","state":"open","html_url":"https://github.com/o/r/pull/7","user":{"login":"a"},"head":{"ref":"f","sha":"abc"},"base":{"ref":"main","sha":"def"},"updated_at":"2026-10-03T10:00:00Z","labels":[]}"#, headers: ["ETag": "\"json\""]))
+        let client = client(stub)
+        _ = try await client.pullRequest(owner: "o", repo: "r", number: 7)
+        stub.respond(to: "\(base)/repos/o/r/pulls/7", with: .init(headers: ["Content-Type": "text/plain", "ETag": "\"diff\""], body: Data("diff --git a b".utf8)))
+        #expect(try await client.diff(owner: "o", repo: "r", number: 7) == "diff --git a b")
+        #expect(stub.recorded.last?.value(forHTTPHeaderField: "If-None-Match") == nil, "the diff's first read carries no JSON tag")
+        stub.respond(to: "\(base)/repos/o/r/pulls/7", with: .json("{}", headers: ["ETag": "\"json\""]))
+        let again = try await client.pullRequest(owner: "o", repo: "r", number: 7)
+        #expect(again.number == 7, "the JSON representation came back from its own cache entry on a 304")
     }
 
     @Test func cachedReadsPresentTheirETag() async throws {

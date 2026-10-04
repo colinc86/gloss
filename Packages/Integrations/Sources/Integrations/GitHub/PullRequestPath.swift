@@ -16,7 +16,8 @@ public struct PullRequestPath: Equatable, Sendable {
     public init?(_ path: String) {
         // "/o/r/pull/12/rest" → ["", "o", "r", "pull", "12", "rest"...]
         let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count >= 5, parts[0].isEmpty, !parts[1].isEmpty, !parts[2].isEmpty, parts[3] == "pull",
+        let isName: (String) -> Bool = { !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") }
+        guard parts.count >= 5, parts[0].isEmpty, isName(parts[1]), isName(parts[2]), parts[3] == "pull",
               let number = Int(parts[4]), number > 0 else { return nil }
         owner = parts[1]
         repo = parts[2]
