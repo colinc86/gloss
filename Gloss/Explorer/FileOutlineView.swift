@@ -184,12 +184,14 @@ struct FileOutlineView: NSViewRepresentable {
                 item("New Note…", #selector(menuNewNote), symbol: "note.text.badge.plus")
                 menu.addItem(.separator())
             }
-            if directory != nil {
+            // A pull request's tree is what GitHub holds; nothing in it is made, renamed or removed here.
+            let writable = !node.hostID.isVirtual
+            if directory != nil, writable {
                 item("New File", #selector(menuNewFile), symbol: "doc.badge.plus")
                 item("New Folder", #selector(menuNewFolder), symbol: "folder.badge.plus")
                 menu.addItem(.separator())
             }
-            if node.parent != nil {
+            if node.parent != nil, writable {
                 item("Rename…", #selector(menuRename), symbol: "pencil")
                 if !node.isDirectory { item("Duplicate", #selector(menuDuplicate), symbol: "plus.square.on.square") }
                 item(node.hostID == .local ? "Move to Trash" : "Delete…", #selector(menuDelete), symbol: "trash")

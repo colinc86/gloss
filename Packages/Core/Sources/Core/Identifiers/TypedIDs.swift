@@ -56,6 +56,8 @@ public struct HostID: PrefixedIdentifier {
     public static let atlassian = HostID(rawValue: "h_atlassian")
     /// The hosts with fixed ids instead of ULIDs.
     public static let fixed: Set<HostID> = [.local, .web, .github, .atlassian]
+    /// Served by the app from an API or a web view, never a machine's file system; nothing on them can be written.
+    public var isVirtual: Bool { self == .web || self == .github || self == .atlassian }
 
     public init?(validating string: String) {
         if HostID.fixed.contains(HostID(rawValue: string)) {

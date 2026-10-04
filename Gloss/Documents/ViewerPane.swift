@@ -1,4 +1,5 @@
 import Core
+import Integrations
 import SwiftUI
 import UniformTypeIdentifiers
 import Viewers
@@ -205,7 +206,7 @@ private struct StatusBar: View {
             if session.isReadOnly {
                 Image(systemName: "lock.fill")
                     .imageScale(.small)
-                    .help("Read-only: the file is too large to edit here")
+                    .help(session.readOnlyReason)
             }
             Text(languageName)
                 .font(.caption2.weight(.semibold))
@@ -243,10 +244,28 @@ private struct StatusBar: View {
 
     private var breadcrumb: some View {
         HStack(spacing: DS.Space.xxs) {
-            if session.hostID != .local, let host = model.hosts.entry(for: session.hostID)?.name {
+            if session.hostID != .local, session.hostID != .github, let host = model.hosts.entry(for: session.hostID)?.name {
                 Label(session.kind == .web ? "via \(host)" : host, systemImage: "network")
                     .labelStyle(.titleAndIcon)
                     .padding(.trailing, DS.Space.xs)
+            }
+            if session.hostID == .github, let pull = PullRequestPath(session.path) {
+                // The pull request itself, where the crumbs below it live.
+                Label("\(pull.repository) #\(pull.number)", systemImage: "arrow.triangle.pull")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.secondary)
+                    .help("Pull request \(pull.webURL.absoluteString)")
+                    .contextMenu {
+                        Button("Open on GitHub") { NSWorkspace.shared.open(pull.webURL) }
+                        Button("Copy Pull Request URL") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(pull.webURL.absoluteString, forType: .string)
+                            model.flashCopied("URL copied")
+                        }
+                    }
+                if !pull.rest.isEmpty {
+                    Image(systemName: "chevron.compact.right").foregroundStyle(.tertiary)
+                }
             }
             if session.kind == .web {
                 // A page's address, not folders: nothing here to reveal in the explorer.
@@ -262,7 +281,8 @@ private struct StatusBar: View {
                         }
                     }
             }
-            let crumbs = session.kind == .web ? [] : segments
+            // A pull request's number is in its label already; the crumbs start below the root.
+            let crumbs = session.kind == .web ? [] : (session.hostID == .github ? Array(segments.dropFirst()) : segments)
             ForEach(Array(crumbs.enumerated()), id: \.offset) { index, segment in
                 if index > 0 {
                     Image(systemName: "chevron.compact.right")
@@ -369,6 +389,7 @@ private struct StatusBar: View {
         let names = ["javascript": "JavaScript", "typescript": "TypeScript", "tsx": "TSX", "json": "JSON", "yaml": "YAML",
                      "toml": "TOML", "c": "C", "bash": "Shell", "markdown": "Markdown"]
         if session.kind == .web { return "Web" }
+        if ["diff", "patch"].contains((session.path as NSString).pathExtension.lowercased()) { return "Diff" }
         if HTMLViewerController.handles(path: session.path) { return "HTML" }
         if let grammar = GrammarCatalog.languageName(forPath: session.path) { return names[grammar] ?? grammar.capitalized }
         return switch session.kind {

@@ -75,6 +75,16 @@ public struct GitHubPullRequestSummary: Codable, Sendable, Equatable {
     public var updatedAt: Date
     public var repositoryUrl: URL
 
+    public init(number: Int, title: String, state: String, draft: Bool? = nil, htmlUrl: URL, updatedAt: Date, repositoryUrl: URL) {
+        self.number = number
+        self.title = title
+        self.state = state
+        self.draft = draft
+        self.htmlUrl = htmlUrl
+        self.updatedAt = updatedAt
+        self.repositoryUrl = repositoryUrl
+    }
+
     /// `owner/repo` from the API's repository URL.
     public var repository: String { repositoryUrl.pathComponents.suffix(2).joined(separator: "/") }
 }

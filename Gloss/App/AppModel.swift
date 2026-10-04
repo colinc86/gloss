@@ -23,6 +23,7 @@ final class AppModel {
     let hooks = HooksModel()
     let integrations: IntegrationsModel
     let quickOpen = QuickOpenModel()
+    let pullRequestPicker = PullRequestPickerModel()
     /// The one web view, shared by every HTML document and live page.
     let browser = WebBrowserController()
     let launchOptions: AppLaunchOptions
@@ -205,6 +206,7 @@ final class AppModel {
             Task { await self?.createWholeFileNote(hostID: hostID, path: path, body: body, color: color) }
         }
         quickOpen.onOpen = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+        pullRequestPicker.onOpen = { [weak self] pull in Task { await self?.openPullRequest(pull) } }
     }
 
     // MARK: Follow mode
@@ -387,6 +389,50 @@ final class AppModel {
         trimSessions()
     }
 
+    // MARK: Integration hosts
+
+    /// The GitHub host exists while a token is saved: its provider serves pull requests with that token. When the
+    /// token goes, so do the host and its open documents.
+    private func registerIntegrationHosts() async {
+        if let client = integrations.githubClient {
+            fileSystems[.github] = GitHubPullRequestFileSystem(client: client)
+        } else {
+            fileSystems[.github] = nil
+            for (key, session) in sessions where session.hostID == .github {
+                session.close()
+                sessions[key] = nil
+                if activeSession === session { activeSession = nil }
+            }
+            for tab in explorer.tabs where tab.hostID == .github { explorer.closeTab(tab.id) }
+        }
+        await hosts.setVirtualHost(.github, name: "github", kind: .github, enabled: integrations.github != nil)
+    }
+
+    /// The PR provider, for what the viewer asks beyond files (changed lines, the packet's resource).
+    var pullRequests: GitHubPullRequestFileSystem? { fileSystems[.github] as? GitHubPullRequestFileSystem }
+
+    func presentOpenPullRequest() {
+        pullRequestPicker.present(client: integrations.githubClient, login: integrations.githubLogin)
+    }
+
+    /// Opens a pull request as a root and shows its description (or the named changed file).
+    func openPullRequest(_ pull: PullRequestPath, line: Int? = nil) async {
+        guard fileSystems[.github] != nil else {
+            presentOpenPullRequest()
+            return
+        }
+        pickedHost = .github
+        await explorer.openRoot(hostID: .github, path: pull.root)
+        let document = pull.isRoot ? pull.root + "/" + PullRequestPath.descriptionName : pull.path
+        if let line { openDocument(hostID: .github, path: document, line: line) } else { openDocument(hostID: .github, path: document) }
+    }
+
+    /// A GitHub pull request URL as the host and path the app opens it under; nil for any other URL.
+    nonisolated static func resolveResourceURL(_ url: URL) -> (host: String, path: String)? {
+        guard let pull = PullRequestPath.parse(reference: url.absoluteString) else { return nil }
+        return ("github", pull.isRoot ? pull.root + "/" + PullRequestPath.descriptionName : pull.path)
+    }
+
     // MARK: Web pages
 
     /// Shows a live page as a document: on the web host, or on an ssh host when `via` names one, in which case
@@ -548,10 +594,15 @@ final class AppModel {
         }
     }
 
-    /// Makes sure a root containing `path` is open, opening the parent directory when none is.
+    /// Makes sure a root containing `path` is open, opening the parent directory when none is (a pull request's
+    /// documents open their pull request).
     func openRootIfNeeded(hostID: HostID, containing path: String) async {
         guard await ensureConnected(hostID) else { return }
         if explorer.tabs.contains(where: { $0.hostID == hostID && ExplorerModel.inRootSpelling(path, root: $0.path, hostID: hostID) != nil }) { return }
+        if hostID == .github, let pull = PullRequestPath(path) {
+            await explorer.openRoot(hostID: hostID, path: pull.root)
+            return
+        }
         await explorer.openRoot(hostID: hostID, path: PathUtilities.parent(of: path))
     }
 
@@ -617,12 +668,14 @@ final class AppModel {
         updateDockBadge()
         sweepAttachments()
         await hosts.load()
+        integrations.onChange = { [weak self] in Task { await self?.registerIntegrationHosts() } }
         #if DEBUG
         if let path = launchOptions.integrationsEnv {
             await integrations.importEnvironmentFile(at: path, atlassianSite: launchOptions.atlassianSite)
         }
         #endif
         await integrations.load()
+        await registerIntegrationHosts()
         explorer.showDotfiles = settings.showDotfilesByDefault
         let launchHost = launchOptions.host == "local" ? HostID.local : hosts.entries.first { $0.name == launchOptions.host }?.id
         if let launchHost, launchHost != .local {
@@ -703,6 +756,9 @@ final class AppModel {
         guard let best else { return }
         if best.hostID == .local {
             await explorer.openRoot(hostID: .local, path: best.path)
+        } else if best.hostID.isVirtual {
+            guard fileSystems[best.hostID] != nil else { return }
+            await explorer.openRoot(hostID: best.hostID, path: best.path)
         } else {
             await openRemoteRoot(hostID: best.hostID, path: best.path)
         }
@@ -741,6 +797,7 @@ final class AppModel {
             },
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         )
+        dependencies.resolveURL = { Self.resolveResourceURL($0) }
         dependencies.openDocument = { [weak self] host, path, line in
             let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
             guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }

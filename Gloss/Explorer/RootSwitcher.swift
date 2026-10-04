@@ -1,4 +1,5 @@
 import Core
+import Integrations
 import SwiftUI
 import Viewers
 
@@ -19,15 +20,15 @@ struct RootSwitcher: View {
         } label: {
             HStack(spacing: DS.Space.s) {
                 if let tab = explorer.selectedTab {
-                    Image(systemName: tab.hostID == .local ? "folder.fill" : "network")
+                    Image(systemName: tab.hostID == .local ? "folder.fill" : tab.hostID == .github ? "arrow.triangle.pull" : "network")
                         .foregroundStyle(Color.accentColor)
                         .contentTransition(.symbolEffect(.replace))
-                    if tab.hostID != .local {
+                    if tab.hostID != .local, tab.hostID != .github {
                         Text(hostName(tab.hostID))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.teal)
                     }
-                    Text(tab.title)
+                    Text(tab.hostID == .github ? (PullRequestPath(tab.path).map { "\($0.repository) #\($0.number)" } ?? tab.title) : tab.title)
                         .font(.callout.weight(.semibold))
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -100,7 +101,10 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
     let path: String
     let pinned: Bool
     let section: Section
-    var title: String { (path as NSString).lastPathComponent }
+    var title: String {
+        if hostID == .github, let pull = PullRequestPath(path) { return "\(pull.repository) #\(pull.number)" }
+        return (path as NSString).lastPathComponent
+    }
 
     /// The sections in order, filtered by `query` (name first, then anywhere in the path; case-insensitive).
     /// Closed roots already open under another spelling are left out; at most `recentLimit` recents without a query.
@@ -221,7 +225,7 @@ private struct RootSwitcherList: View {
         let explorer = model.explorer
         let isOpen = entry.section == .open
         let tab = explorer.tabs.first { $0.id == entry.id }
-        return RootRow(title: entry.title, path: entry.path, host: entry.hostID == .local ? nil : hostName(entry.hostID),
+        return RootRow(title: entry.title, path: entry.hostID == .github ? "pull request" : entry.path, host: entry.hostID == .local ? nil : entry.hostID == .github ? "GitHub" : hostName(entry.hostID),
                        isCurrent: isOpen && explorer.selectedTabID == entry.id, isOpen: isOpen, isHighlighted: highlighted,
                        pinned: entry.pinned, notes: tab.map { explorer.folderCountForRoot($0) } ?? 0,
                        choose: { choose(entry) },

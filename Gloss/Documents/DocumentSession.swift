@@ -112,6 +112,14 @@ final class DocumentSession: Identifiable {
     }
 
     var fileName: String { Core.Document.displayName(of: path) }
+    /// Why the document cannot be edited here, for the status bar's lock.
+    var readOnlyReason: String {
+        switch hostID {
+        case .github: "Read-only: a pull request's file at its head commit. Ask your agent for changes."
+        case .web: "Read-only: the page's current DOM"
+        default: "Read-only: the file is too large to edit here"
+        }
+    }
     /// The page's URL when this document is a live web page.
     var webURL: URL? { kind == .web ? URL(string: path) : nil }
 
@@ -236,10 +244,12 @@ final class DocumentSession: Identifiable {
             let text = decode(data)
             fingerprintAtOpen = fingerprint
             baseText = text
-            isReadOnly = attributes.size > Self.readOnlyThreshold
-            if isReadOnly { banner = .readOnlyLargeFile } else if usedLatin1 { banner = .decodedAsLatin1 }
+            let tooLarge = attributes.size > Self.readOnlyThreshold
+            isReadOnly = tooLarge || hostID.isVirtual
+            if tooLarge { banner = .readOnlyLargeFile } else if usedLatin1 { banner = .decodedAsLatin1 }
             document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
-            let controller = TextEditorController(text: text, languageName: isReadOnly ? nil : GrammarCatalog.languageName(forPath: path))
+            // Highlighting stays on for a small read-only file (a pull request's); only size turns it off.
+            let controller = TextEditorController(text: text, languageName: tooLarge ? nil : GrammarCatalog.languageName(forPath: path))
             controller.isEditable = !isReadOnly
             controller.onTextChange = { [weak self] in self?.isDirty = true }
             controller.onEdit = { [weak self] _, _ in self?.liveRangesDidShift() }

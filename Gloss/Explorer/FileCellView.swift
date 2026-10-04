@@ -1,5 +1,6 @@
 import AppKit
 import Core
+import Integrations
 import Viewers
 
 /// Icon, name, and an optional note-count badge. Ignored files are dimmed.
@@ -54,10 +55,13 @@ final class FileCellView: NSTableCellView {
     required init?(coder: NSCoder) { nil }
 
     func configure(with node: FileNode, mark: NoteMark? = nil, folderCount: Int = 0, holdsActive: Bool = false, animated: Bool = false) {
-        nameField.stringValue = node.name
+        // A pull request's root is its number on disk; it reads as the pull request.
+        let isPullRoot = node.hostID == .github && node.parent == nil
+        nameField.stringValue = isPullRoot ? (PullRequestPath(node.path).map { "\($0.repo) #\($0.number)" } ?? node.name) : node.name
+        let symbol = isPullRoot ? "arrow.triangle.pull" : (node.isDirectory ? "folder" : "doc")
         iconView.image = node.hostID == .local
             ? NSWorkspace.shared.icon(forFile: node.path)
-            : NSImage(systemSymbolName: node.isDirectory ? "folder" : "doc", accessibilityDescription: nil)
+            : NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         let dim = node.isIgnored || node.entry.isHidden
         nameField.textColor = dim ? .tertiaryLabelColor : .labelColor
         iconView.alphaValue = dim ? 0.5 : 1

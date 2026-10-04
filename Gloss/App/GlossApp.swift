@@ -67,6 +67,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("p", modifiers: [.command])
             Button { model.presentOpenLocation() } label: { Label("Open Location…", systemImage: "globe") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button { model.presentOpenPullRequest() } label: { Label("Open Pull Request…", systemImage: "arrow.triangle.pull") }
+                .keyboardShortcut("p", modifiers: [.command, .option])
                 .disabled(model.explorer.selectedTab == nil)
         }
         CommandGroup(replacing: .saveItem) {

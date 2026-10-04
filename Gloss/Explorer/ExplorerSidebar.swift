@@ -40,12 +40,14 @@ struct ExplorerSidebar: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
-                    Label("No folder open", systemImage: "folder.badge.plus")
+                    Label(pickedHost == .github ? "No pull request open" : "No folder open", systemImage: pickedHost == .github ? "arrow.triangle.pull" : "folder.badge.plus")
                 } description: {
                     // On this Mac the welcome screen beside it carries the button; one first step, not two.
-                    Text(pickedHost == .local ? "Its files appear here." : "Connect to browse \(hostName(pickedHost))'s files.")
+                    Text(pickedHost == .local ? "Its files appear here." : pickedHost == .github ? "Its description, conversation and changed files appear here." : "Connect to browse \(hostName(pickedHost))'s files.")
                 } actions: {
-                    if pickedHost != .local {
+                    if pickedHost == .github {
+                        Button("Open Pull Request…") { model.presentOpenPullRequest() }
+                    } else if pickedHost != .local {
                         Button("Connect") { openFolder() }
                     }
                 }
@@ -100,18 +102,26 @@ struct ExplorerSidebar: View {
             ForEach(model.hosts.entries) { entry in
                 Button {
                     model.pickedHost = entry.id
-                    if entry.id != .local { Task { await model.openRemoteRoot(hostID: entry.id) } }
+                    if entry.id == .github {
+                        model.presentOpenPullRequest()
+                    } else if entry.id != .local {
+                        Task { await model.openRemoteRoot(hostID: entry.id) }
+                    }
                 } label: {
-                    Label(entry.name, systemImage: entry.kind == .local ? "desktopcomputer" : statusIcon(entry.id))
+                    Label(entry.id == .github ? "GitHub" : entry.name, systemImage: entry.kind == .local ? "desktopcomputer" : entry.id == .github ? "arrow.triangle.pull" : statusIcon(entry.id))
                 }
             }
             Divider()
             // ⇧⌘O belongs to File › Open Folder…; two bindings for one key made the menu bar's win silently.
-            Button("Open Folder on \(hostName(pickedHost))…") { openFolder() }
+            if pickedHost == .github {
+                Button("Open Pull Request…") { model.presentOpenPullRequest() }
+            } else {
+                Button("Open Folder on \(hostName(pickedHost))…") { openFolder() }
+            }
             SettingsLink { Text("Manage Hosts…") }
         } label: {
             // This Mac is the default and the icon says so; a remote host names itself, since which one matters.
-            Label(pickedHost == .local ? "local" : hostName(pickedHost), systemImage: pickedHost == .local ? "desktopcomputer" : statusIcon(pickedHost))
+            Label(pickedHost == .local ? "local" : pickedHost == .github ? "GitHub" : hostName(pickedHost), systemImage: pickedHost == .local ? "desktopcomputer" : pickedHost == .github ? "arrow.triangle.pull" : statusIcon(pickedHost))
                 .labelStyle(.titleAndIcon)
         }
         .help(pickedHost == .local ? "Browsing this Mac. Choose another host…" : "Browsing \(hostName(pickedHost)). Choose another host…")
@@ -130,6 +140,8 @@ struct ExplorerSidebar: View {
     private func openFolder() {
         if pickedHost == .local {
             model.explorer.chooseRootWithPanel(hostID: .local)
+        } else if pickedHost == .github {
+            model.presentOpenPullRequest()
         } else {
             let home = model.hostHomes[pickedHost] ?? ""
             remotePathPrompt = RemotePathPrompt(hostID: pickedHost, hostName: hostName(pickedHost), initialPath: home)
@@ -141,7 +153,7 @@ struct ExplorerSidebar: View {
     private var statusRow: AnyView? {
         var follow: String?
         if model.followHerdr, model.followedPane == nil { follow = model.followStatus }
-        let status: HostsModel.Status? = pickedHost == .local ? nil : model.hosts.status(for: pickedHost)
+        let status: HostsModel.Status? = pickedHost == .local || pickedHost.isVirtual ? nil : model.hosts.status(for: pickedHost)
         guard let content = ConnectionNoticeContent.make(
             host: hostName(pickedHost), status: status, progress: model.hosts.progress[pickedHost],
             warning: model.hosts.warnings[pickedHost], follow: follow

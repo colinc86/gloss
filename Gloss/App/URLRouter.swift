@@ -34,8 +34,15 @@ enum URLRouter {
         let hostID = hostName == "local" ? HostID.local : hosts[hostName] ?? (HostID(validating: hostName) ?? .local)
         switch url.host?.lowercased() ?? components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased() {
         case "open":
+            let line = query["line"].flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
+            if let text = query["url"], let url = URL(string: text) {
+                // A pull request URL opens on the github host; a web address opens in the browser.
+                if let resolved = AppModel.resolveResourceURL(url) { return .open(hostID: .github, path: resolved.path, line: line) }
+                if DocumentKindDetector.isWebURL(text) { return .open(hostID: hostID, path: text, line: nil) }
+                return nil
+            }
             guard let path = query["path"], path.hasPrefix("/") else { return nil }
-            return .open(hostID: hostID, path: path, line: query["line"].flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil })
+            return .open(hostID: hostID, path: path, line: line)
         case "note":
             let text = query["text"] ?? ""
             let file = query["file"]

@@ -77,6 +77,8 @@ struct MCPServerTests {
         let opened = OpenLog()
         var dependencies = Self.dependencies(store: store)
         dependencies.openDocument = { host, path, line in await opened.record("\(host)|\(path)|\(line.map(String.init) ?? "-")") }
+        // The app knows which URLs it has a host for (a pull request); any other http(s) URL is a web page.
+        dependencies.resolveURL = { url in url.host() == "github.com" ? ("github", "/o/r/pull/12/Pull request.md") : nil }
         let server = MCPServer(dependencies: dependencies, port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
         try await server.start()
         let port = try #require(await server.port)
@@ -100,7 +102,11 @@ struct MCPServerTests {
         // The session URL's host is the default; a host in the call wins.
         #expect(try await call(remote, ["path": "/home/colin/x.py", "line": 3]).text == "showing asus:/home/colin/x.py at line 3")
         #expect(try await call(remote, ["path": "/Users/c/y.md", "host": "local"]).text == "showing local:/Users/c/y.md")
-        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-"])
+        #expect(try await call(local, ["url": "https://github.com/o/r/pull/12"]).text == "showing github:/o/r/pull/12/Pull request.md")
+        #expect(try await call(local, ["url": "https://example.com/docs", "line": 4]).text == "showing web:https://example.com/docs at line 4")
+        #expect(try await call(local, ["url": "ftp://example.com/x"]).isError, "a URL with no viewer is refused")
+        #expect(try await call(local, [:]).isError, "path or url is required")
+        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-", "github|/o/r/pull/12/Pull request.md|-", "web|https://example.com/docs|4"])
     }
 
     /// The hook finds notes under a non-ASCII working directory, encoded the way `curl --data-urlencode` sends it.

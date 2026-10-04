@@ -17,18 +17,18 @@ enum PullRequestMarkdown {
     static func description(_ pull: GitHubPullRequest, files: [GitHubPullRequestFile], reviewComments: [GitHubComment], path: PullRequestPath) -> String {
         var lines: [String] = ["# \(pull.title)", ""]
         let short = String(pull.head.sha.prefix(7))
-        var facts = ["**\(path.repository) #\(pull.number)** · \(state(of: pull)) · by @\(pull.user.login) · `\(pull.base.ref)` ← `\(pull.head.ref)` (\(short))"]
+        // One fact per list item: Markdown would run adjacent lines into a single paragraph.
+        lines.append("- **\(path.repository) #\(pull.number)** · \(state(of: pull)) · by @\(pull.user.login)")
+        var branches = "- `\(pull.base.ref)` ← `\(pull.head.ref)` (\(short))"
         if let additions = pull.additions, let deletions = pull.deletions {
-            facts.append("+\(additions) −\(deletions) in \(pull.changedFiles ?? files.count) files")
+            branches += " · +\(additions) −\(deletions) in \(pull.changedFiles ?? files.count) files"
         }
-        lines.append(facts.joined(separator: " · "))
-        var tags: [String] = []
-        if !pull.labels.isEmpty { tags.append("Labels: " + pull.labels.map(\.name).joined(separator: ", ")) }
-        if let reviewers = pull.requestedReviewers, !reviewers.isEmpty { tags.append("Reviewers: " + reviewers.map { "@" + $0.login }.joined(separator: ", ")) }
-        if !tags.isEmpty { lines.append(tags.joined(separator: " · ")) }
+        lines.append(branches)
+        if !pull.labels.isEmpty { lines.append("- Labels: " + pull.labels.map(\.name).joined(separator: ", ")) }
+        if let reviewers = pull.requestedReviewers, !reviewers.isEmpty { lines.append("- Reviewers: " + reviewers.map { "@" + $0.login }.joined(separator: ", ")) }
         let removed = files.filter { $0.status == "removed" }.map(\.filename)
-        if !removed.isEmpty { lines.append("Removed: " + removed.joined(separator: ", ")) }
-        lines.append(pull.htmlUrl.absoluteString)
+        if !removed.isEmpty { lines.append("- Removed: " + removed.joined(separator: ", ")) }
+        lines.append("- <\(pull.htmlUrl.absoluteString)>")
         lines.append("")
         let body = (pull.body ?? "").replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         lines.append(body.isEmpty ? "_No description._" : body)

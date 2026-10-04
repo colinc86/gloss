@@ -100,7 +100,7 @@ struct GitHubPullRequestFileSystemTests {
         #expect(sources.map { "\($0.name):\($0.kind)" } == ["App.swift:file", "Deep:directory"])
 
         let description = String(decoding: try await fs.read("/o/r/pull/2/Pull request.md"), as: UTF8.self)
-        #expect(description.hasPrefix("# Name the receiver\n\n**o/r #2** · merged · by @colinc86 · `main` ← `fix` (f00d123) · +5 −5 in 3 files\nLabels: infra · Reviewers: @sam\nRemoved: Gone.swift\nhttps://github.com/o/r/pull/2\n\nWhy:\n\nbecause.\n\n## Reviews\n\n### Sources/App.swift:2 · @sam · 2026-10-03T11:30:00Z\nRename this.\n"), Comment(rawValue: description))
+        #expect(description.hasPrefix("# Name the receiver\n\n- **o/r #2** · merged · by @colinc86\n- `main` ← `fix` (f00d123) · +5 −5 in 3 files\n- Labels: infra\n- Reviewers: @sam\n- Removed: Gone.swift\n- <https://github.com/o/r/pull/2>\n\nWhy:\n\nbecause.\n\n## Reviews\n\n### Sources/App.swift:2 · @sam · 2026-10-03T11:30:00Z\nRename this.\n"), Comment(rawValue: description))
         let conversation = String(decoding: try await fs.read("/o/r/pull/2/Conversation.md"), as: UTF8.self)
         #expect(conversation == "# Conversation\n\n### @sam · 2026-10-03T11:00:00Z\nLooks right.\n", Comment(rawValue: conversation))
         #expect(String(decoding: try await fs.read("/o/r/pull/2/changes/Sources/App.swift"), as: UTF8.self) == "new\nctx\n")

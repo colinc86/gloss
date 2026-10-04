@@ -15,6 +15,8 @@ public struct MCPDependencies: Sendable {
     /// Opens a file in the viewer, for the plugin's link handler on a host.
     /// Opens a file on a host, scrolled to a 1-based line when one is given.
     public var openDocument: @Sendable (_ host: String, _ path: String, _ line: Int?) async throws -> Void = { _, _, _ in }
+    /// A resource URL (a GitHub pull request) as the host and path it opens under; nil when the app has no host for it.
+    public var resolveURL: (@Sendable (URL) -> (host: String, path: String)?) = { _ in nil }
     public var appVersion: String
 
     public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
@@ -151,13 +153,20 @@ public actor MCPServer {
         case ("POST", "/plugin/note"):
             return await handlePluginNote(request.body ?? Data())
         case ("POST", "/plugin/open"):
-            guard let object = try? JSONSerialization.jsonObject(with: request.body ?? Data()) as? [String: Any],
-                  let path = object["path"] as? String, path.hasPrefix("/") else {
+            guard let object = try? JSONSerialization.jsonObject(with: request.body ?? Data()) as? [String: Any] else {
+                return .error(statusCode: 400, MCPError.invalidParams("path is required"))
+            }
+            var host = object["host"] as? String ?? "local"
+            var path = object["path"] as? String ?? ""
+            if let raw = object["url"] as? String, let url = URL(string: raw), let resolved = dependencies.resolveURL(url) {
+                (host, path) = resolved
+            }
+            guard path.hasPrefix("/") || DocumentKindDetector.isWebURL(path) else {
                 return .error(statusCode: 400, MCPError.invalidParams("path is required"))
             }
             do {
                 let line = (object["line"] as? Int).flatMap { $0 > 0 ? $0 : nil }
-                try await dependencies.openDocument(object["host"] as? String ?? "local", path, line)
+                try await dependencies.openDocument(host, path, line)
                 return .ok(headers: ["Content-Length": "0"])
             } catch {
                 return .error(statusCode: 500, MCPError.internalError("\(error)"))
@@ -252,8 +261,8 @@ public actor MCPServer {
         ),
         Tool(
             name: "open_in_viewer",
-            description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another.",
-            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "line": ["type": "integer", "minimum": 1], "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"]], "required": ["path"], "additionalProperties": false],
+            description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another. Give url instead for a GitHub pull request (https://github.com/owner/repo/pull/123, optionally /files/<path>) or a web page.",
+            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "url": ["type": "string", "description": "a pull request or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true, idempotentHint: true, openWorldHint: false)
         ),
         Tool(
@@ -329,10 +338,23 @@ public actor MCPServer {
             try await store.resolve(id, outcome: outcome, message: arguments["message"]?.stringValue)
             return CallTool.Result(content: [text("resolved \(raw)")])
         case "open_in_viewer":
-            guard let path = arguments["path"]?.stringValue, path.hasPrefix("/") else {
-                return CallTool.Result(content: [text("path must be absolute")], isError: true)
+            var host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
+            let path: String
+            if let raw = arguments["url"]?.stringValue, !raw.isEmpty {
+                guard let url = URL(string: raw) else { return CallTool.Result(content: [text("url is not a URL")], isError: true) }
+                if let resolved = dependencies.resolveURL(url) {
+                    (host, path) = resolved
+                } else if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                    (host, path) = ("web", raw)
+                } else {
+                    return CallTool.Result(content: [text("no viewer for \(raw)")], isError: true)
+                }
+            } else {
+                guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {
+                    return CallTool.Result(content: [text("path must be absolute (or give url)")], isError: true)
+                }
+                path = given
             }
-            let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
             if host != "local", try await hostID(named: host, store: store) == nil {
                 return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
             }

@@ -35,6 +35,9 @@ final class HostsModel {
     private let noteStore: NoteStore
     let manager: SSHConnectionManager
     private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local, origin: .local)]
+    /// Hosts the app serves itself (a pull request tree, a Jira project) while their key is saved; they need no
+    /// connection and appear after this Mac in the host menu.
+    private(set) var virtualHosts: [Entry] = []
     private(set) var status: [HostID: Status] = [:]
     /// The latest stage ssh reported while connecting, e.g. "Authenticating as colin…".
     private(set) var progress: [HostID: String] = [:]
@@ -118,7 +121,8 @@ final class HostsModel {
                 continue
             }
         }
-        entries = list.sorted { lhs, rhs in lhs.kind == .local ? true : rhs.kind == .local ? false : lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending }
+        let ssh = list.dropFirst().sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        entries = [list[0]] + virtualHosts.sorted { $0.name < $1.name } + ssh
     }
 
     /// Mirror of the setting that `refresh` reads, so the didSet above does not loop.
@@ -150,7 +154,14 @@ final class HostsModel {
     }
 
     func status(for hostID: HostID) -> Status {
-        hostID == .local ? .connected : (status[hostID] ?? .idle)
+        hostID == .local || hostID.isVirtual ? .connected : (status[hostID] ?? .idle)
+    }
+
+    /// Shows or hides a virtual host (GitHub while a token is saved).
+    func setVirtualHost(_ hostID: HostID, name: String, kind: HostKind, enabled: Bool) async {
+        virtualHosts.removeAll { $0.id == hostID }
+        if enabled { virtualHosts.append(Entry(id: hostID, name: name, kind: kind, origin: .local)) }
+        await refresh()
     }
 
     /// One-line warnings per host shown under the picker (e.g. a non-atomic save fallback).
