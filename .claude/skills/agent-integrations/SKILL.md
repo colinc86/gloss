@@ -55,4 +55,6 @@ Over SSH run the same through the exec channel; pipe the packet into `ssh <host>
 
 Tools: `list_pending_notes(host?, path?)`, `get_note(id)`, `resolve_note(id, outcome?, message?)`, `list_documents()`, `open_in_viewer(path, line?, host?)` (host defaults to the session's: a remote registration URL is `http://127.0.0.1:<port>/mcp?host=<alias>`, quoted in the `mcp add` shell line). Resources: `note://<id>/attachment/<n>` serving image/png. Keep tool names stable; the packet's closing line names `resolve_note` literally.
 
+Every route but `/health` needs the server's token (`Authorization: Bearer <token>` or `token=<token>` in the query): the registration URL carries `?token=…` (and `&host=<alias>` remotely), and the port file (`mcp-port`, 0600; `~/.config/gloss/mcp-port` on a host) holds the port on line 1 and the token on line 2 for the hook script and the Herdr plugin. The token lives in `~/Library/Application Support/Gloss/mcp-token`. Without it anyone else logged in to a host could reach the forwarded port and read the notes. Requests with an `Origin` or a non-loopback `Host` are refused too.
+
 Remote agents reach the server through a reverse forward on the app's SSH control connection: `ssh -O forward -R <port>:127.0.0.1:<port> <host>`. Use the same port number on both ends so the agent config is identical everywhere.

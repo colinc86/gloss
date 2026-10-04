@@ -165,11 +165,15 @@ struct HookInstallerTests {
         #expect(((final["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]])?.count == 1 && final["model"] as? String == "opus")
 
         // Remote flavour: GLOSS_HOST in the command and a port file the script can find.
-        let remote = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "asus", port: 47831) { _ in ExecResult(exitStatus: 0, stdout: Data(), stderr: Data()) }
+        let token = String(repeating: "cd", count: 32)
+        let remote = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "asus", port: 47831, token: token) { _ in ExecResult(exitStatus: 0, stdout: Data(), stderr: Data()) }
         let report = try await remote.install(.claude)
         #expect(report.changedFiles.contains(remote.remotePortFilePath))
         let portFile = try String(contentsOfFile: remote.remotePortFilePath, encoding: .utf8)
-        #expect(portFile == "47831\n")
+        #expect(portFile == "47831\n\(token)\n", "the port, then the token the hook sends")
+        let portMode = try FileManager.default.attributesOfItem(atPath: remote.remotePortFilePath)[.posixPermissions] as? Int
+        #expect(portMode == 0o600, "other users on the host cannot read the token")
+        #expect(remote.mcpURL == "http://127.0.0.1:47831/mcp?host=asus&token=\(token)")
         let remoteSettings = try Data(contentsOf: URL(fileURLWithPath: remote.claudeSettingsPath))
         #expect(HookInstaller.hasEntry(in: remoteSettings, command: "GLOSS_HOST='asus' \"$HOME/.claude/hooks/gloss-notes.sh\" claude"))
     }
@@ -180,9 +184,12 @@ struct HookInstallerTests {
         try FileManager.default.createDirectory(atPath: "\(home)/Library/Application Support/Gloss", withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: home) }
         let (store, _) = try await MCPServerTests.makeStore(count: 2, attachmentDirectory: home)
-        let server = MCPServer(dependencies: MCPServerTests.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(home)/Library/Application Support/Gloss/mcp-port"))
+        // A token, as the app runs: the script reads it from the port file's second line.
+        let server = MCPServer(dependencies: MCPServerTests.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(home)/Library/Application Support/Gloss/mcp-port"), token: String(repeating: "ab", count: 32))
         try await server.start()
         defer { Task { await server.stop() } }
+        let portFileMode = try FileManager.default.attributesOfItem(atPath: "\(home)/Library/Application Support/Gloss/mcp-port")[.posixPermissions] as? Int
+        #expect(portFileMode == 0o600, "the port file holds the token")
         let script = try #require(Bundle.module.url(forResource: "gloss-notes", withExtension: "sh", subdirectory: "HookScripts")?.path)
 
         func runScript(flavour: String, cwd: String, home: String) -> (Int32, String, String) {

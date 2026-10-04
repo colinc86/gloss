@@ -12,9 +12,12 @@ cat > "$tmp" 2>/dev/null
 home="${HOME:-}"
 [ -n "$home" ] || exit 0
 port=""
+token=""
 for f in "$home/Library/Application Support/Gloss/mcp-port" "$home/.config/gloss/mcp-port"; do
     if [ -r "$f" ]; then
         port=$(head -n 1 "$f" 2>/dev/null | tr -cd '0-9')
+        # The second line is the server's token; the server answers nothing without it.
+        token=$(sed -n 2p "$f" 2>/dev/null | tr -cd '0-9a-f')
         [ -n "$port" ] && break
     fi
 done
@@ -32,7 +35,7 @@ else
 fi
 
 command -v curl >/dev/null 2>&1 || exit 0
-out=$(curl -sf -m 3 --get --data-urlencode "cwd=$cwd" --data-urlencode "host=${GLOSS_HOST:-local}" \
+out=$(curl -sf -m 3 --get --data-urlencode "cwd=$cwd" --data-urlencode "host=${GLOSS_HOST:-local}" -H "Authorization: Bearer $token" \
     "http://127.0.0.1:$port/hook/$flavour" 2>/dev/null) || exit 0
 [ -n "$out" ] || exit 0
 printf '%s\n' "$out"

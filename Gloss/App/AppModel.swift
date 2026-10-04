@@ -1114,7 +1114,8 @@ final class AppModel {
                 }
             }
         }
-        let server = MCPServer(dependencies: dependencies, port: settings.mcpPort)
+        // A test host serves without a token (its tests talk to the server directly); a real launch never does.
+        let server = MCPServer(dependencies: dependencies, port: settings.mcpPort, token: launchOptions.isTestHost ? nil : MCPServer.loadOrCreateToken())
         do {
             try await server.start()
             mcpServer = server
@@ -1134,11 +1135,11 @@ final class AppModel {
         // Hooks must point where the server listens now, not at a port the setting names for the next launch.
         let port = mcpListeningPort ?? settings.mcpPort
         if hostID == .local {
-            return HookInstaller(fileSystem: LocalFileSystem(), home: NSHomeDirectory(), port: port) { try await LocalShell.run($0) }
+            return HookInstaller(fileSystem: LocalFileSystem(), home: NSHomeDirectory(), port: port, token: mcpServer?.token) { try await LocalShell.run($0) }
         }
         guard let fileSystem = fileSystems[hostID], let connection = connections[hostID], let alias = hosts.entry(for: hostID)?.name else { return nil }
         guard let home = hostHomes[hostID] else { return nil }
-        return HookInstaller(fileSystem: fileSystem, home: home, hostAlias: alias, port: port) { line in
+        return HookInstaller(fileSystem: fileSystem, home: home, hostAlias: alias, port: port, token: mcpServer?.token) { line in
             try await connection.exec(LocalShell.pathPrefix + line, timeout: .seconds(60))
         }
     }

@@ -58,15 +58,22 @@ public struct HookInstaller: Sendable {
     /// Runs one shell line (`sh -c`) where the files live, for the agents' own `mcp add` commands.
     public var run: @Sendable (String) async throws -> ExecResult
     public var port: Int
+    /// The server's token: written on the port file's second line and carried in the registered MCP URL.
+    public var token: String?
     public var now: @Sendable () -> Date = { Date() }
 
-    public init(fileSystem: any FileSystemProvider, home: String, hostAlias: String? = nil, port: Int, run: @escaping @Sendable (String) async throws -> ExecResult) {
+    public init(fileSystem: any FileSystemProvider, home: String, hostAlias: String? = nil, port: Int, token: String? = nil, run: @escaping @Sendable (String) async throws -> ExecResult) {
         self.fileSystem = fileSystem
         self.home = home
         self.hostAlias = hostAlias
         self.port = port
+        self.token = token
         self.run = run
     }
+
+    /// The port file's content, and the mode it is written with (it holds the token).
+    private var portFileContents: Data { MCPServer.portFileContents(port: port, token: token) }
+    private var privateFile: FileAttributes { FileAttributes(kind: .file, size: 0, mtime: now(), mode: 0o600) }
 
     // MARK: Paths and commands
 
@@ -92,7 +99,7 @@ public struct HookInstaller: Sendable {
     description = "send selection to Gloss"
     """
     /// On a host, the URL carries the alias so the app knows which machine the agent's paths are on.
-    public var mcpURL: String { MCPServer.url(port: port, host: hostAlias) }
+    public var mcpURL: String { MCPServer.url(port: port, host: hostAlias, token: token) }
     private var shellMCPURL: String { mcpURL.contains("?") ? ShellQuote.single(mcpURL) : mcpURL }
 
     public func hookCommand(for agent: HookAgent) -> String {
@@ -220,8 +227,8 @@ public struct HookInstaller: Sendable {
             if agent == .codex, let toml = try? await fileSystem.read(codexConfigPath), !Self.codexHooksEnabled(String(decoding: toml, as: UTF8.self)) {
                 return .outdated("[features] hooks is not enabled")
             }
-            if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != Data("\(port)\n".utf8) {
-                return .outdated("port file does not match port \(port)")
+            if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != portFileContents {
+                return .outdated("port file does not match this app (port \(port) and its token)")
             }
             if let registered = await registeredMCPURL(for: agent), registered != mcpURL {
                 return .outdated("MCP url differs")
@@ -234,7 +241,7 @@ public struct HookInstaller: Sendable {
             }
             guard let listed = try? await run("herdr plugin list --json"), listed.exitStatus == 0 else { return .outdated("herdr is not reachable") }
             guard listed.stdoutText.contains("\"plugin_id\":\"\(Self.pluginID)\"") else { return .outdated("not linked in Herdr") }
-            if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != Data("\(port)\n".utf8) { return .outdated("port file does not match port \(port)") }
+            if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != portFileContents { return .outdated("port file does not match this app (port \(port) and its token)") }
             return .installed
         case .opencode:
             guard let data = try? await fileSystem.read(opencodeConfigPath),
@@ -261,10 +268,10 @@ public struct HookInstaller: Sendable {
         try await fileSystem.makeDirectory(PathUtilities.parent(of: scriptPath))
         if hostAlias != nil {
             // The port can change between installs while the script and the hook entry stay the same.
-            let portLine = Data("\(port)\n".utf8)
+            let portLine = portFileContents
             if try await readIfPresent(remotePortFilePath) != portLine {
                 try await fileSystem.makeDirectory(PathUtilities.parent(of: remotePortFilePath))
-                _ = try await fileSystem.writeAtomically(portLine, to: remotePortFilePath, preservingModeFrom: nil)
+                _ = try await fileSystem.writeAtomically(portLine, to: remotePortFilePath, preservingModeFrom: privateFile)
                 report.changedFiles.append(remotePortFilePath)
             }
         }
@@ -285,9 +292,9 @@ public struct HookInstaller: Sendable {
             _ = try await fileSystem.writeAtomically(bundled, to: path, preservingModeFrom: FileAttributes(kind: .file, size: Int64(bundled.count), mtime: now(), mode: mode))
             report.changedFiles.append(path)
         }
-        let portLine = Data("\(port)\n".utf8)
+        let portLine = portFileContents
         if try await readIfPresent(remotePortFilePath) != portLine {
-            _ = try await fileSystem.writeAtomically(portLine, to: remotePortFilePath, preservingModeFrom: nil)
+            _ = try await fileSystem.writeAtomically(portLine, to: remotePortFilePath, preservingModeFrom: privateFile)
             report.changedFiles.append(remotePortFilePath)
         }
         let hostLine = Data("\(hostAlias ?? "local")\n".utf8)

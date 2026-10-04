@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import Security
 import MCP
 import Synchronization
 
@@ -45,6 +46,10 @@ public actor MCPServer {
     private let dependencies: MCPDependencies
     private let requestedPort: Int
     private let portFileURL: URL?
+    /// What every caller but /health must present (`Authorization: Bearer`, or `token=` in the query). The port is
+    /// reverse-forwarded to remote hosts, where anyone else logged in can reach that host's loopback; the token,
+    /// kept in 0600 files, is what tells this user's agents and hooks from theirs. Nil only in tests.
+    public nonisolated let token: String?
     private var listener: HTTPListener?
     private var sessions: [String: Session] = [:]
     private var sweeper: Task<Void, Never>?
@@ -57,10 +62,41 @@ public actor MCPServer {
         var lastUsed: Date
     }
 
-    public init(dependencies: MCPDependencies, port: Int = MCPServer.defaultPort, portFileURL: URL? = MCPServer.defaultPortFileURL) {
+    public init(dependencies: MCPDependencies, port: Int = MCPServer.defaultPort, portFileURL: URL? = MCPServer.defaultPortFileURL, token: String? = nil) {
         self.dependencies = dependencies
         self.requestedPort = port
         self.portFileURL = portFileURL
+        self.token = token
+    }
+
+    public static var defaultTokenFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Gloss/mcp-token")
+    }
+
+    /// The server's token, kept across launches (agents store the URL that carries it), made on first use.
+    public static func loadOrCreateToken(at url: URL = MCPServer.defaultTokenFileURL) -> String? {
+        if let existing = try? String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), existing.count >= 32 { return existing }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
+        let token = bytes.map { String(format: "%02x", $0) }.joined()
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard FileManager.default.createFile(atPath: url.path, contents: Data((token + "\n").utf8), attributes: [.posixPermissions: 0o600]) else { return nil }
+        return token
+    }
+
+    /// What the port file holds: the port, and on the next line the token, for the hook script and the plugin.
+    public static func portFileContents(port: Int, token: String?) -> Data {
+        Data(("\(port)\n" + (token.map { "\($0)\n" } ?? "")).utf8)
+    }
+
+    /// Whether a request carries the token, compared in constant time.
+    nonisolated static func authorized(_ request: HTTPRequest, query: [String: String], token: String?) -> Bool {
+        guard let token else { return true }
+        let header = request.headers.first { $0.key.lowercased() == "authorization" }?.value
+        let given = header.flatMap { $0.hasPrefix("Bearer ") ? String($0.dropFirst(7)) : nil } ?? query["token"] ?? ""
+        guard given.utf8.count == token.utf8.count else { return false }
+        return zip(given.utf8, token.utf8).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
     public static var defaultPortFileURL: URL {
@@ -76,16 +112,19 @@ public actor MCPServer {
 
     /// The registration URL. A remote host's agents carry `?host=<alias>`, so tools that take a path know which
     /// machine it is on without the agent having to say.
-    public static func url(port: Int, host: String? = nil) -> String {
+    public static func url(port: Int, host: String? = nil, token: String? = nil) -> String {
         let base = "http://127.0.0.1:\(port)/mcp"
-        guard let host, !host.isEmpty, host != "local" else { return base }
+        var items: [URLQueryItem] = []
+        if let host, !host.isEmpty, host != "local" { items.append(URLQueryItem(name: "host", value: host)) }
+        if let token { items.append(URLQueryItem(name: "token", value: token)) }
+        guard !items.isEmpty else { return base }
         var components = URLComponents()
-        components.queryItems = [URLQueryItem(name: "host", value: host)]
+        components.queryItems = items
         return base + (components.percentEncodedQuery.map { "?\($0)" } ?? "")
     }
 
-    public static func snippets(port: Int, host: String? = nil) -> MCPConfigSnippets {
-        let url = url(port: port, host: host)
+    public static func snippets(port: Int, host: String? = nil, token: String? = nil) -> MCPConfigSnippets {
+        let url = url(port: port, host: host, token: token)
         let shellURL = url.contains("?") ? "'" + url.replacingOccurrences(of: "'", with: "'\\''") + "'" : url
         return MCPConfigSnippets(
             claudeCommand: "claude mcp add -s user --transport http \(serverName) \(shellURL)",
@@ -112,7 +151,9 @@ public actor MCPServer {
         }
         if let portFileURL {
             try? FileManager.default.createDirectory(at: portFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? "\(started.port)\n".write(to: portFileURL, atomically: true, encoding: .utf8)
+            // 0600 from the start: it holds the token.
+            try? FileManager.default.removeItem(at: portFileURL)
+            FileManager.default.createFile(atPath: portFileURL.path, contents: Self.portFileContents(port: started.port, token: token), attributes: [.posixPermissions: 0o600])
         }
     }
 
@@ -141,6 +182,9 @@ public actor MCPServer {
     // MARK: Routing
 
     private func route(_ request: HTTPRequest, query: [String: String]) async -> HTTPResponse {
+        if request.path != "/health", !Self.authorized(request, query: query, token: token) {
+            return .error(statusCode: 401, MCPError.invalidRequest("missing or wrong token"))
+        }
         switch (request.method.uppercased(), request.path ?? "/") {
         case (_, "/mcp"):
             return await handleMCP(request, host: query["host"].flatMap { $0.isEmpty ? nil : $0 } ?? "local")

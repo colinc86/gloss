@@ -66,13 +66,13 @@ open)
     fi
     port=""
     for f in "$home/.config/gloss/mcp-port" "$home/Library/Application Support/Gloss/mcp-port"; do
-        [ -r "$f" ] && port=$(head -n 1 "$f" | tr -cd '0-9') && [ -n "$port" ] && break
+        [ -r "$f" ] && port=$(head -n 1 "$f" | tr -cd '0-9') && token=$(sed -n 2p "$f" | tr -cd '0-9a-f') && [ -n "$port" ] && break
     done
     [ -n "$port" ] || exit 0
     body=$(python3 -c 'import json,sys; d={"host": sys.argv[1], "path": sys.argv[2]}; sys.argv[3] and d.update(line=int(sys.argv[3])); print(json.dumps(d))' "$host" "$path" "$line") || exit 0
     [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$body"; exit 0; }
     command -v curl >/dev/null 2>&1 || exit 0
-    curl -sf -m 3 -X POST -H 'Content-Type: application/json' --data-binary "$body" "http://127.0.0.1:$port/plugin/open" >/dev/null 2>&1
+    curl -sf -m 3 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer ${token:-}" --data-binary "$body" "http://127.0.0.1:$port/plugin/open" >/dev/null 2>&1
     exit 0
     ;;
 note)
@@ -97,7 +97,7 @@ note)
     fi
     port=""
     for f in "$home/.config/gloss/mcp-port" "$home/Library/Application Support/Gloss/mcp-port"; do
-        [ -r "$f" ] && port=$(head -n 1 "$f" | tr -cd '0-9') && [ -n "$port" ] && break
+        [ -r "$f" ] && port=$(head -n 1 "$f" | tr -cd '0-9') && token=$(sed -n 2p "$f" | tr -cd '0-9a-f') && [ -n "$port" ] && break
     done
     [ -n "$port" ] || exit 0
     body=$(python3 -c 'import json,sys; print(json.dumps({"host": sys.argv[1], "cwd": sys.argv[2], "pane_id": sys.argv[3], "agent": sys.argv[4], "text": sys.stdin.read().rstrip("\n")}))' "$host" "$cwd" "$pane" "$agent" <<EOT
@@ -106,7 +106,7 @@ EOT
     ) || exit 0
     [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$body"; exit 0; }
     command -v curl >/dev/null 2>&1 || exit 0
-    curl -sf -m 3 -X POST -H 'Content-Type: application/json' --data-binary "$body" "http://127.0.0.1:$port/plugin/note" >/dev/null 2>&1
+    curl -sf -m 3 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer ${token:-}" --data-binary "$body" "http://127.0.0.1:$port/plugin/note" >/dev/null 2>&1
     exit 0
     ;;
 esac

@@ -165,7 +165,7 @@ private struct AgentsSettings: View {
 
     var body: some View {
         let port = model.mcpListeningPort ?? settings.mcpPort
-        let snippets = MCPServer.snippets(port: port)
+        let snippets = MCPServer.snippets(port: port, token: model.mcpServer?.token)
         let status = Self.status(error: model.mcpStatus, listening: model.mcpListeningPort, configured: settings.mcpPort)
         Form {
             Section {

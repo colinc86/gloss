@@ -188,6 +188,31 @@ struct MCPServerTests {
         #expect((served as? HTTPURLResponse)?.statusCode == 200)
     }
 
+    /// With a token, every route but /health needs it, by header or query.
+    @Test func theServerAnswersOnlyWithItsToken() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-token-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        let token = String(repeating: "ef", count: 32)
+        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"), token: token)
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let port = try #require(await server.port)
+        func status(_ path: String, bearer: String? = nil) async throws -> Int {
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
+            if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode ?? -1
+        }
+        #expect(try await status("/hook/claude?cwd=%2Ftmp") == 401, "someone else on the host, without the token")
+        #expect(try await status("/hook/claude?cwd=%2Ftmp", bearer: "wrong") == 401)
+        #expect(try await status("/hook/claude?cwd=%2Ftmp", bearer: token) == 200)
+        #expect(try await status("/hook/claude?cwd=%2Ftmp&token=\(token)") == 200, "as the registered MCP URL carries it")
+        #expect(try await status("/health") == 200)
+        #expect(try String(contentsOfFile: "\(directory)/mcp-port", encoding: .utf8) == "\(port)\n\(token)\n")
+    }
+
     @Test func registrationURLsCarryTheHostAlias() {
         #expect(MCPServer.url(port: 47831) == "http://127.0.0.1:47831/mcp")
         #expect(MCPServer.url(port: 47831, host: "local") == "http://127.0.0.1:47831/mcp")
