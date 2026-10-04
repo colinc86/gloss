@@ -149,10 +149,8 @@ struct GitHubPullRequestFileSystemTests {
         let shared = provider(other)
         async let a = shared.list("/o/r/pull/2")
         async let b = shared.stat("/o/r/pull/2/Pull request.md")
-        async let c = shared.title(forRoot: "/o/r/pull/2")
         _ = try await (a, b)
-        _ = await c
-        #expect(other.recorded.filter { $0.url!.path == "/repos/o/r/pulls/2" }.count == 1, "three concurrent callers, one fetch")
+        #expect(other.recorded.filter { $0.url!.path == "/repos/o/r/pulls/2" }.count == 1, "two concurrent callers, one fetch")
 
         // The same facts render the same bytes, so anchors in the Markdown stay put across re-renders.
         #expect(try await fs.read("/o/r/pull/2/Pull request.md") == Data(description.utf8))
@@ -176,8 +174,6 @@ struct GitHubPullRequestFileSystemTests {
         #expect(await fs.resource(for: "/o/r/pull/2/Conversation.md", line: 10) == PacketResource(url: url, details: ["Comment: https://github.com/o/r/pull/2#issuecomment-3"]), "the second comment starts after the first's lines")
         #expect(await fs.resource(for: "/o/r/pull/2/Conversation.md", line: 1) == PacketResource(url: url, details: ["Field: conversation"]))
         #expect(await fs.resource(for: "/o/r/pull/2/pull-2.diff") == PacketResource(url: url))
-        let title = await fs.title(forRoot: "/o/r/pull/2")
-        #expect(title?.reference == "o/r #2" && title?.title == "Name the receiver" && title?.state == "merged")
     }
 
     /// A new token mid-watch: the next poll reads with it and still reports the head that moved meanwhile.

@@ -25,3 +25,21 @@ struct PollSchedule {
         return min(delay, max(Self.longest, interval))
     }
 }
+
+/// Whether the app is in front. Pollers do not ask GitHub or Atlassian anything while it is not (nobody is
+/// looking), and look again within a couple of seconds of it coming back.
+public final class PollGate: @unchecked Sendable {
+    public static let shared = PollGate()
+    private let lock = NSLock()
+    private var paused = false
+
+    public var isPaused: Bool {
+        get { lock.withLock { paused } }
+        set { lock.withLock { paused = newValue } }
+    }
+
+    /// Returns once the app is in front again (at once when it is), or when the task is cancelled.
+    func waitWhilePaused() async {
+        while isPaused, !Task.isCancelled { try? await Task.sleep(for: .seconds(2)) }
+    }
+}

@@ -63,7 +63,6 @@ public struct GitHubComment: Codable, Sendable, Equatable {
     public var line: Int?
     public var originalLine: Int?
     public var side: String?
-    public var diffHunk: String?
 }
 
 public struct GitHubPullRequestSummary: Codable, Sendable, Equatable {

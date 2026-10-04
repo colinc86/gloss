@@ -133,14 +133,6 @@ public actor AtlassianClient {
         return Array(results.prefix(limit))
     }
 
-    public func projects() async throws -> [JiraProject] {
-        let page = try object(try await http.get(url("rest/api/3/project/search", query: ["maxResults": "100", "orderBy": "name"]), headers: headers))
-        return (page["values"] as? [[String: Any]] ?? []).compactMap { value in
-            guard let id = value["id"] as? String, let key = value["key"] as? String else { return nil }
-            return JiraProject(id: id, key: key, name: value["name"] as? String ?? key)
-        }
-    }
-
     nonisolated public func browseURL(forIssue key: String) -> URL { site.appendingPathComponent("browse/\(key)") }
 
     // MARK: Confluence

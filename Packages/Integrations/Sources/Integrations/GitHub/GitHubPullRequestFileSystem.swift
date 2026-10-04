@@ -270,6 +270,7 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
                 var schedule = PollSchedule(interval: interval)
                 while !Task.isCancelled {
                     try? await Task.sleep(for: schedule.delay(rateLimitedUntil: await self?.rateLimitedUntil))
+                    await PollGate.shared.waitWhilePaused()
                     guard !Task.isCancelled, let self else { return }
                     if await self.poll(path) { schedule.succeeded() } else { schedule.failed() }
                 }
@@ -377,11 +378,5 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
             return PacketResource(url: url, details: ["Field: conversation"])
         default: return PacketResource(url: url)
         }
-    }
-
-    /// `owner/repo #123 · title` for a root, once its facts are known.
-    public func title(forRoot path: String) async -> (reference: String, title: String, state: String)? {
-        guard let parsed = PullRequestPath(path), parsed.isRoot, let snapshot = try? await snapshot(for: parsed) else { return nil }
-        return ("\(parsed.repository) #\(parsed.number)", snapshot.pull.title, PullRequestMarkdown.state(of: snapshot.pull))
     }
 }

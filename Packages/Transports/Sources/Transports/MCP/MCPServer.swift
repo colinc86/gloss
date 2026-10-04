@@ -158,8 +158,9 @@ public actor MCPServer {
             }
             var host = object["host"] as? String ?? "local"
             var path = object["path"] as? String ?? ""
-            if let raw = object["url"] as? String, let url = URL(string: raw), let resolved = dependencies.resolveURL(url) {
-                (host, path) = resolved
+            if let raw = object["url"] as? String, let url = URL(string: raw) {
+                // A URL the app has no document for is a web page, as open_in_viewer treats it.
+                if let resolved = dependencies.resolveURL(url) { (host, path) = resolved } else if DocumentKindDetector.isWebURL(raw) { path = raw }
             }
             guard path.hasPrefix("/") || DocumentKindDetector.isWebURL(path) else {
                 return .error(statusCode: 400, MCPError.invalidParams("path is required"))
@@ -243,7 +244,7 @@ public actor MCPServer {
     static let toolSchemas: [Tool] = [
         Tool(
             name: "list_pending_notes",
-            description: "Notes the user wants addressed, newest first. Filter by host (\"local\" or an ssh alias) and/or an absolute path prefix.",
+            description: "Notes the user wants addressed, newest first. Filter by host (\"local\", an ssh alias, or \"github\", \"atlassian\" or \"web\" for notes on pull requests, Jira issues and Confluence pages, and web pages) and/or an absolute path prefix.",
             inputSchema: ["type": "object", "properties": ["host": ["type": "string"], "path": ["type": "string", "description": "absolute file path or directory prefix"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true)
         ),
@@ -261,8 +262,8 @@ public actor MCPServer {
         ),
         Tool(
             name: "open_in_viewer",
-            description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another. Give url instead for a GitHub pull request (https://github.com/owner/repo/pull/123, optionally /files/<path>) or a web page.",
-            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "url": ["type": "string", "description": "a pull request or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"]], "additionalProperties": false],
+            description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another. Give url instead for a GitHub pull request (https://github.com/o/r/pull/12, optionally /files/<path>), a Jira issue (https://<site>/browse/KEY) or Confluence page (https://<site>/wiki/spaces/KEY/pages/<id>) of the user's saved site, or any web page.",
+            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "url": ["type": "string", "description": "a pull request, Jira issue, Confluence page or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "host": ["type": "string", "description": "\"local\", an ssh alias, \"github\" or \"atlassian\"; defaults to your machine"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true, idempotentHint: true, openWorldHint: false)
         ),
         Tool(
