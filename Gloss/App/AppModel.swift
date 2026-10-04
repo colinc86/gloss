@@ -181,6 +181,10 @@ final class AppModel {
             openDocument(hostID: hostID, path: path)
         }
         browser.onDocumentChange = { [weak self] url in self?.webDocumentDidChange(url) }
+        browser.onNeedsTunnel = { [weak self] hostID, port in
+            guard let self else { throw CancellationError() }
+            return try await tunnel(hostID: hostID, port: port)
+        }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
         notesPanel.onGroupsChange = { [weak self, weak explorer] groups in
             explorer?.updateNoteMarks(groups)
@@ -405,12 +409,28 @@ final class AppModel {
         openWebPage(url, via: via)
     }
 
+    /// Loopback ports forwarded from each ssh host: remote port → local port, for the pages opened through it.
+    @ObservationIgnored private var tunnels: [HostID: [UInt16: UInt16]] = [:]
+
     /// The tunnels known for a host, shared by every page opened through it.
     private func proxy(for hostID: HostID) -> WebProxyMap {
-        for session in sessions.values where session.hostID == hostID {
-            if let proxy = session.html?.proxy ?? session.proxy { return proxy }
+        WebProxyMap(hostID: hostID, tunnels: tunnels[hostID] ?? [:])
+    }
+
+    /// Forwards `port` on `hostID`'s loopback to a port here, on the host's existing connection, and tells every
+    /// page open through that host about it.
+    func tunnel(hostID: HostID, port: UInt16) async throws -> UInt16 {
+        if let local = tunnels[hostID]?[port] { return local }
+        guard await ensureConnected(hostID), let connection = connections[hostID] else { throw FileSystemError.io("not connected") }
+        let forward = try await connection.forwardLocalPort(toRemotePort: port)
+        guard case .localPort(let local, _) = forward.kind else { throw FileSystemError.io("unexpected forward") }
+        tunnels[hostID, default: [:]][port] = local
+        let proxy = proxy(for: hostID)
+        for session in sessions.values where session.hostID == hostID && session.kind == .web {
+            session.proxy = proxy
+            session.html?.proxy = proxy
         }
-        return WebProxyMap(hostID: hostID)
+        return local
     }
 
     var isOpenLocationPresented = false

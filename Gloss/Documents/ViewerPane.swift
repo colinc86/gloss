@@ -56,7 +56,8 @@ struct ViewerPane: View {
                 if let markdown = session.markdown {
                     MarkdownViewerView(controller: markdown)
                 } else if let html = session.html {
-                    HTMLViewerView(controller: html, browser: model.browser)
+                    HTMLViewerView(controller: html, browser: model.browser,
+                                   via: session.kind == .web && session.hostID != .web ? model.hosts.entry(for: session.hostID)?.name : nil)
                 } else {
                     TextEditorView(controller: controller)
                 }

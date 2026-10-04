@@ -137,6 +137,11 @@ public final class WebBrowserController {
         case .live(let url):
             displayedURL = url
             shownFilePath = nil
+            if let proxy = controller.proxy, let port = WebProxyMap.loopbackPort(of: url), !proxy.isProxied(url), proxy.tunnels[port] == nil {
+                // The page lives on the host's loopback: get there first, then load.
+                tunnel(port: port, then: url, proxy: proxy)
+                return
+            }
             webView.load(URLRequest(url: controller.proxy?.proxied(url) ?? url))
         }
     }

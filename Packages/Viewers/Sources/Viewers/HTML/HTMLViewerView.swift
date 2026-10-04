@@ -8,10 +8,13 @@ import WebKit
 public struct HTMLViewerView: View {
     public let controller: HTMLViewerController
     public let browser: WebBrowserController
+    /// The ssh host whose loopback this page is reached through, when it is.
+    public let via: String?
 
-    public init(controller: HTMLViewerController, browser: WebBrowserController) {
+    public init(controller: HTMLViewerController, browser: WebBrowserController, via: String? = nil) {
         self.controller = controller
         self.browser = browser
+        self.via = via
     }
 
     public var body: some View {
@@ -32,6 +35,15 @@ public struct HTMLViewerView: View {
                     .transition(.opacity)
                 }
                 WebAddressField(controller: controller, browser: browser)
+                if let via {
+                    Label("via \(via)", systemImage: "network")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.teal)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.teal.opacity(0.12), in: Capsule())
+                        .help("localhost here means \(via)'s loopback, reached through the app's ssh connection")
+                }
                 if let refusal = browser.refusal, controller.mode == .rendered {
                     Label(refusal, systemImage: "exclamationmark.triangle")
                         .font(.caption)
@@ -155,8 +167,10 @@ struct RenderedHTMLView: NSViewRepresentable {
             container.addSubview(webView)
         }
         if browser.current !== controller {
-            // A page the view already shows (a link it followed, a route change) is adopted, not reloaded.
+            // A page the view already shows (a link it followed, a route change) is adopted, not reloaded; the same
+            // address on another host (localhost here and on a machine) is a different page.
             let adopt: Bool = {
+                guard browser.current?.hostID == controller.hostID else { return false }
                 switch controller.page {
                 case .live(let url):
                     guard let shown = browser.displayedURL else { return false }
