@@ -165,7 +165,7 @@ final class DocumentSession: Identifiable {
     nonisolated static func openFailure(_ error: any Error, virtual: Bool = false) -> String {
         if virtual {
             switch error as? FileSystemError {
-            case .notFound: return "Not found, or the key can't see it."
+            case .notFound: return "Not found, or your API key can't see it."
             case .permissionDenied(let detail), .io(let detail): return detail
             default: break
             }
@@ -1234,20 +1234,30 @@ final class DocumentSession: Identifiable {
     /// Git's line numbers on the editor's lines. Git ends a line only at "\n"; the editor also breaks at U+2028,
     /// U+2029, U+0085 and a lone "\r", so in a file holding one of those every tint below it would be a row off.
     nonisolated static func editorLines(of changes: LineChanges, in text: String, lineIndex: LineIndex) -> LineChanges {
-        let utf16 = text.utf16
-        guard text.contains(where: { $0 == "\u{2028}" || $0 == "\u{2029}" || $0 == "\u{85}" || $0 == "\r" }) else { return changes }
-        // The UTF-16 offset where each git line starts.
+        // One pass over the UTF-16 units: where each git line starts, and whether anything else breaks lines.
         var starts = [0]
         var offset = 0
-        for unit in utf16 {
+        var otherBreaks = false
+        var previous: UInt16 = 0
+        for unit in text.utf16 {
+            if previous == 0x0D, unit != 0x0A { otherBreaks = true }
+            if unit == 0x2028 || unit == 0x2029 || unit == 0x85 { otherBreaks = true }
             offset += 1
             if unit == 0x0A { starts.append(offset) }
+            previous = unit
         }
+        if previous == 0x0D { otherBreaks = true }
+        guard otherBreaks else { return changes }
         func editorLine(_ gitLine: Int) -> Int {
-            let start = starts[min(max(gitLine - 1, 0), starts.count - 1)]
-            return lineIndex.position(forUTF16Offset: start).line
+            // Past the last line (a deletion at the end of a file without a final newline): after it.
+            guard gitLine - 1 < starts.count else { return lineIndex.lineCount + 1 }
+            return lineIndex.position(forUTF16Offset: starts[max(gitLine - 1, 0)]).line
         }
-        return LineChanges(added: changes.added.map { editorLine($0.lowerBound)...max(editorLine($0.lowerBound), editorLine($0.upperBound)) },
+        // The last editor row of a git line: just before where the next git line starts.
+        func lastEditorLine(_ gitLine: Int) -> Int {
+            gitLine < starts.count ? max(editorLine(gitLine), editorLine(gitLine + 1) - 1) : lineIndex.lineCount
+        }
+        return LineChanges(added: changes.added.map { editorLine($0.lowerBound)...max(editorLine($0.lowerBound), lastEditorLine($0.upperBound)) },
                            deletions: changes.deletions.map(editorLine))
     }
 
@@ -1278,7 +1288,7 @@ final class DocumentSession: Identifiable {
         guard let controller = textController, let changes = controller.lineChanges else { NSSound.beep(); return false }
         let caret = Double(controller.lineIndex.position(forUTF16Offset: controller.selection.location).line)
         // The first Next counts a hunk starting on the caret's own line (on open the caret sits on line 1).
-        let from = currentSteppedHunk == nil && forward ? caret - 0.5 : caret
+        let from = steppedHunk == nil && selectionAtHunkStep == nil && forward ? caret - 0.5 : caret
         guard let index = Self.step(from: from, current: currentSteppedHunk, in: changeHunks, forward: forward) else { NSSound.beep(); return false }
         steppedHunk = index
         selectionAtHunkStep = controller.selection

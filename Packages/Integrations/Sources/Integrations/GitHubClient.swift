@@ -147,17 +147,18 @@ public actor GitHubClient {
         return String(decoding: reply.data, as: UTF8.self)
     }
 
-    /// A file's bytes at a commit. The path goes in unescaped: `appendingPathComponent` escapes spaces, `#`, `%`
-    /// and non-ASCII once (escaping first made `%20` into `%2520` and every such file a 404).
     /// A file's size at a commit, and its bytes when GitHub includes them (files up to 1 MB come base64-encoded;
-    /// larger ones come without, which is what makes this cheap where downloading would not be).
+    /// larger ones come without, which is what makes this cheap where downloading would not be). The object media
+    /// type is the one GitHub documents for files up to 100 MB (checked read-only against a 24 MB file).
     public func fileMetadata(owner: String, repo: String, path: String, ref: String) async throws -> (size: Int64, content: Data?) {
         struct Metadata: Decodable { var size: Int64; var content: String?; var encoding: String? }
-        let metadata = try decode(Metadata.self, from: try await http.get(url("repos/\(owner)/\(repo)/contents/\(path)", query: ["ref": ref]), headers: headers()))
+        let metadata = try decode(Metadata.self, from: try await http.get(url("repos/\(owner)/\(repo)/contents/\(path)", query: ["ref": ref]), headers: headers(accept: "application/vnd.github.object")))
         let content = metadata.encoding == "base64" ? metadata.content.flatMap { Data(base64Encoded: $0, options: .ignoreUnknownCharacters) } : nil
         return (metadata.size, content)
     }
 
+    /// A file's bytes at a commit. The path goes in unescaped: `appendingPathComponent` escapes spaces, `#`, `%`
+    /// and non-ASCII once (escaping first made `%20` into `%2520` and every such file a 404).
     public func fileContent(owner: String, repo: String, path: String, ref: String) async throws -> Data {
         try await http.get(url("repos/\(owner)/\(repo)/contents/\(path)", query: ["ref": ref]), headers: headers(accept: "application/vnd.github.raw+json")).data
     }

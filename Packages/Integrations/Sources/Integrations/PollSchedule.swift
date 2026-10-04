@@ -15,7 +15,9 @@ struct PollSchedule {
 
     func delay(rateLimitedUntil: Date?, now: Date = Date()) -> Duration {
         if let until = rateLimitedUntil, until > now {
-            return max(interval, .milliseconds(Int64(until.timeIntervalSince(now) * 1000)))
+            // At most an hour: a bad reset time must not put a poller to sleep for good.
+            let seconds = min(until.timeIntervalSince(now), 3600)
+            return max(interval, .milliseconds(Int64(seconds * 1000)))
         }
         guard failures > 0 else { return interval }
         var delay = interval

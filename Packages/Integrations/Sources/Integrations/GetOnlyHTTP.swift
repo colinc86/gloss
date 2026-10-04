@@ -72,15 +72,19 @@ public actor GetOnlyHTTP {
     /// When a spent limit resets: `Retry-After` (seconds or an HTTP date), else `X-RateLimit-Reset` (epoch seconds,
     /// as GitHub sends it, or an ISO 8601 time, as Atlassian does).
     nonisolated static func resetDate(_ headers: [String: String], now: Date = Date()) -> Date? {
+        // Pollers wait at most an hour whatever this says (PollSchedule); only non-numbers are refused here.
         if let retry = headers["retry-after"] {
-            if let seconds = Double(retry.trimmingCharacters(in: .whitespaces)) { return now.addingTimeInterval(seconds) }
+            if let seconds = Double(retry.trimmingCharacters(in: .whitespaces)) { return seconds.isFinite && seconds >= 0 ? now.addingTimeInterval(seconds) : nil }
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
             formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
             if let date = formatter.date(from: retry) { return date }
         }
         if let reset = headers["x-ratelimit-reset"] {
-            if let epoch = Double(reset) { return Date(timeIntervalSince1970: epoch) }
+            if let epoch = Double(reset), epoch.isFinite {
+                // Milliseconds, as some servers send them, would otherwise mean the year 50000.
+                return Date(timeIntervalSince1970: epoch > 1e11 ? epoch / 1000 : epoch)
+            }
             if let date = try? Date(reset, strategy: .iso8601) { return date }
         }
         return nil
@@ -132,7 +136,8 @@ public actor GetOnlyHTTP {
         case 200..<300:
             // Raw file bodies are cached by their commit by the caller, and a diff can be megabytes; holding them
             // here too would keep every one of them.
-            if let etag = lowered["etag"], !key.accept.contains("raw"), !key.accept.contains("diff") { remember(key, (etag, reply)) }
+            // File metadata carries a small file's bytes and is read at a fixed commit: nothing to revalidate.
+            if let etag = lowered["etag"], !key.accept.contains("raw"), !key.accept.contains("diff"), !key.accept.contains("object") { remember(key, (etag, reply)) }
             return reply
         case 401:
             throw IntegrationError.unauthorized(Self.message(in: data) ?? "")

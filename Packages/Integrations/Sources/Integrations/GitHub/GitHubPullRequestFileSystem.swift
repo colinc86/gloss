@@ -300,7 +300,11 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     @discardableResult
     private func poll(_ path: PullRequestPath) async -> Bool {
         let key = key(path)
-        guard let previous = snapshots[key] else { return true }
+        // No baseline (the pull request was dropped when its last watcher left, and a watcher came back): read
+        // one now, so the next look has something to compare against.
+        guard let previous = snapshots[key] else {
+            do { _ = try await snapshot(for: path); return true } catch { return false }
+        }
         let latest: GitHubPullRequest
         do {
             latest = try await client.pullRequest(owner: path.owner, repo: path.repo, number: path.number)
@@ -333,7 +337,8 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     public func patchOmitted(forPath path: String) async -> Bool {
         guard let parsed = PullRequestPath(path), let file = parsed.changedFile, let snapshot = try? await snapshot(for: parsed),
               let entry = snapshot.files.first(where: { $0.filename == file }) else { return false }
-        return entry.patch == nil && entry.status != "removed"
+        // A pure rename or an empty file has no patch because nothing in it changed.
+        return entry.patch == nil && entry.status != "removed" && entry.additions + entry.deletions > 0
     }
 
     /// The lines a changed file's patch touched; nil when GitHub sent no patch (a very large or binary file).

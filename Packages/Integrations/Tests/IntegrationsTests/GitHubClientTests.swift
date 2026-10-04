@@ -115,6 +115,9 @@ struct HTTPLayerTests {
         #expect(GetOnlyHTTP.resetDate(["x-ratelimit-reset": "2000"], now: now) == Date(timeIntervalSince1970: 2_000))
         #expect(GetOnlyHTTP.resetDate(["x-ratelimit-reset": "1970-01-01T00:40:00Z"], now: now) == Date(timeIntervalSince1970: 2_400), "Atlassian sends an ISO time")
         #expect(GetOnlyHTTP.resetDate([:], now: now) == nil)
+        #expect(GetOnlyHTTP.resetDate(["retry-after": "Thu, 01 Jan 1970 00:20:00 GMT"], now: now) == Date(timeIntervalSince1970: 1_200), "an HTTP date")
+        #expect(GetOnlyHTTP.resetDate(["x-ratelimit-reset": "2000000000000"], now: now) == Date(timeIntervalSince1970: 2_000_000_000), "milliseconds are read as such")
+        #expect(GetOnlyHTTP.resetDate(["retry-after": "inf"], now: now) == nil, "not a wait anyone means")
     }
 
     @Test func pollsBackOffAndWaitOutALimit() {
@@ -128,6 +131,7 @@ struct HTTPLayerTests {
         schedule.succeeded()
         #expect(schedule.delay(rateLimitedUntil: nil, now: now) == .seconds(10))
         #expect(schedule.delay(rateLimitedUntil: Date(timeIntervalSince1970: 120), now: now) == .seconds(120))
+        #expect(schedule.delay(rateLimitedUntil: Date(timeIntervalSince1970: 1e9), now: now) == .seconds(3600), "never more than an hour, whatever the server says")
     }
 
     @Test func secondaryLimitsAndStrayNotModifiedAreHandled() async throws {
@@ -137,6 +141,15 @@ struct HTTPLayerTests {
         await #expect(throws: IntegrationError.self) { _ = try await client.viewer() }
         do { _ = try await client.viewer() } catch let error as IntegrationError {
             if case .rateLimited(let reset) = error { #expect(reset != nil) } else { Issue.record("a secondary limit is a rate limit, not a refused key: \(error)") }
+        }
+        // A 403 that says nothing of limits is a refusal; a 503 with Retry-After is a limit.
+        let refused = Stub()
+        refused.respond(to: "https://api.github.com/user", with: .json(#"{"message":"Resource not accessible by integration"}"#, status: 403))
+        await #expect(throws: IntegrationError.unauthorized("Resource not accessible by integration")) { _ = try await GitHubClient(token: "t", session: refused.session()).viewer() }
+        let busy = Stub()
+        busy.respond(to: "https://api.github.com/user", with: .json("{}", status: 503, headers: ["Retry-After": "5"]))
+        do { _ = try await GitHubClient(token: "t", session: busy.session()).viewer(); Issue.record("expected a limit") } catch let error as IntegrationError {
+            if case .rateLimited = error {} else { Issue.record("a 503 with Retry-After is a limit: \(error)") }
         }
         // A server that answers 304 to a request that sent no tag is asked once more, plainly.
         let other = Stub()
@@ -151,7 +164,7 @@ struct HTTPLayerProviderTests {
         GitHubPullRequestFileSystemTests.serve(stub)
         let base = GitHubPullRequestFileSystemTests.base
         // 90 MB: the metadata says so without the bytes; nothing downloads the file to learn its size.
-        stub.respond(to: "\(base)/repos/o/r/contents/Sources/App.swift?ref=f00d123abcdef", accept: "application/vnd.github+json", with: .json(#"{"size":94371840,"encoding":"none","content":""}"#))
+        stub.respond(to: "\(base)/repos/o/r/contents/Sources/App.swift?ref=f00d123abcdef", accept: "application/vnd.github.object", with: .json(#"{"size":94371840,"encoding":"none","content":""}"#))
         let fs = GitHubPullRequestFileSystem(client: GitHubClient(token: "t", session: stub.session()))
         #expect(try await fs.stat("/o/r/pull/2/changes/Sources/App.swift").size == 94_371_840)
         #expect(!stub.recorded.contains { $0.value(forHTTPHeaderField: "Accept")?.contains("raw") == true }, "the file itself was not fetched")

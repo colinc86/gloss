@@ -76,7 +76,7 @@ struct PatchHunksTests {
 
         let large = Stub()
         GitHubPullRequestFileSystemTests.serve(large)
-        large.respond(to: "\(GitHubPullRequestFileSystemTests.base)/repos/o/r/pulls/2/files?page=1&per_page=100", with: .json(#"[{"filename":"Assets/model.bin","status":"added","additions":0,"deletions":0}]"#))
+        large.respond(to: "\(GitHubPullRequestFileSystemTests.base)/repos/o/r/pulls/2/files?page=1&per_page=100", with: .json(#"[{"filename":"Assets/model.bin","status":"added","additions":12,"deletions":0}]"#))
         let other = GitHubPullRequestFileSystem(client: GitHubClient(token: "t", session: large.session()))
         #expect(await other.patchOmitted(forPath: "/o/r/pull/2/changes/Assets/model.bin"), "GitHub sent no patch for it")
         #expect(await other.changes(forPath: "/o/r/pull/2/changes/Assets/model.bin") == nil)

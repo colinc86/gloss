@@ -72,6 +72,11 @@ struct ChangeSteppingTests {
         #expect(mapped == LineChanges(added: [4...5], deletions: [2]))
         let plain = "a\nb\nc\n"
         #expect(DocumentSession.editorLines(of: LineChanges(added: [2...2]), in: plain, lineIndex: LineIndex(plain)) == LineChanges(added: [2...2]), "no separators: unchanged")
+        // The added line itself holds the separator: both of its editor rows are tinted.
+        let inside = "a\nlet s = \"x\u{2028}y\"\nb\n"
+        #expect(DocumentSession.editorLines(of: LineChanges(added: [2...2]), in: inside, lineIndex: LineIndex(inside)) == LineChanges(added: [2...3]))
+        #expect(DocumentSession.openFailure(FileSystemError.permissionDenied("GitHub refused the key. Check it in Settings → Integrations."), virtual: true) == "GitHub refused the key. Check it in Settings → Integrations.")
+        #expect(DocumentSession.openFailure(FileSystemError.notFound("/x"), virtual: true) == "Not found, or your API key can't see it.")
     }
 
     /// A read-only file (a pull request's) still takes notes: the selection becomes a text anchor like any other.

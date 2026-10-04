@@ -29,7 +29,8 @@ public enum ADFMarkdown {
         let children = node["content"] as? [[String: Any]] ?? []
         switch node["type"] as? String ?? "" {
         case "paragraph":
-            return escapeLineStart(inline(children))
+            // Every line of it: after a line break, a line can start a block just as the first can.
+            return inline(children).components(separatedBy: "  \n").map(escapeLineStart).joined(separator: "  \n")
         case "heading":
             let level = min(max(attrs["level"] as? Int ?? 1, 1), 6)
             return String(repeating: "#", count: level) + " " + inline(children)
@@ -59,7 +60,7 @@ public enum ADFMarkdown {
             return children.compactMap { media in
                 let mediaAttrs = media["attrs"] as? [String: Any] ?? [:]
                 let name = mediaAttrs["alt"] as? String ?? mediaAttrs["name"] as? String ?? mediaAttrs["id"] as? String ?? "attachment"
-                return "[image: \(name)]"
+                return "\\[image: " + escapeInline(name) + "\\]"
             }.joined(separator: "\n")
         case "expand", "nestedExpand":
             let title = attrs["title"] as? String ?? "Details"
@@ -74,8 +75,7 @@ public enum ADFMarkdown {
             let inner = render(blocks: children, context: context)
             return (["[macro: \(attrs["extensionKey"] as? String ?? "extension")]"] + inner).joined(separator: "\n\n")
         case "blockCard", "embedCard":
-            let url = attrs["url"] as? String ?? ""
-            return url.isEmpty ? nil : "<" + url + ">"
+            return (attrs["url"] as? String).flatMap(safeLink).map { "<" + $0 + ">" }
         case "decisionList":
             return children.map { decision($0) }.joined(separator: "\n")
         case "decisionItem":
@@ -97,8 +97,10 @@ public enum ADFMarkdown {
             let marker = ordered ? "\(start + index). " : "- "
             let parts = render(blocks: item["content"] as? [[String: Any]] ?? [], context: inner)
             guard let first = parts.first else { lines.append(marker.trimmingCharacters(in: .whitespaces)); continue }
-            lines.append(marker + first)
             let indent = String(repeating: " ", count: marker.count)
+            // A first part over several lines (a code block, a task list) stays inside the item.
+            lines.append(marker + first.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
+                .map { $0.offset == 0 ? String($0.element) : indent + $0.element }.joined(separator: "\n"))
             for part in parts.dropFirst() {
                 lines.append(part.split(separator: "\n", omittingEmptySubsequences: false).map { indent + $0 }.joined(separator: "\n"))
             }
@@ -181,21 +183,20 @@ public enum ADFMarkdown {
             case "hardBreak":
                 return "  \n"
             case "mention":
-                return "@" + ((attrs["text"] as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "@")))
+                return "@" + escapeInline((attrs["text"] as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "@")))
             case "emoji":
                 return attrs["text"] as? String ?? attrs["shortName"] as? String ?? ""
             case "inlineCard", "blockCard", "embedCard":
-                let url = attrs["url"] as? String ?? ""
-                return url.isEmpty ? "" : "<" + url + ">"
+                return (attrs["url"] as? String).flatMap(safeLink).map { "<" + $0 + ">" } ?? ""
             case "mediaInline", "media":
-                return "[file: \(attrs["alt"] as? String ?? attrs["name"] as? String ?? attrs["id"] as? String ?? "attachment")]"
+                return "\\[file: " + escapeInline(attrs["alt"] as? String ?? attrs["name"] as? String ?? attrs["id"] as? String ?? "attachment") + "\\]"
             case "date":
                 if let stamp = attrs["timestamp"] as? String, let millis = Double(stamp) {
                     return Date(timeIntervalSince1970: millis / 1000).formatted(.iso8601.year().month().day())
                 }
                 return ""
             case "status":
-                return "[" + (attrs["text"] as? String ?? "") + "]"
+                return "\\[" + escapeInline(attrs["text"] as? String ?? "") + "\\]"
             case "inlineExtension":
                 return "[macro: \(attrs["extensionKey"] as? String ?? "extension")]"
             case "placeholder":
@@ -232,7 +233,8 @@ public enum ADFMarkdown {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let scheme = trimmed.split(separator: ":", maxSplits: 1).first.map { $0.lowercased() } ?? ""
-        if trimmed.contains(":"), ["javascript", "vbscript", "data"].contains(scheme) { return nil }
+        // Script and data links, and file: (the viewer opens links with the system), are not followed.
+        if trimmed.contains(":"), ["javascript", "vbscript", "data", "file"].contains(scheme) { return nil }
         return trimmed.replacingOccurrences(of: " ", with: "%20").replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
     }
 
@@ -240,16 +242,19 @@ public enum ADFMarkdown {
     static func escapeInline(_ text: String) -> String {
         var result = ""
         for character in text {
-            if "\\*_`[]<".contains(character) { result.append("\\") }
+            if "\\*_`[]<&".contains(character) { result.append("\\") }
             result.append(character)
         }
         return result
     }
 
     /// A paragraph that starts like a heading, a quote, a list item or a rule is text, not that.
-    static func escapeLineStart(_ text: String) -> String {
+    static func escapeLineStart(_ line: String) -> String {
+        // Leading spaces mean nothing in a paragraph, and four of them would make it code.
+        let text = String(line.drop { $0 == " " })
         guard let first = text.first else { return text }
-        if "#>-+".contains(first) { return "\\" + text }
+        // Headings, quotes, list items, rules and setext underlines, and fences of either kind.
+        if "#>-+=~".contains(first) { return "\\" + text }
         // `1. ` or `1) `: an ordered list marker.
         let digits = text.prefix { $0.isNumber }
         if !digits.isEmpty, let after = text.dropFirst(digits.count).first, after == "." || after == ")" {
