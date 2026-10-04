@@ -421,8 +421,11 @@ path. Dropping on the Dock icon is not supported yet.
   Back and Forward cross from a file to a site and back and a single-page app changes route without reloading; the
   document follows the page (a link to a file opens that file, an http(s) link becomes a web document, Back returns
   to the file's own session). WebKit is the engine; the app is a browser for reviewing only: no bookmarks, passwords,
-  extensions or downloads (a response the view cannot show is refused with "Downloads aren't available here" in the
-  toolbar, in orange).
+  extensions or downloads (a response the view cannot show, or a blob:/data: link, is refused with "Downloads aren't
+  available here" in the toolbar, in orange; a file input says "File uploads aren't available here"). Only what the
+  reader asks for moves the viewer: a click, a form, Back or Forward may open another file or a tunnel; a script or a
+  redirect may not (a redirect to a port not yet tunnelled says "This page tried to open port N on its host"). A
+  page's alert, confirm and prompt come up as sheets on the window. A closed document's page stops running.
 - **Web page toolbar**: leading, Back and Forward (`chevron.left`/`chevron.right`, disabled at either end), then the
   address: at rest a quiet caption, the file's `<title>` with a globe for a served file, the logical URL for a live
   page (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form); a click makes it a field,
@@ -605,4 +608,8 @@ path. Dropping on the Dock icon is not supported yet.
   a `SecureField` for the token (its prompt says "Saved · paste a new one to replace it" once one is), Atlassian's
   site and email fields with the saved values as prompts, and Save (glass), Test Connection and Remove. The footer is
   the trust note, with `lock.shield` as on Hooks: the app only reads with these keys, the agent makes every change,
-  and keys live in the Keychain. Saving tests the key at once, so the sentence is the receipt.
+  and keys live in the Keychain. Saving tests the key first: a key the service refuses is not saved and the sentence
+  says so ("…It wasn't saved"); one that cannot be checked (offline) is saved and says it could not be checked.
+  Remove asks first when it would close open pull requests, issues or pages. Integration roots offer Copy URL in the
+  tree's menu instead of Copy Path, and Open Quickly and Find in Files are off for them (they are browsed, not
+  searched).
