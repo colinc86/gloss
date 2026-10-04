@@ -408,7 +408,8 @@ final class AppModel {
             return
         }
         if hostID == .atlassian, AtlassianPath(path)?.pageID != nil, !canonicalPages.contains(path) {
-            // A page is opened at the path the tree shows it today, its notes from earlier paths with it.
+            // A page is opened at the path the tree shows it today, its notes from earlier paths with it. The
+            // result is always marked, so a page that cannot be looked up opens as it is rather than retrying.
             Task {
                 let canonical = await canonicalConfluencePath(path)
                 openDocument(hostID: .atlassian, path: canonical)
@@ -520,16 +521,18 @@ final class AppModel {
         // with their notes, and its recent roots go, so nothing of it is ever shown as the new site's.
         let row = try? await noteStore.hosts().first { $0.id == .atlassian }
         let storedSite = row?.options?.site
-        if let site, let storedSite, storedSite != site.absoluteString {
+        let sameSite = { (stored: String, site: URL) in URL(string: stored)?.host()?.lowercased() == site.host()?.lowercased() }
+        if let site, let storedSite, !sameSite(storedSite, site) {
             let old = URL(string: storedSite)?.host() ?? storedSite
             try? await noteStore.archiveDocuments(hostID: .atlassian, under: "/previous-sites/\(old)")
         }
-        if let site, storedSite != site.absoluteString {
+        if let site, storedSite.map({ !sameSite($0, site) }) ?? true {
             var options = row?.options ?? HostOptions()
             options.site = site.absoluteString
             try? await noteStore.setHostOptions(.atlassian, options)
         }
         if previousSite != nil, site != previousSite {
+            canonicalPages = []
             // Another site, or none: the open issues and pages were that site's and their paths mean nothing here.
             for (key, session) in sessions where session.hostID == .atlassian {
                 retire(session)
@@ -548,7 +551,11 @@ final class AppModel {
     /// the notes made on any earlier path of the same page moved there, so a renamed or moved page keeps them.
     func canonicalConfluencePath(_ path: String) async -> String {
         guard let reference = AtlassianPath(path), let id = reference.pageID, let provider = atlassianDocuments,
-              let canonical = await provider.documentPath(for: reference) else { return path }
+              let canonical = await provider.documentPath(for: reference) else {
+            // Not resolvable now (no key, offline, a deleted page): open as it is, and never ask again this run.
+            canonicalPages.insert(path)
+            return path
+        }
         let earlier = ((try? await noteStore.documentsWithNotes()) ?? []).map(\.document).filter { document in
             document.hostID == .atlassian && document.path != canonical && AtlassianPath(document.path)?.pageID == id
         }
@@ -581,8 +588,13 @@ final class AppModel {
             await explorer.openRoot(hostID: .atlassian, path: reference.path)
         case .confluencePageFolder(let space, _, _), .confluencePage(let space, _, _, _):
             await explorer.openRoot(hostID: .atlassian, path: AtlassianPath.confluenceSpace(space).path)
-            guard await provider.documentPath(for: reference) != nil else { return }
-            let document = await canonicalConfluencePath(reference.path)
+            var document = await canonicalConfluencePath(reference.path)
+            if case .confluencePage? = AtlassianPath(document) {} else {
+                // A page URL whose place could not be read: open the page at the top of its space, moving nothing.
+                guard let unplaced = await provider.documentPath(for: reference, allowUnplaced: true) else { return }
+                document = unplaced
+                canonicalPages.insert(unplaced)
+            }
             if let line { openDocument(hostID: .atlassian, path: document, line: line) } else { openDocument(hostID: .atlassian, path: document) }
         default:
             break
@@ -1177,12 +1189,24 @@ final class AppModel {
 
     /// Opens the note's document and scrolls to it.
     func reveal(note: Note, in document: Core.Document, select: Bool = true) {
-        openDocument(hostID: document.hostID, path: document.path)
-        guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
-        Task {
+        withSession(for: document) { session in
             // The session may still be opening.
             for _ in 0..<50 where !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
             session.reveal(note, select: select)
+        }
+    }
+
+    /// Opens a note's document and hands its session to `body`: for a Confluence page, at today's path once it
+    /// is known (the note moves there with it).
+    private func withSession(for document: Core.Document, _ body: @escaping @MainActor (DocumentSession) async -> Void) {
+        Task {
+            var path = document.path
+            if document.hostID == .atlassian, AtlassianPath(path)?.pageID != nil, !canonicalPages.contains(path) {
+                path = await canonicalConfluencePath(path)
+            }
+            openDocument(hostID: document.hostID, path: path)
+            guard let session = sessions["\(document.hostID.rawValue):\(path)"] else { return }
+            await body(session)
         }
     }
 
@@ -1198,18 +1222,14 @@ final class AppModel {
     }
 
     func reanchor(note: Note, in document: Core.Document) {
-        openDocument(hostID: document.hostID, path: document.path)
-        guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
-        Task {
+        withSession(for: document) { session in
             for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
             session.beginReanchor(note)
         }
     }
 
     func edit(note: Note, in document: Core.Document) {
-        openDocument(hostID: document.hostID, path: document.path)
-        guard let session = sessions["\(document.hostID.rawValue):\(document.path)"] else { return }
-        Task {
+        withSession(for: document) { session in
             for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
             session.editNote(note)
         }

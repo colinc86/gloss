@@ -82,7 +82,12 @@ public actor AtlassianFileSystem: FileSystemProvider {
     private func issueDocument(_ key: String, project: String, refresh: Bool = false) async throws -> IssueDocument {
         if !refresh, let cached = issues[key], isFresh(cached.fetchedAt, AtlassianPath.jiraIssue(project: project, key: key)) { return cached }
         do {
-            let issue = try await client.issue(key: key)
+            let issue: JiraIssue
+            do { issue = try await client.issue(key: key) } catch {
+                // Offline or refused on a re-read: the copy already shown is better than an error.
+                if !refresh, let cached = issues[key] { return cached }
+                throw error
+            }
             let rendered = AtlassianMarkdown.issue(issue, url: client.browseURL(forIssue: key))
             let document = IssueDocument(issue: issue, data: Data(rendered.text.utf8), description: rendered.description, comments: rendered.comments)
             issues[key] = document
@@ -123,7 +128,11 @@ public actor AtlassianFileSystem: FileSystemProvider {
     private func pageDocument(_ id: String, space: String, refresh: Bool = false) async throws -> PageDocument {
         if !refresh, let cached = pages[id], isFresh(cached.fetchedAt, nil) || pollers.keys.contains(where: { AtlassianPath($0)?.pageID == id }) { return cached }
         do {
-            let page = try await client.page(id: id)
+            let page: ConfluencePage
+            do { page = try await client.page(id: id) } catch {
+                if !refresh, let cached = pages[id] { return cached }
+                throw error
+            }
             pageTitles[id] = page
             let document = PageDocument(page: page, spaceKey: space, data: Data(AtlassianMarkdown.page(page, spaceKey: space, url: client.pageURL(page)).utf8))
             pages[id] = document
@@ -331,13 +340,21 @@ public actor AtlassianFileSystem: FileSystemProvider {
     /// The document a page URL or an issue key opens, at the path the tree shows it: a page needs its title and
     /// its ancestors (asked of Confluence), so revealing it walks the tree's own folders. A path made before a
     /// rename or a move comes back with today's title and place.
-    public func documentPath(for reference: AtlassianPath) async -> String? {
+    /// - allowUnplaced: when the ancestors cannot be read, a bare page reference still gets a path (at the top of
+    ///   its space); otherwise nil, so nothing is moved on a guess.
+    public func documentPath(for reference: AtlassianPath, allowUnplaced: Bool = false) async -> String? {
         switch reference {
         case .jiraIssue: return reference.path
         case .confluencePageFolder(let space, let id, _), .confluencePage(let space, let id, _, _):
             guard let document = try? await pageDocument(id, space: space) else { return nil }
-            let ancestors = (try? await client.ancestors(ofPage: id)) ?? []
-            return AtlassianPath.confluencePage(space: space, id: id, title: AtlassianPath.fileTitle(document.page.title), ancestors: ancestors).path
+            let title = AtlassianPath.fileTitle(document.page.title)
+            guard let ancestors = try? await client.ancestors(ofPage: id) else {
+                // Where it sits is unknown: a path to a page stays as it is (nil: nothing moves); a bare page
+                // reference (a URL) opens the page at the top of its space rather than not at all.
+                if case .confluencePageFolder = reference, allowUnplaced { return AtlassianPath.confluencePage(space: space, id: id, title: title).path }
+                return nil
+            }
+            return AtlassianPath.confluencePage(space: space, id: id, title: title, ancestors: ancestors).path
         default: return nil
         }
     }

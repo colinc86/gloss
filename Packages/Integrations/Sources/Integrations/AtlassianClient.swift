@@ -43,9 +43,7 @@ public actor AtlassianClient {
     private var headers: [String: String] { ["Authorization": authorization, "Accept": "application/json"] }
 
     private func url(_ path: String, query: [String: String] = [:]) -> URL {
-        var components = URLComponents(url: site.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        if !query.isEmpty { components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) } }
-        return components.url!
+        GetOnlyHTTP.url(site, path: path, query: query)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from reply: HTTPReply) throws -> T {
@@ -115,6 +113,7 @@ public actor AtlassianClient {
     public func searchIssues(jql: String, limit: Int = 50) async throws -> [JiraIssue.Summary] {
         var results: [JiraIssue.Summary] = []
         var token: String?
+        var seen: Set<String> = []
         repeat {
             var query = ["jql": jql, "maxResults": String(min(limit, 100)), "fields": "summary,status,issuetype,project,updated"]
             if let token { query["nextPageToken"] = token }
@@ -128,6 +127,8 @@ public actor AtlassianClient {
                 ))
             }
             token = page["isLast"] as? Bool == false ? page["nextPageToken"] as? String : nil
+            // A server handing back a token it already gave would loop forever.
+            if let next = token, !seen.insert(next).inserted { token = nil }
         } while token != nil && results.count < limit
         return Array(results.prefix(limit))
     }

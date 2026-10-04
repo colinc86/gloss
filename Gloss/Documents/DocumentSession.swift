@@ -107,6 +107,7 @@ final class DocumentSession: Identifiable {
     @ObservationIgnored var changeSummaryProvider: ((String) async -> String?)?
     /// What the last `resourceUpdated` banner says changed, once known.
     private(set) var resourceUpdateSummary: String?
+    @ObservationIgnored private var resourceUpdateGeneration = 0
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot) {
         self.id = "\(hostID.rawValue):\(path)"
@@ -482,16 +483,21 @@ final class DocumentSession: Identifiable {
     private func showResourceUpdated() {
         banner = .resourceUpdated
         resourceUpdateSummary = nil
+        // Each update has its own generation: an older lookup or dismissal never touches a newer banner.
+        resourceUpdateGeneration += 1
+        let generation = resourceUpdateGeneration
         if let provider = changeSummaryProvider {
             let path = path
             Task { [weak self] in
                 let summary = await provider(path)
-                if self?.banner == .resourceUpdated { self?.resourceUpdateSummary = summary }
+                guard let self, self.resourceUpdateGeneration == generation, self.banner == .resourceUpdated else { return }
+                self.resourceUpdateSummary = summary
             }
         }
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(8))
-            if self?.banner == .resourceUpdated { self?.banner = nil }
+            guard let self, self.resourceUpdateGeneration == generation, self.banner == .resourceUpdated else { return }
+            self.banner = nil
         }
     }
 

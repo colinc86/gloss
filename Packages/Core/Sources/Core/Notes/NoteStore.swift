@@ -197,7 +197,6 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// Documents that have at least one note, with their notes in reading order.
     /// Moves a document's notes to another path on the same host (the thing it names was renamed or moved): the
     /// row takes the new path, or, when the new path already has a row, its notes join that row and the old one
     /// goes. One transaction.
@@ -230,14 +229,21 @@ public struct NoteStore: Sendable {
     public func archiveDocuments(hostID: HostID, under prefix: String) async throws {
         try await queue.write { db in
             for var record in try DocumentRecord.filter(Column("host_id") == hostID.rawValue).fetchAll(db) where !record.path.hasPrefix("/previous-sites/") {
-                record.path = prefix + record.path
-                if try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == record.path).fetchCount(db) > 0 { continue }
-                try record.update(db)
+                let archived = prefix + record.path
+                if let existing = try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == archived).fetchOne(db) {
+                    // Archived before (A → B → A → B): the notes join that row, so none stays on the live path.
+                    try db.execute(sql: "UPDATE note SET document_id = ? WHERE document_id = ?", arguments: [existing.id, record.id])
+                    _ = try record.delete(db)
+                } else {
+                    record.path = archived
+                    try record.update(db)
+                }
             }
             try db.execute(sql: "DELETE FROM root WHERE host_id = ?", arguments: [hostID.rawValue])
         }
     }
 
+    /// Documents that have at least one note, with their notes in reading order.
     public func documentsWithNotes() async throws -> [(document: Document, notes: [Note])] {
         try await queue.read { db in
             let documents = try DocumentRecord

@@ -148,6 +148,11 @@ struct PacketBuilderTests {
         let both = PacketBuilder.build([first, second]).text
         #expect(both.hasPrefix("File: /jira/CP/CP-7.md\nSource: jira\nResource: \(url)\n\nLine 17\nComment: \(url)?focusedCommentId=1\n"), Comment(rawValue: both))
         #expect(both.contains("Line 20\nComment: \(url)?focusedCommentId=2\n"), Comment(rawValue: both))
+
+        // The first note's lookup failed: the resource still comes from the note that knows it.
+        let unknown = PacketNote(noteID: NoteID.new(), agentPath: "/jira/CP/CP-7.md", source: .jira, anchor: textAnchor(3, 3), comment: "c", excerptLines: ["z"])
+        let mixed = PacketBuilder.build([unknown, second]).text
+        #expect(mixed.hasPrefix("File: /jira/CP/CP-7.md\nSource: jira\nResource: \(url)\nComment: \(url)?focusedCommentId=2\n\nLine 3\n"), Comment(rawValue: mixed))
     }
 
     @Test func escapesCommentsAndSplitsEmbeddedNewlines() {

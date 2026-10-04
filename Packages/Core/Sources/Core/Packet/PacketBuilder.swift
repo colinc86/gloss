@@ -167,9 +167,11 @@ public enum PacketBuilder {
         // The resource's lines that hold for every note go in the header; a line that differs (each note on its
         // own comment, or its own field) goes with its note, under the note's place.
         var shared: [String] = []
-        if let resource = first.resource {
+        // Any note's lookup may have failed; the resource is whichever note knows it.
+        let located = notes.filter { $0.resource != nil }
+        if let resource = located.first?.resource {
             header.append("Resource: \(resource)")
-            shared = first.resourceDetails.filter { line in notes.allSatisfy { $0.resourceDetails.contains(line) } }
+            shared = located[0].resourceDetails.filter { line in located.allSatisfy { $0.resourceDetails.contains(line) } }
             header.append(contentsOf: shared)
         }
         if let size = notes.lazy.compactMap({ note -> ImageAnchor? in if case .image(let image) = note.anchor { image } else { nil } }).first {

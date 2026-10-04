@@ -167,7 +167,7 @@ struct GitHubPullRequestFileSystemTests {
         #expect(await fs.changes(forPath: "/o/r/pull/2/Pull request.md") == nil)
         let url = URL(string: "https://github.com/o/r/pull/2")!
         #expect(await fs.resource(for: "/o/r/pull/2/changes/Sources/App.swift") == PacketResource(url: url, details: ["Path: Sources/App.swift at f00d123"]))
-        #expect(await fs.resource(for: "/o/r/pull/2/Pull request.md") == PacketResource(url: url, details: ["Field: description"]))
+        #expect(await fs.resource(for: "/o/r/pull/2/Pull request.md") == PacketResource(url: url), "a whole-file note is the pull request as a whole")
         #expect(await fs.resource(for: "/o/r/pull/2/Pull request.md", line: 12) == PacketResource(url: url, details: ["Field: description"]), "a line of the body")
         #expect(await fs.resource(for: "/o/r/pull/2/Pull request.md", line: 4) == PacketResource(url: url), "a fact line is the pull request as a whole")
         #expect(await fs.resource(for: "/o/r/pull/2/Pull request.md", line: 17) == PacketResource(url: url, details: ["Comment: https://github.com/o/r/pull/2#discussion_r2"]), "a review comment by its own link")

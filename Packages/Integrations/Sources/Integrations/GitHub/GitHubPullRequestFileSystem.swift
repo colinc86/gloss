@@ -36,6 +36,8 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     private var generation = 0
     private var contents: [String: Data] = [:]
     private var pollers: [Key: Poller] = [:]
+    /// The head before the last change a poll saw, so the banner can say whether the head moved.
+    private var previousHeads: [Key: String] = [:]
 
     /// A new key. Open documents and pollers carry on with it; the snapshots stay, so the next poll still
     /// compares against what the documents show and reports a head that moved meanwhile. File contents read with
@@ -270,6 +272,7 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         guard let previous = snapshots[key], let latest = try? await client.pullRequest(owner: path.owner, repo: path.repo, number: path.number) else { return }
         guard latest.head.sha != previous.pull.head.sha || latest.updatedAt != previous.pull.updatedAt else { return }
         guard let fresh = try? await snapshot(for: path, refresh: true), let poller = pollers[key] else { return }
+        previousHeads[key] = previous.pull.head.sha
         let changed = documentPaths(in: fresh, path: path) + documentPaths(in: previous, path: path)
         for (continuation, isRoot) in poller.continuations.values {
             // Documents hear which paths changed; the root (the explorer) also re-lists the tree.
@@ -285,7 +288,6 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
 
     // MARK: What the app asks beyond files
 
-    /// The lines a changed file's patch touched; nil when GitHub sent no patch (a very large or binary file).
     /// Whether GitHub left out a changed file's patch (a large or binary change), so the viewer can say the lines
     /// are not tinted because GitHub would not say which, not because nothing changed.
     public func patchOmitted(forPath path: String) async -> Bool {
@@ -294,15 +296,18 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
         return entry.patch == nil && entry.status != "removed"
     }
 
+    /// The lines a changed file's patch touched; nil when GitHub sent no patch (a very large or binary file).
     public func changes(forPath path: String) async -> LineChanges? {
         guard let parsed = PullRequestPath(path), let file = parsed.changedFile, let snapshot = try? await snapshot(for: parsed),
               let patch = snapshot.files.first(where: { $0.filename == file })?.patch else { return nil }
         return PatchHunks.parse(patch)
     }
 
-    /// For the banner after a change: the head the pull request moved to.
+    /// For the banner after a change: the head the pull request moved to, when it moved (a comment or a label
+    /// changes the pull request without moving its head).
     public func changeSummary(for path: String) async -> String? {
         guard let parsed = PullRequestPath(path), let snapshot = try? await snapshot(for: parsed) else { return nil }
+        guard let previous = previousHeads[key(parsed)], previous != snapshot.pull.head.sha else { return nil }
         return "Pull request updated to \(snapshot.pull.head.sha.prefix(7))"
     }
 
@@ -317,7 +322,8 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
             if let line, let review = snapshot.reviewLines.first(where: { $0.range.contains(line) }) {
                 return PacketResource(url: url, details: ["Comment: \(review.url.absoluteString)"])
             }
-            if let line, !snapshot.descriptionBody.contains(line) { return PacketResource(url: url) }
+            // A whole-file note, a fact line or the title is the pull request as a whole, as for a Jira issue.
+            guard let line, snapshot.descriptionBody.contains(line) else { return PacketResource(url: url) }
             return PacketResource(url: url, details: ["Field: description"])
         case PullRequestPath.conversationName:
             if let line, let comment = snapshot.conversationLines.first(where: { $0.range.contains(line) }) {

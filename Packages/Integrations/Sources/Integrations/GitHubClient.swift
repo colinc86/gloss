@@ -108,9 +108,7 @@ public actor GitHubClient {
     }
 
     private func url(_ path: String, query: [String: String] = [:]) -> URL {
-        var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
-        if !query.isEmpty { components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) } }
-        return components.url!
+        GetOnlyHTTP.url(base, path: path, query: query)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from reply: HTTPReply) throws -> T {
@@ -151,6 +149,15 @@ public actor GitHubClient {
 
     /// A file's bytes at a commit. The path goes in unescaped: `appendingPathComponent` escapes spaces, `#`, `%`
     /// and non-ASCII once (escaping first made `%20` into `%2520` and every such file a 404).
+    /// A file's size at a commit, and its bytes when GitHub includes them (files up to 1 MB come base64-encoded;
+    /// larger ones come without, which is what makes this cheap where downloading would not be).
+    public func fileMetadata(owner: String, repo: String, path: String, ref: String) async throws -> (size: Int64, content: Data?) {
+        struct Metadata: Decodable { var size: Int64; var content: String?; var encoding: String? }
+        let metadata = try decode(Metadata.self, from: try await http.get(url("repos/\(owner)/\(repo)/contents/\(path)", query: ["ref": ref]), headers: headers()))
+        let content = metadata.encoding == "base64" ? metadata.content.flatMap { Data(base64Encoded: $0, options: .ignoreUnknownCharacters) } : nil
+        return (metadata.size, content)
+    }
+
     public func fileContent(owner: String, repo: String, path: String, ref: String) async throws -> Data {
         try await http.get(url("repos/\(owner)/\(repo)/contents/\(path)", query: ["ref": ref]), headers: headers(accept: "application/vnd.github.raw+json")).data
     }

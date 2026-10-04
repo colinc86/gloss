@@ -57,7 +57,8 @@ struct NotesPanel: View {
                                                     : group.document.hostID == .github ? PullRequestPath(group.document.path).map { "\($0.repository) #\($0.number)" }
                                                     : group.document.hostID == .atlassian ? Self.atlassianLabel(group.document.path)
                                                     : (model.hosts.entry(for: group.document.hostID)?.name).map { group.document.kind == .web ? "via \($0)" : $0 } ?? "remote",
-                                                open: { model.openDocument(hostID: group.document.hostID, path: group.document.path) })
+                                                // A previous Atlassian site's documents are kept to read, not to open.
+                                                open: group.document.path.hasPrefix("/previous-sites/") ? {} : { model.openDocument(hostID: group.document.hostID, path: group.document.path) })
                         }
                     }
                 }
