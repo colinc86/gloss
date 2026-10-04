@@ -12,6 +12,10 @@ struct WebDocumentKeyTests {
         #expect(key("http://localhost:80/x") == "http://localhost/x")
         #expect(key("https://example.com:8443/") == "https://example.com:8443/", "a non-default port stays")
         #expect(key("http://localhost:3000/a?x=1") != key("http://localhost:3000/a?x=2"), "the query names a different page")
+        #expect(key("http://127.0.0.1:8080/") == key("http://localhost:8080/"), "one page however the loopback is spelled")
+        #expect(key("http://[::1]:8080/") == "http://localhost:8080/")
+        #expect(key("http://127.0.1.1:8080/") == "http://localhost:8080/")
+        #expect(key("https://me:secret@example.com/") == "https://example.com/", "credentials are never part of a key")
     }
 }
 
@@ -28,6 +32,9 @@ struct WebProxyMapTests {
         #expect(port("https://localhost/") == 443)
         #expect(port("https://example.com/") == nil)
         #expect(port("http://localhost.example.com:3000/") == nil)
+        #expect(port("http://127.1.2.3:3000/") == 3000)
+        #expect(port("http://localhost.:3000/") == 3000)
+        #expect(port("http://127.0.0.256:3000/") == nil)
         #expect(port("file:///tmp/x") == nil)
     }
 

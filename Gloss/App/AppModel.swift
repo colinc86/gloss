@@ -174,6 +174,18 @@ final class AppModel {
                 }
             }
         }
+        hosts.onForwardsLost = { [weak self] hostID, lost in
+            guard let self else { return }
+            for forward in lost {
+                if case .localPort(_, let remote) = forward.kind { tunnels[hostID]?[remote] = nil }
+            }
+            // Pages through those ports get a new tunnel the next time they load (Reload goes through it).
+            let proxy = proxy(for: hostID)
+            for session in sessions.values where session.hostID == hostID && session.kind == .web {
+                session.proxy = proxy
+                session.html?.proxy = proxy
+            }
+        }
         hosts.onDisconnected = { [weak self] hostID in
             guard let self else { return }
             self.connections[hostID] = nil
@@ -751,10 +763,29 @@ final class AppModel {
         return unsavedSessions
     }
 
-    /// Ends a session; a page it showed stops running in the shared web view.
+    /// Ends a session; a page it showed stops running in the shared web view, and a tunnel no other open page
+    /// uses is closed.
     private func retire(_ session: DocumentSession) {
         if let html = session.html, browser.current === html { browser.unload() }
         session.close()
+        releaseTunnel(of: session)
+    }
+
+    private func releaseTunnel(of session: DocumentSession) {
+        guard session.kind == .web, let url = session.webURL, let port = WebProxyMap.loopbackPort(of: url),
+              tunnels[session.hostID]?[port] != nil else { return }
+        let stillUsed = sessions.values.contains { other in
+            other !== session && other.hostID == session.hostID && other.kind == .web && other.webURL.flatMap(WebProxyMap.loopbackPort(of:)) == port
+        }
+        guard !stillUsed else { return }
+        let hostID = session.hostID
+        tunnels[hostID]?[port] = nil
+        let proxy = proxy(for: hostID)
+        for other in sessions.values where other !== session && other.hostID == hostID && other.kind == .web {
+            other.proxy = proxy
+            other.html?.proxy = proxy
+        }
+        if let connection = connections[hostID] { Task { await connection.cancelLocalPort(remotePort: port) } }
     }
 
     func closeDocument(_ session: DocumentSession) {

@@ -39,6 +39,8 @@ public enum SSHConnectionEvent: Sendable, Equatable {
     case reconnecting(HostID, attempt: Int)
     case disconnected(HostID, reason: String)
     case failed(HostID, SSHError)
+    /// After a reconnect, these forwards could not be set up again; whatever used them has to start over.
+    case forwardsLost(HostID, [SSHForward])
 }
 
 public struct ExecResult: Sendable, Equatable {
@@ -86,7 +88,8 @@ public struct SSHForward: Sendable, Hashable {
         switch kind {
         case .localSocket(let local, let remote): ["-L", "\(local):\(remote)"]
         case .remotePort(let port): ["-R", "\(port):127.0.0.1:\(port)"]
-        case .localPort(let local, let remote): ["-L", "127.0.0.1:\(local):127.0.0.1:\(remote)"]
+        // `localhost` is resolved by sshd on the host, so a dev server listening only on ::1 is reached too.
+        case .localPort(let local, let remote): ["-L", "127.0.0.1:\(local):localhost:\(remote)"]
         }
     }
 }
@@ -128,6 +131,8 @@ public actor SSHConnection {
     public var capturedStderr: String { masterStderr.text }
     public private(set) var state: State = .disconnected
     private var forwards: Set<SSHForward> = []
+    /// Local-port forwards being set up, by remote port, so concurrent requests for one port share one forward.
+    private var forwardsInFlight: [UInt16: Task<SSHForward, any Error>] = [:]
     private var supervisor: Task<Void, Never>?
     /// The launch in progress, shared by every concurrent `connect` and by the supervisor.
     private var connecting: Task<Void, any Error>?
@@ -491,6 +496,14 @@ public actor SSHConnection {
         if let existing = forwards.first(where: { if case .localPort(_, let remote) = $0.kind { remote == remotePort } else { false } }) {
             return existing
         }
+        if let pending = forwardsInFlight[remotePort] { return try await pending.value }
+        let task = Task { try await self.addLocalPortForward(remotePort: remotePort) }
+        forwardsInFlight[remotePort] = task
+        defer { forwardsInFlight[remotePort] = nil }
+        return try await task.value
+    }
+
+    private func addLocalPortForward(remotePort: UInt16) async throws -> SSHForward {
         var lastError: any Error = SSHError.notConnected
         for _ in 0..<3 {
             let local = try PortAllocator.freeLoopbackPort()
@@ -526,12 +539,22 @@ public actor SSHConnection {
         _ = try? await runClient(["-O", "cancel"] + forward.arguments, timeout: .seconds(15))
     }
 
+    /// Stops forwarding a remote loopback port, when it is forwarded.
+    public func cancelLocalPort(remotePort: UInt16) async {
+        for forward in forwards {
+            if case .localPort(_, let remote) = forward.kind, remote == remotePort { await cancel(forward) }
+        }
+    }
+
+    /// Sets the forwards up again on a new master; any that cannot be are reported, never dropped silently.
     private func restoreForwards() async {
         let pending = forwards
         forwards = []
+        var lost: [SSHForward] = []
         for forward in pending {
-            try? await add(forward)
+            do { try await add(forward) } catch { lost.append(forward) }
         }
+        if !lost.isEmpty { events.yield(.forwardsLost(hostID, lost)) }
     }
 
     public var activeForwards: Set<SSHForward> { forwards }

@@ -78,6 +78,15 @@ struct SSHConnectionTests {
             #expect(remote == remotePort)
             #expect(await connection.localPort(forRemotePort: remotePort) == local)
             #expect(try await connection.forwardLocalPort(toRemotePort: remotePort) == forward, "a second request reuses the forward")
+            // Two requests at once for a new port share one forward.
+            let other = try PortAllocator.freeLoopbackPort()
+            async let first = connection.forwardLocalPort(toRemotePort: other)
+            async let second = connection.forwardLocalPort(toRemotePort: other)
+            let (a, b) = try await (first, second)
+            #expect(a == b)
+            #expect(await connection.activeForwards.filter { if case .localPort(_, let remote) = $0.kind { remote == other } else { false } }.count == 1)
+            await connection.cancelLocalPort(remotePort: other)
+            #expect(await connection.localPort(forRemotePort: other) == nil)
 
             let (data, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(local)/hello.txt")!)
             #expect((response as? HTTPURLResponse)?.statusCode == 200)
@@ -93,7 +102,7 @@ struct SSHConnectionTests {
     @Test func allocatesFreeLoopbackPortsAndBuildsForwardArguments() throws {
         let port = try PortAllocator.freeLoopbackPort()
         #expect(port >= 1024)
-        #expect(SSHForward(kind: .localPort(local: 50_123, remotePort: 3000)).arguments == ["-L", "127.0.0.1:50123:127.0.0.1:3000"])
+        #expect(SSHForward(kind: .localPort(local: 50_123, remotePort: 3000)).arguments == ["-L", "127.0.0.1:50123:localhost:3000"])
     }
 
     @Test func buildsHostOptionArguments() {

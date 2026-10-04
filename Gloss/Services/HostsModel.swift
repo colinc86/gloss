@@ -77,6 +77,8 @@ final class HostsModel {
     @ObservationIgnored var onFileSystemReady: (HostID, SFTPFileSystem, SSHConnection) -> Void = { _, _, _ in }
     /// Called when the user disconnects a host, so the app drops its file system and transports forget the host.
     @ObservationIgnored var onDisconnected: (HostID) -> Void = { _ in }
+    /// Forwards a reconnect could not set up again.
+    @ObservationIgnored var onForwardsLost: (HostID, [SSHForward]) -> Void = { _, _ in }
     @ObservationIgnored private var eventTask: Task<Void, Never>?
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private var fileSystems: [HostID: SFTPFileSystem] = [:]
@@ -234,6 +236,7 @@ final class HostsModel {
         case .reconnecting(let host, let attempt): status[host] = .reconnecting(attempt)
         case .disconnected(let host, _): status[host] = .idle
         case .failed(let host, let error): status[host] = .failed(describe(error))
+        case .forwardsLost(let host, let forwards): onForwardsLost(host, forwards)
         }
     }
 

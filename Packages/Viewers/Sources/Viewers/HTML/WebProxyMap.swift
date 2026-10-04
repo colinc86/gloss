@@ -13,12 +13,20 @@ public struct WebProxyMap: Equatable, Hashable, Sendable {
         self.tunnels = tunnels
     }
 
-    nonisolated public static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]
+    nonisolated public static let loopbackHosts: Set<String> = ["localhost", "localhost.", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]
+
+    /// Whether a host name is this machine's loopback: the names above and all of 127.0.0.0/8.
+    nonisolated public static func isLoopback(host: String) -> Bool {
+        let host = host.lowercased()
+        if loopbackHosts.contains(host) { return true }
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 4 && parts[0] == "127" && parts.allSatisfy { UInt8($0) != nil }
+    }
 
     /// The port of an http(s) URL on a loopback host, with the scheme's default when none is written; nil otherwise.
     nonisolated public static func loopbackPort(of url: URL) -> UInt16? {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let host = url.host()?.lowercased(), loopbackHosts.contains(host) else { return nil }
+              let host = url.host(), isLoopback(host: host) else { return nil }
         if let port = url.port { return UInt16(exactly: port) }
         return scheme == "https" ? 443 : 80
     }
