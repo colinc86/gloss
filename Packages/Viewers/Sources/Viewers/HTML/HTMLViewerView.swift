@@ -365,7 +365,8 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
 /// Serves `gloss-html://doc/<absolute path>`: the document itself from the editor's current text, and other paths
 /// (stylesheets, images, scripts) inside the controller's resource root through its loader. Anything else fails.
 final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
-    static let scheme = "gloss-html"
+    nonisolated static let scheme = "gloss-html"
+    nonisolated static let host = "doc"
     private let controller: HTMLViewerController
     private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
@@ -381,7 +382,7 @@ final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
         let path = url.path
         let key = ObjectIdentifier(urlSchemeTask)
         // `//host/x` references resolve to `gloss-html://host/x`; only `doc` is ours.
-        guard url.host == "doc" else {
+        guard url.host == Self.host else {
             urlSchemeTask.didFailWithError(URLError(.unsupportedURL))
             return
         }
