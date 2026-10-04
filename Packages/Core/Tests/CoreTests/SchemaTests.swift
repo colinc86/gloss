@@ -157,4 +157,37 @@ struct SchemaTests {
         try database.close()
         #expect(!FileManager.default.fileExists(atPath: path))
     }
+
+    @Test func anOlderDatabaseIsBackedUpBeforeMigrating() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-backup-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("notes.sqlite")
+
+        // A database last opened by an older build, holding a row the user cares about.
+        let old = try DatabaseQueue(path: url.path)
+        try Schema.migrator.migrate(old, upTo: "v3-send-note-index")
+        let before = try old.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM host") ?? 0 }
+        try old.close()
+
+        let database = try AppDatabase.open(at: url)
+        try database.queue.close()
+        let backup = directory.appendingPathComponent("notes.before-v3-send-note-index.sqlite")
+        #expect(FileManager.default.fileExists(atPath: backup.path))
+        let copy = try DatabaseQueue(path: backup.path)
+        let (rows, applied) = try copy.read { (try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM host") ?? 0, try Schema.migrator.appliedIdentifiers($0)) }
+        try copy.close()
+        #expect(rows == before)
+        #expect(!applied.contains("v4-integrations"), "the backup is the database as it was, before the new migrations")
+
+        // An up-to-date database and a brand-new one are not copied.
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.hasPrefix("notes.before-") }
+        #expect(leftovers == ["notes.before-v3-send-note-index.sqlite"], "one file, no WAL sidecars: \(leftovers)")
+        try FileManager.default.removeItem(at: backup)
+        try AppDatabase.open(at: url).queue.close()
+        let fresh = directory.appendingPathComponent("fresh.sqlite")
+        try AppDatabase.open(at: fresh).queue.close()
+        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        #expect(!names.contains { $0.contains(".before-") }, "\(names)")
+    }
 }

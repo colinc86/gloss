@@ -98,6 +98,14 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { model.quickOpen.isPresented }, set: { if !$0 { model.quickOpen.dismiss() } })) {
             QuickOpenSheet()
         }
+        .alert("Notes Are Temporary This Session", isPresented: Binding(get: { model.databaseFailure != nil }, set: { if !$0 { model.databaseFailure = nil } })) {
+            Button("OK", role: .cancel) {}
+            Button("Show Database in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([AppDatabase.defaultURL.deletingLastPathComponent()])
+            }
+        } message: {
+            Text(model.databaseFailure ?? "")
+        }
         .dropToOpen()
         .overlay(alignment: .bottom) { CopyHUD() }
         // The dot in the close button whenever any open document has unsaved edits, not only the visible one.

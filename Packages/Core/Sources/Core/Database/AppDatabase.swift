@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import OSLog
 
 /// The app's single SQLite database. One instance per process; `open(at:)` for the real
 /// file under Application Support, `temporary()` for `--reset-db` and tests.
@@ -17,8 +18,44 @@ public final class AppDatabase: Sendable {
     public static func open(at url: URL) throws -> AppDatabase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let queue = try DatabaseQueue(path: url.path, configuration: configuration())
+        do {
+            try backUpBeforeMigrating(queue, at: url)
+        } catch {
+            // A failed copy (a full disk, say) must not keep the notes closed; migrating is what happened before backups existed.
+            Logger(subsystem: "Gloss", category: "database").fault("Could not back up the database before migrating: \(error, privacy: .public)")
+        }
         try Schema.migrator.migrate(queue)
         return AppDatabase(queue: queue, temporaryURL: nil)
+    }
+
+    /// Before a new version's migrations touch a database that holds notes, a consistent copy is made beside it
+    /// (`<name>.before-<last migration>.sqlite`, the newest three kept): a migration that fails or goes wrong
+    /// never takes the only copy of the user's notes with it.
+    static func backUpBeforeMigrating(_ queue: DatabaseQueue, at url: URL) throws {
+        let (applied, complete) = try queue.read { db in (try Schema.migrator.appliedIdentifiers(db), try Schema.migrator.hasCompletedMigrations(db)) }
+        guard !applied.isEmpty, !complete else { return }
+        let last = Schema.migrator.migrations.last { applied.contains($0) } ?? "unknown"
+        let backup = url.deletingPathExtension().appendingPathExtension("before-\(last)").appendingPathExtension("sqlite")
+        removeWithSidecars(backup)
+        let copy = try DatabaseQueue(path: backup.path)
+        try queue.backup(to: copy)
+        // The copy inherits WAL mode from the header; a rollback journal keeps it one self-contained file.
+        try copy.writeWithoutTransaction { try $0.execute(sql: "PRAGMA journal_mode = DELETE") }
+        try copy.close()
+        // Closed in rollback mode, the copy needs none of the WAL sidecars the switch can leave behind.
+        for suffix in ["-wal", "-shm"] { try? FileManager.default.removeItem(atPath: backup.path + suffix) }
+        let directory = url.deletingLastPathComponent()
+        let prefix = url.deletingPathExtension().lastPathComponent + ".before-"
+        let backups = ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+            .filter { $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "sqlite" }
+            .sorted { ((try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) > ((try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+        for old in backups.dropFirst(3) { removeWithSidecars(old) }
+    }
+
+    private static func removeWithSidecars(_ url: URL) {
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            try? FileManager.default.removeItem(atPath: url.path + suffix)
+        }
     }
 
     /// A throwaway database under `$TMPDIR`, deleted by `close()`.
