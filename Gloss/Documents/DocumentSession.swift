@@ -351,7 +351,13 @@ final class DocumentSession: Identifiable {
         let results = await resolve(items)
         guard !Task.isCancelled else { return }
         for (id, anchor) in items {
-            guard let note = notes.first(where: { $0.id == id }), let resolution = results[id] else { continue }
+            guard let note = notes.first(where: { $0.id == id }), var resolution = results[id] else { continue }
+            // On a served file each candidate's place in the page maps to a source line, so the note's Line
+            // follows its element when lines are added above it.
+            if kind != .web {
+                resolution.bySelector = resolution.bySelector.map(withSourceLine)
+                resolution.byText = resolution.byText.map(withSourceLine)
+            }
             do {
                 switch ReAnchorer.element(anchor, resolution: resolution, newHash: hash) {
                 case .unchanged:
@@ -361,7 +367,7 @@ final class DocumentSession: Identifiable {
                     needsReview.remove(id)
                     // Found at its own selector with the same text: only the hash and rect moved, which every
                     // page tick on a busy page would otherwise write back.
-                    if case .element(let next) = moved, note.state != .orphaned, next.selector == anchor.selector, next.text == anchor.text { break }
+                    if case .element(let next) = moved, note.state != .orphaned, next.selector == anchor.selector, next.text == anchor.text, next.line == anchor.line { break }
                     try await noteStore.updateAnchor(id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
                 case .movedNeedsReview(let moved):
                     needsReview.insert(id)
@@ -376,18 +382,27 @@ final class DocumentSession: Identifiable {
         syncHighlights()
     }
 
+    private func withSourceLine(_ candidate: ElementCandidate) -> ElementCandidate {
+        var candidate = candidate
+        if let offset = candidate.textOffset { candidate.line = sourceLine(forDOMOffset: offset) }
+        return candidate
+    }
+
+    /// The source line a page-text offset maps to on a served file; nil when the page and source don't align there.
+    private func sourceLine(forDOMOffset offset: Int) -> Int? {
+        guard let html, let controller = textController, let alignment = html.alignment,
+              let projected = alignment.projected(NSRange(location: offset, length: 1)),
+              let source = html.projection.sourceRange(forProjected: projected) else { return nil }
+        return controller.lineIndex.position(forUTF16Offset: source.location).line
+    }
+
     /// Starts a note on the element the user picked in note mode: the editor opens at the element, no Add Note
     /// pill in between. On a served file the element's first text maps to its source line.
     func beginNote(element pick: ElementPick) {
         guard let html, let controller = textController else { return }
         html.isNoteMode = false
         html.pendingPick = nil
-        var line: Int?
-        if kind != .web, let offset = pick.textOffset, let alignment = html.alignment,
-           let projected = alignment.projected(NSRange(location: offset, length: 1)),
-           let source = html.projection.sourceRange(forProjected: projected) {
-            line = controller.lineIndex.position(forUTF16Offset: source.location).line
-        }
+        let line = kind == .web ? nil : pick.textOffset.flatMap(sourceLine(forDOMOffset:))
         let anchor = ElementAnchor(
             selector: pick.selector, tag: pick.tag, text: pick.text, html: pick.html, rect: pick.pageRect,
             line: line, hash: Data(controller.text.utf8).sha256Hex
@@ -775,9 +790,11 @@ final class DocumentSession: Identifiable {
         guard let controller = textController else { return }
         if let html {
             html.elementHighlights = notes.compactMap { note in
-                guard case .element(let anchor) = note.anchor, note.state != .orphaned else { return nil }
+                guard case .element(let anchor) = note.anchor else { return nil }
+                // An orphan is drawn dashed where its element last was.
                 return ElementHighlight(id: note.id, selector: anchor.selector, tag: anchor.tag, text: anchor.text,
-                                        color: Theme.color(for: note.color), state: note.displayState, needsReview: needsReview.contains(note.id))
+                                        color: Theme.color(for: note.color), state: note.displayState, needsReview: needsReview.contains(note.id),
+                                        lastRect: note.state == .orphaned ? anchor.rect : nil)
             }
         }
         let index = controller.lineIndex

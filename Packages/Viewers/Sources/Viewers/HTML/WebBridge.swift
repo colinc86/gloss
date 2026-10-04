@@ -140,12 +140,20 @@ enum WebBridge {
         return forced.join(' > ');
       }
       const collapse = (s) => s.replace(/\\s+/g, ' ').trim();
+      // Where an element starts in the page's text: its first non-blank text, or for an element without text (an
+      // image, an input) the first text after it, so even those map to a source line.
+      function textOffsetOf(el) {
+        const inside = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = inside.nextNode())) { if (node.data.trim().length) return offsetOf(node, 0); }
+        const after = document.createTreeWalker(root(), NodeFilter.SHOW_TEXT);
+        after.currentNode = el;
+        while ((node = after.nextNode())) { if (!inOverlay(node) && node.data.trim().length) return offsetOf(node, 0); }
+        return null;
+      }
       function describe(el) {
         const box = el.getBoundingClientRect();
-        let textOffset = null;
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-        let first;
-        while ((first = walker.nextNode())) { if (first.data.trim().length) { textOffset = offsetOf(first, 0); break; } }
+        const textOffset = textOffsetOf(el);
         return { selector: selectorFor(el), tag: el.tagName.toLowerCase(), text: collapse(el.textContent || '').slice(0, 500),
                  html: (el.outerHTML || '').slice(0, 2048),
                  rect: { x: box.left, y: box.top, w: box.width, h: box.height },
@@ -181,7 +189,10 @@ enum WebBridge {
         if (raf) return;
         raf = requestAnimationFrame(() => {
           raf = null;
-          for (const [, entry] of boxes) { if (entry.element.isConnected) place(entry.box, entry.element); else entry.box.style.display = 'none'; }
+          for (const [, entry] of boxes) {
+            if (!entry.element) continue;
+            if (entry.element.isConnected) place(entry.box, entry.element); else entry.box.style.display = 'none';
+          }
           if (hover) place(hover.box, hover.element);
         });
       }
@@ -202,33 +213,46 @@ enum WebBridge {
         return list.map((item) => {
           const { bySelector, byText } = findCandidates(item);
           const found = (el) => ({ selector: selectorFor(el), tag: el.tagName.toLowerCase(), text: collapse(el.textContent || '').slice(0, 500),
-                                   html: (el.outerHTML || '').slice(0, 2048), rect: (() => { const b = el.getBoundingClientRect(); return { x: b.left + scrollX, y: b.top + scrollY, w: b.width, h: b.height }; })() });
+                                   html: (el.outerHTML || '').slice(0, 2048), textOffset: textOffsetOf(el),
+                                   rect: (() => { const b = el.getBoundingClientRect(); return { x: b.left + scrollX, y: b.top + scrollY, w: b.width, h: b.height }; })() });
           return { id: item.id, bySelector: bySelector ? found(bySelector) : null, byText: byText.map(found) };
         });
       }
+      // An orphaned note is drawn dashed where its element last was; the others at their element. The overlay is
+      // made only when there is something to draw, so a page without element notes is left exactly as it is.
       function highlightElements(list) {
-        ensureOverlay();
         for (const [, entry] of boxes) entry.box.remove();
         boxes.clear();
         const rects = {};
+        if (!list.length) { if (overlay && overlay.isConnected && !picking) { overlay.remove(); overlay = null; } return rects; }
+        ensureOverlay();
         for (const item of list) {
           let el = null;
-          try { el = document.querySelector(item.selector); } catch (e) {}
-          if (!el || inOverlay(el)) continue;
+          if (item.state !== 'orphaned') { try { el = document.querySelector(item.selector); } catch (e) {} }
+          if (el && inOverlay(el)) el = null;
+          if (!el && !(item.state === 'orphaned' && item.rect)) continue;
           const box = makeBox(item.color, item.needsReview ? '?' : null, item.state === 'orphaned');
           box.style.opacity = item.state === 'resolved' ? '0.35' : item.state === 'sent' ? '0.7' : '1';
           box.style.background = item.fill;
           overlay.appendChild(box);
-          place(box, el);
-          boxes.set(item.id, { box, element: el });
-          const r = el.getBoundingClientRect();
-          rects[item.id] = { x: r.left, y: r.top, w: r.width, h: r.height };
+          if (el) {
+            place(box, el);
+          } else {
+            box.style.left = item.rect.x + 'px'; box.style.top = item.rect.y + 'px';
+            box.style.width = item.rect.w + 'px'; box.style.height = item.rect.h + 'px';
+          }
+          boxes.set(item.id, { box, element: el, rect: el ? null : item.rect });
+          rects[item.id] = el ? (() => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()
+                              : { x: item.rect.x - scrollX, y: item.rect.y - scrollY, w: item.rect.w, h: item.rect.h };
         }
         return rects;
       }
       function elementRects() {
         const rects = {};
-        for (const [id, entry] of boxes) { const r = entry.element.getBoundingClientRect(); rects[id] = { x: r.left, y: r.top, w: r.width, h: r.height }; }
+        for (const [id, entry] of boxes) {
+          if (entry.element) { const r = entry.element.getBoundingClientRect(); rects[id] = { x: r.left, y: r.top, w: r.width, h: r.height }; }
+          else if (entry.rect) rects[id] = { x: entry.rect.x - scrollX, y: entry.rect.y - scrollY, w: entry.rect.w, h: entry.rect.h };
+        }
         return rects;
       }
       function scrollToElement(selector) {
@@ -300,10 +324,13 @@ enum WebBridge {
       const labelCSS = OVERLAY + ' div[data-label]::after { content: attr(data-label); position: absolute; left: 0; top: -18px; font: 11px -apple-system, sans-serif; color: #fff; background: rgba(10,132,255,0.9); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }\\n';
       window.__cc = {
         highlight(list, css) {
-          if (!sheet) { sheet = new CSSStyleSheet(); document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]; }
+          if (!sheet) sheet = new CSSStyleSheet();
+          // A page that sets its own adoptedStyleSheets drops ours; put it back.
+          if (!document.adoptedStyleSheets.includes(sheet)) document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
           sheet.replaceSync(labelCSS + css);
           if (!window.CSS || !CSS.highlights) return;
-          CSS.highlights.clear();
+          // Only our own highlights: the page may have its own.
+          for (const name of [...CSS.highlights.keys()]) { if (name.startsWith('gloss-note-')) CSS.highlights.delete(name); }
           for (const item of list) {
             const range = rangeAt(item.start, item.end);
             if (range) CSS.highlights.set(item.name, new Highlight(range));

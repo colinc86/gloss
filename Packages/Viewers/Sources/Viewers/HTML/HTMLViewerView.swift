@@ -90,6 +90,8 @@ public struct HTMLViewerView: View {
                 TextEditorView(controller: controller.source)
             }
         }
+        // Escape leaves element notes wherever focus is (the page catches it too, but only while it has focus).
+        .onExitCommand(perform: controller.isNoteMode ? { controller.isNoteMode = false } : nil)
     }
 }
 

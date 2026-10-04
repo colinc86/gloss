@@ -44,8 +44,11 @@ public struct ElementHighlight: Equatable {
     public var color: NSColor
     public var state: NoteState
     public var needsReview: Bool
+    /// Where the element last was (page CSS pixels): an orphaned note is drawn there, dashed.
+    public var lastRect: ElementRect?
 
-    public init(id: NoteID, selector: String, tag: String, text: String, color: NSColor, state: NoteState, needsReview: Bool) {
+    public init(id: NoteID, selector: String, tag: String, text: String, color: NSColor, state: NoteState, needsReview: Bool, lastRect: ElementRect? = nil) {
+        self.lastRect = lastRect
         self.id = id
         self.selector = selector
         self.tag = tag
@@ -75,7 +78,10 @@ public final class HTMLViewerController: RenderedDocumentController {
     }
 
     public let source: TextEditorController
-    public var mode: Mode = .rendered
+    public var mode: Mode = .rendered {
+        // Element notes are picked on the rendered page; the source view has its own selection and Add Note.
+        didSet { if mode != oldValue { isNoteMode = false } }
+    }
     /// What the view shows: a served file or a live page.
     public let page: BrowserPage
     /// The served file's path, or a live page's document key (its normalised URL).

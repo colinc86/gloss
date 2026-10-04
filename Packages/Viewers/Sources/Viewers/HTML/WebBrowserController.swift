@@ -484,7 +484,8 @@ public final class WebBrowserController {
     private func candidate(_ value: Any?) -> ElementCandidate? {
         guard let dictionary = value as? [String: Any], let selector = dictionary["selector"] as? String,
               let tag = dictionary["tag"] as? String, let rect = rect(dictionary["rect"]) else { return nil }
-        return ElementCandidate(selector: selector, tag: tag, text: dictionary["text"] as? String ?? "", html: dictionary["html"] as? String ?? "", rect: rect)
+        return ElementCandidate(selector: selector, tag: tag, text: dictionary["text"] as? String ?? "", html: dictionary["html"] as? String ?? "", rect: rect,
+                                textOffset: dictionary["textOffset"] as? Int)
     }
 
     // MARK: Elements
@@ -508,16 +509,31 @@ public final class WebBrowserController {
     public func snapshot(pageRect: ElementRect) async throws -> (png: Data, width: Int, height: Int)? {
         guard isLoaded else { return nil }
         let bounds = webView.bounds
+        // CSS pixels are view points only at 100%; a pinch-zoomed page scales them.
+        let zoom = webView.magnification
+        func scroll() async throws -> [Double] {
+            try await webView.callAsyncJavaScript("return [window.scrollX, window.scrollY]", arguments: [:], in: nil, contentWorld: .defaultClient) as? [Double] ?? [0, 0]
+        }
         func viewport() async throws -> CGRect {
-            let offsets = try await webView.callAsyncJavaScript("return [window.scrollX, window.scrollY]", arguments: [:], in: nil, contentWorld: .defaultClient) as? [Double] ?? [0, 0]
-            return CGRect(x: pageRect.x - offsets[0], y: pageRect.y - offsets[1], width: pageRect.w, height: pageRect.h)
+            let offsets = try await scroll()
+            return CGRect(x: (pageRect.x - offsets[0]) * zoom, y: (pageRect.y - offsets[1]) * zoom, width: pageRect.w * zoom, height: pageRect.h * zoom)
         }
         var rect = try await viewport()
         if rect.minX < 0 || rect.minY < 0 || rect.maxX > bounds.width || rect.maxY > bounds.height {
+            let original = try await scroll()
             _ = try? await webView.callAsyncJavaScript("window.scrollTo(Math.max(0, x - 16), Math.max(0, y - 16))", arguments: ["x": pageRect.x, "y": pageRect.y], in: nil, contentWorld: .defaultClient)
             try? await Task.sleep(for: .milliseconds(150))
             rect = try await viewport()
+            // The reader is put back where they were once the crop is taken.
+            defer {
+                webView.callAsyncJavaScript("window.scrollTo(x, y)", arguments: ["x": original[0], "y": original[1]], in: nil, in: .defaultClient)
+            }
+            return try await capture(rect, bounds: bounds)
         }
+        return try await capture(rect, bounds: bounds)
+    }
+
+    private func capture(_ rect: CGRect, bounds: CGRect) async throws -> (png: Data, width: Int, height: Int)? {
         let capture = rect.insetBy(dx: -4, dy: -4).intersection(bounds)
         guard !capture.isNull, capture.width >= 2, capture.height >= 2 else { return nil }
         let configuration = WKSnapshotConfiguration()
@@ -540,8 +556,10 @@ public final class WebBrowserController {
         let list: [[String: Any]] = current.elementHighlights.map { highlight in
             let color = highlight.color.usingColorSpace(.sRGB) ?? .systemBlue
             let rgb = "\(Int(color.redComponent * 255)),\(Int(color.greenComponent * 255)),\(Int(color.blueComponent * 255))"
-            return ["id": highlight.id.rawValue, "selector": highlight.selector, "tag": highlight.tag, "text": highlight.text,
-                    "color": "rgb(\(rgb))", "fill": "rgba(\(rgb),0.12)", "state": highlight.state.rawValue, "needsReview": highlight.needsReview]
+            var item: [String: Any] = ["id": highlight.id.rawValue, "selector": highlight.selector, "tag": highlight.tag, "text": highlight.text,
+                                       "color": "rgb(\(rgb))", "fill": "rgba(\(rgb),0.12)", "state": highlight.state.rawValue, "needsReview": highlight.needsReview]
+            if let last = highlight.lastRect { item["rect"] = ["x": last.x, "y": last.y, "w": last.w, "h": last.h] }
+            return item
         }
         let started = current
         webView.callAsyncJavaScript("return window.__cc ? window.__cc.highlightElements(list) : {}", arguments: ["list": list], in: nil, in: .defaultClient) { [weak self] result in

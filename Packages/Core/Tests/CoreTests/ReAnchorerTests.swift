@@ -170,6 +170,14 @@ struct ReAnchorerTests {
         }
         #expect(retitled.text == "Save changes" && retitled.line == 7)
 
+        // The element's own line, when the page could map it, follows the element.
+        var lower = candidate("#toolbar > button:nth-of-type(2)")
+        lower.line = 28
+        guard case .moved(.element(let followed)) = ReAnchorer.element(anchor, resolution: .init(bySelector: lower), newHash: "new") else {
+            Issue.record("expected moved"); return
+        }
+        #expect(followed.line == 28, "twenty lines were added above the element")
+
         // The selector now hits a different kind of element: fall through to text matches.
         let wrongTag = ElementResolution(bySelector: candidate("#toolbar > button:nth-of-type(2)", tag: "div", text: "Save"), byText: [candidate("#save")])
         guard case .movedNeedsReview(.element(let byText)) = ReAnchorer.element(anchor, resolution: wrongTag, newHash: "new") else {

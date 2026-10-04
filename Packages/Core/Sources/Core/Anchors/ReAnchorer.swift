@@ -26,13 +26,19 @@ public struct ElementCandidate: Sendable, Equatable {
     public var text: String
     public var html: String
     public var rect: ElementRect
+    /// The page-text offset where the element starts (its first text, or the text that follows it).
+    public var textOffset: Int?
+    /// The source line that offset maps to, on a served file; filled in by whoever can map it.
+    public var line: Int?
 
-    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect) {
+    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect, textOffset: Int? = nil, line: Int? = nil) {
         self.selector = selector
         self.tag = tag
         self.text = text
         self.html = html
         self.rect = rect
+        self.textOffset = textOffset
+        self.line = line
     }
 }
 
@@ -397,7 +403,7 @@ public enum ReAnchorer {
             next.text = ElementAnchor.collapse(candidate.text, limit: ElementAnchor.textLimit)
             next.html = ElementAnchor.truncate(candidate.html, limit: ElementAnchor.htmlLimit)
             next.rect = candidate.rect
-            next.line = line ?? anchor.line
+            next.line = line ?? candidate.line ?? anchor.line
             next.hash = newHash
             return next
         }

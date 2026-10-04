@@ -96,6 +96,43 @@ struct WebBridgeTests {
         #expect(harness.documentChanges.allSatisfy { $0.scheme != "about" }, "a blank page is never a document")
     }
 
+    @Test func elementsWithoutTextStillHaveAPlaceInTheText() async throws {
+        let harness = Harness(html: "<html><body><p>Before</p><img id=\"logo\" src=\"data:,\"><p>After the logo</p></body></html>")
+        try await harness.ready()
+        let image = try #require(try await harness.js("return window.__cc.describeAt('#logo')") as? [String: Any])
+        let offset = try #require(image["textOffset"] as? Int, "an image maps to the text that follows it")
+        let text = try await harness.string("return document.documentElement.textContent")
+        #expect((text as NSString).substring(with: NSRange(location: offset, length: 5)) == "After")
+        let resolved = try #require(try await harness.js("return window.__cc.resolveElements([{ id: 'x', selector: '#logo', tag: 'img', text: '' }])") as? [[String: Any]])
+        #expect((resolved.first?["bySelector"] as? [String: Any])?["textOffset"] as? Int == offset)
+    }
+
+    @Test func theBridgeLeavesThePagesOwnHighlightsAndDOMAlone() async throws {
+        let harness = Harness(html: Self.fixture)
+        try await harness.ready()
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true, "no overlay without element notes")
+        _ = try await harness.js("""
+            const r = new Range(); r.selectNodeContents(document.querySelector('#long'));
+            CSS.highlights.set('page-own', new Highlight(r)); return true
+            """)
+        _ = try await harness.js("window.__cc.highlight([{ name: 'gloss-note-0', start: 0, end: 3 }], ''); return true")
+        _ = try await harness.js("window.__cc.highlight([], ''); return true")
+        #expect(try await harness.js("return CSS.highlights.has('page-own')") as? Bool == true, "the page's own highlight survives ours being cleared")
+        #expect(try await harness.js("return CSS.highlights.has('gloss-note-0')") as? Bool == false)
+        // A page that replaces its adopted stylesheets gets ours back on the next paint.
+        _ = try await harness.js("document.adoptedStyleSheets = []; window.__cc.highlight([], ''); return true")
+        #expect(try await harness.js("return document.adoptedStyleSheets.length") as? Int == 1)
+
+        // An orphaned note is drawn where its element last was; with nothing left to draw the overlay goes.
+        let orphan: [String: Any] = ["id": "n1", "selector": "#gone", "tag": "button", "text": "", "color": "red", "fill": "rgba(0,0,0,0)",
+                                     "state": "orphaned", "needsReview": false, "rect": ["x": 10, "y": 20, "w": 30, "h": 40]]
+        let rects = try #require(try await harness.js("return window.__cc.highlightElements(list)", ["list": [orphan]]) as? [String: Any])
+        #expect((rects["n1"] as? [String: Any])?["w"] as? Double == 30)
+        #expect(try await harness.js("return document.querySelector('gloss-overlay div').style.borderStyle") as? String == "dashed")
+        _ = try await harness.js("return window.__cc.highlightElements([])")
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
+    }
+
     @Test func selectorsPreferIdsThenTestIdsThenPositions() async throws {
         let harness = Harness(html: Self.fixture)
         try await harness.ready()
