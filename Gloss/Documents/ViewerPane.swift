@@ -177,7 +177,11 @@ private struct BannerView: View {
         case .reanchoring:
             (.mode, "scope", "Placing a note", "Select its new range, then click Add Note.")
         case .deletedOnDisk:
-            (.warning, "trash", "Deleted on disk", "This file is no longer at its path. Its notes stay until you delete them.")
+            switch session.hostID {
+            case .github: (.warning, "arrow.triangle.pull", "No longer in this pull request", "A newer push took this file out. Its notes stay until you delete them.")
+            case .atlassian: (.warning, "questionmark.folder", "No longer available", "The issue or page is gone, or the key can't see it any more. Its notes stay until you delete them.")
+            default: (.warning, "trash", "Deleted on disk", "This file is no longer at its path. Its notes stay until you delete them.")
+            }
         case .resourceUpdated:
             (.info, "arrow.triangle.2.circlepath", session.resourceUpdateSummary ?? (session.hostID == .atlassian ? "Updated in Jira or Confluence" : "Pull request updated"),
              session.hostID == .atlassian ? "The ticket or page changed at its source; this document reloaded and its notes followed." : "Something changed on GitHub; this document reloaded and its notes followed.")

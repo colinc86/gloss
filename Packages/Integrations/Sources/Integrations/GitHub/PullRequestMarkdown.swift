@@ -38,6 +38,10 @@ enum PullRequestMarkdown {
         if let reviewers = pull.requestedReviewers, !reviewers.isEmpty { lines.append("- Reviewers: " + reviewers.map { "@" + $0.login }.joined(separator: ", ")) }
         let removed = files.filter { $0.status == "removed" }.map(\.filename)
         if !removed.isEmpty { lines.append("- Removed: " + removed.joined(separator: ", ")) }
+        let renamed = files.compactMap { file in file.previousFilename.map { "\($0) → \(file.filename)" } }
+        if !renamed.isEmpty { lines.append("- Renamed: " + renamed.joined(separator: ", ")) }
+        // GitHub lists at most 3000 files; a tree from a bigger pull request is not the whole change.
+        if let total = pull.changedFiles, total > files.count { lines.append("- Showing \(files.count) of \(total) changed files: GitHub lists at most 3000") }
         lines.append("- <\(pull.htmlUrl.absoluteString)>")
         lines.append("")
         let body = (pull.body ?? "").replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)

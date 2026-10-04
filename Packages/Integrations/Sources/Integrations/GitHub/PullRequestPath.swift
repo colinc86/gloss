@@ -54,7 +54,9 @@ public struct PullRequestPath: Equatable, Sendable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let hash = trimmed.lastIndex(of: "#"), !trimmed.contains("/pull/") {
             let repoPart = trimmed[..<hash].split(separator: "/")
-            guard repoPart.count == 2, let number = Int(trimmed[trimmed.index(after: hash)...]), number > 0 else { return nil }
+            // `owner/repo #12` is a search for a picker, not a repository called "repo ".
+            guard repoPart.count == 2, !repoPart.contains(where: { $0.contains(where: \.isWhitespace) || $0 == "." || $0 == ".." }),
+                  let number = Int(trimmed[trimmed.index(after: hash)...]), number > 0 else { return nil }
             return PullRequestPath(owner: String(repoPart[0]), repo: String(repoPart[1]), number: number)
         }
         var candidate = trimmed

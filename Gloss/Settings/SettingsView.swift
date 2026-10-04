@@ -661,6 +661,18 @@ private struct IntegrationsSettings: View {
     @State private var site = ""
     @State private var email = ""
     @State private var atlassianToken = ""
+    /// The service whose key is about to go, while documents of it are open (they close with it).
+    @State private var removing: IntegrationsModel.Service?
+
+    /// Removes a key; asks first when that closes open pull requests, issues or pages.
+    private func remove(_ service: IntegrationsModel.Service) {
+        let host: HostID = service == .github ? .github : .atlassian
+        if model.sessions.values.contains(where: { $0.hostID == host }) || model.explorer.tabs.contains(where: { $0.hostID == host }) {
+            removing = service
+        } else {
+            model.integrations.clear(service)
+        }
+    }
 
     var body: some View {
         let integrations = model.integrations
@@ -672,7 +684,7 @@ private struct IntegrationsSettings: View {
                 HStack {
                     Spacer()
                     if integrations.github != nil {
-                        Button("Remove", role: .destructive) { integrations.clear(.github) }
+                        Button("Remove", role: .destructive) { remove(.github) }
                         Button("Test Connection") { Task { await integrations.test(.github) } }
                             .disabled(integrations.githubStatus == .checking)
                     }
@@ -696,7 +708,7 @@ private struct IntegrationsSettings: View {
                 HStack {
                     Spacer()
                     if integrations.atlassian != nil {
-                        Button("Remove", role: .destructive) { integrations.clear(.atlassian) }
+                        Button("Remove", role: .destructive) { remove(.atlassian) }
                         Button("Test Connection") { Task { await integrations.test(.atlassian) } }
                             .disabled(integrations.atlassianStatus == .checking)
                     }
@@ -723,6 +735,15 @@ private struct IntegrationsSettings: View {
             if let error = integrations.lastError {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
+        }
+        .confirmationDialog(removing == .github ? "Remove the GitHub token?" : "Remove the Atlassian key?",
+                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+            Button("Remove", role: .destructive) {
+                if let service = removing { model.integrations.clear(service) }
+                removing = nil
+            }
+        } message: {
+            Text(removing == .github ? "The pull requests open now close. Their notes stay." : "The issues and pages open now close. Their notes stay.")
         }
         .formStyle(.grouped)
         .animation(DS.Motion.smooth, value: integrations.githubStatus)

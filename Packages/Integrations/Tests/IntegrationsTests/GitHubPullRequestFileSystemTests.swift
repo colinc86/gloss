@@ -23,7 +23,7 @@ struct PullRequestPathTests {
         #expect(PullRequestPath.parse(reference: "github.com/o/r/pull/12/files") == PullRequestPath(owner: "o", repo: "r", number: 12))
         #expect(PullRequestPath.parse(reference: "https://github.com/o/r/pull/12/files/Sources/A.swift")?.changedFile == "Sources/A.swift")
         #expect(PullRequestPath.parse(reference: " o/r#12 ") == PullRequestPath(owner: "o", repo: "r", number: 12))
-        for bad in ["#12", "o/r", "https://gitlab.com/o/r/pull/1", "https://github.com/o/r/issues/12", "o/r#x", ""] {
+        for bad in ["#12", "o/r", "https://gitlab.com/o/r/pull/1", "https://github.com/o/r/issues/12", "o/r#x", "", "o/r #12", "../x#1"] {
             #expect(PullRequestPath.parse(reference: bad) == nil, Comment(rawValue: bad))
         }
     }
