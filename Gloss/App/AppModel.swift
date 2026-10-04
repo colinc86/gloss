@@ -510,6 +510,20 @@ final class AppModel {
         } else {
             fileSystems[.atlassian] = nil
         }
+        // The site the stored documents are about survives relaunches in the host row. Another site's
+        // `/jira/CP/CP-7.md` is a different issue: the old site's documents move under `/previous-sites/<host>`
+        // with their notes, and its recent roots go, so nothing of it is ever shown as the new site's.
+        let row = try? await noteStore.hosts().first { $0.id == .atlassian }
+        let storedSite = row?.options?.site
+        if let site, let storedSite, storedSite != site.absoluteString {
+            let old = URL(string: storedSite)?.host() ?? storedSite
+            try? await noteStore.archiveDocuments(hostID: .atlassian, under: "/previous-sites/\(old)")
+        }
+        if let site, storedSite != site.absoluteString {
+            var options = row?.options ?? HostOptions()
+            options.site = site.absoluteString
+            try? await noteStore.setHostOptions(.atlassian, options)
+        }
         if previousSite != nil, site != previousSite {
             // Another site, or none: the open issues and pages were that site's and their paths mean nothing here.
             for (key, session) in sessions where session.hostID == .atlassian {

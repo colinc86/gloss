@@ -55,7 +55,7 @@ struct NotesPanel: View {
                             DocumentGroupHeader(document: group.document, count: group.notes.count, place: places[group.document.path],
                                                 host: group.document.hostID == .local || group.document.hostID == .web ? nil
                                                     : group.document.hostID == .github ? PullRequestPath(group.document.path).map { "\($0.repository) #\($0.number)" }
-                                                    : group.document.hostID == .atlassian ? (group.document.path.hasPrefix("/jira/") ? "Jira" : "Confluence")
+                                                    : group.document.hostID == .atlassian ? Self.atlassianLabel(group.document.path)
                                                     : (model.hosts.entry(for: group.document.hostID)?.name).map { group.document.kind == .web ? "via \($0)" : $0 } ?? "remote",
                                                 open: { model.openDocument(hostID: group.document.hostID, path: group.document.path) })
                         }
@@ -95,6 +95,15 @@ struct NotesPanel: View {
             guard let entry = panel.selectedEntry, model.fileSystem(for: entry.document.hostID) != nil else { return }
             model.reveal(note: entry.note, in: entry.document, select: false)
         }
+    }
+
+    /// `Jira`, `Confluence`, or, for notes on a site the account no longer uses, that site.
+    static func atlassianLabel(_ path: String) -> String {
+        if path.hasPrefix("/previous-sites/") {
+            let host = path.split(separator: "/").dropFirst().first.map(String.init) ?? "another site"
+            return "\(host) (previous site)"
+        }
+        return path.hasPrefix("/jira/") ? "Jira" : "Confluence"
     }
 
     private var header: some View {

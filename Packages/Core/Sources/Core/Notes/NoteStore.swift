@@ -215,6 +215,29 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// Sets a host row's options as they are (the integration hosts keep their site here).
+    public func setHostOptions(_ id: HostID, _ options: HostOptions?) async throws {
+        try await queue.write { db in
+            guard var record = try HostRecord.fetchOne(db, key: id.rawValue) else { return }
+            record.optionsJson = try options.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
+            try record.update(db)
+        }
+    }
+
+    /// Moves every document of a host under `prefix` (one transaction) and forgets the host's recent roots: an
+    /// integration host's account changed, and its documents' paths now mean something else. Their notes stay,
+    /// readable, under the prefix. Documents already under a `/previous-sites/` prefix stay where they are.
+    public func archiveDocuments(hostID: HostID, under prefix: String) async throws {
+        try await queue.write { db in
+            for var record in try DocumentRecord.filter(Column("host_id") == hostID.rawValue).fetchAll(db) where !record.path.hasPrefix("/previous-sites/") {
+                record.path = prefix + record.path
+                if try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == record.path).fetchCount(db) > 0 { continue }
+                try record.update(db)
+            }
+            try db.execute(sql: "DELETE FROM root WHERE host_id = ?", arguments: [hostID.rawValue])
+        }
+    }
+
     public func documentsWithNotes() async throws -> [(document: Document, notes: [Note])] {
         try await queue.read { db in
             let documents = try DocumentRecord

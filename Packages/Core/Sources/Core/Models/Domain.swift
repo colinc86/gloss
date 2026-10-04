@@ -38,8 +38,11 @@ public struct HostOptions: Codable, Sendable, Hashable {
     /// The `~/.ssh/config` alias, when the host's name had to differ from it: an alias called `github`, `atlassian`
     /// or `web` is listed as `github-ssh` (those names are the integration hosts'), and ssh is still given `github`.
     public var alias: String?
+    /// The integration host's account, for the `atlassian` host: the site its documents' paths are about.
+    public var site: String?
 
-    public init(hostName: String = "", user: String = "", port: Int? = nil, identityFile: String = "", alias: String? = nil) {
+    public init(hostName: String = "", user: String = "", port: Int? = nil, identityFile: String = "", alias: String? = nil, site: String? = nil) {
+        self.site = site
         self.hostName = hostName
         self.user = user
         self.port = port
