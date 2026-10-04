@@ -177,7 +177,8 @@ public actor GitHubClient {
     }
 
     /// Open pull requests the user is involved in, most recently updated first.
-    public func openPullRequests(involving login: String, limit: Int = 30) async throws -> [GitHubPullRequestSummary] {
+    /// Open pull requests the user is involved in; `@me` is whoever the token belongs to.
+    public func openPullRequests(involving login: String = "@me", limit: Int = 30) async throws -> [GitHubPullRequestSummary] {
         struct Search: Decodable { var items: [GitHubPullRequestSummary] }
         let reply = try await http.get(url("search/issues", query: ["q": "is:pr is:open involves:\(login)", "sort": "updated", "per_page": String(limit)]), headers: headers())
         return try decode(Search.self, from: reply).items

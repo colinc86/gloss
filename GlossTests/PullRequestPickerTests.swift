@@ -12,7 +12,7 @@ struct PullRequestPickerTests {
     }
 
     @Test func filtersByEveryWordAcrossRepoNumberAndTitle() {
-        let pulls = [summary("acme/widget-api", 2, "Name job consumer"), summary("acme/billing-api", 50, "Cache user lookups"), summary("colinc86/notes", 7, "Draft: job fan-out", draft: true)]
+        let pulls = [summary("acme/widget-api", 2, "Name job consumer"), summary("acme/billing-api", 50, "Cache user lookups"), summary("octo/notes", 7, "Draft: job fan-out", draft: true)]
         #expect(PullRequestPickerModel.filter(pulls, query: "").count == 3)
         #expect(PullRequestPickerModel.filter(pulls, query: "job").map(\.number) == [2, 7])
         #expect(PullRequestPickerModel.filter(pulls, query: "Job widget").map(\.number) == [2])
@@ -25,13 +25,32 @@ struct PullRequestPickerTests {
         let picker = PullRequestPickerModel()
         var opened: PullRequestPath?
         picker.onOpen = { opened = $0 }
-        picker.present(client: nil, login: nil)
-        #expect(picker.errorMessage?.contains("Settings → Integrations") == true, "no token: the list cannot load, a URL still opens")
+        let client = GitHubClient(token: "t", session: URLSession(configuration: .ephemeral))
+        picker.present(client: client, login: nil)
+        #expect(picker.errorMessage == nil, "a saved token lists even before its check has named the login")
         picker.query = "https://github.com/o/r/pull/12/files/Sources/A.swift"
         #expect(picker.typedReference?.changedFile == "Sources/A.swift")
         picker.submit()
         #expect(opened?.path == "/o/r/pull/12/changes/Sources/A.swift")
         #expect(!picker.isPresented)
+    }
+
+    @Test func withoutATokenAPastedURLOpensInTheBrowser() {
+        let picker = PullRequestPickerModel()
+        var opened: PullRequestPath?
+        var browsed: URL?
+        picker.onOpen = { opened = $0 }
+        picker.onOpenWeb = { browsed = $0 }
+        picker.present(client: nil, login: nil)
+        #expect(picker.errorMessage?.contains("Settings → Integrations") == true)
+        picker.query = "o/r#12"
+        #expect(picker.typedAction == .needsKey)
+        picker.submit()
+        #expect(picker.isPresented && picker.query == "o/r#12", "nothing to open it with: the sheet and the query stay")
+        picker.query = "https://github.com/o/r/pull/12"
+        picker.submit()
+        #expect(browsed == URL(string: "https://github.com/o/r/pull/12"))
+        #expect(opened == nil)
     }
 
     @Test func resourceURLsResolveToTheGitHubHost() {

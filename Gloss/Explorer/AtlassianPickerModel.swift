@@ -38,6 +38,10 @@ final class AtlassianPickerModel {
     private var confluenceError: String?
     private(set) var site: URL?
     @ObservationIgnored var onOpen: (AtlassianPath) -> Void = { _ in }
+    /// Without a key: the pasted address, to show as a web page.
+    @ObservationIgnored var onOpenWeb: (URL) -> Void = { _ in }
+    /// Whether a key is saved.
+    private(set) var hasKey = false
     @ObservationIgnored private var issues: [Row] = []
     @ObservationIgnored private var spaces: [Row] = []
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -45,6 +49,7 @@ final class AtlassianPickerModel {
     func present(client: AtlassianClient?, product: Product? = nil) {
         if let product { self.product = product }
         site = client?.site
+        hasKey = client != nil
         query = ""
         selectedIndex = 0
         results = []
@@ -57,7 +62,7 @@ final class AtlassianPickerModel {
         loadTask?.cancel()
         guard let client else {
             isLoading = false
-            noKeyMessage = "Save your Atlassian site, email and API token in Settings → Integrations to list issues and spaces. An issue key or a URL still opens."
+            noKeyMessage = "Save your Atlassian site, email and API token in Settings → Integrations to list and open issues and pages. A pasted URL opens in the browser."
             return
         }
         isLoading = true
@@ -94,9 +99,29 @@ final class AtlassianPickerModel {
         return "\(product) didn't answer: \(reason). Check the key in Settings → Integrations; an issue key or a URL still opens."
     }
 
+    /// What Return does with what is typed: open it, show a pasted URL in the browser (no key), or nothing.
+    enum TypedAction: Equatable { case open(AtlassianPath), browse(URL), needsKey }
+
+    var typedAction: TypedAction? {
+        guard let typed = typedReference else { return nil }
+        if hasKey { return .open(typed) }
+        if let url = URL(string: query.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme?.hasPrefix("http") == true { return .browse(url) }
+        return .needsKey
+    }
+
     var typedReference: AtlassianPath? { AtlassianPath.parse(reference: query, site: site) }
 
     func submit() {
+        switch typedAction {
+        case .browse(let url):
+            dismiss()
+            onOpenWeb(url)
+            return
+        case .needsKey:
+            return
+        default:
+            break
+        }
         let chosen: AtlassianPath?
         if let typed = typedReference {
             chosen = typed

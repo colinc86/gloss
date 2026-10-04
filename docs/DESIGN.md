@@ -247,8 +247,9 @@ path. Dropping on the Dock icon is not supported yet.
   GitHub leads to the picker, never to "Connect".
 - **Open Pull Request…** (File menu, ⌥⌘P; also the GitHub host's menu entry): the Open Quickly panel's shape with
   the pull symbol. The field narrows the open pull requests you are involved in by every word typed (`repo`, `#12`,
-  a word of the title); a pasted URL or `owner/repo#123` shows one "Open owner/repo #123" row and opens as is, even
-  without a token. Rows read title first, then `owner/repo #n · draft · updated 3 days ago`.
+  a word of the title); a pasted URL or `owner/repo#123` shows one "Open owner/repo #123" row and opens as is. The
+  list does not wait for the token's check. Without a token a pasted URL shows "Open in the browser" and opens as a
+  web page; a short reference says a token is needed, and Return keeps the query. Rows read title first, then `owner/repo #n · draft · updated 3 days ago`.
 - **Jira and Confluence roots** (milestone 2): with an Atlassian site saved, the host menu lists Atlassian
   (`square.stack.3d.up`) after GitHub. A Jira project opens as a root named `Jira · PROJ` (ticket symbol) holding
   the issues you are assigned, reported or watch as `PROJ-123.md`; a Confluence space as `Confluence · SPACE`
@@ -260,7 +261,8 @@ path. Dropping on the Dock icon is not supported yet.
   state): the same panel as pull requests with a Jira / Confluence segment at the field's end. Jira lists the issues
   you are part of, newest change first, as `summary` then `KEY · type · status · updated 2 days ago`; Confluence
   lists the site's spaces. A typed key (`cp-12`, any case), a `/browse/KEY` URL or a page URL opens as is, even
-  before the lists arrive or without a key saved.
+  before the lists arrive. Without a key a pasted URL opens in the browser; a bare key says a key is needed. Jira
+  and Confluence each report their own refusal.
 
 ### Notes
 

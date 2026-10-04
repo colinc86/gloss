@@ -50,12 +50,20 @@ struct OpenAtlassianSheet: View {
 
     @ViewBuilder
     private func content(_ picker: AtlassianPickerModel) -> some View {
-        if let typed = picker.typedReference {
+        if let typed = picker.typedReference, let action = picker.typedAction {
             HStack(spacing: DS.Space.m) {
-                Image(systemName: "arrow.right.circle.fill").foregroundStyle(Color.accentColor)
-                Text(Self.describe(typed)).font(.body.weight(.medium))
+                Image(systemName: action == .needsKey ? "key" : action == .open(typed) ? "arrow.right.circle.fill" : "globe")
+                    .foregroundStyle(action == .needsKey ? Color.secondary : Color.accentColor)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(action == .open(typed) ? Self.describe(typed) : action == .needsKey ? Self.describe(typed).replacingOccurrences(of: "Open ", with: "") : "Open in the browser")
+                        .font(.body.weight(.medium))
+                    if action != .open(typed) {
+                        Text(action == .needsKey ? "Save an Atlassian key in Settings → Integrations to open it" : "Save an Atlassian key to open it as a document")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
-                KeyCap("↩").foregroundStyle(.secondary)
+                if action != .needsKey { KeyCap("↩").foregroundStyle(.secondary) }
             }
             .padding(DS.Space.l)
             .frame(height: 60)

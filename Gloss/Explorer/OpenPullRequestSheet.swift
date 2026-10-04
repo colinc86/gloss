@@ -44,13 +44,21 @@ struct OpenPullRequestSheet: View {
 
     @ViewBuilder
     private func content(_ picker: PullRequestPickerModel) -> some View {
-        if let typed = picker.typedReference {
-            // A pasted reference opens as is, whatever the list holds.
+        if let typed = picker.typedReference, let action = picker.typedAction {
+            // A pasted reference opens as is, whatever the list holds; without a token a URL opens as a web page.
             HStack(spacing: DS.Space.m) {
-                Image(systemName: "arrow.right.circle.fill").foregroundStyle(Color.accentColor)
-                Text("Open \(typed.repository) #\(typed.number)").font(.body.weight(.medium))
+                Image(systemName: action == .needsKey ? "key" : action == .open(typed) ? "arrow.right.circle.fill" : "globe")
+                    .foregroundStyle(action == .needsKey ? Color.secondary : Color.accentColor)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(action == .needsKey ? "\(typed.repository) #\(typed.number)" : action == .open(typed) ? "Open \(typed.repository) #\(typed.number)" : "Open in the browser")
+                        .font(.body.weight(.medium))
+                    if action != .open(typed) {
+                        Text(action == .needsKey ? "Save a GitHub token in Settings → Integrations to open it" : "Save a GitHub token to open it as a pull request")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Spacer()
-                KeyCap("↩").foregroundStyle(.secondary)
+                if action != .needsKey { KeyCap("↩").foregroundStyle(.secondary) }
             }
             .padding(DS.Space.l)
             .frame(height: 60)

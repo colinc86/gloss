@@ -239,6 +239,9 @@ final class AppModel {
         quickOpen.onOpen = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
         pullRequestPicker.onOpen = { [weak self] pull in Task { await self?.openPullRequest(pull) } }
         atlassianPicker.onOpen = { [weak self] reference in Task { await self?.openAtlassian(reference) } }
+        // Without a key a pasted pull request, issue or page URL is still worth reading: as a web page.
+        pullRequestPicker.onOpenWeb = { [weak self] url in self?.openWebPage(url) }
+        atlassianPicker.onOpenWeb = { [weak self] url in self?.openWebPage(url) }
     }
 
     // MARK: Follow mode

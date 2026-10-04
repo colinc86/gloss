@@ -16,15 +16,21 @@ final class PullRequestPickerModel {
     var selectedIndex = 0
     private(set) var isLoading = false
     private(set) var errorMessage: String?
-    /// The signed-in login, for the empty state.
+    /// The signed-in login, for the empty state, once the token has been checked.
     private(set) var login: String?
+    /// Whether a token is saved: without one a pasted URL opens in the browser instead.
+    private(set) var hasKey = false
     @ObservationIgnored var onOpen: (PullRequestPath) -> Void = { _ in }
+    /// Without a token: the pasted address, to show as a web page.
+    @ObservationIgnored var onOpenWeb: (URL) -> Void = { _ in }
     @ObservationIgnored private var all: [GitHubPullRequestSummary] = []
     @ObservationIgnored private var loadTask: Task<Void, Never>?
 
-    /// Shows the panel and lists the user's open pull requests; nil arguments mean no token is saved.
+    /// Shows the panel and lists the user's open pull requests; a nil client means no token is saved. The list
+    /// does not wait for the token's check (it searches as whoever the token belongs to).
     func present(client: GitHubClient?, login: String?) {
         self.login = login
+        hasKey = client != nil
         query = ""
         selectedIndex = 0
         results = []
@@ -32,15 +38,15 @@ final class PullRequestPickerModel {
         errorMessage = nil
         isPresented = true
         loadTask?.cancel()
-        guard let client, let login else {
+        guard let client else {
             isLoading = false
-            errorMessage = "Save a GitHub token in Settings → Integrations to list your pull requests. A pull request URL still opens."
+            errorMessage = "Save a GitHub token in Settings → Integrations to list and open pull requests. A pasted URL opens in the browser."
             return
         }
         isLoading = true
         loadTask = Task { [weak self] in
             do {
-                let pulls = try await client.openPullRequests(involving: login, limit: 50)
+                let pulls = try await client.openPullRequests(limit: 50)
                 guard !Task.isCancelled, let self else { return }
                 all = pulls
                 isLoading = false
@@ -56,8 +62,30 @@ final class PullRequestPickerModel {
     /// The reference the query names, when it does.
     var typedReference: PullRequestPath? { PullRequestPath.parse(reference: query) }
 
-    /// Return: a typed reference opens as is; otherwise the selected pull request.
+    /// What Return does with what is typed: open the pull request, show a pasted URL in the browser (no token), or
+    /// nothing (a short reference with no token to open it with).
+    enum TypedAction: Equatable { case open(PullRequestPath), browse(URL), needsKey }
+
+    var typedAction: TypedAction? {
+        guard let typed = typedReference else { return nil }
+        if hasKey { return .open(typed) }
+        if let url = URL(string: query.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme?.hasPrefix("http") == true { return .browse(url) }
+        return .needsKey
+    }
+
+    /// Return: a typed reference opens as is; otherwise the selected pull request. The query stays when nothing
+    /// can be opened.
     func submit() {
+        switch typedAction {
+        case .browse(let url):
+            dismiss()
+            onOpenWeb(url)
+            return
+        case .needsKey:
+            return
+        default:
+            break
+        }
         let chosen: PullRequestPath?
         if let typed = typedReference {
             chosen = typed
