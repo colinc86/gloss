@@ -15,6 +15,7 @@ final class Stub: @unchecked Sendable {
 
     let id = UUID().uuidString
     private var responses: [String: Response] = [:]
+    private var sequences: [String: [Response]] = [:]
     private var requests: [URLRequest] = []
     private let lock = NSLock()
 
@@ -27,12 +28,24 @@ final class Stub: @unchecked Sendable {
         responses[url] = response
     }
 
+    /// Answers in order, the last one repeating: a pull request that changes between polls.
+    func respond(to url: String, inOrder responses: [Response]) {
+        lock.lock(); defer { lock.unlock() }
+        sequences[url] = responses
+    }
+
     var recorded: [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
 
     fileprivate func serve(_ request: URLRequest) -> Response? {
         lock.lock(); defer { lock.unlock() }
         requests.append(request)
-        return responses[request.url!.absoluteString]
+        let url = request.url!.absoluteString
+        if var queue = sequences[url], !queue.isEmpty {
+            let next = queue.removeFirst()
+            if !queue.isEmpty { sequences[url] = queue } else { sequences[url] = nil; responses[url] = next }
+            return next
+        }
+        return responses[url]
     }
 
     /// A session whose requests all come to this stub.
