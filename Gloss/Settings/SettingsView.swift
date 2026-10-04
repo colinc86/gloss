@@ -736,14 +736,14 @@ private struct IntegrationsSettings: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
         }
-        .confirmationDialog(removing == .github ? "Remove the GitHub token?" : "Remove the Atlassian key?",
-                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
-            Button("Remove", role: .destructive) {
-                if let service = removing { model.integrations.clear(service) }
+        // The service is held by the dialog, so its wording does not change while it closes.
+        .confirmationDialog(Text("Remove this key?"), isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { service in
+            Button(service == .github ? "Remove GitHub Token" : "Remove Atlassian Key", role: .destructive) {
+                model.integrations.clear(service)
                 removing = nil
             }
-        } message: {
-            Text(removing == .github ? "The pull requests open now close. Their notes stay." : "The issues and pages open now close. Their notes stay.")
+        } message: { service in
+            Text(service == .github ? "The pull requests open now close. Their notes stay." : "The issues and pages open now close. Their notes stay.")
         }
         .formStyle(.grouped)
         .animation(DS.Motion.smooth, value: integrations.githubStatus)

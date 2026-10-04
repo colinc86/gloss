@@ -265,7 +265,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
             poller.task = Task { [weak self] in
                 var schedule = PollSchedule(interval: interval)
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: schedule.delay(rateLimitedUntil: await self?.rateLimitedUntil))
+                    await PollGate.shared.sleep(for: schedule.delay(rateLimitedUntil: await self?.rateLimitedUntil))
                     await PollGate.shared.waitWhilePaused()
                     guard !Task.isCancelled, let self else { return }
                     if await self.poll(path) { schedule.succeeded() } else { schedule.failed() }

@@ -66,6 +66,7 @@ struct AppCommands: Commands {
             Button { model.presentQuickOpen() } label: { Label("Open Quickly…", systemImage: "doc.text.magnifyingglass") }
                 .keyboardShortcut("p", modifiers: [.command])
                 .disabled(model.explorer.selectedTab == nil || model.selectedRootIsVirtual)
+                .help(model.selectedRootIsVirtual ? "A pull request, project or space is browsed in the tree, not searched by name" : "")
             Button { model.presentOpenLocation() } label: { Label("Open Location…", systemImage: "globe") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Button { model.presentOpenPullRequest() } label: { Label("Open Pull Request…", systemImage: "arrow.triangle.pull") }

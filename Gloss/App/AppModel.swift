@@ -208,7 +208,9 @@ final class AppModel {
                 await self.herdrTransport.forget(hostID)
             }
         }
-        // Pull requests, tickets and pages are not polled while the app is in the background.
+        // Pull requests, tickets and pages are not polled while the app is in the background (a launch that never
+        // came to the front included; a test host never pauses, since it is not an app launch).
+        if !launchOptions.isTestHost, !NSApplication.shared.isActive { PollGate.shared.isPaused = true }
         NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in PollGate.shared.isPaused = true }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in PollGate.shared.isPaused = false }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }

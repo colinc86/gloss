@@ -160,7 +160,7 @@ public actor MCPServer {
             var path = object["path"] as? String ?? ""
             if let raw = object["url"] as? String, let url = URL(string: raw) {
                 // A URL the app has no document for is a web page, as open_in_viewer treats it.
-                if let resolved = dependencies.resolveURL(url) { (host, path) = resolved } else if DocumentKindDetector.isWebURL(raw) { path = raw }
+                if let resolved = dependencies.resolveURL(url) { (host, path) = resolved } else if DocumentKindDetector.isWebURL(raw) { (host, path) = ("web", raw) }
             }
             guard path.hasPrefix("/") || DocumentKindDetector.isWebURL(path) else {
                 return .error(statusCode: 400, MCPError.invalidParams("path is required"))

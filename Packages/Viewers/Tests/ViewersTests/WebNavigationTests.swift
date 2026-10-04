@@ -16,6 +16,15 @@ struct WebDocumentKeyTests {
         #expect(key("https://me:secret@example.com/") == "https://example.com/", "credentials are never part of a key")
         #expect(key("https://example.com/a?utm_source=x&id=2&fbclid=y") == "https://example.com/a?id=2", "tracking parameters name the same page")
         #expect(key("https://example.com/a?utm_source=x") == "https://example.com/a")
+        #expect(key("https://example.com/search?q=c%2B%2B") == "https://example.com/search?q=c%2B%2B", "an encoded plus stays encoded: the key is also what loads")
+        #expect(key("https://example.com/s?q=a%2Bb") != key("https://example.com/s?q=a+b"))
+
+        let address = { WebAddress.url(from: $0) }
+        #expect(address("mailto:x@y.com") == nil, "not an address to load")
+        #expect(address("example.com:443") == URL(string: "https://example.com:443"), "the TLS port means https")
+        #expect(address("user:pw@example.com") == nil, "a bare scheme-like prefix is refused rather than sent in clear")
+        #expect(address("https://user:pw@example.com") == URL(string: "https://user:pw@example.com"), "written out in full, it is what was typed")
+        #expect(address("localhost:3000/x") == URL(string: "http://localhost:3000/x"))
     }
 }
 

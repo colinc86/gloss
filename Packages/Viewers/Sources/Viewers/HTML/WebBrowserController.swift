@@ -737,26 +737,43 @@ public final class WebBrowserController {
         // A page's alert, confirm and prompt come up as sheets on the window, as Safari shows them; a page
         // reviewed here may need them to get anywhere.
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
+            guard let window = shownWindow(webView) else { return completionHandler() }
             let alert = Self.alert(message, frame: frame)
             alert.addButton(withTitle: "OK")
-            present(alert, in: webView) { _ in completionHandler() }
+            present(alert, in: window) { _ in completionHandler() }
         }
 
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) {
+            guard let window = shownWindow(webView) else { return completionHandler(false) }
             let alert = Self.alert(message, frame: frame)
             alert.addButton(withTitle: "OK")
             alert.addButton(withTitle: "Cancel")
-            present(alert, in: webView) { completionHandler($0 == .alertFirstButtonReturn) }
+            present(alert, in: window) { completionHandler($0 == .alertFirstButtonReturn) }
         }
 
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (String?) -> Void) {
+            guard let window = shownWindow(webView) else { return completionHandler(nil) }
             let alert = Self.alert(prompt, frame: frame)
             let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
             field.stringValue = defaultText ?? ""
             alert.accessoryView = field
+            alert.window.initialFirstResponder = field
             alert.addButton(withTitle: "OK")
             alert.addButton(withTitle: "Cancel")
-            present(alert, in: webView) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
+            present(alert, in: window) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
+        }
+
+        /// Dialogs the reader turned off for the page now showing; cleared when the view goes to another page.
+        private var dialogsSuppressed = false
+        private var suppressedFor: URL?
+
+        /// The window a dialog may come up on: only while the page is on screen and the reader has not turned the
+        /// page's dialogs off. A page left running behind another document is answered at once (OK, Cancel, no
+        /// text), never with an app-wide modal over whatever the reader is doing.
+        private func shownWindow(_ webView: WKWebView) -> NSWindow? {
+            if suppressedFor != webView.url?.withoutFragment { dialogsSuppressed = false }
+            guard !dialogsSuppressed, let window = webView.window, window.isVisible, browser?.current != nil else { return nil }
+            return window
         }
 
         /// A file input: uploading is not something a review does, and the page is told no file was chosen.
@@ -767,16 +784,27 @@ public final class WebBrowserController {
 
         private static func alert(_ message: String, frame: WKFrameInfo) -> NSAlert {
             let alert = NSAlert()
-            alert.messageText = frame.securityOrigin.host.isEmpty ? "This page says" : "\(frame.securityOrigin.host) says"
+            let host = frame.securityOrigin.host
+            // A served file's origin is the app's own scheme host (`h_local`): just "This page".
+            let named = !host.isEmpty && frame.securityOrigin.protocol.lowercased().hasPrefix("http")
+            alert.messageText = named ? "\(host) says" : "This page says"
             alert.informativeText = message
+            // A page that asks again and again can be told to stop.
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Don't show more dialogs from this page"
             return alert
         }
 
-        private func present(_ alert: NSAlert, in webView: WKWebView, then: @escaping @MainActor (NSApplication.ModalResponse) -> Void) {
-            if let window = webView.window {
-                alert.beginSheetModal(for: window) { response in MainActor.assumeIsolated { then(response) } }
-            } else {
-                then(alert.runModal())
+        private func present(_ alert: NSAlert, in window: NSWindow, then: @escaping @MainActor (NSApplication.ModalResponse) -> Void) {
+            let page = window.contentView.flatMap { _ in browser?.webView.url?.withoutFragment }
+            alert.beginSheetModal(for: window) { [weak self] response in
+                MainActor.assumeIsolated {
+                    if alert.suppressionButton?.state == .on {
+                        self?.dialogsSuppressed = true
+                        self?.suppressedFor = page
+                    }
+                    then(response)
+                }
             }
         }
 
@@ -788,5 +816,14 @@ public final class WebBrowserController {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             browser?.received(message.body)
         }
+    }
+}
+
+private extension URL {
+    /// The page this URL shows: a fragment is a place on it, not another page.
+    var withoutFragment: URL? {
+        guard var components = URLComponents(url: self, resolvingAgainstBaseURL: true) else { return self }
+        components.fragment = nil
+        return components.url
     }
 }

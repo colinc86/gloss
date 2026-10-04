@@ -256,6 +256,9 @@ struct ExplorerSidebar: View {
                 Image(systemName: "magnifyingglass")
             }
             .buttonStyle(.borderless)
+            // A pull request, project or space is browsed, not searched.
+            .disabled(explorer.selectedTab?.hostID.isVirtual == true)
+            .onChange(of: explorer.selectedTab?.hostID.isVirtual == true) { _, virtual in if virtual { explorer.contentSearch.isVisible = false } }
             .help("Search file contents (⌘⇧F)")
             // Shows its state, not just its function: struck through while hidden files stay hidden.
             Toggle(isOn: $explorer.showDotfiles) {

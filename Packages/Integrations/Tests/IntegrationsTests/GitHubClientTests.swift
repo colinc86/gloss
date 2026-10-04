@@ -134,6 +134,22 @@ struct HTTPLayerTests {
         #expect(schedule.delay(rateLimitedUntil: Date(timeIntervalSince1970: 1e9), now: now) == .seconds(3600), "never more than an hour, whatever the server says")
     }
 
+    @Test func aPausedPollerWakesWhenTheAppComesBack() async throws {
+        let gate = PollGate()
+        gate.isPaused = true
+        let started = ContinuousClock.now
+        async let slept: Void = gate.sleep(for: .seconds(30))
+        try await Task.sleep(for: .milliseconds(100))
+        gate.isPaused = false
+        await slept
+        #expect(ContinuousClock.now - started < .seconds(5), "activation cuts the interval short")
+        gate.isPaused = true
+        async let waited: Void = gate.waitWhilePaused()
+        try await Task.sleep(for: .milliseconds(50))
+        gate.isPaused = false
+        await waited
+    }
+
     @Test func secondaryLimitsAndStrayNotModifiedAreHandled() async throws {
         let stub = Stub()
         stub.respond(to: "https://api.github.com/user", with: .json(#"{"message":"You have exceeded a secondary rate limit."}"#, status: 403, headers: ["Retry-After": "60"]))

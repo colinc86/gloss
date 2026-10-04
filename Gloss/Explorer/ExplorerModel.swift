@@ -1,5 +1,6 @@
 import AppKit
 import Core
+import Remote
 import Observation
 import OSLog
 
@@ -210,7 +211,7 @@ final class ExplorerModel {
         do {
             let attributes = try await fileSystem.stat(normalized)
             guard attributes.kind == .directory else {
-                lastError = "\(normalized) is not a directory"
+                lastError = "\(PathUtilities.name(of: normalized)) is a file, not a folder."
                 return
             }
             let root = try await noteStore.recordRootOpened(hostID: hostID, path: normalized)
@@ -227,7 +228,7 @@ final class ExplorerModel {
             startWatching(tab, fileSystem: fileSystem)
             await loadRecents(hostID: hostID)
         } catch {
-            lastError = "Couldn't open \(PathUtilities.name(of: normalized)): " + DocumentSession.openFailure(error, virtual: hostID.isVirtual)
+            lastError = "Couldn't open \(PathUtilities.name(of: normalized)): " + Self.folderFailure(error, virtual: hostID.isVirtual)
             Log.explorer.error("openRoot failed: \(error, privacy: .public)")
         }
     }
@@ -322,6 +323,19 @@ final class ExplorerModel {
             for child in node.children ?? [] where child.isLoaded {
                 await reload(node: child, recursive: true)
             }
+        }
+    }
+
+    /// Why a folder could not be opened, in a folder's words (a lost connection named as one).
+    nonisolated static func folderFailure(_ error: any Error, virtual: Bool) -> String {
+        if virtual { return DocumentSession.openFailure(error, virtual: true) }
+        switch error as? FileSystemError {
+        case .notFound: return "it isn't there any more."
+        case .permissionDenied: return "you don't have permission to open it."
+        case .io(let detail): return detail
+        default:
+            if error is SFTPClientError || error is SSHError { return "the connection to its host was lost or refused (\(error))." }
+            return error.localizedDescription
         }
     }
 

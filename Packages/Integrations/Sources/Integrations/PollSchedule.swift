@@ -32,14 +32,49 @@ public final class PollGate: @unchecked Sendable {
     public static let shared = PollGate()
     private let lock = NSLock()
     private var paused = false
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    /// Bumped on every resume, so sleeping pollers look again at once rather than at the end of their interval.
+    private var resumes = 0
 
     public var isPaused: Bool {
         get { lock.withLock { paused } }
-        set { lock.withLock { paused = newValue } }
+        set {
+            let woken: [CheckedContinuation<Void, Never>] = lock.withLock {
+                let wasPaused = paused
+                paused = newValue
+                guard wasPaused, !newValue else { return [] }
+                resumes += 1
+                defer { waiters = [:] }
+                return Array(waiters.values)
+            }
+            woken.forEach { $0.resume() }
+        }
     }
 
-    /// Returns once the app is in front again (at once when it is), or when the task is cancelled.
+    var resumeCount: Int { lock.withLock { resumes } }
+
+    /// Returns once the app is in front again (at once when it is).
     func waitWhilePaused() async {
-        while isPaused, !Task.isCancelled { try? await Task.sleep(for: .seconds(2)) }
+        let id = UUID()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let ready = lock.withLock { () -> Bool in
+                if !paused { return true }
+                waiters[id] = continuation
+                return false
+            }
+            if ready { continuation.resume() }
+        }
+    }
+
+    /// Sleeps for `duration`, cut short when the app comes back to the front, so a poll follows activation at once.
+    func sleep(for duration: Duration) async {
+        let start = resumeCount
+        let step: Duration = .seconds(1)
+        var left = duration
+        while left > .zero, !Task.isCancelled, resumeCount == start {
+            let chunk = min(step, left)
+            try? await Task.sleep(for: chunk)
+            left -= chunk
+        }
     }
 }

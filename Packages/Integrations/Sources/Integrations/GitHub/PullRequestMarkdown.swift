@@ -41,7 +41,8 @@ enum PullRequestMarkdown {
         let renamed = files.compactMap { file in file.previousFilename.map { "\($0) → \(file.filename)" } }
         if !renamed.isEmpty { lines.append("- Renamed: " + renamed.joined(separator: ", ")) }
         // GitHub lists at most 3000 files; a tree from a bigger pull request is not the whole change.
-        if let total = pull.changedFiles, total > files.count { lines.append("- Showing \(files.count) of \(total) changed files: GitHub lists at most 3000") }
+        // Only at the cap: a push between fetching the pull request and its files is not a truncated tree.
+        if let total = pull.changedFiles, files.count >= 3000, total > files.count { lines.append("- Showing \(files.count) of \(total) changed files: GitHub lists at most 3000") }
         lines.append("- <\(pull.htmlUrl.absoluteString)>")
         lines.append("")
         let body = (pull.body ?? "").replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
