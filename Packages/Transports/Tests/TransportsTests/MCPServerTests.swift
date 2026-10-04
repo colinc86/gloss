@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import NIOHTTP1
 import Testing
 @testable import Transports
 
@@ -150,6 +151,41 @@ struct MCPServerTests {
         #expect(status == 413 || status == -1, "status \(status)")
         let (_, health) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/health")!)
         #expect((health as? HTTPURLResponse)?.statusCode == 200, "the server still answers")
+    }
+
+    /// A web page (a site open in a browser, or one rebinding its name to 127.0.0.1) is refused; agents, hooks and
+    /// the plugin, which send no Origin and use a loopback Host, are served.
+    @Test func webPagesCannotReachTheNotes() async throws {
+        var headers = HTTPHeaders()
+        headers.add(name: "Host", value: "127.0.0.1:47831")
+        #expect(HTTPListener.permits(headers))
+        headers.replaceOrAdd(name: "Host", value: "localhost")
+        #expect(HTTPListener.permits(headers))
+        headers.replaceOrAdd(name: "Host", value: "[::1]:47831")
+        #expect(HTTPListener.permits(headers))
+        headers.replaceOrAdd(name: "Host", value: "evil.example:47831")
+        #expect(!HTTPListener.permits(headers), "a rebound name")
+        headers.replaceOrAdd(name: "Host", value: "127.0.0.1:47831")
+        headers.add(name: "Origin", value: "https://evil.example")
+        #expect(!HTTPListener.permits(headers), "a cross-site request")
+        headers.replaceOrAdd(name: "Origin", value: "null")
+        #expect(!HTTPListener.permits(headers), "a sandboxed frame")
+
+        // End to end: the same hook request with and without an Origin.
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-origin-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let port = try #require(await server.port)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/health")!)
+        request.setValue("https://evil.example", forHTTPHeaderField: "Origin")
+        let (_, refused) = try await URLSession.shared.data(for: request)
+        #expect((refused as? HTTPURLResponse)?.statusCode == 403)
+        let (_, served) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/health")!)
+        #expect((served as? HTTPURLResponse)?.statusCode == 200)
     }
 
     @Test func registrationURLsCarryTheHostAlias() {

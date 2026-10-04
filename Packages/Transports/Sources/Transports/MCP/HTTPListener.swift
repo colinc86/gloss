@@ -7,6 +7,22 @@ import NIOPosix
 /// A minimal HTTP/1.1 listener on the loopback interface that hands whole requests to a handler and writes plain
 /// or streamed (SSE) responses. Mirrors the MCP SDK's conformance adapter; NIO is already in the SDK's graph.
 public final class HTTPListener: Sendable {
+    /// Who may talk to the server: the agents, hooks and plugin, which call it by a loopback address and send no
+    /// Origin. A browser always sends Origin on cross-site requests (and on same-origin ones after a DNS
+    /// rebinding, whose Host is then the attacker's name), so either one names a web page and is refused, as the
+    /// MCP specification asks of local servers.
+    nonisolated static func permits(_ headers: HTTPHeaders) -> Bool {
+        if !headers["Origin"].isEmpty { return false }
+        guard let host = headers["Host"].first else { return true }
+        let name: Substring
+        if host.hasPrefix("[") {
+            name = host.prefix { $0 != "]" }.dropFirst()
+        } else {
+            name = host.split(separator: ":").first ?? Substring(host)
+        }
+        return ["127.0.0.1", "localhost", "::1"].contains(name.lowercased())
+    }
+
     public typealias Handler = @Sendable (HTTPRequest, _ query: [String: String]) async -> HTTPResponse
 
     private let group: MultiThreadedEventLoopGroup
@@ -91,6 +107,15 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
         case .end:
             guard let request = pending else { return }
             pending = nil
+            guard HTTPListener.permits(request.head.headers) else {
+                // A web page (any site open in a browser, or one rebinding its name to 127.0.0.1) must not reach the
+                // notes: answered with 403 and the connection closed.
+                let head = HTTPResponseHead(version: .http1_1, status: .forbidden, headers: ["Content-Length": "0", "Connection": "close"])
+                context.write(wrapOutboundOut(.head(head)), promise: nil)
+                let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+                context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in bound.value.close(promise: nil) }
+                return
+            }
             nonisolated(unsafe) let ctx = context
             let handler = handler
             streamTask = Task {
