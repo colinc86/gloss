@@ -45,14 +45,17 @@ struct ExecIntegrationTests {
             let target = AgentTarget(transport: .tmux, hostID: hostRow.id, label: "t", identityJSON: "{}")
             let staging = try await stager.stage([LocalAttachment(noteID: NoteID.new(), localPath: crop)], for: target, sendID: sendID)
             let remotePath = try #require(staging.attachments.first?.agentPath)
-            #expect(remotePath.hasPrefix("/tmp/gloss/\(sendID.rawValue)/"))
+            let stagingRoot = NSHomeDirectory() + "/.cache/gloss/attachments"
+            #expect(remotePath.hasPrefix("\(stagingRoot)/\(sendID.rawValue)/"), "in the user's own home, not a /tmp anyone can pre-create")
+            let rootMode = try FileManager.default.attributesOfItem(atPath: stagingRoot)[.posixPermissions] as? Int
+            #expect(rootMode == 0o700)
             #expect(try Data(contentsOf: URL(fileURLWithPath: remotePath)) == Data([0x89, 0x50, 0x4E, 0x47]))
-            #expect(staging.remoteDirectories == ["/tmp/gloss/\(sendID.rawValue)"])
+            #expect(staging.remoteDirectories == ["\(stagingRoot)/\(sendID.rawValue)"])
             // The coordinator records the directory once the send row exists; mirror that here.
             let recordedSend = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "p", noteIDs: [], outcome: .delivered)
             try await store.recordStagedFiles(sendID: recordedSend, hostID: hostRow.id, remotePaths: staging.remoteDirectories, expiresAt: Date().addingTimeInterval(7 * 24 * 3600))
             let recorded = try await store.expiredStagedFiles(now: Date().addingTimeInterval(8 * 24 * 3600))
-            #expect(recorded.map(\.remotePath) == ["/tmp/gloss/\(sendID.rawValue)"])
+            #expect(recorded.map(\.remotePath) == ["\(stagingRoot)/\(sendID.rawValue)"])
             await stager.cleanupExpired(now: Date().addingTimeInterval(8 * 24 * 3600))
             #expect(!FileManager.default.fileExists(atPath: remotePath), "expired staging directory is removed")
             #expect(try await store.expiredStagedFiles(now: Date().addingTimeInterval(8 * 24 * 3600)).isEmpty)

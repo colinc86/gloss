@@ -99,7 +99,7 @@ Source: image
 Original size: 2880x1800
 
 Region: x=1204 y=312 w=640 h=220 (crop attached)
-Attachment: /tmp/gloss/a1b2c3/dashboard-region-1.png
+Attachment: /home/me/.cache/gloss/attachments/a1b2c3/dashboard-region-1.png
 User comment: "The legend overlaps the chart here. Move it below."
 
 Notes: 2. Mark each resolved with the gloss MCP tool when done.

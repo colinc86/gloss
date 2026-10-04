@@ -66,7 +66,7 @@ Source: image
 Original size: 2880x1800
 
 Region: x=1204 y=312 w=640 h=220 (crop attached)
-Attachment: /tmp/gloss/a1b2c3/dashboard-region-1.png
+Attachment: /home/me/.cache/gloss/attachments/a1b2c3/dashboard-region-1.png
 User comment: "The legend overlaps the chart here. Move it below."
 
 Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9X..., n_01J9Y...) when done.
@@ -87,7 +87,7 @@ The app only ever reads these resources; the agent makes every change with its o
 
 - Crops and PDF page renders are PNG. Render PDF regions at 2x (144 dpi) for legibility.
 - Local target: `~/Library/Application Support/Gloss/attachments/<send-id>/<name>.png`.
-- Remote target: upload over SFTP to `/tmp/gloss/<send-id>/` on that host BEFORE delivering the packet, `mkdir -p` semantics via SFTP MKDIR with tolerated FAILURE-if-exists. Record each in `staged_file` with a 7 day `expires_at`; a cleanup task removes expired directories over the exec channel.
+- Remote target: upload over SFTP to `~/.cache/gloss/attachments/<send-id>/` on that host BEFORE delivering the packet. The root is made 0700 and checked to be a real directory owned by the user (never `/tmp`: on a shared host a predictable directory there can be made first by someone else). Record each in `staged_file` with a 7 day `expires_at`; a cleanup task removes expired directories over the exec channel.
 - The `Attachment:` path is always the path on the machine where the agent runs. Decide that machine from the target (Herdr pane host, tmux host, OpenCode host), not from where the file was viewed.
 
 ## Size rules
