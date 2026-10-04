@@ -61,6 +61,12 @@ struct HerdrPluginTests {
         #expect(object?["host"] as? String == "asus" && object?["cwd"] as? String == "/home/colin" && object?["text"] as? String == "line1\nline2 \"q\"")
         // The URL route needs no files under HOME; the host file is simply absent, so the note targets local.
         #expect(run("note", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"x"}"#, env: ["HOME": "/nonexistent"]).hasPrefix("gloss://note?host=local"))
+        // With the app's token file, a note link carries the token (a web page's link could not).
+        let tokenHome = NSTemporaryDirectory() + "gloss-token-\(UUID().uuidString.prefix(6))"
+        try? FileManager.default.createDirectory(atPath: tokenHome + "/Library/Application Support/Gloss", withIntermediateDirectories: true)
+        try? "0123456789abcdef\n".write(toFile: tokenHome + "/Library/Application Support/Gloss/url-token", atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(atPath: tokenHome) }
+        #expect(run("note", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"x"}"#, env: ["HOME": tokenHome]).hasSuffix("&token=0123456789abcdef"))
         #expect(run("note", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"x"}"#, env: ["HOME": "", "GLOSS_PLUGIN_TRANSPORT": "http"]).isEmpty)
     }
 

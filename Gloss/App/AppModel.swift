@@ -968,6 +968,8 @@ final class AppModel {
         updateDockBadge()
         sweepAttachments()
         await hosts.load()
+        // The token note links must carry exists before the Herdr plugin first reads it.
+        if !launchOptions.isTestHost { _ = URLRouter.token() }
         // Set before anything can save a key, so no save is missed; registrations are queued and only act on what
         // changed, so the explicit one below adds nothing but waiting for them.
         integrations.onChange = { [weak self] in self?.scheduleIntegrationRegistration() }

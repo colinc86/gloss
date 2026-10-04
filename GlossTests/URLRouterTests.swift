@@ -28,4 +28,12 @@ struct URLRouterTests {
         #expect(URLRouter.parse(URL(string: "gloss://note?path=/p/a.md&text=x&color=teal")!, hosts: hosts)
                 == .note(hostID: .local, path: "/p/a.md", cwd: nil, line: nil, text: "x", file: nil), "an unknown colour falls back to the default")
     }
+
+    @Test func linksThatCreateNotesMustCarryTheUsersToken() {
+        let token = "ab" + String(repeating: "c", count: 62)
+        #expect(URLRouter.carriesToken(URL(string: "gloss://note?text=x&token=\(token)")!, expected: token))
+        #expect(!URLRouter.carriesToken(URL(string: "gloss://note?text=x")!, expected: token), "a web page cannot know it")
+        #expect(!URLRouter.carriesToken(URL(string: "gloss://note?text=x&token=abc")!, expected: token))
+        #expect(!URLRouter.carriesToken(URL(string: "gloss://note?text=x&token=\(token)")!, expected: nil))
+    }
 }

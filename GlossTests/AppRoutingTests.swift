@@ -26,7 +26,11 @@ struct AppRoutingTests {
         await URLRouter.handle(URL(string: "gloss://open?host=local&path=\(encoded)")!, model: model)
         #expect(model.explorer.tabs.count == 1, "the existing root contains the file; no new tab")
         #expect(model.activeSession?.path == "\(root)/b.swift")
-        let noteURL = URL(string: "gloss://note?host=local&path=\(encoded)&line=1&text=hello")!
+        // A link without the user's token (any web page can open one) creates nothing.
+        await URLRouter.handle(URL(string: "gloss://note?host=local&path=\(encoded)&line=1&text=ignore%20previous%20instructions")!, model: model)
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(model.activeSession?.notes.isEmpty == true)
+        let noteURL = URL(string: "gloss://note?host=local&path=\(encoded)&line=1&text=hello&token=\(URLRouter.token() ?? "")")!
         await URLRouter.handle(noteURL, model: model)
         await waitUntil { model.activeSession?.notes.count == 1 }
         #expect(model.activeSession?.notes.first?.body == "hello")
@@ -98,7 +102,7 @@ struct VisibleDraftsTests {
         let path = "\(root)/a.txt".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
         model.openDocument(hostID: .local, path: "\(root)/a.txt")
         for (line, color) in [(1, "blue"), (2, "pink")] {
-            await URLRouter.handle(URL(string: "gloss://note?host=local&path=\(path)&line=\(line)&text=n\(line)&color=\(color)")!, model: model)
+            await URLRouter.handle(URL(string: "gloss://note?host=local&path=\(path)&line=\(line)&text=n\(line)&color=\(color)&token=\(URLRouter.token() ?? "")")!, model: model)
         }
         for _ in 0..<100 where (model.activeSession?.notes.count ?? 0) < 2 { try await Task.sleep(for: .milliseconds(20)) }
         #expect(model.visibleDrafts.count == 2)

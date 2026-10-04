@@ -1,6 +1,7 @@
 import Core
 import Integrations
 import Foundation
+import Security
 import OSLog
 
 /// `gloss://open?host=<alias|local>&path=<abs>[&line=<n>]` opens a file, scrolled to a line;
@@ -19,12 +20,46 @@ enum URLRouter {
             .appendingPathComponent("Gloss/inbox").path
     }
 
+    /// A secret only this user's processes can read (the file is 0600). Any web page can open a
+    /// `gloss://` link; one that creates a note (which an agent's hook then reads as the user's words) or
+    /// opens a tunnel to a host must carry it, which the Herdr plugin does and a page cannot.
+    nonisolated static var tokenPath: String {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Gloss/url-token").path
+    }
+
+    /// The token, made on first use.
+    nonisolated static func token() -> String? {
+        if let existing = try? String(contentsOfFile: tokenPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), existing.count >= 32 {
+            return existing
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
+        let token = bytes.map { String(format: "%02x", $0) }.joined()
+        let directory = (tokenPath as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        guard FileManager.default.createFile(atPath: tokenPath, contents: Data((token + "\n").utf8), attributes: [.posixPermissions: 0o600]) else { return nil }
+        return token
+    }
+
+    /// Whether a link carries the token, compared in constant time.
+    nonisolated static func carriesToken(_ url: URL, expected: String?) -> Bool {
+        guard let expected, let given = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "token" })?.value,
+              given.utf8.count == expected.utf8.count else { return false }
+        return zip(given.utf8, expected.utf8).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
+    }
+
     nonisolated static func isInboxFile(_ path: String) -> Bool {
         let resolved = (path as NSString).standardizingPath
         let inbox = (inboxDirectory as NSString).standardizingPath
         guard resolved.hasPrefix(inbox + "/"), !resolved.dropFirst(inbox.count + 1).contains("/") else { return false }
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory) && !isDirectory.boolValue
+    }
+
+    nonisolated static func pathOf(_ route: Route) -> String? {
+        if case .open(_, let path, _) = route { return path }
+        return nil
     }
 
     nonisolated static func parse(_ url: URL, hosts: [String: HostID], atlassianSite: URL? = nil) -> Route? {
@@ -69,7 +104,14 @@ enum URLRouter {
             Log.app.error("Unhandled URL: \(url.absoluteString, privacy: .public)")
             return
         }
+        let trusted = carriesToken(url, expected: token())
         switch route {
+        case .open(let hostID, _, _) where !trusted && hostID != .local && !hostID.isVirtual && DocumentKindDetector.isWebURL(Self.pathOf(route) ?? ""):
+            // Opening a page on an ssh host's loopback connects to the host and forwards a port: not for a link
+            // any page could have opened.
+            Log.app.error("Refused an untrusted link that would open a tunnel to \(hostID.rawValue, privacy: .public)")
+        case .note where !trusted:
+            Log.app.error("Refused an untrusted link that would create a note")
         case .open(let hostID, let path, let line):
             await model.openRootIfNeeded(hostID: hostID, containing: path)
             if let line { model.openDocument(hostID: hostID, path: path, line: line) } else { model.openDocument(hostID: hostID, path: path) }

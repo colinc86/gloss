@@ -47,7 +47,7 @@ If the window-id lookup fails, fall back to `screencapture -x /tmp/gloss-shot.pn
 
 ## Drive it
 
-- The app registers the `gloss://` URL scheme. `open 'gloss://open?host=local&path=/abs/path'` opens a file; `gloss://note?host=..&path=..&line=12&text=...` creates a note. Use these from scripts instead of simulating clicks.
+- The app registers the `gloss://` URL scheme. A `note` link (and an `open` of a web URL through an ssh host) must carry `&token=$(cat ~/Library/Application\ Support/Gloss/url-token)`; without it the app refuses, since any web page can open such links. `open 'gloss://open?host=local&path=/abs/path'` opens a file; `gloss://note?host=..&path=..&line=12&text=...` creates a note. Use these from scripts instead of simulating clicks.
 - Logs: `log stream --predicate 'subsystem == "com.cnc.Gloss"' --level debug` in the background while reproducing.
 - Quit cleanly with `osascript -e 'tell application "Gloss" to quit'` so the database closes properly.
 

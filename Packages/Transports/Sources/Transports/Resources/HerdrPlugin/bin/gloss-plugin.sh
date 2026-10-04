@@ -88,6 +88,9 @@ note)
         else
             url="gloss://note?host=$(encode "$host")&cwd=$(encode "$cwd")&pane=$(encode "$pane")&agent=$(encode "$agent")&text=$(encode "$text")"
         fi
+        # The app takes notes from links only with the token it keeps for this user (a web page cannot read it).
+        token=$(head -n 1 "$home/Library/Application Support/Gloss/url-token" 2>/dev/null | tr -cd '0-9a-f')
+        [ -n "$token" ] && url="$url&token=$token"
         [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$url"; exit 0; }
         open "$url" >/dev/null 2>&1
         exit 0
