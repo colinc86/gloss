@@ -52,7 +52,8 @@ struct NotesPanel: View {
                             }
                         } header: {
                             DocumentGroupHeader(document: group.document, count: group.notes.count, place: places[group.document.path],
-                                                host: group.document.hostID == .local ? nil : (model.hosts.entry(for: group.document.hostID)?.name ?? "remote"),
+                                                host: group.document.hostID == .local || group.document.hostID == .web ? nil
+                                                    : (model.hosts.entry(for: group.document.hostID)?.name).map { group.document.kind == .web ? "via \($0)" : $0 } ?? "remote",
                                                 open: { model.openDocument(hostID: group.document.hostID, path: group.document.path) })
                         }
                     }
@@ -711,9 +712,16 @@ private struct DocumentGroupHeader: View {
 
     var body: some View {
         HStack(spacing: DS.Space.s) {
-            Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (document.path as NSString).pathExtension) ?? .data))
-                .resizable()
-                .frame(width: 14, height: 14)
+            if document.kind == .web {
+                Image(systemName: "globe")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
+            } else {
+                Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (document.path as NSString).pathExtension) ?? .data))
+                    .resizable()
+                    .frame(width: 14, height: 14)
+            }
             Text(document.fileName)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)

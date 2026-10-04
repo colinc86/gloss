@@ -175,6 +175,9 @@ public final class HTMLViewerController: RenderedDocumentController {
 
     /// Set by the session: whether the document's host is this Mac (symlinks can then be resolved).
     @ObservationIgnored public var isLocal = false
+    /// Set by the session: the host the page's document belongs to, so a file the browser returns to (Back from a
+    /// site) can be opened on the right machine.
+    @ObservationIgnored public var hostID: HostID?
 
     public func toggle() {
         mode = mode == .rendered ? .source : .rendered

@@ -242,17 +242,32 @@ private struct StatusBar: View {
 
     private var breadcrumb: some View {
         HStack(spacing: DS.Space.xxs) {
-            if session.hostID != .local {
-                Label(model.hosts.entry(for: session.hostID)?.name ?? "remote", systemImage: "network")
+            if session.hostID != .local, let host = model.hosts.entry(for: session.hostID)?.name {
+                Label(session.kind == .web ? "via \(host)" : host, systemImage: "network")
                     .labelStyle(.titleAndIcon)
                     .padding(.trailing, DS.Space.xs)
             }
-            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+            if session.kind == .web {
+                // A page's address, not folders: nothing here to reveal in the explorer.
+                Label(session.fileName, systemImage: "globe")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.secondary)
+                    .help(session.path)
+                    .contextMenu {
+                        Button("Copy Address") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(session.path, forType: .string)
+                            model.flashCopied("Address copied")
+                        }
+                    }
+            }
+            let crumbs = session.kind == .web ? [] : segments
+            ForEach(Array(crumbs.enumerated()), id: \.offset) { index, segment in
                 if index > 0 {
                     Image(systemName: "chevron.compact.right")
                         .foregroundStyle(.tertiary)
                 }
-                let isFile = index == segments.count - 1
+                let isFile = index == crumbs.count - 1
                 BreadcrumbSegment(title: segment.name, isCurrent: isFile) {
                     Task { _ = await model.explorer.reveal(hostID: session.hostID, path: segment.path) }
                 }
@@ -352,6 +367,7 @@ private struct StatusBar: View {
     private var languageName: String {
         let names = ["javascript": "JavaScript", "typescript": "TypeScript", "tsx": "TSX", "json": "JSON", "yaml": "YAML",
                      "toml": "TOML", "c": "C", "bash": "Shell", "markdown": "Markdown"]
+        if session.kind == .web { return "Web" }
         if HTMLViewerController.handles(path: session.path) { return "HTML" }
         if let grammar = GrammarCatalog.languageName(forPath: session.path) { return names[grammar] ?? grammar.capitalized }
         return switch session.kind {

@@ -135,7 +135,15 @@ public struct Document: Identifiable, Hashable, Codable, Sendable {
         self.fingerprint = fingerprint
     }
 
-    public var fileName: String { (path as NSString).lastPathComponent }
+    public var fileName: String { Self.displayName(of: path) }
+
+    /// The last path component of a file, or host and path of a web page (`localhost:3000/dashboard`).
+    public static func displayName(of path: String) -> String {
+        guard DocumentKindDetector.isWebURL(path), let url = URL(string: path) else { return (path as NSString).lastPathComponent }
+        let host = (url.host() ?? "") + (url.port.map { ":\($0)" } ?? "")
+        let trimmed = url.path == "/" ? "" : url.path
+        return host + trimmed + (url.query.map { "?" + $0 } ?? "")
+    }
 }
 
 public enum NoteState: String, Codable, Sendable, CaseIterable {

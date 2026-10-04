@@ -74,7 +74,7 @@ Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9
 
 ### Milestone 2 sources
 
-- `web`: a live page. `File:` is the logical URL as the user sees it (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form); text anchors work as for code, element anchors as above.
+- `web`: a live page. `File:` is the logical URL as the user sees it (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form). A text note's anchor line is `Line N` of the page's serialised DOM (rarely meaningful) and its excerpt is the selected text itself, as for a PDF text selection; element anchors as above.
 - `pull_request`: `File:` is the virtual path (`/owner/repo/pull/123/changes/Sources/App.swift`), `Resource:` the PR URL, `Path: Sources/App.swift at <head sha>` for a changed file, `Field: description` for the description document, `Comment: <url>` when a note sits inside one review comment.
 - `jira`: `File:` is `/jira/PROJ/PROJ-123.md`, `Resource:` the browse URL, `Field: description` or `Comment: <id>` by the note's position.
 - `confluence`: `File:` is `/confluence/SPACE/<id> <title>.md`, `Resource:` the page URL, `Version: <n>` the version the note was made against.

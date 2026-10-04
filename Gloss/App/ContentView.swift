@@ -67,6 +67,9 @@ struct ContentView: View {
                 }
             }
         }
+        .sheet(isPresented: Binding(get: { model.isOpenLocationPresented }, set: { model.isOpenLocationPresented = $0 })) {
+            OpenLocationSheet()
+        }
         .sheet(isPresented: Binding(get: { model.quickOpen.isPresented }, set: { if !$0 { model.quickOpen.dismiss() } })) {
             QuickOpenSheet()
         }

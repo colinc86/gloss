@@ -65,6 +65,8 @@ struct AppCommands: Commands {
             .keyboardShortcut("o", modifiers: [.command, .shift])
             Button { model.presentQuickOpen() } label: { Label("Open Quickly…", systemImage: "doc.text.magnifyingglass") }
                 .keyboardShortcut("p", modifiers: [.command])
+            Button { model.presentOpenLocation() } label: { Label("Open Location…", systemImage: "globe") }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
                 .disabled(model.explorer.selectedTab == nil)
         }
         CommandGroup(replacing: .saveItem) {

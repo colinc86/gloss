@@ -90,6 +90,8 @@ final class DocumentSession: Identifiable {
 
     /// The explorer root holding this file, when one is open; rendered HTML may read files only inside it.
     @ObservationIgnored var resourceRoot: () -> String? = { nil }
+    /// For a web page reached through an ssh host's loopback: the tunnels to use. Set before `open`.
+    var proxy: WebProxyMap?
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot) {
         self.id = "\(hostID.rawValue):\(path)"
@@ -106,7 +108,9 @@ final class DocumentSession: Identifiable {
         return true
     }
 
-    var fileName: String { PathUtilities.name(of: path) }
+    var fileName: String { Core.Document.displayName(of: path) }
+    /// The page's URL when this document is a live web page.
+    var webURL: URL? { kind == .web ? URL(string: path) : nil }
 
     var textController: TextEditorController? {
         if case .text(let controller) = state { return controller }
@@ -149,6 +153,10 @@ final class DocumentSession: Identifiable {
     }
 
     func open() async {
+        if kind == .web {
+            await openWebPage()
+            return
+        }
         do {
             let attributes = try await fileSystem.stat(path)
             attributesAtOpen = attributes
@@ -244,6 +252,7 @@ final class DocumentSession: Identifiable {
                     return try await fileSystem.read(resource)
                 }
                 viewer.isLocal = hostID == .local
+                viewer.hostID = hostID
                 html = viewer
             }
             state = .text(controller)
@@ -252,6 +261,42 @@ final class DocumentSession: Identifiable {
         } catch {
             state = .failed(Self.openFailure(error))
             Log.viewer.error("open \(self.path, privacy: .public) failed: \(error, privacy: .public)")
+        }
+    }
+
+    /// A live page: the browser loads it and hands back its DOM as a read-only source, so text notes anchor to
+    /// the page's text the way they anchor to a file's. The page is its own watcher: every settled change comes
+    /// back through `onPageChanged`.
+    private func openWebPage() async {
+        guard let url = webURL else {
+            state = .failed("That isn't a web address.")
+            return
+        }
+        do {
+            document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: .web, fingerprint: Fingerprint())
+            let viewer = HTMLViewerController(livePage: url, proxy: proxy)
+            viewer.hostID = hostID
+            viewer.onPageChanged = { [weak self] in self?.livePageChanged() }
+            isReadOnly = true
+            html = viewer
+            state = .text(viewer.source)
+            observeNotes()
+        } catch {
+            state = .failed(Self.openFailure(error))
+        }
+    }
+
+    /// The page's text changed (it loaded, a script ran, a route changed): its notes follow the new text.
+    private func livePageChanged() {
+        guard let controller = textController else { return }
+        let text = controller.text
+        let hash = Data(text.utf8).sha256Hex
+        baseText = text
+        let fingerprint = Fingerprint(mtime: Date(), size: Int64(text.utf8.count), hash: hash)
+        fingerprintAtOpen = fingerprint
+        Task {
+            if let document { try? await noteStore.updateFingerprint(document.id, fingerprint) }
+            await reanchorAll(in: text, hash: hash)
         }
     }
 

@@ -219,11 +219,17 @@ final class SendCoordinator {
         for (note, document) in notes {
             var excerpt: [String] = []
             var cellDescription: String?
-            if case .text(let anchor) = note.anchor {
+            if case .text(let anchor) = note.anchor, document.kind == .web {
+                // A page's source is its DOM on one long line; the selection is the excerpt that means something.
+                excerpt = anchor.text.components(separatedBy: "\n")
+            } else if case .text(let anchor) = note.anchor {
                 let key = "\(document.hostID.rawValue):\(document.path)"
                 if contents[key] == nil {
                     if let open = openTextProvider(document.hostID, document.path) {
                         contents[key] = open
+                    } else if document.kind == .web {
+                        // A page that is not open has no text to read; the anchor's own text still travels.
+                        contents[key] = ""
                     } else {
                         contents[key] = try await readText(hostID: document.hostID, path: document.path) ?? ""
                     }

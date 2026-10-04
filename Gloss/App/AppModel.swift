@@ -175,10 +175,12 @@ final class AppModel {
             }
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
-        browser.onOpenFile = { [weak self] path in
-            guard let self, let hostID = activeSession?.hostID else { return }
+        fileSystems[.web] = UnavailableFileSystem(hostID: .web)
+        browser.onOpenFile = { [weak self] hostID, path in
+            guard let self, let hostID = hostID ?? activeSession?.hostID, hostID != .web else { return }
             openDocument(hostID: hostID, path: path)
         }
+        browser.onDocumentChange = { [weak self] url in self?.webDocumentDidChange(url) }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
         notesPanel.onGroupsChange = { [weak self, weak explorer] groups in
             explorer?.updateNoteMarks(groups)
@@ -338,6 +340,10 @@ final class AppModel {
     }
 
     func openDocument(hostID: HostID, path: String) {
+        if DocumentKindDetector.isWebURL(path), let url = URL(string: path) {
+            openWebPage(url, via: hostID == .local || hostID == .web ? nil : hostID)
+            return
+        }
         let key = "\(hostID.rawValue):\(path)"
         if let existing = sessions[key] {
             activeSession = existing
@@ -365,6 +371,52 @@ final class AppModel {
         activeSession = session
         Task { await session.open() }
         trimSessions()
+    }
+
+    // MARK: Web pages
+
+    /// Shows a live page as a document: on the web host, or on an ssh host when `via` names one, in which case
+    /// loopback addresses reach that host through tunnels on its connection and the document belongs to it (so a
+    /// packet's `File:` line is right where the agent runs).
+    func openWebPage(_ url: URL, via: HostID? = nil) {
+        let hostID = via ?? .web
+        let path = WebDocumentKey.normalize(url)
+        let key = "\(hostID.rawValue):\(path)"
+        if let existing = sessions[key] {
+            activeSession = existing
+            trimSessions()
+            return
+        }
+        guard let fileSystem = fileSystems[hostID] else {
+            Task { if await ensureConnected(hostID) { openWebPage(url, via: via) } }
+            return
+        }
+        let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
+        if let via { session.proxy = proxy(for: via) }
+        sessions[key] = session
+        activeSession = session
+        Task { await session.open() }
+        trimSessions()
+    }
+
+    /// The browser moved to another page by itself (a link, Back, a route change): that page becomes the document.
+    private func webDocumentDidChange(_ url: URL) {
+        let via = browser.current?.proxy?.hostID
+        openWebPage(url, via: via)
+    }
+
+    /// The tunnels known for a host, shared by every page opened through it.
+    private func proxy(for hostID: HostID) -> WebProxyMap {
+        for session in sessions.values where session.hostID == hostID {
+            if let proxy = session.html?.proxy ?? session.proxy { return proxy }
+        }
+        return WebProxyMap(hostID: hostID)
+    }
+
+    var isOpenLocationPresented = false
+
+    func presentOpenLocation() {
+        isOpenLocationPresented = true
     }
 
     /// Keeps a handful of recent clean sessions open; closes the rest so watchers and observations do not pile up.
@@ -454,7 +506,7 @@ final class AppModel {
 
     /// Shows the open document in the explorer, opening its folder as a root when no root contains it.
     func revealActiveDocumentInExplorer() {
-        guard let session = activeSession else { return }
+        guard let session = activeSession, session.kind != .web else { return }
         Task {
             if await !explorer.reveal(hostID: session.hostID, path: session.path) {
                 await openRootIfNeeded(hostID: session.hostID, containing: session.path)

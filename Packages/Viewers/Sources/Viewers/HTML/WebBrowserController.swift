@@ -15,13 +15,17 @@ public final class WebBrowserController {
     public private(set) var canGoForward = false
     /// The logical address of what the view shows: nil for a file page.
     public private(set) var displayedURL: URL?
+    /// The served file the view shows, when it shows one.
+    public private(set) var shownFilePath: String?
     /// Why the last navigation was refused, for the toolbar; cleared by the next successful load.
     public private(set) var refusal: String?
 
     /// A main-frame load committed to a live page with this logical URL (a link, Back, or a route change).
     @ObservationIgnored public var onDocumentChange: @MainActor (URL) -> Void = { _ in }
-    /// A link to a file on the current page's host.
-    @ObservationIgnored public var onOpenFile: @MainActor (String) -> Void = { _ in }
+    /// A link to a file, or Back to one: the host it lives on (the current page's, or the last file page's) and
+    /// its absolute path.
+    @ObservationIgnored public var onOpenFile: @MainActor (HostID?, String) -> Void = { _, _ in }
+    @ObservationIgnored private var lastFileHostID: HostID?
     /// The page wants `port` on `host`'s loopback; return the local port that reaches it.
     @ObservationIgnored public var onNeedsTunnel: @MainActor (HostID, UInt16) async throws -> UInt16 = { _, _ in throw CancellationError() }
     @ObservationIgnored public var onExternal: @MainActor (URL) -> Void = { NSWorkspace.shared.open($0) }
@@ -89,6 +93,7 @@ public final class WebBrowserController {
         }
         detachCurrent()
         current = controller
+        if case .file = controller.page, let host = controller.hostID { lastFileHostID = host }
         highlightToken = controller.source.addHighlightObserver { [weak self] in self?.applyHighlights() }
         if load {
             self.load(controller)
@@ -127,9 +132,11 @@ public final class WebBrowserController {
             components.path = path
             guard let url = components.url else { return }
             displayedURL = nil
+            shownFilePath = path
             webView.load(URLRequest(url: url))
         case .live(let url):
             displayedURL = url
+            shownFilePath = nil
             webView.load(URLRequest(url: controller.proxy?.proxied(url) ?? url))
         }
     }
@@ -201,7 +208,7 @@ public final class WebBrowserController {
         case .cancel:
             return .cancel
         case .openFile(let path):
-            onOpenFile(path)
+            onOpenFile(fileHost(for: current), path)
             return .cancel
         case .tunnel(let port, let then):
             if let proxy = current.proxy { tunnel(port: port, then: then, proxy: proxy) }
@@ -210,6 +217,14 @@ public final class WebBrowserController {
             onExternal(url)
             return .cancel
         }
+    }
+
+    /// The host a file link means: the page's own when it is a served file, otherwise the last file page's (a
+    /// live page's host is the web, or an ssh host whose files the link may well point at).
+    private func fileHost(for controller: HTMLViewerController) -> HostID? {
+        if case .file = controller.page { return controller.hostID ?? lastFileHostID }
+        if let host = controller.hostID, host != .web { return host }
+        return lastFileHostID
     }
 
     private func tunnel(port: UInt16, then url: URL, proxy: WebProxyMap) {
@@ -232,10 +247,15 @@ public final class WebBrowserController {
         guard let url, let current else { return }
         if url.scheme?.lowercased() == HTMLSchemeHandler.scheme {
             displayedURL = nil
+            shownFilePath = url.path
+            // Back (or Forward) to a served file: that file's document takes over again.
+            if case .file(let path) = current.page, path == url.path { return }
+            onOpenFile(fileHost(for: current), url.path)
             return
         }
         let logical = current.proxy?.logical(url) ?? url
         displayedURL = logical
+        shownFilePath = nil
         refusal = nil
         if case .live(let shown) = current.page, WebDocumentKey.normalize(shown) == WebDocumentKey.normalize(logical) { return }
         onDocumentChange(logical)

@@ -18,14 +18,32 @@ public struct HTMLViewerView: View {
         @Bindable var controller = controller
         VStack(spacing: 0) {
             ViewerToolbar {
-                Label(controller.pageTitle ?? "Web page", systemImage: "globe")
-                    .contentTransition(.opacity)
-                    .animation(Motion.smooth, value: controller.pageTitle)
+                if controller.mode == .rendered {
+                    ToolGroup {
+                        Button { browser.goBack() } label: { Image(systemName: "chevron.left") }
+                            .disabled(!browser.canGoBack)
+                            .help("Back")
+                            .accessibilityLabel("Back")
+                        Button { browser.goForward() } label: { Image(systemName: "chevron.right") }
+                            .disabled(!browser.canGoForward)
+                            .help("Forward")
+                            .accessibilityLabel("Forward")
+                    }
+                    .transition(.opacity)
+                }
+                WebAddressField(controller: controller, browser: browser)
+                if let refusal = browser.refusal, controller.mode == .rendered {
+                    Label(refusal, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .transition(.opacity.calmed)
+                }
             } trailing: {
                 if controller.mode == .rendered {
                     ToolGroup {
                         Button { browser.reload() } label: { Image(systemName: "arrow.clockwise") }
-                            .help("Reload the page and run its scripts again")
+                            .help(controller.page.isLive ? "Reload the page" : "Reload the page and run its scripts again")
                             .accessibilityLabel("Reload")
                     }
                     .transition(.opacity)
@@ -34,10 +52,11 @@ public struct HTMLViewerView: View {
                     .init(HTMLViewerController.Mode.rendered, "Rendered", symbol: "eye"),
                     .init(HTMLViewerController.Mode.source, "Source", symbol: "chevron.left.forwardslash.chevron.right"),
                 ], selection: $controller.mode)
-                .help("Toggle rendered and source")
+                .help(controller.page.isLive ? "Toggle the page and its current DOM" : "Toggle rendered and source")
             }
             .overlay(alignment: .bottom) { LoadProgressLine(progress: controller.mode == .rendered ? controller.loadProgress : nil) }
             .animation(Motion.smooth, value: controller.mode)
+            .animation(Motion.smooth, value: browser.refusal)
             switch controller.mode {
             case .rendered:
                 RenderedHTMLView(controller: controller, browser: browser)
@@ -45,6 +64,68 @@ public struct HTMLViewerView: View {
                 TextEditorView(controller: controller.source)
             }
         }
+    }
+}
+
+/// The page's name at rest: the file's title with a globe, or a live page's address. A click turns it into a
+/// field; Return opens what was typed, Escape puts the address back.
+struct WebAddressField: View {
+    let controller: HTMLViewerController
+    let browser: WebBrowserController
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    private var address: String? {
+        if case .live = controller.page { return (browser.displayedURL ?? liveURL)?.absoluteString }
+        return nil
+    }
+
+    private var liveURL: URL? { if case .live(let url) = controller.page { url } else { nil } }
+
+    var body: some View {
+        if editing {
+            TextField("Address", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .focused($focused)
+                .onSubmit(open)
+                .onExitCommand { editing = false }
+                .onChange(of: focused) { _, isFocused in if !isFocused { editing = false } }
+                .frame(minWidth: 180, maxWidth: 520)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                .onAppear { focused = true }
+        } else {
+            Button {
+                draft = address ?? ""
+                editing = true
+            } label: {
+                Label(address ?? controller.pageTitle ?? "Web page", systemImage: "globe")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .contentTransition(.opacity)
+            }
+            .buttonStyle(.plain)
+            .help(address == nil ? "Click to type an address" : "Open another address")
+            .accessibilityLabel(address.map { "Address: " + $0 } ?? "Address")
+            .animation(Motion.smooth, value: controller.pageTitle)
+        }
+    }
+
+    private func open() {
+        editing = false
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        var url = URL(string: text)
+        if url?.scheme == nil, !text.contains("://") {
+            let host = text.split(separator: "/", maxSplits: 1).first.map(String.init) ?? text
+            let bare = host.split(separator: ":").first.map(String.init) ?? host
+            url = URL(string: (WebProxyMap.loopbackHosts.contains(bare.lowercased()) ? "http://" : "https://") + text)
+        }
+        guard let url, url.host() != nil else { return }
+        browser.open(url)
     }
 }
 
@@ -76,8 +157,13 @@ struct RenderedHTMLView: NSViewRepresentable {
         if browser.current !== controller {
             // A page the view already shows (a link it followed, a route change) is adopted, not reloaded.
             let adopt: Bool = {
-                guard case .live(let url) = controller.page, let shown = browser.displayedURL else { return false }
-                return WebDocumentKey.normalize(shown) == WebDocumentKey.normalize(url)
+                switch controller.page {
+                case .live(let url):
+                    guard let shown = browser.displayedURL else { return false }
+                    return WebDocumentKey.normalize(shown) == WebDocumentKey.normalize(url)
+                case .file(let path):
+                    return browser.shownFilePath == path && browser.displayedURL == nil
+                }
             }()
             browser.attach(controller, load: !adopt)
         }
