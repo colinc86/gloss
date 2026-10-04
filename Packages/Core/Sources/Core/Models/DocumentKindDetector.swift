@@ -21,6 +21,7 @@ public enum DocumentKindDetector {
     ]
 
     public static func kind(forPath path: String) -> DocumentKind {
+        if isWebURL(path) { return .web }
         let name = (path as NSString).lastPathComponent
         let lowered = name.lowercased()
         let ext = (name as NSString).pathExtension.lowercased()
@@ -33,6 +34,12 @@ public enum DocumentKindDetector {
         if textExtensions.contains(ext) { return .text }
         if ext.isEmpty, lowered.hasPrefix(".") { return .text }   // dotfiles without an extension are usually config text
         return .file
+    }
+
+    /// A document path that is a live page's URL rather than a file path.
+    public static func isWebURL(_ path: String) -> Bool {
+        let lowered = path.prefix(8).lowercased()
+        return lowered.hasPrefix("http://") || lowered.hasPrefix("https://")
     }
 
     /// A last resort for unknown extensions: looks at the first 8 KiB. Binary is a NUL byte or more than 1 % C0

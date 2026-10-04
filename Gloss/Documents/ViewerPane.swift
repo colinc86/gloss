@@ -101,6 +101,7 @@ struct ViewerPane: View {
         case .image: "photo"
         case .pdf: "doc.richtext"
         case .csv: "tablecells"
+        case .web: "globe"
         default: "doc"
         }
     }

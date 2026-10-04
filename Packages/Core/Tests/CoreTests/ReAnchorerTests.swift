@@ -149,4 +149,42 @@ struct ReAnchorerTests {
         #expect(ReAnchorer.pdf(regionOnly, in: FakePDF(pages: ["a"])) == .orphaned)
         #expect(ReAnchorer.pdf(regionOnly, in: FakePDF(pages: Array(repeating: "", count: 6))) == .unchanged)
     }
+
+    @Test func elementRules() {
+        let anchor = ElementAnchor(selector: "#toolbar > button:nth-of-type(2)", tag: "button", text: "Save", html: "<button>Save</button>", rect: .init(x: 100, y: 100, w: 50, h: 20), line: 7, hash: "old")
+        func candidate(_ selector: String, tag: String = "button", text: String = "Save", x: Double = 100, y: Double = 100) -> ElementCandidate {
+            ElementCandidate(selector: selector, tag: tag, text: text, html: "<\(tag)>\(text)</\(tag)>", rect: .init(x: x, y: y, w: 50, h: 20))
+        }
+
+        #expect(ReAnchorer.element(anchor, resolution: .init(), newHash: "old") == .unchanged)
+
+        // Same selector and text: kept, with the new rect, html and hash; the line is refreshed when the caller knows it.
+        guard case .moved(.element(let moved)) = ReAnchorer.element(anchor, resolution: .init(bySelector: candidate("#toolbar > button:nth-of-type(2)", y: 140)), newHash: "new", line: 9) else {
+            Issue.record("expected moved"); return
+        }
+        #expect(moved.rect.y == 140 && moved.hash == "new" && moved.line == 9 && moved.selector == anchor.selector)
+
+        // Same selector, different text: kept but flagged, text and html refreshed.
+        guard case .movedNeedsReview(.element(let retitled)) = ReAnchorer.element(anchor, resolution: .init(bySelector: candidate("#toolbar > button:nth-of-type(2)", text: "  Save  changes ")), newHash: "new") else {
+            Issue.record("expected review"); return
+        }
+        #expect(retitled.text == "Save changes" && retitled.line == 7)
+
+        // The selector now hits a different kind of element: fall through to text matches.
+        let wrongTag = ElementResolution(bySelector: candidate("#toolbar > button:nth-of-type(2)", tag: "div", text: "Save"), byText: [candidate("#save")])
+        guard case .movedNeedsReview(.element(let byText)) = ReAnchorer.element(anchor, resolution: wrongTag, newHash: "new") else {
+            Issue.record("expected text match"); return
+        }
+        #expect(byText.selector == "#save")
+
+        // Several text matches: the nearest to the old rect wins.
+        let several = ElementResolution(byText: [candidate("#far", x: 900, y: 900), candidate("#near", x: 110, y: 105), candidate("div#wrong", tag: "div")])
+        guard case .movedNeedsReview(.element(let nearest)) = ReAnchorer.element(anchor, resolution: several, newHash: "new") else {
+            Issue.record("expected nearest"); return
+        }
+        #expect(nearest.selector == "#near")
+
+        #expect(ReAnchorer.element(anchor, resolution: .init(byText: [candidate("div#x", tag: "div")]), newHash: "new") == .orphaned)
+        #expect(ReAnchorer.element(anchor, resolution: .init(), newHash: "new") == .orphaned)
+    }
 }

@@ -92,6 +92,54 @@ struct PacketBuilderTests {
         #expect(PacketBuilder.build([noCrop]).text.contains("Region: x=1 y=2 w=3 h=4\nUser comment"), "no crop attached without an attachment")
     }
 
+    @Test func elementNoteOnALivePage() {
+        let note = PacketNote(
+            noteID: markdownID, agentPath: "http://localhost:3000/dashboard", source: .web,
+            anchor: .element(ElementAnchor(
+                selector: "#toolbar > button:nth-of-type(2)", tag: "button", text: "Save", html: "<button class=\"primary\">\n  Save\n</button>",
+                rect: ElementRect(x: 120, y: 480.25, w: 96, h: 32)
+            )),
+            comment: "Misaligned", attachmentAgentPath: "/tmp/gloss/a1/dashboard-element-1.png"
+        )
+        let expected = """
+        File: http://localhost:3000/dashboard
+        Source: web
+
+        Element: #toolbar > button:nth-of-type(2)
+        Text: "Save"
+        Rect: x=120 y=480.3 w=96 h=32 (crop attached)
+        Snippet:
+        > <button class="primary">
+        >   Save
+        > </button>
+        Attachment: /tmp/gloss/a1/dashboard-element-1.png
+        User comment: "Misaligned"
+
+        Notes: 1. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9X0000000000000000000) when done.
+        """
+        #expect(PacketBuilder.build([note]).text == expected)
+        #expect(PacketBuilder.summaryLine(note) == "n_01J9X0000000000000000000: http://localhost:3000/dashboard:element(#toolbar > button:nth-of-type(2)) \"Misaligned\"")
+
+        let fileBacked = PacketNote(
+            noteID: imageID, agentPath: "/p/site/index.html", source: .code,
+            anchor: .element(ElementAnchor(selector: "#save", tag: "button", text: "", html: "", rect: .init(x: 1, y: 2, w: 3, h: 4), line: 42)),
+            comment: "c"
+        )
+        #expect(PacketBuilder.build([fileBacked]).text.contains("Element: #save\nRect: x=1 y=2 w=3 h=4\nLine 42\nUser comment: \"c\""), "no text, no snippet, no crop: only the lines that exist")
+    }
+
+    @Test func resourceHeaderForVirtualHosts() {
+        let note = PacketNote(
+            noteID: markdownID, agentPath: "/o/r/pull/123/changes/Sources/App.swift", source: .pullRequest, anchor: textAnchor(7, 7),
+            comment: "rename", excerptLines: ["let x = 1"],
+            resource: "https://github.com/o/r/pull/123", resourceDetails: ["Path: Sources/App.swift at 0f3a9c1"]
+        )
+        let text = PacketBuilder.build([note]).text
+        #expect(text.hasPrefix("File: /o/r/pull/123/changes/Sources/App.swift\nSource: pull_request\nResource: https://github.com/o/r/pull/123\nPath: Sources/App.swift at 0f3a9c1\n\nLine 7\n"))
+        #expect(PacketSource(kind: .web) == .web)
+        #expect(PacketSource.pullRequest.rawValue == "pull_request")
+    }
+
     @Test func escapesCommentsAndSplitsEmbeddedNewlines() {
         #expect(PacketBuilder.escape(#"say "hi"\ now"#) == #"say \"hi\"\\ now"#)
         #expect(PacketBuilder.escape("a\r\nb\nc") == #"a\r\nb\nc"#)

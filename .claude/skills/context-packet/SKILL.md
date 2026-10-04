@@ -10,8 +10,10 @@ One packet = one message to one agent. It is plain text, grouped by file, one bl
 ## Grammar
 
 ```
-File: <absolute path on the agent's machine>
-Source: <markdown|text|code|image|pdf|file>
+File: <absolute path on the agent's machine, or the page URL for source web>
+Source: <markdown|text|code|image|pdf|file|web|pull_request|jira|confluence>
+[Resource: <canonical URL>]         # pull_request, jira, confluence: the thing the agent edits with its own tools
+[Path: <repo path> at <sha>]        # pull_request file; also Field: <name>, Comment: <url>, Version: <n> as they apply
 [Original size: <W>x<H>]            # image only
 [Pages: <N>]                        # pdf only
 
@@ -38,6 +40,7 @@ Notes: <count>. Mark each resolved with the gloss MCP tool `resolve_note` (ids: 
 | image | `Region: x=.. y=.. w=.. h=.. (crop attached)` in original pixel coordinates, origin top-left | none |
 | pdf | `Page 3` plus `Region: ...` in page points when a region was drawn | selected text, blockquoted, if any |
 | file (whole-file note) | `Whole file` | none |
+| element (web, or an html file viewed as a page) | `Element: <css selector>` then `Text: "<collapsed text>"` when the element has text, `Rect: x=.. y=.. w=.. h=.. (crop attached)` in CSS pixels from the page's top-left, `Line <n>` when the page is a file | `Snippet:` with the element's outerHTML blockquoted (at most 2048 characters); an `Attachment:` PNG crop of the element |
 
 ### Escaping
 
@@ -68,6 +71,15 @@ User comment: "The legend overlaps the chart here. Move it below."
 
 Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9X..., n_01J9Y...) when done.
 ```
+
+### Milestone 2 sources
+
+- `web`: a live page. `File:` is the logical URL as the user sees it (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form); text anchors work as for code, element anchors as above.
+- `pull_request`: `File:` is the virtual path (`/owner/repo/pull/123/changes/Sources/App.swift`), `Resource:` the PR URL, `Path: Sources/App.swift at <head sha>` for a changed file, `Field: description` for the description document, `Comment: <url>` when a note sits inside one review comment.
+- `jira`: `File:` is `/jira/PROJ/PROJ-123.md`, `Resource:` the browse URL, `Field: description` or `Comment: <id>` by the note's position.
+- `confluence`: `File:` is `/confluence/SPACE/<id> <title>.md`, `Resource:` the page URL, `Version: <n>` the version the note was made against.
+
+The app only ever reads these resources; the agent makes every change with its own GitHub or Atlassian tools, which is why the header names the resource precisely.
 
 ## Attachment staging
 

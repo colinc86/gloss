@@ -16,6 +16,9 @@ struct DocumentKindDetectorTests {
         #expect(DocumentKindDetector.kind(forPath: "/a/.zshrc") == .text)
         #expect(DocumentKindDetector.kind(forPath: "/a/budget.numbers") == .file)
         #expect(DocumentKindDetector.kind(forPath: "/a/archive.zip") == .file)
+        #expect(DocumentKindDetector.kind(forPath: "https://example.com/docs/index.html") == .web, "a URL is a live page, whatever it ends in")
+        #expect(DocumentKindDetector.kind(forPath: "HTTP://localhost:3000/") == .web)
+        #expect(DocumentKindDetector.kind(forPath: "/a/http://notaurl.md") == .markdown)
     }
 
     @Test func sniffsBinaryContent() {

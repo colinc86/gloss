@@ -30,12 +30,68 @@ struct SchemaTests {
         }
     }
 
-    @Test func localHostIsSeeded() async throws {
+    @Test func fixedHostsAreSeeded() async throws {
         let store = NoteStore(database: try AppDatabase.inMemory())
         let hosts = try await store.hosts()
-        #expect(hosts.map(\.name) == ["local"])
-        #expect(hosts.first?.id == HostID.local)
-        #expect(hosts.first?.kind == .local)
+        #expect(Set(hosts.map(\.name)) == ["local", "web", "github", "atlassian"])
+        let byID = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
+        #expect(byID[.local]?.kind == .local)
+        #expect(byID[.web]?.kind == .web && byID[.github]?.kind == .github && byID[.atlassian]?.kind == .atlassian)
+        #expect(byID[.web]?.origin == .local && byID[.web]?.isVirtual == true && byID[.local]?.isVirtual == false)
+        for id in HostID.fixed {
+            #expect(HostID(validating: id.rawValue) == id, "fixed ids pass validation without a ULID")
+        }
+        #expect(HostID(validating: "h_nope") == nil)
+    }
+
+    /// The milestone 2 migration rebuilds host, document and note to widen their CHECK constraints; every row written
+    /// before it must come through byte for byte, with the references between them intact.
+    @Test func v4RebuildKeepsEveryRow() throws {
+        let database = try AppDatabase.inMemory()
+        // `AppDatabase.inMemory` already migrated fully; build a v3 database by hand instead and migrate it.
+        let queue = try DatabaseQueue()
+        try Schema.migrator.migrate(queue, upTo: "v3-send-note-index")
+        try queue.write { db in
+            try db.execute(sql: """
+                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01HOST', 'asus', 'ssh', '2026-10-01 10:00:00', 'manual', '{"user":"colin"}');
+                INSERT INTO root (id, host_id, path, last_opened_at, pinned) VALUES ('r_1', 'h_01HOST', '/home/colin', '2026-10-01 10:00:00', 1);
+                INSERT INTO document (id, host_id, path, kind, last_hash, last_mtime, last_size) VALUES ('d_1', 'h_01HOST', '/home/colin/a.md', 'markdown', 'abc', '2026-10-01 10:00:00', 12);
+                INSERT INTO note (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message)
+                    VALUES ('n_1', 'd_1', '{}', 'file', 'hi', 'resolved', '2026-10-01 10:00:00', '2026-10-01 10:00:01', 'yellow', 'done', 'ok');
+                INSERT INTO attachment (id, note_id, kind, local_path, width, height) VALUES ('a_1', 'n_1', 'crop', '/tmp/c.png', 1, 2);
+                INSERT INTO send (id, target_json, transport, packet_text, sent_at, outcome) VALUES ('s_1', '{}', 'clipboard', 'p', '2026-10-01 10:00:00', 'ok');
+                INSERT INTO send_note (send_id, note_id) VALUES ('s_1', 'n_1');
+                INSERT INTO staged_file (id, send_id, host_id, remote_path, expires_at) VALUES ('f_1', 's_1', 'h_01HOST', '/tmp/x', '2026-10-08 10:00:00');
+                INSERT INTO target (id, host_id, transport, identity_json, label, last_used_at) VALUES ('t_1', 'h_01HOST', 'tmux', '{}', 'pane', NULL);
+                """)
+        }
+        func rows(_ db: Database, _ table: String) throws -> [[String: DatabaseValue]] {
+            try Row.fetchAll(db, sql: "SELECT * FROM \(table) ORDER BY 1").map { row in Dictionary(uniqueKeysWithValues: row.columnNames.map { ($0, row[$0] as DatabaseValue) }) }
+        }
+        let before = try queue.read { db in try Schema.tableNames.map { try rows(db, $0) } }
+        try Schema.migrator.migrate(queue)
+        let after = try queue.read { db in try Schema.tableNames.map { try rows(db, $0) } }
+        for (index, table) in Schema.tableNames.enumerated() where table != "host" {
+            #expect(before[index] == after[index], "\(table) rows survive the rebuild")
+        }
+        try queue.read { (db: Database) throws in
+            #expect(try rows(db, "host").count == before[0].count + 3, "the three virtual hosts are added, nothing else changes")
+            #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
+            #expect(try Row.fetchOne(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'note_document_state'") != nil)
+        }
+        try queue.write { (db: Database) throws in
+            // Cascades still follow the rebuilt references.
+            try db.execute(sql: "DELETE FROM host WHERE id = 'h_01HOST'")
+            #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM note") == 0, "host → document → note cascade")
+            #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM attachment") == 0)
+            // The widened constraints accept the new kinds.
+            try db.execute(sql: "INSERT INTO document (id, host_id, path, kind) VALUES ('d_w', 'h_web', 'https://example.com/', 'web')")
+            try db.execute(sql: """
+                INSERT INTO note (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color)
+                    VALUES ('n_e', 'd_w', '{}', 'element', 'x', 'draft', '2026-10-01 10:00:00', '2026-10-01 10:00:00', 'blue')
+                """)
+        }
+        _ = database
     }
 
     @Test func addingAnAttachmentTouchesItsNote() async throws {

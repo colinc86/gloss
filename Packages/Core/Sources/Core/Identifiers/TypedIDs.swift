@@ -50,9 +50,15 @@ public struct HostID: PrefixedIdentifier {
 
     /// The local Mac. Seeded by the first database migration.
     public static let local = HostID(rawValue: "h_local")
+    /// Live web pages. Seeded by `v4-integrations`, as are `github` and `atlassian`.
+    public static let web = HostID(rawValue: "h_web")
+    public static let github = HostID(rawValue: "h_github")
+    public static let atlassian = HostID(rawValue: "h_atlassian")
+    /// The hosts with fixed ids instead of ULIDs.
+    public static let fixed: Set<HostID> = [.local, .web, .github, .atlassian]
 
     public init?(validating string: String) {
-        if string == HostID.local.rawValue {
+        if HostID.fixed.contains(HostID(rawValue: string)) {
             self.init(rawValue: string)
             return
         }

@@ -104,6 +104,62 @@ public enum Schema {
             // Note cards look up their latest send by note; the primary key leads with send_id.
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS send_note_note ON send_note(note_id)")
         }
+        migrator.registerMigration("v4-integrations") { db in
+            // Milestone 2: web pages, GitHub and Atlassian are hosts, a live page is a document kind, and a note can
+            // anchor to a DOM element. SQLite cannot widen a CHECK in place, so each table is rebuilt in GRDB's
+            // documented order (create, copy, drop, rename, recreate indexes) with foreign keys off for the
+            // migration: host first, then document, then note, each new table referencing the final names.
+            try db.execute(sql: """
+                CREATE TABLE host_new (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL UNIQUE,
+                    kind TEXT NOT NULL CHECK (kind IN ('local', 'ssh', 'web', 'github', 'atlassian')),
+                    last_connected_at DATETIME,
+                    origin TEXT NOT NULL DEFAULT 'ssh_config',
+                    options_json TEXT
+                );
+                INSERT INTO host_new (id, name, kind, last_connected_at, origin, options_json)
+                    SELECT id, name, kind, last_connected_at, origin, options_json FROM host;
+                DROP TABLE host;
+                ALTER TABLE host_new RENAME TO host;
+                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES
+                    ('h_web', 'web', 'web', NULL, 'local', NULL),
+                    ('h_github', 'github', 'github', NULL, 'local', NULL),
+                    ('h_atlassian', 'atlassian', 'atlassian', NULL, 'local', NULL);
+                CREATE TABLE document_new (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    host_id TEXT NOT NULL REFERENCES host(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('text', 'code', 'markdown', 'image', 'pdf', 'csv', 'file', 'web')),
+                    last_hash TEXT,
+                    last_mtime DATETIME,
+                    last_size INTEGER,
+                    UNIQUE (host_id, path)
+                );
+                INSERT INTO document_new (id, host_id, path, kind, last_hash, last_mtime, last_size)
+                    SELECT id, host_id, path, kind, last_hash, last_mtime, last_size FROM document;
+                DROP TABLE document;
+                ALTER TABLE document_new RENAME TO document;
+                CREATE TABLE note_new (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+                    anchor_json TEXT NOT NULL,
+                    anchor_type TEXT NOT NULL CHECK (anchor_type IN ('text', 'image', 'pdf', 'file', 'element')),
+                    body TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (state IN ('draft', 'sent', 'resolved', 'orphaned')),
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    color TEXT NOT NULL,
+                    resolve_outcome TEXT,
+                    resolve_message TEXT
+                );
+                INSERT INTO note_new (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message)
+                    SELECT id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message FROM note;
+                DROP TABLE note;
+                ALTER TABLE note_new RENAME TO note;
+                CREATE INDEX note_document_state ON note(document_id, state);
+                """)
+        }
         return migrator
     }
 }

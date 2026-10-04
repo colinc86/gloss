@@ -159,11 +159,74 @@ public struct PDFAnchor: Codable, Hashable, Sendable {
     }
 }
 
+/// A rectangle in CSS pixels, in page (document) coordinates with the origin at the page's top-left.
+public struct ElementRect: Codable, Hashable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var w: Double
+    public var h: Double
+
+    public init(x: Double, y: Double, w: Double, h: Double) {
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    }
+
+    var center: (x: Double, y: Double) { (x + w / 2, y + h / 2) }
+}
+
+/// A DOM element on a web page, found again by selector first and by its text second.
+public struct ElementAnchor: Codable, Hashable, Sendable {
+    public static let textLimit = 500
+    public static let htmlLimit = 2048
+
+    /// `#id`, `[data-testid="…"]`, or a `tag:nth-of-type(n)` path from the nearest uniquely identified ancestor.
+    /// Never class names, which change with every stylesheet.
+    public var selector: String
+    /// Lowercase tag name.
+    public var tag: String
+    /// Whitespace-collapsed `textContent`, at most `textLimit` characters.
+    public var text: String
+    /// `outerHTML`, at most `htmlLimit` characters.
+    public var html: String
+    public var rect: ElementRect
+    /// Source line of the element's first text node, for pages backed by a file the app can open.
+    public var line: Int?
+    /// SHA-256 of the file, or of the page's serialised DOM, when the anchor was made.
+    public var hash: String?
+
+    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect, line: Int? = nil, hash: String? = nil) {
+        self.selector = selector
+        self.tag = tag.lowercased()
+        self.text = Self.collapse(text, limit: Self.textLimit)
+        self.html = Self.truncate(html, limit: Self.htmlLimit)
+        self.rect = rect
+        self.line = line
+        self.hash = hash
+    }
+
+    /// The last compound of the selector: `button:nth-of-type(2)` of `#toolbar > button:nth-of-type(2)`.
+    public var lastCompound: String {
+        selector.components(separatedBy: " > ").last?.trimmingCharacters(in: .whitespaces) ?? selector
+    }
+
+    static func collapse(_ text: String, limit: Int) -> String {
+        let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return truncate(collapsed, limit: limit)
+    }
+
+    static func truncate(_ text: String, limit: Int) -> String {
+        text.count <= limit ? text : String(text.prefix(limit - 1)) + "…"
+    }
+}
+
 public enum AnchorType: String, Codable, Sendable, CaseIterable {
     case text
     case image
     case pdf
     case file
+    case element
 }
 
 /// A typed description of the part of a document a note refers to. Stored as `anchor_type` + `anchor_json`.
@@ -172,6 +235,7 @@ public enum Anchor: Hashable, Sendable {
     case image(ImageAnchor)
     case pdf(PDFAnchor)
     case wholeFile
+    case element(ElementAnchor)
 
     public var type: AnchorType {
         switch self {
@@ -179,6 +243,7 @@ public enum Anchor: Hashable, Sendable {
         case .image: .image
         case .pdf: .pdf
         case .wholeFile: .file
+        case .element: .element
         }
     }
 
@@ -196,6 +261,7 @@ public enum Anchor: Hashable, Sendable {
         case .image(let anchor): data = try Self.encoder.encode(anchor)
         case .pdf(let anchor): data = try Self.encoder.encode(anchor)
         case .wholeFile: data = Data("{}".utf8)
+        case .element(let anchor): data = try Self.encoder.encode(anchor)
         }
         return String(decoding: data, as: UTF8.self)
     }
@@ -208,6 +274,7 @@ public enum Anchor: Hashable, Sendable {
         case .image: self = .image(try decoder.decode(ImageAnchor.self, from: data))
         case .pdf: self = .pdf(try decoder.decode(PDFAnchor.self, from: data))
         case .file: self = .wholeFile
+        case .element: self = .element(try decoder.decode(ElementAnchor.self, from: data))
         }
     }
 
@@ -218,6 +285,7 @@ public enum Anchor: Hashable, Sendable {
         case .image(let anchor): SortKey(primary: anchor.y, secondary: anchor.x)
         case .pdf(let anchor): SortKey(primary: anchor.page, secondary: Int(-(anchor.bounds?.y ?? 0)))
         case .wholeFile: SortKey(primary: Int.max, secondary: 0)
+        case .element(let anchor): SortKey(primary: Int(anchor.rect.y.rounded()), secondary: Int(anchor.rect.x.rounded()))
         }
     }
 
@@ -247,6 +315,8 @@ public enum Anchor: Hashable, Sendable {
             anchor.bounds == nil ? "Page \(anchor.page + 1)" : "Page \(anchor.page + 1) region"
         case .wholeFile:
             "Whole file"
+        case .element(let anchor):
+            "Element \(anchor.lastCompound)"
         }
     }
 }

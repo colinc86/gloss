@@ -8,6 +8,12 @@ public enum PacketSource: String, Sendable, CaseIterable {
     case image
     case pdf
     case file
+    /// A live web page; `File:` is its URL.
+    case web
+    /// Milestone 2 resources served by a virtual host; the file block carries a `Resource:` line.
+    case pullRequest = "pull_request"
+    case jira
+    case confluence
 
     public init(kind: DocumentKind) {
         switch kind {
@@ -17,6 +23,7 @@ public enum PacketSource: String, Sendable, CaseIterable {
         case .image: self = .image
         case .pdf: self = .pdf
         case .file: self = .file
+        case .web: self = .web
         }
     }
 }
@@ -37,12 +44,20 @@ public struct PacketNote: Sendable {
     public var attachmentAgentPath: String?
     /// For a spreadsheet cell or column note: `Column E "notes"` or `B2, E4` (see `CellExcerpt`).
     public var cellDescription: String?
+    /// Canonical URL of a pull request, issue or page served by a virtual host; printed as `Resource:` in the file header.
+    public var resource: String?
+    /// Header lines that pin the resource down for the agent: `Path: Sources/App.swift at 0f3a9c1`, `Field: description`,
+    /// `Version: 7`. Printed after `Resource:`, taken from the first note of the file block.
+    public var resourceDetails: [String]
 
     public init(
         noteID: NoteID, agentPath: String, source: PacketSource, anchor: Anchor, comment: String,
-        excerptLines: [String] = [], selectedText: String? = nil, attachmentAgentPath: String? = nil, cellDescription: String? = nil
+        excerptLines: [String] = [], selectedText: String? = nil, attachmentAgentPath: String? = nil, cellDescription: String? = nil,
+        resource: String? = nil, resourceDetails: [String] = []
     ) {
         self.cellDescription = cellDescription
+        self.resource = resource
+        self.resourceDetails = resourceDetails
         self.noteID = noteID
         self.agentPath = agentPath
         self.source = source
@@ -149,6 +164,10 @@ public enum PacketBuilder {
     static func fileBlock(path: String, notes: [PacketNote]) -> String {
         guard let first = notes.first else { return "" }
         var header = ["File: \(path)", "Source: \(first.source.rawValue)"]
+        if let resource = first.resource {
+            header.append("Resource: \(resource)")
+            header.append(contentsOf: first.resourceDetails)
+        }
         if let size = notes.lazy.compactMap({ note -> ImageAnchor? in if case .image(let image) = note.anchor { image } else { nil } }).first {
             header.append("Original size: \(size.imageW)x\(size.imageH)")
         } else if let pdf = notes.lazy.compactMap({ note -> PDFAnchor? in if case .pdf(let pdf) = note.anchor { pdf } else { nil } }).first {
@@ -188,6 +207,17 @@ public enum PacketBuilder {
             if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(attachment)") }
         case .wholeFile:
             lines.append("Whole file")
+            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(attachment)") }
+        case .element(let anchor):
+            lines.append("Element: \(anchor.selector)")
+            if !anchor.text.isEmpty { lines.append("Text: \"\(escape(anchor.text))\"") }
+            let suffix = note.attachmentAgentPath == nil ? "" : " (crop attached)"
+            lines.append("Rect: x=\(points(anchor.rect.x)) y=\(points(anchor.rect.y)) w=\(points(anchor.rect.w)) h=\(points(anchor.rect.h))\(suffix)")
+            if let line = anchor.line { lines.append("Line \(line)") }
+            if !anchor.html.isEmpty {
+                lines.append("Snippet:")
+                lines.append(contentsOf: anchor.html.components(separatedBy: "\n").map { "> " + $0.replacingOccurrences(of: "\r", with: "") })
+            }
             if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(attachment)") }
         }
         lines.append("User comment: \"\(escape(note.comment))\"")
@@ -230,6 +260,7 @@ public enum PacketBuilder {
         case .image(let image): "region(\(image.x),\(image.y),\(image.w),\(image.h))"
         case .pdf(let pdf): "page \(pdf.page + 1)"
         case .wholeFile: "whole file"
+        case .element(let element): "element(\(element.selector))"
         }
     }
 

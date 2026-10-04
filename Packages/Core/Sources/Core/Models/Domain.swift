@@ -3,6 +3,20 @@ import Foundation
 public enum HostKind: String, Codable, Sendable, CaseIterable {
     case local
     case ssh
+    /// Live web pages, addressed by URL.
+    case web
+    /// GitHub pull requests, read with the user's token.
+    case github
+    /// Jira issues and Confluence pages, read with the user's token.
+    case atlassian
+
+    /// Served by the app from an API or a web view rather than from a machine's file system; never written to.
+    public var isVirtual: Bool {
+        switch self {
+        case .local, .ssh: false
+        case .web, .github, .atlassian: true
+        }
+    }
 }
 
 /// Where a host entry came from.
@@ -51,6 +65,7 @@ public struct Host: Identifiable, Hashable, Codable, Sendable {
     }
 
     public var isLocal: Bool { kind == .local }
+    public var isVirtual: Bool { kind.isVirtual }
 }
 
 public struct Root: Identifiable, Hashable, Codable, Sendable {
@@ -78,6 +93,8 @@ public enum DocumentKind: String, Codable, Sendable, CaseIterable {
     case csv
     /// Anything else: shown with QuickLook, only whole-file notes.
     case file
+    /// A live web page; the path is its URL.
+    case web
 
     /// The `Source:` value in a context packet.
     public var packetSource: String { rawValue }

@@ -19,6 +19,35 @@ public protocol PDFTextSource {
     func find(_ text: String) -> [(page: Int, bounds: PDFBounds)]
 }
 
+/// An element the page's bridge found while looking for an anchor again.
+public struct ElementCandidate: Sendable, Equatable {
+    public var selector: String
+    public var tag: String
+    public var text: String
+    public var html: String
+    public var rect: ElementRect
+
+    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect) {
+        self.selector = selector
+        self.tag = tag
+        self.text = text
+        self.html = html
+        self.rect = rect
+    }
+}
+
+/// What the page reported for one element anchor: the element at its selector, if any, and every element of the
+/// same tag with the same collapsed text. The bridge only gathers facts; `ReAnchorer.element` decides.
+public struct ElementResolution: Sendable, Equatable {
+    public var bySelector: ElementCandidate?
+    public var byText: [ElementCandidate]
+
+    public init(bySelector: ElementCandidate? = nil, byText: [ElementCandidate] = []) {
+        self.bySelector = bySelector
+        self.byText = byText
+    }
+}
+
 public enum ReAnchorer {
     public static let contextLines = 3
     public static let acceptScore = 0.6
@@ -353,5 +382,37 @@ public enum ReAnchorer {
         guard let hit = hits.first else { return .orphaned }
         let moved = PDFAnchor(page: hit.page, bounds: anchor.bounds == nil ? nil : hit.bounds, text: text, pageCount: pageCount)
         return hits.count == 1 ? .moved(.pdf(moved)) : .movedNeedsReview(.pdf(moved))
+    }
+
+    // MARK: Element
+
+    /// Selector first, text second: a selector hit with the same tag keeps the note (flagged when the text changed);
+    /// otherwise the one element with the same text takes over, several pick the nearest, none orphans the note.
+    public static func element(_ anchor: ElementAnchor, resolution: ElementResolution, newHash: String, line: Int? = nil) -> ReAnchorResult {
+        if let hash = anchor.hash, hash == newHash { return .unchanged }
+        func updated(_ candidate: ElementCandidate) -> ElementAnchor {
+            var next = anchor
+            next.selector = candidate.selector
+            next.tag = candidate.tag
+            next.text = ElementAnchor.collapse(candidate.text, limit: ElementAnchor.textLimit)
+            next.html = ElementAnchor.truncate(candidate.html, limit: ElementAnchor.htmlLimit)
+            next.rect = candidate.rect
+            next.line = line ?? anchor.line
+            next.hash = newHash
+            return next
+        }
+        if let hit = resolution.bySelector, hit.tag.lowercased() == anchor.tag {
+            let sameText = ElementAnchor.collapse(hit.text, limit: ElementAnchor.textLimit) == anchor.text
+            return sameText ? .moved(.element(updated(hit))) : .movedNeedsReview(.element(updated(hit)))
+        }
+        let hits = resolution.byText.filter { $0.tag.lowercased() == anchor.tag }
+        guard !hits.isEmpty else { return .orphaned }
+        let origin = anchor.rect.center
+        let nearest = hits.min { lhs, rhs in
+            let l = lhs.rect.center, r = rhs.rect.center
+            return (l.x - origin.x) * (l.x - origin.x) + (l.y - origin.y) * (l.y - origin.y)
+                < (r.x - origin.x) * (r.x - origin.x) + (r.y - origin.y) * (r.y - origin.y)
+        }!
+        return .movedNeedsReview(.element(updated(nearest)))
     }
 }

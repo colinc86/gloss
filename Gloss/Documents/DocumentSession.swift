@@ -932,6 +932,8 @@ final class DocumentSession: Identifiable {
                 return (note.id, Double(anchor.page) * 1_000_000 - (anchor.bounds?.cgRect.maxY ?? 999_999))
             case .image:
                 return (note.id, Double(index))
+            case .element(let anchor):
+                return (note.id, anchor.rect.y * 10_000 + anchor.rect.x)
             case .wholeFile:
                 return nil
             }

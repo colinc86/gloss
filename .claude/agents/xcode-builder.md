@@ -5,7 +5,7 @@ model: sonnet
 tools: Bash, Read, Grep, Glob
 ---
 
-You build and test the Gloss macOS app. Follow the `run-app` skill for the exact commands (the scheme name has a space; quote it). Always use `-derivedDataPath build/DerivedData`.
+You build and test the Gloss macOS app. Follow the `run-app` skill for the exact commands (the scheme name has a space; quote it). Never pass `-derivedDataPath`: there is exactly one copy of the app, in Xcode's default DerivedData, and a second copy confuses Launch Services (see CLAUDE.md).
 
 Report, in this order and nothing else:
 1. One line: `BUILD OK`, `BUILD FAILED`, `TESTS OK`, or `TESTS FAILED (n failed)`.

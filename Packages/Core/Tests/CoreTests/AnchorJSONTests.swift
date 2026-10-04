@@ -22,6 +22,26 @@ struct AnchorJSONTests {
         #expect(try anchor.encodedJSON() == #"{"bounds":{"h":40,"w":30,"x":10,"y":20},"page":2,"pageCount":9,"text":"hello"}"#)
     }
 
+    @Test func elementAnchorMatchesTheDocShape() throws {
+        let anchor = Anchor.element(ElementAnchor(
+            selector: "#toolbar > button:nth-of-type(2)", tag: "BUTTON", text: "  Save\n  now ", html: "<button class=\"primary\">Save</button>",
+            rect: ElementRect(x: 120, y: 480, w: 96, h: 32), line: 42, hash: "h"
+        ))
+        #expect(try anchor.encodedJSON() == ###"{"hash":"h","html":"<button class=\"primary\">Save</button>","line":42,"rect":{"h":32,"w":96,"x":120,"y":480},"selector":"#toolbar > button:nth-of-type(2)","tag":"button","text":"Save now"}"###)
+        #expect(anchor.type == .element)
+        #expect(anchor.summary == "Element button:nth-of-type(2)")
+        #expect(Anchor.element(ElementAnchor(selector: "#save", tag: "a", text: "", html: "", rect: .init(x: 0, y: 0, w: 1, h: 1))).summary == "Element #save")
+        #expect(anchor.sortKey == Anchor.SortKey(primary: 480, secondary: 120))
+    }
+
+    @Test func elementAnchorCapsTextAndHTML() {
+        let anchor = ElementAnchor(selector: "p", tag: "p", text: String(repeating: "a ", count: 600), html: String(repeating: "<i>", count: 2000), rect: .init(x: 0, y: 0, w: 0, h: 0))
+        #expect(anchor.text.count == ElementAnchor.textLimit)
+        #expect(anchor.text.hasSuffix("…"))
+        #expect(anchor.html.count == ElementAnchor.htmlLimit)
+        #expect(anchor.html.hasSuffix("…"))
+    }
+
     @Test func wholeFileIsEmptyObject() throws {
         #expect(try Anchor.wholeFile.encodedJSON() == "{}")
         #expect(try Anchor(type: .file, json: "{}") == .wholeFile)
@@ -43,6 +63,7 @@ struct AnchorJSONTests {
             .image(ImageAnchor(x: 0, y: 0, w: 1, h: 1, imageW: 2, imageH: 2, hash: "h")),
             .pdf(PDFAnchor(page: 0, bounds: nil, text: nil, pageCount: 1)),
             .wholeFile,
+            .element(ElementAnchor(selector: "main > p:nth-of-type(3)", tag: "p", text: "Hi", html: "<p>Hi</p>", rect: .init(x: 1.5, y: 2, w: 3, h: 4))),
         ]
         let data = try JSONEncoder().encode(anchors)
         #expect(try JSONDecoder().decode([Anchor].self, from: data) == anchors)
