@@ -418,7 +418,12 @@ private struct StatusBar: View {
     @ViewBuilder
     private var changedLines: some View {
         let hunks = session.changeHunks
-        if !hunks.isEmpty {
+        if session.changesUnknown {
+            Label("Changes not shown", systemImage: "plus.forwardslash.minus")
+                .foregroundStyle(.secondary)
+                .help("Too large for GitHub to show changes: it sends no line-by-line patch for this file")
+                .transition(.opacity)
+        } else if !hunks.isEmpty {
             HStack(spacing: DS.Space.xs) {
                 Image(systemName: "plus.forwardslash.minus")
                     .foregroundStyle(.green)

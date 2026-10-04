@@ -99,6 +99,10 @@ final class DocumentSession: Identifiable {
     var proxy: WebProxyMap?
     /// The lines a change touched in this document (a pull request's file), asked for on open and after a reload.
     @ObservationIgnored var lineChangesProvider: ((String) async -> LineChanges?)?
+    /// Whether the changed lines are unknown (GitHub sent no patch for this file).
+    @ObservationIgnored var patchOmittedProvider: ((String) async -> Bool)?
+    /// Set when a pull request's file changed but GitHub would not say which lines.
+    private(set) var changesUnknown = false
     /// Who changed a pull request, ticket or page, for the banner after a reload ("Updated by Ana Ruiz · version 8").
     @ObservationIgnored var changeSummaryProvider: ((String) async -> String?)?
     /// What the last `resourceUpdated` banner says changed, once known.
@@ -1203,11 +1207,33 @@ final class DocumentSession: Identifiable {
         guard let provider = lineChangesProvider, let controller = textController else { return }
         let path = path
         Task { [weak self] in
-            let changes = await provider(path)
+            let changes = await provider(path).map { Self.editorLines(of: $0, in: controller.text, lineIndex: controller.lineIndex) }
+            let omitted = changes == nil ? await self?.patchOmittedProvider?(path) ?? false : false
             guard let self, self.textController === controller else { return }
+            self.changesUnknown = omitted
             if changes != controller.lineChanges { self.steppedHunk = nil }
             controller.lineChanges = changes
         }
+    }
+
+    /// Git's line numbers on the editor's lines. Git ends a line only at "\n"; the editor also breaks at U+2028,
+    /// U+2029, U+0085 and a lone "\r", so in a file holding one of those every tint below it would be a row off.
+    nonisolated static func editorLines(of changes: LineChanges, in text: String, lineIndex: LineIndex) -> LineChanges {
+        let utf16 = text.utf16
+        guard text.contains(where: { $0 == "\u{2028}" || $0 == "\u{2029}" || $0 == "\u{85}" || $0 == "\r" }) else { return changes }
+        // The UTF-16 offset where each git line starts.
+        var starts = [0]
+        var offset = 0
+        for unit in utf16 {
+            offset += 1
+            if unit == 0x0A { starts.append(offset) }
+        }
+        func editorLine(_ gitLine: Int) -> Int {
+            let start = starts[min(max(gitLine - 1, 0), starts.count - 1)]
+            return lineIndex.position(forUTF16Offset: start).line
+        }
+        return LineChanges(added: changes.added.map { editorLine($0.lowerBound)...max(editorLine($0.lowerBound), editorLine($0.upperBound)) },
+                           deletions: changes.deletions.map(editorLine))
     }
 
     /// Each hunk in file order, keyed by its first line.
@@ -1236,7 +1262,9 @@ final class DocumentSession: Identifiable {
     func stepChange(forward: Bool) -> Bool {
         guard let controller = textController, let changes = controller.lineChanges else { NSSound.beep(); return false }
         let caret = Double(controller.lineIndex.position(forUTF16Offset: controller.selection.location).line)
-        guard let index = Self.step(from: caret, current: currentSteppedHunk, in: changeHunks, forward: forward) else { NSSound.beep(); return false }
+        // The first Next counts a hunk starting on the caret's own line (on open the caret sits on line 1).
+        let from = currentSteppedHunk == nil && forward ? caret - 0.5 : caret
+        guard let index = Self.step(from: from, current: currentSteppedHunk, in: changeHunks, forward: forward) else { NSSound.beep(); return false }
         steppedHunk = index
         selectionAtHunkStep = controller.selection
         let hunk = changes.hunks[index]

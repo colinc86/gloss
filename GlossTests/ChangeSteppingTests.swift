@@ -47,6 +47,33 @@ struct ChangeSteppingTests {
         await model.shutDown()
     }
 
+    @Test func theFirstNextCountsAHunkOnTheCaretsLine() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-hunk1-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try (1...50).map { "line \($0)" }.joined(separator: "\n").write(toFile: "\(root)/a.swift", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        model.openDocument(hostID: .local, path: "\(root)/a.swift")
+        let session = try #require(model.activeSession)
+        await waitUntil { session.textController != nil }
+        let controller = try #require(session.textController)
+        controller.lineChanges = LineChanges(added: [1...2, 40...40])
+        #expect(session.stepChange(forward: true))
+        #expect(session.changePosition?.index == 1, "on open the caret is on line 1, where the first hunk is")
+        await model.shutDown()
+    }
+
+    @Test func gitLinesLandOnTheEditorsLines() {
+        // Git ends lines only at \n; the editor also breaks at U+2028, so everything below one moves down a row.
+        let text = "let a = 1\nlet s = \"x\u{2028}y\"\nlet b = 2\nlet c = 3\n"
+        let index = LineIndex(text)
+        let mapped = DocumentSession.editorLines(of: LineChanges(added: [3...4], deletions: [2]), in: text, lineIndex: index)
+        #expect(mapped == LineChanges(added: [4...5], deletions: [2]))
+        let plain = "a\nb\nc\n"
+        #expect(DocumentSession.editorLines(of: LineChanges(added: [2...2]), in: plain, lineIndex: LineIndex(plain)) == LineChanges(added: [2...2]), "no separators: unchanged")
+    }
+
     /// A read-only file (a pull request's) still takes notes: the selection becomes a text anchor like any other.
     @Test func aSelectionInAReadOnlyEditorBecomesANote() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-ro-note-\(UUID().uuidString)").path

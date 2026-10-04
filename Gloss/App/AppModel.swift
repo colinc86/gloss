@@ -443,6 +443,7 @@ final class AppModel {
         }
         if hostID == .github {
             session.lineChangesProvider = { [weak self] path in await self?.pullRequests?.changes(forPath: path) }
+            session.patchOmittedProvider = { [weak self] path in await self?.pullRequests?.patchOmitted(forPath: path) ?? false }
             session.changeSummaryProvider = { [weak self] path in await self?.pullRequests?.changeSummary(for: path) }
         }
         if hostID == .atlassian {

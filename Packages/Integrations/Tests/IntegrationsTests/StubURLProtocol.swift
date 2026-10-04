@@ -23,6 +23,11 @@ final class Stub: @unchecked Sendable {
         StubURLProtocol.register(self)
     }
 
+    func respond(to url: String, accept: String, with response: Response) {
+        lock.lock(); defer { lock.unlock() }
+        responses["\(url) \(accept)"] = response
+    }
+
     func respond(to url: String, with response: Response) {
         lock.lock(); defer { lock.unlock() }
         responses[url] = response
@@ -40,6 +45,8 @@ final class Stub: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         requests.append(request)
         let url = request.url!.absoluteString
+        // An answer for one media type (a pull request's diff shares its JSON's URL).
+        if let accept = request.value(forHTTPHeaderField: "Accept"), let typed = responses["\(url) \(accept)"] { return typed }
         if var queue = sequences[url], !queue.isEmpty {
             let next = queue.removeFirst()
             if !queue.isEmpty { sequences[url] = queue } else { sequences[url] = nil; responses[url] = next }

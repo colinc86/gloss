@@ -135,6 +135,9 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
                 snapshots[key(path)] = current
             }
             return data
+        } catch IntegrationError.http(406, _) {
+            // GitHub will not send a diff past its size limits; the document says so instead of failing to open.
+            return Data("This diff is too large for GitHub to send. The changed files under changes/ still show what changed, file by file.\n".utf8)
         } catch let error as IntegrationError {
             throw Self.fileSystemError(error, path: path.path)
         }
@@ -283,6 +286,14 @@ public actor GitHubPullRequestFileSystem: FileSystemProvider {
     // MARK: What the app asks beyond files
 
     /// The lines a changed file's patch touched; nil when GitHub sent no patch (a very large or binary file).
+    /// Whether GitHub left out a changed file's patch (a large or binary change), so the viewer can say the lines
+    /// are not tinted because GitHub would not say which, not because nothing changed.
+    public func patchOmitted(forPath path: String) async -> Bool {
+        guard let parsed = PullRequestPath(path), let file = parsed.changedFile, let snapshot = try? await snapshot(for: parsed),
+              let entry = snapshot.files.first(where: { $0.filename == file }) else { return false }
+        return entry.patch == nil && entry.status != "removed"
+    }
+
     public func changes(forPath path: String) async -> LineChanges? {
         guard let parsed = PullRequestPath(path), let file = parsed.changedFile, let snapshot = try? await snapshot(for: parsed),
               let patch = snapshot.files.first(where: { $0.filename == file })?.patch else { return nil }

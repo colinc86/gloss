@@ -14,7 +14,10 @@ public enum PatchHunks {
             deletedRun = 0
             addedAfterDeletion = false
         }
-        for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+        // Only "\n" ends a line in a diff. Swift reads "\r\n" as one Character, so a CRLF file's patch would not
+        // split at all; it is normalised first. Other separators (U+2028) are content, as git sees them.
+        let normalised = patch.replacingOccurrences(of: "\r\n", with: "\n")
+        for line in normalised.split(separator: "\n", omittingEmptySubsequences: false) {
             if line.hasPrefix("@@") {
                 closeDeletion()
                 // @@ -a,b +c,d @@

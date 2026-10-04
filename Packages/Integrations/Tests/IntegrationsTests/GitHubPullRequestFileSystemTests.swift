@@ -63,6 +63,35 @@ struct PatchHunksTests {
         #expect(PatchHunks.parse("@@ -0,0 +1,2 @@\n+new\n+file") == LineChanges(added: [1...2]))
         #expect(PatchHunks.parse("").isEmpty)
     }
+
+    @Test func aDiffTooLargeForGitHubSaysSoAndAFileWithoutAPatchIsFlagged() async throws {
+        let stub = Stub()
+        GitHubPullRequestFileSystemTests.serve(stub)
+        stub.respond(to: "\(GitHubPullRequestFileSystemTests.base)/repos/o/r/pulls/2", accept: "application/vnd.github.diff", with: .json(#"{"message":"Sorry, the diff exceeded the maximum number of lines"}"#, status: 406))
+        let fs = GitHubPullRequestFileSystem(client: GitHubClient(token: "t", session: stub.session()))
+        let text = String(decoding: try await fs.read("/o/r/pull/2/pull-2.diff"), as: UTF8.self)
+        #expect(text.hasPrefix("This diff is too large for GitHub to send."))
+        #expect(await fs.patchOmitted(forPath: "/o/r/pull/2/changes/Sources/App.swift") == false)
+        #expect(await fs.patchOmitted(forPath: "/o/r/pull/2/changes/Gone.swift") == false, "a removed file is not shown at all")
+
+        let large = Stub()
+        GitHubPullRequestFileSystemTests.serve(large)
+        large.respond(to: "\(GitHubPullRequestFileSystemTests.base)/repos/o/r/pulls/2/files?page=1&per_page=100", with: .json(#"[{"filename":"Assets/model.bin","status":"added","additions":0,"deletions":0}]"#))
+        let other = GitHubPullRequestFileSystem(client: GitHubClient(token: "t", session: large.session()))
+        #expect(await other.patchOmitted(forPath: "/o/r/pull/2/changes/Assets/model.bin"), "GitHub sent no patch for it")
+        #expect(await other.changes(forPath: "/o/r/pull/2/changes/Assets/model.bin") == nil)
+    }
+
+    @Test func crlfHeadersWithoutCountsAndSeparatorsInContent() {
+        // A CRLF file: Swift reads "\r\n" as one Character, so the patch must still split into its lines.
+        #expect(PatchHunks.parse("@@ -1,2 +1,2 @@\r\n-a\r\n+b\r\n c\r\n") == LineChanges(added: [1...1]))
+        // A one-line file's hunk header leaves the counts out.
+        #expect(PatchHunks.parse("@@ -1 +1 @@\n-old\n+new") == LineChanges(added: [1...1]))
+        // A U+2028 inside a line is content to git, not a line end.
+        #expect(PatchHunks.parse("@@ -1,2 +1,2 @@\n let s = \"a\u{2028}b\"\n-x\n+y") == LineChanges(added: [2...2]))
+        // A renamed file with no changes has no patch hunks; a binary file has no patch at all.
+        #expect(PatchHunks.parse("").isEmpty)
+    }
 }
 
 @Suite(.serialized)

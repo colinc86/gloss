@@ -8,7 +8,10 @@ enum PullRequestMarkdown {
 
     /// A body as lines of the document, CRLF and trailing blanks gone.
     static func bodyLines(_ body: String) -> [String] {
-        body.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
+        // Every way text can break a line becomes "\n", so the line map counts lines as the editor does.
+        var text = body.replacingOccurrences(of: "\r\n", with: "\n")
+        for separator in ["\r", "\u{2028}", "\u{2029}", "\u{85}"] { text = text.replacingOccurrences(of: separator, with: "\n") }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n")
     }
 
     static func state(of pull: GitHubPullRequest) -> String {
