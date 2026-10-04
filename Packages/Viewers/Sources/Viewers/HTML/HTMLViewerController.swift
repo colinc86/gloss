@@ -190,6 +190,9 @@ public final class HTMLViewerController: RenderedDocumentController {
 
     /// Set by the session: whether the document's host is this Mac (symlinks can then be resolved).
     @ObservationIgnored public var isLocal = false
+    /// Set by the session for a remote host: where a path really is there, links followed. Without it a link
+    /// inside the root (to /etc, to ~/.ssh) would let the page's scripts read whatever it points at.
+    @ObservationIgnored public var resolveRemotePath: (@Sendable (String) async throws -> String)?
     /// Set by the session: the host the page's document belongs to, so a file the browser returns to (Back from a
     /// site) can be opened on the right machine.
     @ObservationIgnored public var hostID: HostID?

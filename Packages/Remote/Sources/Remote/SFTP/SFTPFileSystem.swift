@@ -106,6 +106,11 @@ public struct SFTPFileSystem: FileSystemProvider {
         }
     }
 
+    /// Where a path really is on the host, links followed (the server's realpath).
+    public func resolvedPath(_ path: String) async throws -> String {
+        try await channel.client().realpath(path)
+    }
+
     public func stat(_ path: String) async throws -> FileAttributes {
         let client = try await channel.client()
         do {

@@ -235,8 +235,21 @@ final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
         let load = controller.loadResource
+        let resolve = controller.isLocal ? nil : controller.resolveRemotePath
+        let root = controller.resourceRoot
         tasks[key] = Task { [weak self] in
             let result: Result<Data, any Error>
+            // On a remote host the check above saw the path as written; the file it names, links followed, must
+            // be inside the root's real place too. A host that cannot say is refused.
+            if !(controller.isLocal), let resolve {
+                let real = try? await resolve(path)
+                let realRoot = try? await resolve(root)
+                guard let real, let realRoot, HTMLViewerController.allowsResource(real, root: realRoot, local: false) else {
+                    guard let self, self.tasks.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
+                    urlSchemeTask.didFailWithError(URLError(.noPermissionsToReadFile))
+                    return
+                }
+            }
             do { result = .success(try await load(path)) } catch { result = .failure(error) }
             guard let self, self.tasks.removeValue(forKey: key) != nil, !Task.isCancelled else { return }
             switch result {

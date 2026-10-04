@@ -3,6 +3,7 @@ import Core
 import Observation
 import OSLog
 import PDFKit
+import Remote
 import Viewers
 
 /// One open file: its content, the viewer state, the fingerprint it was read with, and the save protocol.
@@ -288,6 +289,9 @@ final class DocumentSession: Identifiable {
                     return try await fileSystem.read(resource)
                 }
                 viewer.isLocal = hostID == .local
+                if let sftp = fileSystem as? SFTPFileSystem {
+                    viewer.resolveRemotePath = { path in try await sftp.resolvedPath(path) }
+                }
                 viewer.hostID = hostID
                 viewer.onPick = { [weak self] pick in self?.beginNote(element: pick) }
                 viewer.onPageChanged = { [weak self] in self?.pageChanged() }

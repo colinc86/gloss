@@ -275,6 +275,43 @@ struct WebBridgeTests {
         #expect((otherHost.error as? URLError)?.code == .noPermissionsToReadFile, "a served page cannot reach another host's files")
     }
 
+    /// On a remote host a link inside the site pointing out of it (to /etc, to ~/.ssh) is refused: the file's real
+    /// place, links followed, must be inside the root's.
+    @Test func aRemoteLinkOutOfTheSiteIsRefused() async throws {
+        final class Task: NSObject, WKURLSchemeTask {
+            let request: URLRequest
+            var error: (any Error)?
+            var data = Data()
+            var finished = false
+            init(_ url: String, mainDocument: String) {
+                var request = URLRequest(url: URL(string: url)!)
+                request.mainDocumentURL = URL(string: mainDocument)
+                self.request = request
+            }
+            func didReceive(_ response: URLResponse) {}
+            func didReceive(_ data: Data) { self.data.append(data) }
+            func didFinish() { finished = true }
+            func didFailWithError(_ error: any Error) { self.error = error; finished = true }
+        }
+        let browser = WebBrowserController()
+        let handler = HTMLSchemeHandler()
+        handler.browser = browser
+        let page = HTMLViewerController(source: TextEditorController(text: "<p>x</p>", languageName: "html"), documentPath: "/site/index.html", resourceRoot: { "/site" }) { _ in Data("bytes".utf8) }
+        page.hostID = HostID(rawValue: "h_asus")
+        page.isLocal = false
+        page.resolveRemotePath = { path in path == "/site/link.txt" ? "/etc/passwd" : path }
+        browser.attach(page, load: false)
+
+        let link = Task("gloss-html://h_asus/site/link.txt", mainDocument: "gloss-html://h_asus/site/index.html")
+        handler.webView(browser.webView, start: link)
+        let plain = Task("gloss-html://h_asus/site/style.css", mainDocument: "gloss-html://h_asus/site/index.html")
+        handler.webView(browser.webView, start: plain)
+        for _ in 0..<100 where !(link.finished && plain.finished) { try await _Concurrency.Task.sleep(for: .milliseconds(20)) }
+        #expect((link.error as? URLError)?.code == .noPermissionsToReadFile, "the link leads out of the site")
+        #expect(link.data.isEmpty)
+        #expect(plain.error == nil && String(decoding: plain.data, as: UTF8.self) == "bytes")
+    }
+
     @Test func schemePermissions() {
         let url = { URL(string: $0)! }
         let permits = { (u: String, main: String?, ref: String?) in
