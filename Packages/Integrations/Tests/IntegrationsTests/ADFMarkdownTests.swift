@@ -19,8 +19,24 @@ struct ADFMarkdownTests {
         let adf = #"{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"Name"}]}]},{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"A|B"}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"tableCell","content":[]}]}]},{"type":"mediaSingle","content":[{"type":"media","attrs":{"id":"abc","alt":"diagram.png"}}]},{"type":"expand","attrs":{"title":"More"},"content":[{"type":"paragraph","content":[{"type":"text","text":"hidden"}]}]},{"type":"somethingNew","content":[{"type":"paragraph","content":[{"type":"text","text":"kept"}]}]},{"type":"paragraph","content":[{"type":"inlineCard","attrs":{"url":"https://x.test/p"}}]}]}"#
         #expect(render(adf) == "| Name | A\\|B |\n| --- | --- |\n| x |  |\n\n[image: diagram.png]\n\n**More**\n\nhidden\n\nkept\n\n<https://x.test/p>\n")
         let rich = #"{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"a"}]},{"type":"paragraph","content":[{"type":"text","text":"b"}]}]}]}]}]}"#
-        #expect(render(rich) == "- Row 1: a b\n", "a cell with several paragraphs is listed, not squashed")
+        #expect(render(rich) == "- Row 1:\n  - a\n    \n    b\n", "a cell with several paragraphs is listed, not squashed")
         #expect(ADFMarkdown.markdown(fromJSON: Data("nope".utf8)) == nil)
+    }
+
+    @Test func nodesThatUsedToVanish() {
+        let card = #"{"type":"doc","content":[{"type":"blockCard","attrs":{"url":"https://x.test/board"}},{"type":"extension","attrs":{"extensionKey":"toc"}},{"type":"paragraph","content":[{"type":"text","text":"see "},{"type":"mediaInline","attrs":{"name":"spec.pdf"}},{"type":"text","text":" "},{"type":"status","attrs":{"text":"IN REVIEW"}}]},{"type":"decisionList","content":[{"type":"decisionItem","attrs":{"state":"DECIDED"},"content":[{"type":"text","text":"Ship"}]},{"type":"decisionItem","attrs":{"state":"UNDECIDED"},"content":[{"type":"text","text":"Name"}]}]}]}"#
+        #expect(render(card) == "<https://x.test/board>\n\n[macro: toc]\n\nsee [file: spec.pdf] [IN REVIEW]\n\n- ✓ Ship\n- ○ Name\n")
+        // A list in a table cell keeps its items apart.
+        let listCell = #"{"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"a"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"b"}]}]}]}]}]}]}]}"#
+        #expect(render(listCell) == "- Row 1:\n  - - a\n    - b\n")
+        // Nested task lists are indented.
+        let tasks = #"{"type":"doc","content":[{"type":"taskList","content":[{"type":"taskItem","attrs":{"state":"TODO"},"content":[{"type":"text","text":"parent"}]},{"type":"taskList","content":[{"type":"taskItem","attrs":{"state":"DONE"},"content":[{"type":"text","text":"child"}]}]}]}]}"#
+        #expect(render(tasks) == "- [ ] parent\n  - [x] child\n")
+    }
+
+    @Test func textCannotBecomeMarkdownOrScript() {
+        let tricky = ##"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"# not a heading"}]},{"type":"paragraph","content":[{"type":"text","text":"1. not a list, *not bold*, <b>not html</b>"}]},{"type":"paragraph","content":[{"type":"text","text":"click","marks":[{"type":"link","attrs":{"href":"javascript:alert(1)"}}]},{"type":"text","text":" "},{"type":"text","text":"wiki","marks":[{"type":"link","attrs":{"href":"https://x.test/a_(b)"}}]},{"type":"text","text":" "},{"type":"text","text":"under","marks":[{"type":"underline"}]}]},{"type":"codeBlock","content":[{"type":"text","text":"```inner```"}]}]}"##
+        #expect(render(tricky) == "\\# not a heading\n\n1\\. not a list, \\*not bold\\*, \\<b>not html\\</b>\n\nclick [wiki](https://x.test/a_%28b%29) under\n\n````\n```inner```\n````\n")
     }
 
     @Test func renderingIsDeterministic() {
