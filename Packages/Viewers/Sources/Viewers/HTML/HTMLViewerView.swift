@@ -165,16 +165,19 @@ struct RenderedHTMLView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
-        park(in: container)
+        park(in: container, fresh: true)
         return container
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        park(in: nsView)
+        park(in: nsView, fresh: false)
         browser.sync()
     }
 
-    private func park(in container: NSView) {
+    private func park(in container: NSView, fresh: Bool) {
+        // The page the view just left (a link, Back, a redirect) belongs to a pane on its way out; only a pane
+        // made for it again takes the view back.
+        if !fresh, browser.released === controller { return }
         let webView = browser.webView
         if webView.superview !== container {
             webView.removeFromSuperview()
@@ -219,7 +222,10 @@ final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
         let path = url.path
         let key = ObjectIdentifier(urlSchemeTask)
         let request = urlSchemeTask.request
-        guard let controller = browser?.current, case .file = controller.page,
+        // The page the request belongs to is its main document: the current page, or, while Back or Forward goes
+        // to a file, that file's open document.
+        let main = request.mainDocumentURL ?? url
+        guard let controller = browser?.servingController(host: main.host()?.lowercased(), documentPath: main.path), case .file = controller.page,
               Self.permits(url: url, mainDocument: request.mainDocumentURL,
                            referrer: (request.value(forHTTPHeaderField: "Referer") ?? request.value(forHTTPHeaderField: "Origin")).flatMap(URL.init(string:)),
                            servingHost: WebBrowserController.hostKey(controller.hostID)) else {

@@ -64,9 +64,11 @@ enum WebBridge {
       let lastURL = location.href;
       function reportURL() { if (location.href !== lastURL) { lastURL = location.href; post({ url: lastURL }); } }
       // The overlay's own comings and goings (it is detached to serialise, attached to draw) are not page changes.
+      // The overlay just taken away (no element notes left) counts as ours too.
+      let retiredOverlay = null;
       const ours = (r) => inOverlay(r.target)
         || (r.target === root() && (r.addedNodes.length + r.removedNodes.length) > 0
-            && [...r.addedNodes, ...r.removedNodes].every((n) => n === overlay));
+            && [...r.addedNodes, ...r.removedNodes].every((n) => n === overlay || n === retiredOverlay));
       // Reported once changes settle for 200 ms, and at least every 2 s while they never do (a ticking clock, a
       // streaming log), so a page that never rests is still followed.
       let firstChange = 0;
@@ -209,11 +211,14 @@ enum WebBridge {
         }
         return { bySelector, byText };
       }
-      function resolveElements(list) {
+      // Text offsets cost a walk of the page each, so they are asked for only on served files, and only for the
+      // first few text matches of a common text.
+      function resolveElements(list, offsets) {
         return list.map((item) => {
           const { bySelector, byText } = findCandidates(item);
+          let budget = 20;
           const found = (el) => ({ selector: selectorFor(el), tag: el.tagName.toLowerCase(), text: collapse(el.textContent || '').slice(0, 500),
-                                   html: (el.outerHTML || '').slice(0, 2048), textOffset: textOffsetOf(el),
+                                   html: (el.outerHTML || '').slice(0, 2048), textOffset: offsets && budget-- > 0 ? textOffsetOf(el) : null,
                                    rect: (() => { const b = el.getBoundingClientRect(); return { x: b.left + scrollX, y: b.top + scrollY, w: b.width, h: b.height }; })() });
           return { id: item.id, bySelector: bySelector ? found(bySelector) : null, byText: byText.map(found) };
         });
@@ -224,7 +229,7 @@ enum WebBridge {
         for (const [, entry] of boxes) entry.box.remove();
         boxes.clear();
         const rects = {};
-        if (!list.length) { if (overlay && overlay.isConnected && !picking) { overlay.remove(); overlay = null; } return rects; }
+        if (!list.length) { if (overlay && overlay.isConnected && !picking) { retiredOverlay = overlay; overlay.remove(); overlay = null; } return rects; }
         ensureOverlay();
         for (const item of list) {
           let el = null;

@@ -33,9 +33,13 @@ public final class WebBrowserController {
     @ObservationIgnored public var onOpenFile: @MainActor (_ host: HostID?, _ path: String, _ previous: HTMLViewerController?) -> Void = { _, _, _ in }
     /// Scheme host keys of the hosts whose files this view has served, back to their ids (WebKit lowercases hosts).
     @ObservationIgnored private var hostKeys: [String: HostID] = [:]
-    /// Back or Forward to a served file that is not current: once its document attaches, the view returns to
-    /// this history item instead of loading the file as a new one.
-    @ObservationIgnored private var pendingHistory: WKBackForwardListItem?
+    /// The open document for a served file on a host, so Back and Forward can return to a file without a new
+    /// history entry: the scheme handler serves it while the view goes there, and the document takes over when
+    /// the view commits. Nil when no such document is open.
+    @ObservationIgnored public var fileDocument: @MainActor (HostID, String) -> HTMLViewerController? = { _, _ in nil }
+    /// The tunnels of whichever ssh host owns a local port, so Back to a proxied page from an outside one still
+    /// maps it back to that host's loopback. Nil when the port is not a tunnel.
+    @ObservationIgnored public var tunnelOwner: @MainActor (UInt16) -> WebProxyMap? = { _ in nil }
     /// The page wants `port` on `host`'s loopback; return the local port that reaches it.
     @ObservationIgnored public var onNeedsTunnel: @MainActor (HostID, UInt16) async throws -> UInt16 = { _, _ in throw CancellationError() }
     @ObservationIgnored public var onExternal: @MainActor (URL) -> Void = { NSWorkspace.shared.open($0) }
@@ -79,11 +83,11 @@ public final class WebBrowserController {
             webView.observe(\.estimatedProgress, options: [.new]) { [weak self] webView, _ in
                 MainActor.assumeIsolated { self?.progressChanged(webView.estimatedProgress, loading: webView.isLoading) }
             },
-            webView.observe(\.canGoBack, options: [.new]) { [weak self] webView, _ in
-                MainActor.assumeIsolated { self?.canGoBack = webView.canGoBack }
+            webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.updateHistoryState() }
             },
-            webView.observe(\.canGoForward, options: [.new]) { [weak self] webView, _ in
-                MainActor.assumeIsolated { self?.canGoForward = webView.canGoForward }
+            webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.updateHistoryState() }
             },
             // Same-document navigations (pushState, hash changes) commit nothing; the URL still moves. While a
             // real navigation loads, the URL is only provisional: didCommit reports it when it is the page.
@@ -99,6 +103,7 @@ public final class WebBrowserController {
     /// changed under a navigation the view made itself); true loads the page.
     public func attach(_ controller: HTMLViewerController, load: Bool) {
         refusal = nil
+        released = nil
         if current === controller {
             if load { self.load(controller) }
             return
@@ -153,7 +158,6 @@ public final class WebBrowserController {
     public func unload() {
         detachCurrent()
         current = nil
-        pendingHistory = nil
         displayedURL = nil
         shownFilePath = nil
         shownFileHost = nil
@@ -165,9 +169,14 @@ public final class WebBrowserController {
     /// The view moved to something else: the page that was current stops receiving its state until a document
     /// attaches again (a later attach of the same page reloads it, since the view no longer shows it).
     private func release() {
+        if let current { released = current }
         detachCurrent()
         current = nil
     }
+
+    /// The page the view just let go of. Its pane is usually on its way out, and an update to it must not
+    /// re-attach (and reload) it; a pane made for it afresh does.
+    public private(set) weak var released: HTMLViewerController?
 
     private func detachCurrent() {
         guard let current else { return }
@@ -199,20 +208,12 @@ public final class WebBrowserController {
             shownFilePath = path
             shownFileHost = Self.hostKey(controller.hostID)
             shownProxy = nil
-            // Back or Forward brought this file back: return to its history item rather than adding a new one.
-            if let item = pendingHistory, item.url.path == path, item.url.host()?.lowercased() == shownFileHost {
-                pendingHistory = nil
-                webView.go(to: item)
-                return
-            }
-            pendingHistory = nil
             webView.load(URLRequest(url: url))
         case .live(let url):
             displayedURL = url
             shownFilePath = nil
             shownFileHost = nil
             shownProxy = controller.proxy
-            pendingHistory = nil
             if let proxy = controller.proxy, let port = WebProxyMap.loopbackPort(of: url), !proxy.isProxied(url), proxy.tunnels[port] == nil {
                 // The page lives on the host's loopback: get there first, then load.
                 tunnel(port: port, then: url, proxy: proxy)
@@ -222,8 +223,22 @@ public final class WebBrowserController {
         }
     }
 
-    public func goBack() { webView.goBack() }
-    public func goForward() { webView.goForward() }
+    /// Back and Forward step over the blank page a closed document left behind.
+    public func goBack() {
+        let list = webView.backForwardList
+        if let item = list.backList.reversed().first(where: { $0.url.scheme?.lowercased() != "about" }) { webView.go(to: item) }
+    }
+
+    public func goForward() {
+        let list = webView.backForwardList
+        if let item = list.forwardList.first(where: { $0.url.scheme?.lowercased() != "about" }) { webView.go(to: item) }
+    }
+
+    private func updateHistoryState() {
+        let list = webView.backForwardList
+        canGoBack = list.backList.contains { $0.url.scheme?.lowercased() != "about" }
+        canGoForward = list.forwardList.contains { $0.url.scheme?.lowercased() != "about" }
+    }
 
     public func reload() {
         guard let current else { return }
@@ -281,12 +296,16 @@ public final class WebBrowserController {
 
     fileprivate func decide(_ action: WKNavigationAction) -> WKNavigationActionPolicy {
         guard let url = action.request.url else { return .cancel }
-        // Nothing attached (a page was closed, or the view is between documents): only the view's own loads.
-        guard let current else { return url.scheme?.lowercased() == "about" ? .allow : .cancel }
+        // Frames load what they like, attached or not (a page's iframes start before its document attaches).
+        guard action.targetFrame?.isMainFrame ?? true else { return .allow }
+        // Between documents (the view moved on and the next document has not attached yet) the page it left is
+        // still the context a redirect or a click is judged in. With neither, only the view's own blank page.
+        guard let current = current ?? released else { return url.scheme?.lowercased() == "about" ? .allow : .cancel }
         let fileHost: String? = { if case .file = current.page { Self.hostKey(current.hostID) } else { nil } }()
+        let proxy = current.proxy ?? shownProxy ?? loopbackOwner(of: url)
         let decision = WebNavigationPolicy.decide(
-            url: url, type: action.navigationType, isMainFrame: action.targetFrame?.isMainFrame ?? true,
-            page: current.page, fileHost: fileHost, proxy: current.proxy, isLocalHost: current.isLocal
+            url: url, type: action.navigationType, isMainFrame: true,
+            page: current.page, fileHost: fileHost, proxy: proxy, isLocalHost: current.isLocal
         )
         switch decision {
         case .allow:
@@ -301,14 +320,16 @@ public final class WebBrowserController {
             if url.scheme?.lowercased() == HTMLSchemeHandler.scheme {
                 guard let key = url.host()?.lowercased(), let known = hostKeys[key] else { return .cancel }
                 host = known
-                if action.navigationType == .backForward { pendingHistory = historyItem(for: url) }
+                // Back or Forward to a file whose document is open: let the view go there through its own history;
+                // the handler serves the document and the commit hands the viewer to it.
+                if action.navigationType == .backForward, fileDocument(known, path) != nil { return .allow }
             } else {
                 host = current.hostID
             }
             onOpenFile(host, path, current)
             return .cancel
         case .tunnel(let port, let then):
-            if let proxy = current.proxy { tunnel(port: port, then: then, proxy: proxy) }
+            if let proxy { tunnel(port: port, then: then, proxy: proxy) }
             return .cancel
         case .external(let url):
             onExternal(url)
@@ -316,24 +337,34 @@ public final class WebBrowserController {
         }
     }
 
-    /// The nearest history item showing `url`, behind or ahead of the current one.
-    private func historyItem(for url: URL) -> WKBackForwardListItem? {
-        let list = webView.backForwardList
-        let candidates = list.backList.reversed() + list.forwardList
-        return candidates.first { $0.url.path == url.path && $0.url.host()?.lowercased() == url.host()?.lowercased() }
+    /// The tunnels owning `url` when it is a tunnel's local end (`127.0.0.1:<local>`).
+    private func loopbackOwner(of url: URL) -> WebProxyMap? {
+        guard url.host()?.lowercased() == "127.0.0.1", let port = url.port, let local = UInt16(exactly: port) else { return nil }
+        return tunnelOwner(local)
+    }
+
+    /// The host a served file's scheme key names, among the hosts whose files this view has shown.
+    func host(forKey key: String?) -> HostID? { key.flatMap { hostKeys[$0.lowercased()] } }
+
+    /// The page a served-file request belongs to: the current page when it is that file, else the open document
+    /// for it (Back or Forward on its way there).
+    func servingController(host key: String?, documentPath: String) -> HTMLViewerController? {
+        if let current, case .file(let path) = current.page, path == documentPath, Self.hostKey(current.hostID) == key { return current }
+        guard let host = host(forKey: key) else { return nil }
+        return fileDocument(host, documentPath)
     }
 
     private func tunnel(port: UInt16, then url: URL, proxy: WebProxyMap) {
-        let started = current
+        let started = current ?? released
         Task { [weak self] in
             guard let self else { return }
             do {
                 let local = try await onNeedsTunnel(proxy.hostID, port)
                 // The reader may have moved on while the tunnel came up; only the page that asked loads through it.
-                guard let current, current === started, current.proxy?.hostID == proxy.hostID else { return }
-                var updated = current.proxy ?? proxy
+                guard let page = current ?? released, page === started else { return }
+                var updated = page.proxy?.hostID == proxy.hostID ? page.proxy ?? proxy : proxy
                 updated.tunnels[port] = local
-                current.proxy = updated
+                if page.proxy?.hostID == proxy.hostID { page.proxy = updated }
                 shownProxy = updated
                 if let proxied = updated.proxied(url) { webView.load(URLRequest(url: proxied)) }
             } catch {
@@ -347,33 +378,55 @@ public final class WebBrowserController {
     fileprivate func committed(_ url: URL?) {
         guard let url else { return }
         let scheme = url.scheme?.lowercased() ?? ""
-        // about:blank and friends are the view's own pages, never documents.
-        if scheme == "about" { return }
+        // about:blank and friends are the view's own pages, never documents; nothing is attached to them.
+        if scheme == "about" {
+            if current != nil { release() }
+            displayedURL = nil
+            shownFilePath = nil
+            shownFileHost = nil
+            shownProxy = nil
+            return
+        }
+        let context = current ?? released
         if scheme == HTMLSchemeHandler.scheme {
             let key = url.host()?.lowercased()
             displayedURL = nil
             shownFilePath = url.path
             shownFileHost = key
             shownProxy = nil
-            guard let current else { return }
-            if case .file(let path) = current.page, path == url.path, Self.hostKey(current.hostID) == key { return }
+            func shows(_ page: HTMLViewerController) -> Bool {
+                if case .file(let path) = page.page { path == url.path && Self.hostKey(page.hostID) == key } else { false }
+            }
+            if let current, shows(current) { return }
+            // Back to the page the view just left (a bounce, Back then Forward): it takes the view straight back.
+            if current == nil, let released, shows(released) { attach(released, load: false); return }
             release()
-            if let key, let host = hostKeys[key] { onOpenFile(host, url.path, current) }
+            if let key, let host = hostKeys[key] { onOpenFile(host, url.path, context) }
             return
         }
-        let proxy = current?.proxy ?? shownProxy
-        let logical = proxy?.logical(url) ?? url
+        let proxy = context?.proxy ?? shownProxy ?? loopbackOwner(of: url)
+        var logical = proxy?.logical(url) ?? url
+        // Keep the loopback spelling the page was opened with (127.0.0.1 and localhost are different origins).
+        if case .live(let opened)? = context?.page, let spelled = opened.host(), WebProxyMap.loopbackPort(of: opened) != nil,
+           WebProxyMap.loopbackPort(of: opened) == WebProxyMap.loopbackPort(of: logical), logical.host() != spelled,
+           var components = URLComponents(url: logical, resolvingAgainstBaseURL: true) {
+            components.host = spelled
+            logical = components.url ?? logical
+        }
         displayedURL = logical
         shownFilePath = nil
         shownFileHost = nil
         refusal = nil
-        guard let current else { return }
-        if case .live(let shown) = current.page, WebDocumentKey.normalize(shown) == WebDocumentKey.normalize(logical) { return }
+        func shows(_ page: HTMLViewerController) -> Bool {
+            if case .live(let shown) = page.page { WebDocumentKey.normalize(shown) == WebDocumentKey.normalize(logical) } else { false }
+        }
+        if let current, shows(current) { return }
+        if current == nil, let released, shows(released) { attach(released, load: false); return }
         // A page on the host's loopback stays on that host; anything else is the open web.
         let via = proxy.flatMap { WebProxyMap.loopbackPort(of: logical) != nil ? $0.hostID : nil }
-        if via == nil { shownProxy = nil }
+        shownProxy = via == nil ? nil : proxy
         release()
-        onDocumentChange(logical, via, current)
+        onDocumentChange(logical, via, context)
     }
 
     fileprivate func finished() {
@@ -494,7 +547,9 @@ public final class WebBrowserController {
     public func resolve(_ items: [(id: NoteID, anchor: ElementAnchor)]) async -> [NoteID: ElementResolution] {
         guard isLoaded, !items.isEmpty else { return [:] }
         let list: [[String: Any]] = items.map { ["id": $0.id.rawValue, "selector": $0.anchor.selector, "tag": $0.anchor.tag, "text": $0.anchor.text] }
-        let value = try? await webView.callAsyncJavaScript("return window.__cc ? window.__cc.resolveElements(list) : []", arguments: ["list": list], in: nil, contentWorld: .defaultClient)
+        // Text offsets map to source lines only on a served file; on a live page they would be wasted work.
+        let offsets = !(current?.page.isLive ?? true)
+        let value = try? await webView.callAsyncJavaScript("return window.__cc ? window.__cc.resolveElements(list, offsets) : []", arguments: ["list": list, "offsets": offsets], in: nil, contentWorld: .defaultClient)
         var result: [NoteID: ElementResolution] = [:]
         for entry in value as? [[String: Any]] ?? [] {
             guard let id = entry["id"] as? String else { continue }
@@ -671,8 +726,7 @@ public final class WebBrowserController {
         /// A link the user clicked that wants a new window loads here instead, and the policy above judges it like
         /// any other; a window a script opens by itself (ads, pop-unders, `window.open('')`) is not followed.
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-            let scheme = navigationAction.request.url?.scheme?.lowercased()
-            if navigationAction.targetFrame == nil, navigationAction.navigationType == .linkActivated, scheme == "http" || scheme == "https" {
+            if navigationAction.targetFrame == nil, navigationAction.navigationType == .linkActivated {
                 webView.load(navigationAction.request)
             } else {
                 browser?.refuse("This page tried to open a window")

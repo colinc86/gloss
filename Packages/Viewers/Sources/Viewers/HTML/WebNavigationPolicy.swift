@@ -49,7 +49,8 @@ public enum WebNavigationPolicy {
             guard let proxy else { return .allow }
             if proxy.isProxied(url) { return .allow }
             if let port = WebProxyMap.loopbackPort(of: url) {
-                if isUserInitiated(type) { return .tunnel(port: port, then: url) }
+                // A port already tunnelled is the page's own server (a redirect to its login, a hard-coded base URL).
+                if isUserInitiated(type) || proxy.tunnels[port] != nil { return .tunnel(port: port, then: url) }
                 return .refuse("This page tried to open port \(port) on its host; follow a link to it instead")
             }
             return .allow

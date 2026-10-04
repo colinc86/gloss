@@ -211,9 +211,15 @@ final class AppModel {
         // A page moves the viewer only while it is what the viewer shows: one left running behind another document
         // (a redirect, a refresh, a script) never pulls the reader away.
         browser.onOpenFile = { [weak self] hostID, path, previous in
-            guard let self, previous != nil, activeSession?.html === previous, let hostID = hostID ?? activeSession?.hostID, hostID != .web else { return }
+            guard let self, browserMayMoveViewer(from: previous), let hostID = hostID ?? activeSession?.hostID, hostID != .web else { return }
             openDocument(hostID: hostID, path: path)
+            browserOpened = activeSession
         }
+        browser.tunnelOwner = { [weak self] local in
+            guard let self, let (hostID, _) = tunnels.lazy.compactMap({ host, ports in ports.values.contains(local) ? (host, ()) : nil }).first else { return nil }
+            return proxy(for: hostID)
+        }
+        browser.fileDocument = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.html }
         browser.onDocumentChange = { [weak self] url, via, previous in self?.webDocumentDidChange(url, via: via, previous: previous) }
         browser.onNeedsTunnel = { [weak self] hostID, port in
             guard let self else { throw CancellationError() }
@@ -568,8 +574,21 @@ final class AppModel {
     /// must not pull the viewer away from it. A page on the host's loopback stays on that host; an outside page
     /// reached from it is the open web's.
     private func webDocumentDidChange(_ url: URL, via: HostID?, previous: HTMLViewerController?) {
-        guard let previous, activeSession?.html === previous else { return }
+        guard browserMayMoveViewer(from: previous) else { return }
         openWebPage(url, via: via)
+        browserOpened = activeSession
+    }
+
+    /// The document the browser itself last moved the viewer to; while it is still opening (no page attached yet)
+    /// a redirect or a click on the page that led there may move the viewer on again.
+    @ObservationIgnored private weak var browserOpened: DocumentSession?
+
+    /// Whether the page the browser just left was what the viewer showed, or the viewer shows a document the
+    /// browser opened that has not attached yet. A page left running behind another document never moves it.
+    private func browserMayMoveViewer(from previous: HTMLViewerController?) -> Bool {
+        guard let active = activeSession else { return false }
+        if let previous, active.html === previous { return true }
+        return active === browserOpened && (active.html == nil || active.html === browser.released)
     }
 
     /// Loopback ports forwarded from each ssh host: remote port → local port, for the pages opened through it.
@@ -766,7 +785,7 @@ final class AppModel {
     /// Ends a session; a page it showed stops running in the shared web view, and a tunnel no other open page
     /// uses is closed.
     private func retire(_ session: DocumentSession) {
-        if let html = session.html, browser.current === html { browser.unload() }
+        if let html = session.html, browser.current === html || browser.released === html { browser.unload() }
         session.close()
         releaseTunnel(of: session)
     }

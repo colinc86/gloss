@@ -103,7 +103,7 @@ struct WebBridgeTests {
         let offset = try #require(image["textOffset"] as? Int, "an image maps to the text that follows it")
         let text = try await harness.string("return document.documentElement.textContent")
         #expect((text as NSString).substring(with: NSRange(location: offset, length: 5)) == "After")
-        let resolved = try #require(try await harness.js("return window.__cc.resolveElements([{ id: 'x', selector: '#logo', tag: 'img', text: '' }])") as? [[String: Any]])
+        let resolved = try #require(try await harness.js("return window.__cc.resolveElements([{ id: 'x', selector: '#logo', tag: 'img', text: '' }], true)") as? [[String: Any]])
         #expect((resolved.first?["bySelector"] as? [String: Any])?["textOffset"] as? Int == offset)
     }
 

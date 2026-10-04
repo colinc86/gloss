@@ -12,9 +12,7 @@ struct WebDocumentKeyTests {
         #expect(key("http://localhost:80/x") == "http://localhost/x")
         #expect(key("https://example.com:8443/") == "https://example.com:8443/", "a non-default port stays")
         #expect(key("http://localhost:3000/a?x=1") != key("http://localhost:3000/a?x=2"), "the query names a different page")
-        #expect(key("http://127.0.0.1:8080/") == key("http://localhost:8080/"), "one page however the loopback is spelled")
-        #expect(key("http://[::1]:8080/") == "http://localhost:8080/")
-        #expect(key("http://127.0.1.1:8080/") == "http://localhost:8080/")
+        #expect(key("http://127.0.0.1:8080/") != key("http://localhost:8080/"), "different origins to the page")
         #expect(key("https://me:secret@example.com/") == "https://example.com/", "credentials are never part of a key")
     }
 }
@@ -103,5 +101,7 @@ struct WebNavigationPolicyTests {
                 "a script or redirect never opens a port on the host")
         #expect(decide("http://localhost:3000/", type: .backForward, page: live, proxy: proxy, local: false) == .tunnel(port: 3000, then: URL(string: "http://localhost:3000/")!))
         #expect(decide("http://127.0.0.1:51000/", type: .other, page: live, proxy: proxy, local: false) == .allow, "a redirect within a tunnel is fine")
+        #expect(decide("http://localhost:3000/login", type: .other, page: live, proxy: proxy, local: false) == .tunnel(port: 3000, then: URL(string: "http://localhost:3000/login")!),
+                "a redirect to the page's own tunnelled port follows it")
     }
 }
