@@ -154,11 +154,18 @@ struct WebBridgeTests {
         try await harness.ready()
         harness.page.isNoteMode = true
         harness.browser.sync()
+        var picks = 0
+        harness.page.onPick = { _ in picks += 1 }
         _ = try await harness.js("""
             const el = document.querySelector('[data-testid=save]'); const r = el.getBoundingClientRect();
-            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + 2, clientY: r.top + 2 })); return true
+            const at = { bubbles: true, cancelable: true, clientX: r.left + 2, clientY: r.top + 2 };
+            el.dispatchEvent(new MouseEvent('mousedown', { ...at, button: 2 }));
+            el.dispatchEvent(new MouseEvent('mousedown', { ...at, button: 0 }));
+            el.dispatchEvent(new MouseEvent('click', at)); return true
             """)
         try await harness.wait("the pick") { harness.page.pendingPick != nil }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(picks == 1, "one pick per left press: the right press and the click that follows post nothing")
         #expect(harness.page.pendingPick?.selector == "[data-testid=\"save\"]")
         #expect(harness.page.pendingPick?.text == "Save")
         #expect(harness.page.pendingPick?.pageRect.w ?? 0 > 0)

@@ -63,8 +63,12 @@ enum WebBridge {
       let changeTimer = null;
       let lastURL = location.href;
       function reportURL() { if (location.href !== lastURL) { lastURL = location.href; post({ url: lastURL }); } }
+      // The overlay's own comings and goings (it is detached to serialise, attached to draw) are not page changes.
+      const ours = (r) => inOverlay(r.target)
+        || (r.target === root() && (r.addedNodes.length + r.removedNodes.length) > 0
+            && [...r.addedNodes, ...r.removedNodes].every((n) => n === overlay));
       new MutationObserver((records) => {
-        if (records.every((r) => inOverlay(r.target))) return;
+        if (records.every(ours)) return;
         clearTimeout(changeTimer);
         changeTimer = setTimeout(() => { reportURL(); post({ changed: true }); relayout(); }, 200);
       }).observe(root(), { childList: true, characterData: true, subtree: true });
@@ -252,12 +256,15 @@ enum WebBridge {
         hover = { box, element: el };
       }
       function clearHover() { if (hover) { hover.box.remove(); hover = null; } }
-      function onClick(event) {
+      // One pick per left press; the click and release that follow are only swallowed.
+      function onPress(event) {
         event.preventDefault();
         event.stopPropagation();
+        if (event.button !== 0) return;
         const el = targetAt(event);
         if (el) post({ pick: describe(el) });
       }
+      function swallow(event) { event.preventDefault(); event.stopPropagation(); }
       function onKey(event) { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); post({ pickCancel: true }); } }
       function setPickMode(on) {
         if (on === picking) return;
@@ -265,14 +272,16 @@ enum WebBridge {
         const opts = { capture: true };
         if (on) {
           document.addEventListener('mousemove', onMove, opts);
-          document.addEventListener('click', onClick, opts);
-          document.addEventListener('mousedown', onClick, opts);
+          document.addEventListener('mousedown', onPress, opts);
+          document.addEventListener('mouseup', swallow, opts);
+          document.addEventListener('click', swallow, opts);
           document.addEventListener('keydown', onKey, opts);
           document.addEventListener('mouseleave', clearHover, opts);
         } else {
           document.removeEventListener('mousemove', onMove, opts);
-          document.removeEventListener('click', onClick, opts);
-          document.removeEventListener('mousedown', onClick, opts);
+          document.removeEventListener('mousedown', onPress, opts);
+          document.removeEventListener('mouseup', swallow, opts);
+          document.removeEventListener('click', swallow, opts);
           document.removeEventListener('keydown', onKey, opts);
           document.removeEventListener('mouseleave', clearHover, opts);
           clearHover();

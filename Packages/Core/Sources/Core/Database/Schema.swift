@@ -105,7 +105,8 @@ public enum Schema {
             try db.execute(sql: "CREATE INDEX IF NOT EXISTS send_note_note ON send_note(note_id)")
         }
         migrator.registerMigration("v4-integrations") { db in
-            // Milestone 2: web pages, GitHub and Atlassian are hosts, a live page is a document kind, and a note can
+            // Milestone 2: web pages, GitHub and Atlassian are hosts (an ssh alias that already took one of their
+            // names becomes `<name>-ssh`, since host names are unique), a live page is a document kind, and a note can
             // anchor to a DOM element. SQLite cannot widen a CHECK in place, so each table is rebuilt in GRDB's
             // documented order (create, copy, drop, rename, recreate indexes) with foreign keys off for the
             // migration: host first, then document, then note, each new table referencing the final names.
@@ -122,6 +123,7 @@ public enum Schema {
                     SELECT id, name, kind, last_connected_at, origin, options_json FROM host;
                 DROP TABLE host;
                 ALTER TABLE host_new RENAME TO host;
+                UPDATE host SET name = name || '-ssh' WHERE name IN ('web', 'github', 'atlassian');
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES
                     ('h_web', 'web', 'web', NULL, 'local', NULL),
                     ('h_github', 'github', 'github', NULL, 'local', NULL),

@@ -164,6 +164,12 @@ final class AppModel {
             guard let self else { return }
             self.connections[hostID] = nil
             self.fileSystems[hostID] = nil
+            // The forwards died with the connection; pages through this host start over on the next connect.
+            self.tunnels[hostID] = nil
+            for session in self.sessions.values where session.hostID == hostID && session.kind == .web {
+                session.proxy = WebProxyMap(hostID: hostID)
+                session.html?.proxy = WebProxyMap(hostID: hostID)
+            }
             self.followTasks[hostID]?.cancel()
             self.followTasks[hostID] = nil
             self.latestFocus[hostID] = nil
@@ -403,10 +409,12 @@ final class AppModel {
         trimSessions()
     }
 
-    /// The browser moved to another page by itself (a link, Back, a route change): that page becomes the document.
+    /// The browser moved to another page by itself (a link, Back, a route change): that page becomes the document,
+    /// when the browser is what the viewer shows. A page that redirects itself while another document is in front
+    /// must not pull the viewer away from it.
     private func webDocumentDidChange(_ url: URL) {
-        let via = browser.current?.proxy?.hostID
-        openWebPage(url, via: via)
+        guard let current = browser.current, activeSession?.html === current else { return }
+        openWebPage(url, via: current.proxy?.hostID)
     }
 
     /// Loopback ports forwarded from each ssh host: remote port → local port, for the pages opened through it.

@@ -25,11 +25,15 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// Returns the host named `name`, creating it when missing.
+    /// Returns the host named `name`, creating it when missing. A name already taken by a host of another kind
+    /// (an ssh alias called `github` next to the GitHub host) gets `-ssh` appended, so the two never merge.
     public func upsertHost(name: String, kind: HostKind, origin: HostOrigin = .sshConfig) async throws -> Host {
         try await queue.write { db in
+            var name = name
             if let existing = try HostRecord.filter(Column("name") == name).fetchOne(db) {
-                return Host(record: existing)
+                if existing.kind == kind.rawValue { return Host(record: existing) }
+                name += "-\(kind.rawValue)"
+                if let suffixed = try HostRecord.filter(Column("name") == name).fetchOne(db) { return Host(record: suffixed) }
             }
             let record = HostRecord(id: HostID.new().rawValue, name: name, kind: kind.rawValue, lastConnectedAt: nil, origin: origin.rawValue, optionsJson: nil)
             try record.insert(db)

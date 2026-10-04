@@ -498,7 +498,8 @@ public actor SSHConnection {
             do {
                 try await add(forward)
                 return forward
-            } catch SSHError.forwardFailed(let message) where message.localizedCaseInsensitiveContains("bind") {
+            } catch SSHError.forwardFailed(let message) {
+                // The mux client only says "Port forwarding failed"; the bind error stays in the master's log.
                 lastError = SSHError.forwardFailed(message)
             }
         }

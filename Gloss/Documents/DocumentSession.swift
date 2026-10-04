@@ -76,6 +76,9 @@ final class DocumentSession: Identifiable {
     private(set) var notes: [Note] = []
     /// Notes whose last re-anchor was a guess; shown with a review badge until edited or resolved.
     private(set) var needsReview: Set<NoteID> = []
+    /// Whether the notes observation has delivered once; a page change before that waits for it.
+    @ObservationIgnored private var notesDelivered = false
+    @ObservationIgnored private var pendingPageReanchor = false
     /// Live ranges of text notes while editing, before they are written back on save.
     @ObservationIgnored private var liveRanges: [NoteID: NSRange] = [:]
     @ObservationIgnored private var invalidatedNotes: Set<NoteID> = []
@@ -293,6 +296,10 @@ final class DocumentSession: Identifiable {
     /// page's text is also its source, so that is refreshed too; a served file's source is the file.
     private func pageChanged() {
         guard let controller = textController else { return }
+        guard notesDelivered else {
+            pendingPageReanchor = true
+            return
+        }
         let text = controller.text
         let hash = Data(text.utf8).sha256Hex
         if kind == .web {
@@ -326,6 +333,9 @@ final class DocumentSession: Identifiable {
                     if note.state == .orphaned { try await noteStore.restoreDraft(id, anchor: .element(anchor)) }
                 case .moved(let moved):
                     needsReview.remove(id)
+                    // Found at its own selector with the same text: only the hash and rect moved, which every
+                    // page tick on a busy page would otherwise write back.
+                    if case .element(let next) = moved, note.state != .orphaned, next.selector == anchor.selector, next.text == anchor.text { break }
                     try await noteStore.updateAnchor(id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
                 case .movedNeedsReview(let moved):
                     needsReview.insert(id)
@@ -684,6 +694,11 @@ final class DocumentSession: Identifiable {
                     guard let self else { return }
                     self.notes = notes
                     self.syncHighlights()
+                    if !self.notesDelivered {
+                        self.notesDelivered = true
+                        // A page that settled before its notes arrived still gets its notes looked at once.
+                        if self.pendingPageReanchor { self.pendingPageReanchor = false; self.pageChanged() }
+                    }
                 }
             } catch {
                 Log.notes.error("note observation failed: \(error, privacy: .public)")
@@ -952,7 +967,8 @@ final class DocumentSession: Identifiable {
                 // The element's picture is taken before the note exists, so its own outline is not in the crop.
                 var elementCrop: (png: Data, width: Int, height: Int)?
                 if case .element(let anchor) = state.anchor, let snapshot = html?.snapshotProvider {
-                    elementCrop = try await snapshot(anchor.rect)
+                    // A crop is a bonus: a page that moved on, or a view that is gone, must not lose the note.
+                    elementCrop = try? await snapshot(anchor.rect)
                 }
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
                 if case .image(let anchor) = state.anchor, let image = imageController {

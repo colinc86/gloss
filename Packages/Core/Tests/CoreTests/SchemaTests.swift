@@ -42,6 +42,9 @@ struct SchemaTests {
             #expect(HostID(validating: id.rawValue) == id, "fixed ids pass validation without a ULID")
         }
         #expect(HostID(validating: "h_nope") == nil)
+        let alias = try await store.upsertHost(name: "github", kind: .ssh)
+        #expect(alias.name == "github-ssh" && alias.kind == .ssh, "an ssh alias never merges with the GitHub host")
+        #expect(try await store.upsertHost(name: "github", kind: .ssh).id == alias.id)
     }
 
     /// The milestone 2 migration rebuilds host, document and note to widen their CHECK constraints; every row written
@@ -54,6 +57,7 @@ struct SchemaTests {
         try queue.write { db in
             try db.execute(sql: """
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01HOST', 'asus', 'ssh', '2026-10-01 10:00:00', 'manual', '{"user":"colin"}');
+                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01GITH', 'github', 'ssh', NULL, 'ssh_config', NULL);
                 INSERT INTO root (id, host_id, path, last_opened_at, pinned) VALUES ('r_1', 'h_01HOST', '/home/colin', '2026-10-01 10:00:00', 1);
                 INSERT INTO document (id, host_id, path, kind, last_hash, last_mtime, last_size) VALUES ('d_1', 'h_01HOST', '/home/colin/a.md', 'markdown', 'abc', '2026-10-01 10:00:00', 12);
                 INSERT INTO note (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message)
@@ -76,6 +80,8 @@ struct SchemaTests {
         }
         try queue.read { (db: Database) throws in
             #expect(try rows(db, "host").count == before[0].count + 3, "the three virtual hosts are added, nothing else changes")
+            #expect(try String.fetchOne(db, sql: "SELECT name FROM host WHERE id = 'h_01GITH'") == "github-ssh", "an ssh alias that took a virtual host's name is renamed, not lost")
+            #expect(try String.fetchOne(db, sql: "SELECT kind FROM host WHERE name = 'github'") == "github")
             #expect(try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty)
             #expect(try Row.fetchOne(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'note_document_state'") != nil)
         }

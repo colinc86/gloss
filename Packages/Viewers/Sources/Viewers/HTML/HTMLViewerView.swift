@@ -182,9 +182,9 @@ struct RenderedHTMLView: NSViewRepresentable {
         }
         if browser.current !== controller {
             // A page the view already shows (a link it followed, a route change) is adopted, not reloaded; the same
-            // address on another host (localhost here and on a machine) is a different page.
+            // address reached through another machine's loopback is a different page.
             let adopt: Bool = {
-                guard browser.current?.hostID == controller.hostID else { return false }
+                guard browser.current?.proxy?.hostID == controller.proxy?.hostID else { return false }
                 switch controller.page {
                 case .live(let url):
                     guard let shown = browser.displayedURL else { return false }
@@ -224,8 +224,11 @@ final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         // The view is shared with live pages, which must not be able to read files through this scheme: the
         // request has to come from a served page (its main document URL is ours), and the current page must be one.
+        let request = urlSchemeTask.request
+        let referrer = (request.value(forHTTPHeaderField: "Referer") ?? request.value(forHTTPHeaderField: "Origin")).flatMap(URL.init(string:))
         guard let controller = browser?.current, case .file = controller.page,
-              urlSchemeTask.request.mainDocumentURL.map({ $0.scheme?.lowercased() == Self.scheme }) ?? true else {
+              request.mainDocumentURL.map({ $0.scheme?.lowercased() == Self.scheme }) ?? true,
+              referrer.map({ $0.scheme?.lowercased() == Self.scheme }) ?? true else {
             urlSchemeTask.didFailWithError(URLError(.noPermissionsToReadFile))
             return
         }

@@ -75,9 +75,10 @@ public final class WebBrowserController {
             webView.observe(\.canGoForward, options: [.new]) { [weak self] webView, _ in
                 MainActor.assumeIsolated { self?.canGoForward = webView.canGoForward }
             },
-            // Same-document navigations (pushState, hash changes) commit nothing; the URL still moves.
+            // Same-document navigations (pushState, hash changes) commit nothing; the URL still moves. While a
+            // real navigation loads, the URL is only provisional: didCommit reports it when it is the page.
             webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
-                MainActor.assumeIsolated { self?.committed(webView.url) }
+                MainActor.assumeIsolated { if !webView.isLoading { self?.committed(webView.url) } }
             },
         ]
     }
@@ -145,6 +146,7 @@ public final class WebBrowserController {
     private func load(_ controller: HTMLViewerController) {
         loadedVersion = controller.renderedVersion
         isLoaded = false
+        appliedPickMode = false
         refusal = nil
         switch controller.page {
         case .file(let path):
@@ -290,6 +292,8 @@ public final class WebBrowserController {
 
     fileprivate func finished() {
         isLoaded = true
+        // A new page's bridge starts with everything off; note mode is applied again below if it is still on.
+        appliedPickMode = false
         refresh { [weak self] in
             guard let self else { return }
             if let y = savedScrollY {
@@ -298,6 +302,7 @@ public final class WebBrowserController {
             }
             current?.pageRect = topRect()
             applyPendingScroll()
+            sync()
         }
     }
 
@@ -447,9 +452,10 @@ public final class WebBrowserController {
             return ["id": highlight.id.rawValue, "selector": highlight.selector, "tag": highlight.tag, "text": highlight.text,
                     "color": "rgb(\(rgb))", "fill": "rgba(\(rgb),0.12)", "state": highlight.state.rawValue, "needsReview": highlight.needsReview]
         }
+        let started = current
         webView.callAsyncJavaScript("return window.__cc ? window.__cc.highlightElements(list) : {}", arguments: ["list": list], in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
-                guard let self, let current = self.current else { return }
+                guard let self, let current = self.current, current === started else { return }
                 var rects: [NoteID: CGRect] = [:]
                 if case .success(let value) = result, let map = value as? [String: Any] {
                     for (id, entry) in map {
