@@ -203,6 +203,7 @@ private struct StatusBar: View {
                 selectionSummary(controller)
             }
             openNotes
+            changedLines
             if session.isReadOnly {
                 Image(systemName: "lock.fill")
                     .imageScale(.small)
@@ -380,6 +381,34 @@ private struct StatusBar: View {
                 NoteStepper()
                     .transition(.opacity)
             }
+        }
+    }
+
+    /// A pull request file's hunks: how many, "2 of 7" while stepping, and the steps themselves.
+    @ViewBuilder
+    private var changedLines: some View {
+        let hunks = session.changeHunks
+        if !hunks.isEmpty {
+            HStack(spacing: DS.Space.xs) {
+                Image(systemName: "plus.forwardslash.minus")
+                    .foregroundStyle(.green)
+                Group {
+                    if let position = session.changePosition {
+                        Text("\(position.index) of \(position.count)")
+                            .contentTransition(.numericText(value: Double(position.index)))
+                    } else {
+                        Text(hunks.count == 1 ? "1 change" : "\(hunks.count) changes")
+                    }
+                }
+                .monospacedDigit()
+                HStack(spacing: 0) {
+                    StepButton(symbol: "chevron.up", help: "Previous Change (⌥⌘↑)") { session.stepChange(forward: false) }
+                    StepButton(symbol: "chevron.down", help: "Next Change (⌥⌘↓)") { session.stepChange(forward: true) }
+                }
+            }
+            .help("Lines this pull request added or rewrote are tinted; a red line marks where lines were removed")
+            .transition(.opacity)
+            .animation(DS.Motion.snappy, value: session.changePosition?.index)
         }
     }
 
@@ -819,27 +848,28 @@ private struct NoteStepper: View {
             StepButton(symbol: "chevron.down", help: "Next Note (⌘')") { model.stepNote(forward: true) }
         }
     }
+}
 
-    private struct StepButton: View {
-        let symbol: String
-        let help: String
-        let action: () -> Void
-        @State private var hovering = false
+/// One step of a stepper: a small chevron that brightens under the pointer.
+private struct StepButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
 
-        var body: some View {
-            Button(action: action) {
-                Image(systemName: symbol)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(hovering ? .primary : .secondary)
-                    .frame(width: 16, height: 16)
-                    .background(hovering ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PressableStyle())
-            .onHover { hovering = $0 }
-            .animation(DS.Motion.snappy, value: hovering)
-            .help(help)
-            .accessibilityLabel(help)
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(hovering ? .primary : .secondary)
+                .frame(width: 16, height: 16)
+                .background(hovering ? Color.primary.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+                .contentShape(Rectangle())
         }
+        .buttonStyle(PressableStyle())
+        .onHover { hovering = $0 }
+        .animation(DS.Motion.snappy, value: hovering)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }

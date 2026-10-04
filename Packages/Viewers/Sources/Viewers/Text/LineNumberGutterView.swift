@@ -129,6 +129,18 @@ final class LineNumberGutterView: NSView {
             lineFrames[line] = (y, y + frame.height)
             firstVisible = min(firstVisible, line)
             lastVisible = max(lastVisible, line)
+            if let changes = controller.lineChanges {
+                // A change bar at the text's edge, as VS Code marks changed rows, and a hairline where lines went.
+                if changes.contains(line: line) {
+                    let rows = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
+                    Theme.changeBar.setFill()
+                    NSRect(x: gutterWidth - 2, y: y, width: 2, height: rows > 0 ? rows : frame.height).fill()
+                }
+                if changes.deletions.contains(line) {
+                    Theme.changeDeletedMarker.setFill()
+                    NSRect(x: 0, y: y, width: bounds.width, height: 1).fill()
+                }
+            }
             let label = NSAttributedString(string: String(line), attributes: line == currentLine ? currentAttributes : attributes)
             let size = label.size()
             label.draw(at: NSPoint(x: gutterWidth - size.width - 6, y: y + (firstLineHeight - size.height) / 2))

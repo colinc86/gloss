@@ -20,6 +20,15 @@ public final class TextEditorController {
         }
     }
     public private(set) var highlightsVersion = 0
+    /// Lines a change touched (a pull request's file at its head): tinted, marked and stepped through. Static: such
+    /// files are never editable, so nothing shifts them.
+    public var lineChanges: LineChanges? {
+        didSet {
+            guard lineChanges != oldValue else { return }
+            highlightsVersion += 1
+            for observer in highlightObservers.values { observer() }
+        }
+    }
     /// Views register here to redraw when highlights change; SwiftUI does not track reads inside AppKit updates.
     @ObservationIgnored private var highlightObservers: [UUID: () -> Void] = [:]
 

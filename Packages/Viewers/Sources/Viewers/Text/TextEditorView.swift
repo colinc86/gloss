@@ -278,6 +278,7 @@ public struct TextEditorView: NSViewRepresentable {
             backdrop?.entries = controller.highlights.filter { !$0.isInvalidated }.map {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.state == .orphaned ? Theme.color(for: $0.color) : Theme.highlightBackground(for: $0.highlight), orphaned: $0.state == .orphaned)
             }
+            backdrop?.lineChanges = controller.lineChanges
             gutter?.needsDisplay = true
             // The ruler appears with a file's first note and goes with its last.
             ruler?.needsDisplay = true

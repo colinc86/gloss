@@ -35,4 +35,12 @@ struct JumpIndicatorTests {
         // A note within one line is shown whole.
         #expect(TextEditorView.Coordinator.indicatorRange(for: NSRange(location: 12, length: 5), in: index) == NSRange(location: 12, length: 5))
     }
+
+    @Test func hunkMarksSitAtTheirLinesWithDeletionsAsPoints() {
+        let index = LineIndex(Array(repeating: "x", count: 100).joined(separator: "\n"))
+        let marks = OverviewRulerView.hunkMarks(for: LineChanges(added: [41...50, 10...10], deletions: [75]), lineIndex: index)
+        #expect(marks.map(\.lines) == [10...10, 41...50, 75...75])
+        #expect(marks[1].start == 0.4 && marks[1].end == 0.5)
+        #expect(marks[2].isDeletion && marks[2].start == marks[2].end)
+    }
 }

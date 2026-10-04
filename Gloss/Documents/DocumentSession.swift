@@ -95,6 +95,8 @@ final class DocumentSession: Identifiable {
     @ObservationIgnored var resourceRoot: () -> String? = { nil }
     /// For a web page reached through an ssh host's loopback: the tunnels to use. Set before `open`.
     var proxy: WebProxyMap?
+    /// The lines a change touched in this document (a pull request's file), asked for on open and after a reload.
+    @ObservationIgnored var lineChangesProvider: ((String) async -> LineChanges?)?
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot) {
         self.id = "\(hostID.rawValue):\(path)"
@@ -273,6 +275,7 @@ final class DocumentSession: Identifiable {
             state = .text(controller)
             startWatching()
             observeNotes()
+            refreshLineChanges()
         } catch {
             state = .failed(Self.openFailure(error))
             Log.viewer.error("open \(self.path, privacy: .public) failed: \(error, privacy: .public)")
@@ -411,6 +414,7 @@ final class DocumentSession: Identifiable {
             invalidatedNotes = []
             try await noteStore.updateFingerprint(document?.id ?? DocumentID.new(), fingerprint)
             await reanchorAll(in: text, hash: fingerprint.hash ?? "")
+            refreshLineChanges()
         } catch {
             lastError = "Reload failed: \(error)"
         }
@@ -1110,7 +1114,7 @@ final class DocumentSession: Identifiable {
     }
 
     /// Where a step goes: on from the note last stepped to, or else from the caret's offset, wrapping at either end.
-    nonisolated static func step(from caret: Double?, current: NoteID?, in ordered: [(id: NoteID, key: Double)], forward: Bool) -> NoteID? {
+    nonisolated static func step<ID: Equatable>(from caret: Double?, current: ID?, in ordered: [(id: ID, key: Double)], forward: Bool) -> ID? {
         guard !ordered.isEmpty else { return nil }
         if let current, let index = ordered.firstIndex(where: { $0.id == current }) {
             return ordered[(index + (forward ? 1 : ordered.count - 1)) % ordered.count].id
@@ -1135,6 +1139,44 @@ final class DocumentSession: Identifiable {
         guard let id = currentSteppedNoteID else { return nil }
         let ordered = steppableNotes
         return ordered.firstIndex { $0.id == id }.map { ($0 + 1, ordered.count) }
+    }
+
+    // MARK: Changed lines (a pull request's file)
+
+    /// Asks the provider, when there is one, which lines a change touched; the editor tints and steps through them.
+    private func refreshLineChanges() {
+        guard let provider = lineChangesProvider, let controller = textController else { return }
+        let path = path
+        Task { [weak self] in
+            let changes = await provider(path)
+            guard let self, self.textController === controller else { return }
+            controller.lineChanges = changes
+        }
+    }
+
+    /// Each hunk in file order, keyed by its first line.
+    var changeHunks: [(id: Int, key: Double)] {
+        (textController?.lineChanges?.hunks ?? []).enumerated().map { ($0.offset, Double($0.element.lowerBound)) }
+    }
+
+    private(set) var steppedHunk: Int?
+
+    /// "2 of 7" while a stepped-to hunk is current.
+    var changePosition: (index: Int, count: Int)? {
+        guard let steppedHunk, let lineChanges = textController?.lineChanges else { return nil }
+        return (steppedHunk + 1, lineChanges.hunks.count)
+    }
+
+    /// Next or previous hunk, from the one last stepped to, else from the caret's line; wraps at either end.
+    @discardableResult
+    func stepChange(forward: Bool) -> Bool {
+        guard let controller = textController, let changes = controller.lineChanges else { NSSound.beep(); return false }
+        let caret = Double(controller.lineIndex.position(forUTF16Offset: controller.selection.location).line)
+        guard let index = Self.step(from: caret, current: steppedHunk, in: changeHunks, forward: forward) else { NSSound.beep(); return false }
+        steppedHunk = index
+        let hunk = changes.hunks[index]
+        controller.scroll(to: controller.lineIndex.contentRange(ofLine: hunk.lowerBound), select: false)
+        return true
     }
 
     /// Goes to the next or previous open note in this document; returns it so the notes panel can follow.

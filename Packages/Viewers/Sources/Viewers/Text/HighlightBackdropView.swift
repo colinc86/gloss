@@ -15,6 +15,11 @@ final class HighlightBackdropView: NSView {
         didSet { needsDisplay = true }
     }
 
+    /// A change's lines: full-width tinted rows for added ones, a hairline where lines were taken out.
+    var lineChanges: LineChanges? {
+        didSet { if oldValue != lineChanges { needsDisplay = true } }
+    }
+
     /// The caret's location while nothing is selected and the editor has focus; its line gets a quiet full-width band.
     var caretLocation: Int? {
         didSet { if oldValue != caretLocation { needsDisplay = true } }
@@ -71,6 +76,9 @@ final class HighlightBackdropView: NSView {
         guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager else { return }
         let documentStart = contentManager.documentRange.location
         let inset = textView.textContainerInset
+        if let lineChanges, !lineChanges.isEmpty {
+            drawLineChanges(lineChanges, in: dirtyRect, layoutManager: layoutManager, contentManager: contentManager)
+        }
         if let caret = caretLocation, let band = currentLineRect(caret, layoutManager: layoutManager, contentManager: contentManager), band.intersects(dirtyRect) {
             Self.currentLineColor.setFill()
             band.fill()
@@ -99,6 +107,38 @@ final class HighlightBackdropView: NSView {
                 }
                 return true
             }
+        }
+    }
+
+    /// Tinted rows and deletion hairlines for the fragments in view: the same walk the guides make, so the cost is
+    /// what is on screen, not the file.
+    private func drawLineChanges(_ changes: LineChanges, in dirtyRect: NSRect, layoutManager: NSTextLayoutManager, contentManager: NSTextContentManager) {
+        guard let textView, let index = lineIndex(), index.lineCount > 0 else { return }
+        let inset = textView.textContainerInset
+        let documentStart = contentManager.documentRange.location
+        let scale = window?.backingScaleFactor ?? 2
+        guard let first = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, dirtyRect.minY - inset.height))) else { return }
+        layoutManager.enumerateTextLayoutFragments(from: first.rangeInElement.location, options: []) { fragment in
+            let frame = fragment.layoutFragmentFrame
+            if frame.minY + inset.height > dirtyRect.maxY { return false }
+            let line = index.position(forUTF16Offset: contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)).line
+            let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
+            let rowsHeight = height > 0 ? height : frame.height
+            let top = frame.minY + inset.height
+            if changes.contains(line: line) {
+                Theme.changeAddedBackground.setFill()
+                NSRect(x: 0, y: top, width: bounds.width, height: rowsHeight).fill()
+            }
+            if changes.deletions.contains(line) {
+                Theme.changeDeletedMarker.setFill()
+                NSRect(x: 0, y: top, width: bounds.width, height: 1 / scale).fill()
+            }
+            // Lines taken out after the last line sit on its bottom edge.
+            if line == index.lineCount, changes.deletions.contains(line + 1) {
+                Theme.changeDeletedMarker.setFill()
+                NSRect(x: 0, y: top + rowsHeight - 1 / scale, width: bounds.width, height: 1 / scale).fill()
+            }
+            return true
         }
     }
 

@@ -36,7 +36,23 @@ final class OverviewRulerView: NSView {
         .sorted { (order[$0.state] ?? 0, $0.line) < (order[$1.state] ?? 0, $1.line) }
     }
 
+    /// A hunk's place in the file, as fractions of its lines.
+    struct HunkMark: Equatable {
+        var lines: ClosedRange<Int>
+        var isDeletion: Bool
+        var start: CGFloat
+        var end: CGFloat
+    }
+
+    nonisolated static func hunkMarks(for changes: LineChanges, lineIndex: LineIndex) -> [HunkMark] {
+        let lines = CGFloat(max(1, lineIndex.lineCount))
+        let added = changes.added.map { HunkMark(lines: $0, isDeletion: false, start: CGFloat($0.lowerBound - 1) / lines, end: CGFloat($0.upperBound) / lines) }
+        let deleted = changes.deletions.map { HunkMark(lines: $0...$0, isDeletion: true, start: CGFloat($0 - 1) / lines, end: CGFloat($0 - 1) / lines) }
+        return (added + deleted).sorted { $0.lines.lowerBound < $1.lines.lowerBound }
+    }
+
     private var hits: [(rect: NSRect, mark: Mark)] = []
+    private var hunkHits: [(rect: NSRect, mark: HunkMark)] = []
     private var hovered: NoteID? {
         didSet { if oldValue != hovered { needsDisplay = true } }
     }
@@ -44,7 +60,7 @@ final class OverviewRulerView: NSView {
 
     override var isFlipped: Bool { true }
 
-    var hasMarks: Bool { !(controller?.highlights.isEmpty ?? true) }
+    var hasMarks: Bool { !(controller?.highlights.isEmpty ?? true) || !(controller?.lineChanges?.isEmpty ?? true) }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -70,6 +86,19 @@ final class OverviewRulerView: NSView {
             NSBezierPath(roundedRect: NSRect(x: 2, y: top, width: bounds.width - 3, height: min(height, track.maxY - top)), xRadius: 3, yRadius: 3).fill()
         }
 
+        // Hunks in a lane of their own at the left, under the notes.
+        hunkHits = []
+        if let changes = controller.lineChanges {
+            for hunk in Self.hunkMarks(for: changes, lineIndex: controller.lineIndex) {
+                let y = (track.minY + track.height * hunk.start).rounded()
+                let rect = hunk.isDeletion
+                    ? NSRect(x: 1.5, y: min(y, track.maxY - 2), width: 3, height: 2)
+                    : NSRect(x: 1.5, y: min(y, track.maxY - 3), width: 2, height: max(3, (track.height * (hunk.end - hunk.start)).rounded()))
+                (hunk.isDeletion ? Theme.changeDeletedMarker : Theme.changeBar).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
+                hunkHits.append((rect.insetBy(dx: -2, dy: -3), hunk))
+            }
+        }
         hits = []
         for mark in Self.marks(for: controller.highlights, lineIndex: controller.lineIndex) {
             let isHovered = mark.noteID == hovered
@@ -116,6 +145,10 @@ final class OverviewRulerView: NSView {
             // Go to the note, the way browsing the notes panel does: the view moves there, the keyboard stays put.
             controller.dismissPeek()
             controller.scroll(to: range, select: false)
+            return
+        }
+        if let hunk = hunkHits.last(where: { $0.rect.contains(point) })?.mark, let controller {
+            controller.scroll(to: controller.lineIndex.contentRange(ofLine: hunk.lines.lowerBound), select: false)
             return
         }
         scroll(toTrackPoint: point)

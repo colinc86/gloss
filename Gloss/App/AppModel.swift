@@ -383,6 +383,9 @@ final class AppModel {
                 return tab.hostID == hostID && file.hasPrefix(root == "/" ? "/" : root + "/")
             }.max { $0.path.count < $1.path.count }?.path
         }
+        if hostID == .github {
+            session.lineChangesProvider = { [weak self] path in await self?.pullRequests?.changes(forPath: path) }
+        }
         sessions[key] = session
         activeSession = session
         Task { await session.open() }
@@ -937,6 +940,11 @@ final class AppModel {
     func stepNote(forward: Bool) {
         guard let note = activeSession?.stepNote(forward: forward) else { return }
         notesPanel.selectedNoteID = note.id
+    }
+
+    /// Notes › Next Change / Previous Change: the hunks of a pull request's file.
+    func stepChange(forward: Bool) {
+        activeSession?.stepChange(forward: forward)
     }
 
     func reanchor(note: Note, in document: Core.Document) {

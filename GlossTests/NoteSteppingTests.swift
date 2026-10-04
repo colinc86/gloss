@@ -24,6 +24,6 @@ struct NoteSteppingTests {
     @Test func withoutACaretItStartsAtAnEnd() {
         #expect(DocumentSession.step(from: nil, current: nil, in: ordered, forward: true) == a)
         #expect(DocumentSession.step(from: nil, current: nil, in: ordered, forward: false) == c)
-        #expect(DocumentSession.step(from: 0, current: nil, in: [], forward: true) == nil)
+        #expect(DocumentSession.step(from: 0, current: nil as NoteID?, in: [] as [(id: NoteID, key: Double)], forward: true) == nil)
     }
 }

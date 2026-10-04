@@ -33,6 +33,15 @@ public enum Theme {
     /// How much stronger note tints are in dark appearance.
     public static let darkBoost: CGFloat = 1.3
 
+    /// A row a change added or rewrote: quieter than a resolved note, so a green note on an added line still reads.
+    public static let changeAddedBackground = NSColor(name: nil) { appearance in
+        NSColor.systemGreen.withAlphaComponent(0.10 * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkBoost : 1))
+    }
+    /// The gutter's strip beside an added row, and the ruler's mark for a hunk.
+    public static let changeBar = NSColor.systemGreen.withAlphaComponent(0.85)
+    /// The hairline where a change took lines out.
+    public static let changeDeletedMarker = NSColor.systemRed.withAlphaComponent(0.9)
+
     /// Settings > Editor. Open editors restyle as soon as one changes (`editorSettingsDidChange`), so a setting is
     /// seen while it is being adjusted.
     public static var editorFontSize: CGFloat = 12.5 {

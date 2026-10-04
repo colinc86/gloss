@@ -131,6 +131,13 @@ struct AppCommands: Commands {
             Button { model.stepNote(forward: false) } label: { Label("Previous Note", systemImage: "chevron.up") }
                 .keyboardShortcut("'", modifiers: [.command, .shift])
                 .disabled(model.activeSession?.steppableNotes.isEmpty ?? true)
+            // ⌥⌘↓ and ⌥⌘↑: the hunks of a pull request's file.
+            Button { model.stepChange(forward: true) } label: { Label("Next Change", systemImage: "chevron.down.2") }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(model.activeSession?.changeHunks.isEmpty ?? true)
+            Button { model.stepChange(forward: false) } label: { Label("Previous Change", systemImage: "chevron.up.2") }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(model.activeSession?.changeHunks.isEmpty ?? true)
             Divider()
             Toggle(isOn: Binding(get: { model.showNotesPanel }, set: { model.showNotesPanel = $0 })) { Label("Show Notes Panel", systemImage: "sidebar.trailing") }
                 .keyboardShortcut("n", modifiers: [.command, .option])

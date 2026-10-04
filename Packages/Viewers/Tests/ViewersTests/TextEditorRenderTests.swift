@@ -151,4 +151,34 @@ struct TextEditorRenderTests {
         }
         #expect(misses.isEmpty, "off-centre jumps: \(misses)")
     }
+
+    /// An added row is tinted across the whole width, past the text; an untouched row is not.
+    @Test func changedLinesTintTheWholeRow() throws {
+        let controller = TextEditorController(text: "one\ntwo\nthree\nfour\n", languageName: nil)
+        controller.isEditable = false
+        controller.lineChanges = LineChanges(added: [2...2], deletions: [4])
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .aqua)
+        let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
+        hosting.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
+        window.contentView = hosting
+        window.layoutIfNeeded()
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T { return match }
+            for subview in view.subviews { if let found = find(type, in: subview) { return found } }
+            return nil
+        }
+        let textView = try #require(find(SourceTextView.self, in: hosting))
+        let rep = try #require(textView.bitmapImageRepForCachingDisplay(in: textView.bounds))
+        textView.cacheDisplay(in: textView.bounds, to: rep)
+        // Scan a column far to the right of the text: tinted rows are greener than the page, plain rows are the page.
+        let column = rep.pixelsWide - 20
+        var tinted = 0, plain = 0
+        for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+            guard let color = rep.colorAt(x: column, y: y)?.usingColorSpace(.sRGB) else { continue }
+            if color.greenComponent > color.redComponent + 0.01 { tinted += 1 } else { plain += 1 }
+        }
+        #expect(tinted > 0, "the added row carries the green tint far from the text")
+        #expect(plain > tinted, "only the added row is tinted")
+    }
 }
