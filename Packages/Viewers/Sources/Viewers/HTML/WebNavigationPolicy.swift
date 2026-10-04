@@ -7,42 +7,56 @@ public enum WebNavigationPolicy {
     public enum Decision: Equatable, Sendable {
         case allow
         case cancel
-        /// Open this absolute path on the page's host as a document.
+        /// Open this absolute path, on the host the URL names, as a document.
         case openFile(String)
         /// The page wants a loopback port on its remote host: tunnel it, then load `then` through the tunnel.
         case tunnel(port: UInt16, then: URL)
         /// Hand the URL to the system (mail, phone).
         case external(URL)
+        /// Not followed, and the toolbar says why.
+        case refuse(String)
     }
 
     nonisolated public static let externalSchemes: Set<String> = ["mailto", "tel", "sms", "facetime", "facetime-audio"]
 
+    /// Navigations the user asked for: a click, a form, Back or Forward. Only these may open a document or a
+    /// tunnel; a script or a redirect never moves the viewer to another file or opens a port on a host.
+    nonisolated static func isUserInitiated(_ type: WKNavigationType) -> Bool {
+        type == .linkActivated || type == .formSubmitted || type == .backForward
+    }
+
     /// - page: what the view is showing now.
+    /// - fileHost: the scheme host of the served file the view shows (its host's key), nil for a live page.
     /// - proxy: the tunnels of the page's host, when it is remote.
     /// - isLocalHost: the page's host is this Mac, so `file://` links can be opened.
-    nonisolated public static func decide(url: URL, type: WKNavigationType, isMainFrame: Bool, page: BrowserPage, proxy: WebProxyMap?, isLocalHost: Bool) -> Decision {
+    nonisolated public static func decide(url: URL, type: WKNavigationType, isMainFrame: Bool, page: BrowserPage, fileHost: String?, proxy: WebProxyMap?, isLocalHost: Bool) -> Decision {
         guard isMainFrame else { return .allow }
         let scheme = url.scheme?.lowercased() ?? ""
         switch scheme {
         case HTMLSchemeHandler.scheme:
-            guard url.host()?.lowercased() == HTMLSchemeHandler.host else { return .cancel }
-            if case .file(let path) = page {
-                return url.path == path ? .allow : .openFile(url.path)
-            }
-            // A live page cannot address files; the scheme handler refuses such loads too.
+            guard let host = url.host()?.lowercased(), !host.isEmpty else { return .cancel }
+            if case .file(let path) = page, host == fileHost, url.path == path { return .allow }
+            // Back or Forward to a served file: that file's document takes over again, on the host its URL names.
+            if type == .backForward { return .openFile(url.path) }
+            // A link on a served file opens the file it names, on the same host only; a live page cannot address
+            // files at all, and neither can a script.
+            if case .file = page, host == fileHost, type == .linkActivated || type == .formSubmitted { return .openFile(url.path) }
             return .cancel
         case "file":
-            if case .file = page, isLocalHost { return .openFile(url.path) }
+            if case .file = page, isLocalHost, type == .linkActivated { return .openFile(url.path) }
             return .cancel
         case "http", "https":
             guard let proxy else { return .allow }
             if proxy.isProxied(url) { return .allow }
-            if let port = WebProxyMap.loopbackPort(of: url) { return .tunnel(port: port, then: url) }
+            if let port = WebProxyMap.loopbackPort(of: url) {
+                if isUserInitiated(type) { return .tunnel(port: port, then: url) }
+                return .refuse("This page tried to open port \(port) on its host; follow a link to it instead")
+            }
             return .allow
         case "about":
             return .allow
         case _ where externalSchemes.contains(scheme):
-            return .external(url)
+            return type == .linkActivated ? .external(url) : .cancel
         default:
             return .cancel
         }

@@ -51,16 +51,21 @@ struct WebNavigationPolicyTests {
     let proxy = WebProxyMap(hostID: .local, tunnels: [3000: 51_000])
 
     func decide(_ url: String, type: WKNavigationType = .linkActivated, main: Bool = true, page: BrowserPage? = nil, proxy: WebProxyMap? = nil, local: Bool = true) -> WebNavigationPolicy.Decision {
-        WebNavigationPolicy.decide(url: URL(string: url)!, type: type, isMainFrame: main, page: page ?? filePage, proxy: proxy, isLocalHost: local)
+        let page = page ?? filePage
+        let fileHost: String? = page.isLive ? nil : "h_local"
+        return WebNavigationPolicy.decide(url: URL(string: url)!, type: type, isMainFrame: main, page: page, fileHost: fileHost, proxy: proxy, isLocalHost: local)
     }
 
     @Test func filePages() {
-        #expect(decide("gloss-html://doc/home/colin/site/index.html", type: .other) == .allow, "the page's own load")
-        #expect(decide("gloss-html://doc/home/colin/site/index.html#section") == .allow, "a same-page anchor")
-        #expect(decide("gloss-html://doc/home/colin/site/index.html", type: .reload) == .allow)
-        #expect(decide("gloss-html://doc/home/colin/site/about.html") == .openFile("/home/colin/site/about.html"), "a relative link WebKit resolved")
-        #expect(decide("gloss-html://doc/home/colin/docs/PLAN.md") == .openFile("/home/colin/docs/PLAN.md"), "any file, not only pages")
-        #expect(decide("gloss-html://other/x") == .cancel)
+        #expect(decide("gloss-html://h_local/home/colin/site/index.html", type: .other) == .allow, "the page's own load")
+        #expect(decide("gloss-html://h_local/home/colin/site/index.html#section") == .allow, "a same-page anchor")
+        #expect(decide("gloss-html://h_local/home/colin/site/index.html", type: .reload) == .allow)
+        #expect(decide("gloss-html://h_local/home/colin/site/about.html") == .openFile("/home/colin/site/about.html"), "a relative link WebKit resolved")
+        #expect(decide("gloss-html://h_local/home/colin/docs/PLAN.md") == .openFile("/home/colin/docs/PLAN.md"), "any file, not only pages")
+        #expect(decide("gloss-html://h_other/x") == .cancel, "a link cannot reach another host's files")
+        #expect(decide("gloss-html://h_local/home/colin/site/about.html", type: .other) == .cancel, "a script or redirect never switches the document")
+        #expect(decide("gloss-html://h_local/home/colin/site/about.html", type: .backForward) == .openFile("/home/colin/site/about.html"))
+        #expect(decide("file:///Users/colin/notes.md", type: .other) == .cancel, "only a click opens a file")
         #expect(decide("file:///Users/colin/notes.md") == .openFile("/Users/colin/notes.md"))
         #expect(decide("file:///Users/colin/notes.md", local: false) == .cancel, "a remote page cannot address this Mac")
     }
@@ -68,7 +73,9 @@ struct WebNavigationPolicyTests {
     @Test func livePagesAndTheWeb() {
         #expect(decide("https://example.com/docs/") == .allow)
         #expect(decide("https://example.com/docs/", page: livePage) == .allow)
-        #expect(decide("gloss-html://doc/etc/passwd", page: livePage) == .cancel, "a live page cannot address files")
+        #expect(decide("gloss-html://h_local/etc/passwd", page: livePage) == .cancel, "a live page cannot address files")
+        #expect(decide("gloss-html://h_local/home/colin/site/index.html", type: .backForward, page: livePage) == .openFile("/home/colin/site/index.html"), "Back from a site to the file it came from")
+        #expect(decide("mailto:colin@example.com", type: .other) == .cancel, "a script cannot launch Mail")
         #expect(decide("file:///etc/passwd", page: livePage) == .cancel)
         #expect(decide("about:blank", type: .other, page: livePage) == .allow)
         #expect(decide("mailto:colin@example.com") == .external(URL(string: "mailto:colin@example.com")!))
@@ -85,5 +92,9 @@ struct WebNavigationPolicyTests {
         #expect(decide("http://127.0.0.1:51000/app", page: live, proxy: proxy, local: false) == .allow, "a relative link on the proxied page")
         #expect(decide("http://localhost:5173/", page: live, proxy: proxy, local: false) == .tunnel(port: 5173, then: URL(string: "http://localhost:5173/")!), "another port needs its own tunnel")
         #expect(decide("https://example.com/", page: live, proxy: proxy, local: false) == .allow)
+        #expect(decide("http://localhost:2375/", type: .other, page: live, proxy: proxy, local: false) == .refuse("This page tried to open port 2375 on its host; follow a link to it instead"),
+                "a script or redirect never opens a port on the host")
+        #expect(decide("http://localhost:3000/", type: .backForward, page: live, proxy: proxy, local: false) == .tunnel(port: 3000, then: URL(string: "http://localhost:3000/")!))
+        #expect(decide("http://127.0.0.1:51000/", type: .other, page: live, proxy: proxy, local: false) == .allow, "a redirect within a tunnel is fine")
     }
 }

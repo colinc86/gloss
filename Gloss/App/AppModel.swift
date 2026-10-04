@@ -196,11 +196,13 @@ final class AppModel {
         }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         fileSystems[.web] = UnavailableFileSystem(hostID: .web)
-        browser.onOpenFile = { [weak self] hostID, path in
-            guard let self, let hostID = hostID ?? activeSession?.hostID, hostID != .web else { return }
+        // A page moves the viewer only while it is what the viewer shows: one left running behind another document
+        // (a redirect, a refresh, a script) never pulls the reader away.
+        browser.onOpenFile = { [weak self] hostID, path, previous in
+            guard let self, previous != nil, activeSession?.html === previous, let hostID = hostID ?? activeSession?.hostID, hostID != .web else { return }
             openDocument(hostID: hostID, path: path)
         }
-        browser.onDocumentChange = { [weak self] url in self?.webDocumentDidChange(url) }
+        browser.onDocumentChange = { [weak self] url, via, previous in self?.webDocumentDidChange(url, via: via, previous: previous) }
         browser.onNeedsTunnel = { [weak self] hostID, port in
             guard let self else { throw CancellationError() }
             return try await tunnel(hostID: hostID, port: port)
@@ -426,7 +428,7 @@ final class AppModel {
         } else {
             fileSystems[.github] = nil
             for (key, session) in sessions where session.hostID == .github {
-                session.close()
+                retire(session)
                 sessions[key] = nil
                 if activeSession === session { activeSession = nil }
             }
@@ -446,7 +448,7 @@ final class AppModel {
         if previousSite != nil, site != previousSite {
             // Another site, or none: the open issues and pages were that site's and their paths mean nothing here.
             for (key, session) in sessions where session.hostID == .atlassian {
-                session.close()
+                retire(session)
                 sessions[key] = nil
                 if activeSession === session { activeSession = nil }
             }
@@ -551,10 +553,11 @@ final class AppModel {
 
     /// The browser moved to another page by itself (a link, Back, a route change): that page becomes the document,
     /// when the browser is what the viewer shows. A page that redirects itself while another document is in front
-    /// must not pull the viewer away from it.
-    private func webDocumentDidChange(_ url: URL) {
-        guard let current = browser.current, activeSession?.html === current else { return }
-        openWebPage(url, via: current.proxy?.hostID)
+    /// must not pull the viewer away from it. A page on the host's loopback stays on that host; an outside page
+    /// reached from it is the open web's.
+    private func webDocumentDidChange(_ url: URL, via: HostID?, previous: HTMLViewerController?) {
+        guard let previous, activeSession?.html === previous else { return }
+        openWebPage(url, via: via)
     }
 
     /// Loopback ports forwarded from each ssh host: remote port → local port, for the pages opened through it.
@@ -599,7 +602,7 @@ final class AppModel {
         while sessions.count > Self.maximumOpenSessions {
             guard let victim = activationOrder.first(where: { id in sessions[id].map { $0 !== activeSession && !$0.isDirty } ?? false }) else { break }
             activationOrder.removeAll { $0 == victim }
-            sessions[victim]?.close()
+            if let session = sessions[victim] { retire(session) }
             sessions[victim] = nil
         }
     }
@@ -748,8 +751,14 @@ final class AppModel {
         return unsavedSessions
     }
 
-    func closeDocument(_ session: DocumentSession) {
+    /// Ends a session; a page it showed stops running in the shared web view.
+    private func retire(_ session: DocumentSession) {
+        if let html = session.html, browser.current === html { browser.unload() }
         session.close()
+    }
+
+    func closeDocument(_ session: DocumentSession) {
+        retire(session)
         sessions[session.id] = nil
         if activeSession === session { activeSession = sessions.values.first }
     }

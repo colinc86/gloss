@@ -36,7 +36,7 @@ struct WebBridgeTests {
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
             browser.webView.frame = window.contentView!.bounds
             window.contentView!.addSubview(browser.webView)
-            browser.onDocumentChange = { [unowned self] in documentChanges.append($0) }
+            browser.onDocumentChange = { [unowned self] url, _, _ in documentChanges.append(url) }
             observation = browser.webView.observe(\.url, options: [.new]) { [unowned self] _, _ in urlObservations += 1 }
             browser.attach(page, load: false)
             browser.webView.loadHTMLString(html, baseURL: url)
@@ -65,6 +65,35 @@ struct WebBridgeTests {
         func string(_ body: String, _ arguments: [String: Any] = [:]) async throws -> String {
             try #require(try await js(body, arguments) as? String)
         }
+    }
+
+    @Test func aPageTheViewLeftNeverTakesTheNextPagesState() async throws {
+        let harness = Harness(html: Self.fixture)
+        try await harness.ready()
+        try await harness.wait("the serialised source") { harness.page.source.text.contains("Target paragraph") }
+        let before = harness.page.source.text
+        // The view moves on by itself (a redirect, a route): the old page lets go before the new one loads.
+        harness.browser.webView.loadHTMLString("<html><body><p>OTHER PAGE</p></body></html>", baseURL: URL(string: "http://other.test/")!)
+        try await harness.wait("the new page to commit") { harness.documentChanges.contains(URL(string: "http://other.test/")!) }
+        #expect(harness.browser.current == nil)
+        try await harness.wait("the new page to finish") { !harness.browser.webView.isLoading }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(harness.page.source.text == before, "the old page's source is not replaced by the new page's DOM")
+
+        // Attaching the old page again reloads it, since the view no longer shows it.
+        harness.browser.attach(harness.page, load: false)
+        #expect(harness.browser.current === harness.page)
+        #expect(harness.browser.refusal == nil)
+    }
+
+    @Test func unloadStopsThePage() async throws {
+        let harness = Harness(html: Self.fixture)
+        try await harness.ready()
+        harness.browser.unload()
+        #expect(harness.browser.current == nil)
+        #expect(harness.browser.displayedURL == nil)
+        try await harness.wait("about:blank") { harness.browser.webView.url?.absoluteString == "about:blank" }
+        #expect(harness.documentChanges.allSatisfy { $0.scheme != "about" }, "a blank page is never a document")
     }
 
     @Test func selectorsPreferIdsThenTestIdsThenPositions() async throws {
@@ -192,17 +221,33 @@ struct WebBridgeTests {
 
         let live = HTMLViewerController(livePage: URL(string: "https://example.com/")!)
         browser.attach(live, load: false)
-        let fromLive = Task("gloss-html://doc/etc/hosts", mainDocument: "https://example.com/")
+        let fromLive = Task("gloss-html://h_local/etc/hosts", mainDocument: "https://example.com/")
         handler.webView(browser.webView, start: fromLive)
         #expect((fromLive.error as? URLError)?.code == .noPermissionsToReadFile, "a live page cannot read files")
 
         let served = HTMLViewerController(source: TextEditorController(text: "<p>served</p>", languageName: "html"), documentPath: "/site/index.html") { _ in Data() }
         browser.attach(served, load: false)
-        let own = Task("gloss-html://doc/site/index.html", mainDocument: "gloss-html://doc/site/index.html")
+        let own = Task("gloss-html://h_local/site/index.html", mainDocument: "gloss-html://h_local/site/index.html")
         handler.webView(browser.webView, start: own)
         #expect(own.error == nil && String(decoding: own.data, as: UTF8.self) == "<p>served</p>")
-        let crossScheme = Task("gloss-html://doc/site/index.html", mainDocument: "https://example.com/")
+        let crossScheme = Task("gloss-html://h_local/site/index.html", mainDocument: "https://example.com/")
         handler.webView(browser.webView, start: crossScheme)
         #expect((crossScheme.error as? URLError)?.code == .noPermissionsToReadFile, "a page from another scheme cannot read through ours")
+        let otherHost = Task("gloss-html://h_asus/site/index.html", mainDocument: "gloss-html://h_local/site/index.html")
+        handler.webView(browser.webView, start: otherHost)
+        #expect((otherHost.error as? URLError)?.code == .noPermissionsToReadFile, "a served page cannot reach another host's files")
+    }
+
+    @Test func schemePermissions() {
+        let url = { URL(string: $0)! }
+        let permits = { (u: String, main: String?, ref: String?) in
+            HTMLSchemeHandler.permits(url: url(u), mainDocument: main.map(url), referrer: ref.map(url), servingHost: "h_local")
+        }
+        #expect(permits("gloss-html://h_local/a.css", "gloss-html://h_local/index.html", nil))
+        #expect(permits("gloss-html://h_local/a.css", nil, "gloss-html://h_local/index.html"))
+        #expect(!permits("gloss-html://h_local/a.css", nil, nil), "a request that says nothing about where it came from")
+        #expect(!permits("gloss-html://h_local/a.css", "https://evil.example/", nil))
+        #expect(!permits("gloss-html://h_local/a.css", "gloss-html://h_local/index.html", "https://evil.example/"), "an https frame inside a served page")
+        #expect(!permits("gloss-html://h_asus/a.css", "gloss-html://h_asus/index.html", nil), "another host than the one shown")
     }
 }

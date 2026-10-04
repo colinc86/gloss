@@ -184,13 +184,13 @@ struct RenderedHTMLView: NSViewRepresentable {
             // A page the view already shows (a link it followed, a route change) is adopted, not reloaded; the same
             // address reached through another machine's loopback is a different page.
             let adopt: Bool = {
-                guard browser.current?.proxy?.hostID == controller.proxy?.hostID else { return false }
                 switch controller.page {
                 case .live(let url):
-                    guard let shown = browser.displayedURL else { return false }
+                    guard let shown = browser.displayedURL, browser.shownProxyHost == controller.proxy?.hostID else { return false }
                     return WebDocumentKey.normalize(shown) == WebDocumentKey.normalize(url)
                 case .file(let path):
-                    return browser.shownFilePath == path && browser.displayedURL == nil
+                    // The same path on another host is another file.
+                    return browser.shownFilePath == path && browser.shownFileHost == WebBrowserController.hostKey(controller.hostID) && browser.displayedURL == nil
                 }
             }()
             browser.attach(controller, load: !adopt)
@@ -202,11 +202,10 @@ struct RenderedHTMLView: NSViewRepresentable {
     }
 }
 
-/// Serves `gloss-html://doc/<absolute path>`: the document itself from the editor's current text, and other paths
+/// Serves `gloss-html://<host key>/<absolute path>`: the document itself from the editor's current text, and other paths
 /// (stylesheets, images, scripts) inside the controller's resource root through its loader. Anything else fails.
 final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
     nonisolated static let scheme = "gloss-html"
-    nonisolated static let host = "doc"
     weak var browser: WebBrowserController?
     private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
@@ -217,18 +216,11 @@ final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         let path = url.path
         let key = ObjectIdentifier(urlSchemeTask)
-        // `//host/x` references resolve to `gloss-html://host/x`; only `doc` is ours.
-        guard url.host == Self.host else {
-            urlSchemeTask.didFailWithError(URLError(.unsupportedURL))
-            return
-        }
-        // The view is shared with live pages, which must not be able to read files through this scheme: the
-        // request has to come from a served page (its main document URL is ours), and the current page must be one.
         let request = urlSchemeTask.request
-        let referrer = (request.value(forHTTPHeaderField: "Referer") ?? request.value(forHTTPHeaderField: "Origin")).flatMap(URL.init(string:))
         guard let controller = browser?.current, case .file = controller.page,
-              request.mainDocumentURL.map({ $0.scheme?.lowercased() == Self.scheme }) ?? true,
-              referrer.map({ $0.scheme?.lowercased() == Self.scheme }) ?? true else {
+              Self.permits(url: url, mainDocument: request.mainDocumentURL,
+                           referrer: (request.value(forHTTPHeaderField: "Referer") ?? request.value(forHTTPHeaderField: "Origin")).flatMap(URL.init(string:)),
+                           servingHost: WebBrowserController.hostKey(controller.hostID)) else {
             urlSchemeTask.didFailWithError(URLError(.noPermissionsToReadFile))
             return
         }
@@ -255,6 +247,18 @@ final class HTMLSchemeHandler: NSObject, WKURLSchemeHandler {
                 urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             }
         }
+    }
+
+    /// The view is shared with live pages, which must never read files through this scheme. A request is served
+    /// only for the host of the file the view shows (a page cannot reach another host's files by writing
+    /// `gloss-html://other/…`), only when its main document is a served file on that host, and only when whatever it
+    /// says it came from is one too. A request that names neither a main document nor a referrer is refused.
+    nonisolated static func permits(url: URL, mainDocument: URL?, referrer: URL?, servingHost: String) -> Bool {
+        func ours(_ candidate: URL) -> Bool { candidate.scheme?.lowercased() == scheme && candidate.host()?.lowercased() == servingHost }
+        guard ours(url) else { return false }
+        if let mainDocument, !ours(mainDocument) { return false }
+        if let referrer, !ours(referrer) { return false }
+        return mainDocument != nil || referrer != nil
     }
 
     func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
