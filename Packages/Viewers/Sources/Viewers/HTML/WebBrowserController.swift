@@ -734,6 +734,52 @@ public final class WebBrowserController {
             return nil
         }
 
+        // A page's alert, confirm and prompt come up as sheets on the window, as Safari shows them; a page
+        // reviewed here may need them to get anywhere.
+        func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) {
+            let alert = Self.alert(message, frame: frame)
+            alert.addButton(withTitle: "OK")
+            present(alert, in: webView) { _ in completionHandler() }
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) {
+            let alert = Self.alert(message, frame: frame)
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            present(alert, in: webView) { completionHandler($0 == .alertFirstButtonReturn) }
+        }
+
+        func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (String?) -> Void) {
+            let alert = Self.alert(prompt, frame: frame)
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+            field.stringValue = defaultText ?? ""
+            alert.accessoryView = field
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            present(alert, in: webView) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
+        }
+
+        /// A file input: uploading is not something a review does, and the page is told no file was chosen.
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
+            browser?.refuse("File uploads aren't available here")
+            completionHandler(nil)
+        }
+
+        private static func alert(_ message: String, frame: WKFrameInfo) -> NSAlert {
+            let alert = NSAlert()
+            alert.messageText = frame.securityOrigin.host.isEmpty ? "This page says" : "\(frame.securityOrigin.host) says"
+            alert.informativeText = message
+            return alert
+        }
+
+        private func present(_ alert: NSAlert, in webView: WKWebView, then: @escaping @MainActor (NSApplication.ModalResponse) -> Void) {
+            if let window = webView.window {
+                alert.beginSheetModal(for: window) { response in MainActor.assumeIsolated { then(response) } }
+            } else {
+                then(alert.runModal())
+            }
+        }
+
         /// The page's web content process went away (a crash, memory pressure): show the page again.
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             browser?.contentProcessEnded()

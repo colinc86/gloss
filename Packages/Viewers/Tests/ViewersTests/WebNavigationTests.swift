@@ -14,6 +14,8 @@ struct WebDocumentKeyTests {
         #expect(key("http://localhost:3000/a?x=1") != key("http://localhost:3000/a?x=2"), "the query names a different page")
         #expect(key("http://127.0.0.1:8080/") != key("http://localhost:8080/"), "different origins to the page")
         #expect(key("https://me:secret@example.com/") == "https://example.com/", "credentials are never part of a key")
+        #expect(key("https://example.com/a?utm_source=x&id=2&fbclid=y") == "https://example.com/a?id=2", "tracking parameters name the same page")
+        #expect(key("https://example.com/a?utm_source=x") == "https://example.com/a")
     }
 }
 
@@ -87,6 +89,7 @@ struct WebNavigationPolicyTests {
         #expect(decide("tel:+441234") == .external(URL(string: "tel:+441234")!))
         #expect(decide("javascript:alert(1)") == .cancel)
         #expect(decide("ftp://example.com/x") == .cancel)
+        #expect(decide("blob:https://example.com/123") == .refuse("Downloads aren't available here"))
         #expect(decide("javascript:alert(1)", main: false) == .allow, "frames load what they like")
     }
 

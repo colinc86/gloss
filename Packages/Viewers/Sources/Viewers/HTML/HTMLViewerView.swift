@@ -146,13 +146,7 @@ struct WebAddressField: View {
         editing = false
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        var url = URL(string: text)
-        if url?.scheme == nil, !text.contains("://") {
-            let host = text.split(separator: "/", maxSplits: 1).first.map(String.init) ?? text
-            let bare = host.split(separator: ":").first.map(String.init) ?? host
-            url = URL(string: (WebProxyMap.loopbackHosts.contains(bare.lowercased()) ? "http://" : "https://") + text)
-        }
-        guard let url, url.host() != nil else { return }
+        guard let url = WebAddress.url(from: text) else { return }
         browser.open(url)
     }
 }

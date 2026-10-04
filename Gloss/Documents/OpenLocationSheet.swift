@@ -41,7 +41,11 @@ struct OpenLocationSheet: View {
         }
         .padding(DS.Space.xl)
         .frame(width: 460)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            // Through the machine the reader is working on: the open document's ssh host, if it has one.
+            if let host = model.activeSession?.hostID, model.hosts.entry(for: host)?.kind == .ssh { via = host }
+        }
     }
 
     private func open() {
@@ -51,16 +55,5 @@ struct OpenLocationSheet: View {
     }
 
     /// `localhost:3000` → `http://localhost:3000/`; `example.com/docs` → `https://example.com/docs`; a full URL as is.
-    nonisolated static func url(from text: String) -> URL? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return nil }
-        if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", url.host() != nil {
-            return url
-        }
-        guard !trimmed.contains("://") else { return nil }
-        let hostPart = trimmed.split(separator: "/", maxSplits: 1).first.map(String.init) ?? trimmed
-        let host = hostPart.split(separator: ":").first.map(String.init) ?? hostPart
-        let scheme = WebProxyMap.loopbackHosts.contains(host.lowercased()) ? "http" : "https"
-        return URL(string: scheme + "://" + trimmed)
-    }
+    nonisolated static func url(from text: String) -> URL? { WebAddress.url(from: text) }
 }

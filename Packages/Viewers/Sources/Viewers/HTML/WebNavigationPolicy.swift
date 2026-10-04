@@ -58,6 +58,9 @@ public enum WebNavigationPolicy {
             return .allow
         case _ where externalSchemes.contains(scheme):
             return type == .linkActivated ? .external(url) : .cancel
+        case "blob", "data":
+            // What a page builds in memory to hand over as a file: a download, which this browser does not do.
+            return .refuse("Downloads aren't available here")
         default:
             return .cancel
         }

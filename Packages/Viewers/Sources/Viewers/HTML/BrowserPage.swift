@@ -25,6 +25,36 @@ public enum WebDocumentKey {
             components.port = nil
         }
         if components.path.isEmpty { components.path = "/" }
+        // Tracking parameters name the same page; leaving them in would split its notes across documents.
+        if let items = components.queryItems {
+            let kept = items.filter { item in
+                let name = item.name.lowercased()
+                return !(name.hasPrefix("utm_") || ["fbclid", "gclid", "msclkid", "_rsc"].contains(name))
+            }
+            components.queryItems = kept.isEmpty ? nil : kept
+        }
         return components.string ?? url.absoluteString
+    }
+}
+
+/// What a typed address means: a URL as written, or a bare `host[:port][/path]` with a scheme filled in. Plain
+/// http for this machine's loopback, an IP address or an explicit port (a dev server or a box on the LAN rarely
+/// has a certificate); https for everything else.
+public enum WebAddress {
+    nonisolated public static func url(from text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return nil }
+        if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", url.host() != nil {
+            return url
+        }
+        guard !trimmed.contains("://") else { return nil }
+        let hostPart = trimmed.split(separator: "/", maxSplits: 1).first.map(String.init) ?? trimmed
+        let bracketed = hostPart.hasPrefix("[")
+        let host = bracketed ? String(hostPart.prefix { $0 != "]" }.dropFirst()) : (hostPart.split(separator: ":").first.map(String.init) ?? hostPart)
+        let hasPort = bracketed ? hostPart.contains("]:") : hostPart.contains(":")
+        let isIP = bracketed || (host.split(separator: ".").count == 4 && host.split(separator: ".").allSatisfy { UInt8($0) != nil })
+        let plain = WebProxyMap.isLoopback(host: host) || isIP || hasPort
+        guard let url = URL(string: (plain ? "http://" : "https://") + trimmed), url.host() != nil else { return nil }
+        return url
     }
 }
