@@ -83,3 +83,64 @@ struct ElementNoteTests {
         await model.shutDown()
     }
 }
+
+/// A live page's changes: nothing is written for a page without notes, and only the newest change's results land.
+@MainActor
+struct PageChangeTests {
+    func waitUntil(_ what: String, _ condition: @escaping @MainActor () -> Bool) async {
+        for _ in 0..<150 {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        Issue.record("timed out waiting for \(what)")
+    }
+
+    @Test func aPageWithoutNotesWritesNothing() async throws {
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.start()
+        model.openWebPage(URL(string: "http://localhost:9/busy")!)
+        let session = try #require(model.activeSession)
+        await waitUntil("the page controller") { session.html != nil }
+        let html = try #require(session.html)
+        for tick in 0..<5 {
+            html.source.replaceAll(with: "<html><body><p>tick \(tick)</p></body></html>")
+            html.onPageChanged()
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        let document = try #require(try await model.noteStore.document(hostID: .web, path: session.path))
+        #expect(document.fingerprint.hash == nil, "no fingerprint written for a page nobody annotated")
+        await model.shutDown()
+    }
+
+    @Test func onlyTheNewestChangeLands() async throws {
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.start()
+        model.openWebPage(URL(string: "http://localhost:9/app")!)
+        let session = try #require(model.activeSession)
+        await waitUntil("the page controller") { session.html != nil }
+        let html = try #require(session.html)
+        let document = try #require(try await model.noteStore.document(hostID: .web, path: session.path))
+        let anchor = ElementAnchor(selector: "#save", tag: "button", text: "Save", html: "<button id=\"save\">Save</button>", rect: ElementRect(x: 1, y: 2, w: 3, h: 4))
+        _ = try await model.noteStore.createNote(documentID: document.id, anchor: .element(anchor), body: "Rename", color: .yellow)
+        await waitUntil("the note") { session.notes.count == 1 }
+
+        // The first change's answer is slow and says the element is gone; the second's is quick and finds it.
+        var calls = 0
+        html.resolveElements = { items in
+            calls += 1
+            if calls == 1 {
+                try? await Task.sleep(for: .milliseconds(400))
+                return [:].merging(items.map { ($0.id, ElementResolution()) }) { a, _ in a }
+            }
+            let found = ElementCandidate(selector: "#save", tag: "button", text: "Save", html: "", rect: ElementRect(x: 1, y: 2, w: 3, h: 4))
+            return [:].merging(items.map { ($0.id, ElementResolution(bySelector: found)) }) { a, _ in a }
+        }
+        html.onPageChanged()
+        try await Task.sleep(for: .milliseconds(50))
+        html.onPageChanged()
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(calls == 2)
+        #expect(session.notes.first?.state == .draft, "the stale 'gone' answer must not orphan the note after the newer one found it")
+        await model.shutDown()
+    }
+}

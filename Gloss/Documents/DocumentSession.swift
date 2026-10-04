@@ -320,17 +320,26 @@ final class DocumentSession: Identifiable {
         let hash = Data(text.utf8).sha256Hex
         if kind == .web {
             baseText = text
-            let fingerprint = Fingerprint(mtime: Date(), size: Int64(text.utf8.count), hash: hash)
-            fingerprintAtOpen = fingerprint
-            Task {
-                if let document { try? await noteStore.updateFingerprint(document.id, fingerprint) }
-                await reanchorAll(in: text, hash: hash)
-                await reanchorElements(hash: hash)
-            }
-        } else {
-            Task { await reanchorElements(hash: hash) }
+            fingerprintAtOpen = Fingerprint(mtime: Date(), size: Int64(text.utf8.count), hash: hash)
+        }
+        // A page without notes has nothing to follow: no database writes and no work on every tick of a busy page.
+        guard !notes.isEmpty else { return }
+        let fingerprint = fingerprintAtOpen
+        // One re-anchoring at a time; a newer page state replaces an older one still under way, whose results
+        // would otherwise land after the newer ones.
+        pageReanchor?.cancel()
+        pageReanchor = Task { [weak self] in
+            guard let self else { return }
+            if kind == .web, let document, let fingerprint { try? await noteStore.updateFingerprint(document.id, fingerprint) }
+            guard !Task.isCancelled else { return }
+            if kind == .web { await reanchorAll(in: text, hash: hash) }
+            guard !Task.isCancelled else { return }
+            await reanchorElements(hash: hash)
         }
     }
+
+    /// The re-anchoring started by the last page change.
+    @ObservationIgnored private var pageReanchor: Task<Void, Never>?
 
     /// Asks the page where each element note's element is now and moves, flags or orphans the notes accordingly.
     private func reanchorElements(hash: String) async {
@@ -340,6 +349,7 @@ final class DocumentSession: Identifiable {
         }
         guard !items.isEmpty else { return }
         let results = await resolve(items)
+        guard !Task.isCancelled else { return }
         for (id, anchor) in items {
             guard let note = notes.first(where: { $0.id == id }), let resolution = results[id] else { continue }
             do {
@@ -644,6 +654,8 @@ final class DocumentSession: Identifiable {
         watcher = nil
         notesObservation?.cancel()
         notesObservation = nil
+        pageReanchor?.cancel()
+        pageReanchor = nil
     }
 
     /// Reloads a changed PDF and re-anchors its notes by page text.
@@ -824,6 +836,7 @@ final class DocumentSession: Identifiable {
     /// Re-anchors every text note against new content (reload after an external change).
     func reanchorAll(in text: String, hash: String) async {
         for note in notes {
+            if Task.isCancelled { return }
             guard case .text(let anchor) = note.anchor else { continue }
             do {
                 switch ReAnchorer.text(anchor, in: text, newHash: hash) {

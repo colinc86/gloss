@@ -67,10 +67,17 @@ enum WebBridge {
       const ours = (r) => inOverlay(r.target)
         || (r.target === root() && (r.addedNodes.length + r.removedNodes.length) > 0
             && [...r.addedNodes, ...r.removedNodes].every((n) => n === overlay));
+      // Reported once changes settle for 200 ms, and at least every 2 s while they never do (a ticking clock, a
+      // streaming log), so a page that never rests is still followed.
+      let firstChange = 0;
+      function reportChange() { firstChange = 0; reportURL(); post({ changed: true }); relayout(); }
       new MutationObserver((records) => {
         if (records.every(ours)) return;
         clearTimeout(changeTimer);
-        changeTimer = setTimeout(() => { reportURL(); post({ changed: true }); relayout(); }, 200);
+        const now = Date.now();
+        if (!firstChange) firstChange = now;
+        if (now - firstChange >= 2000) { reportChange(); return; }
+        changeTimer = setTimeout(reportChange, 200);
       }).observe(root(), { childList: true, characterData: true, subtree: true });
       window.addEventListener('popstate', reportURL);
       window.addEventListener('hashchange', reportURL);
