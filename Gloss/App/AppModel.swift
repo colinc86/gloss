@@ -440,13 +440,15 @@ final class AppModel {
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
         // The deepest open root holding the file bounds what a rendered HTML page may read; looked up per request,
         // since the root can open after the document (launch with --open, a jump from a note).
+        let home = hostID == .local ? NSHomeDirectory() : hostHomes[hostID]
         session.resourceRoot = { [weak explorer] in
             // Compare resolved folders: a root opened as `/private/tmp/x` is stored as `/tmp/x`.
             let file = ExplorerModel.canonical(path, hostID: hostID)
-            return explorer?.tabs.filter { tab in
+            let root = explorer?.tabs.filter { tab in
                 let root = ExplorerModel.canonical(tab.path, hostID: hostID)
                 return tab.hostID == hostID && file.hasPrefix(root == "/" ? "/" : root + "/")
             }.max { $0.path.count < $1.path.count }?.path
+            return Self.boundedResourceRoot(root, documentPath: path, home: home)
         }
         if hostID == .github {
             session.lineChangesProvider = { [weak self] path in await self?.pullRequests?.changes(forPath: path) }
@@ -548,6 +550,20 @@ final class AppModel {
             for tab in explorer.tabs where tab.hostID == .atlassian { explorer.closeTab(tab.id) }
         }
         await hosts.setVirtualHost(.atlassian, name: "atlassian", kind: .atlassian, enabled: credentials != nil)
+    }
+
+    /// What a rendered page may read: the explorer root holding it, but never a home folder, `/`, or anything
+    /// above a home (a root opened on ~ would let a downloaded page read ~/Library and send it anywhere); then
+    /// only the page's own folder.
+    nonisolated static func boundedResourceRoot(_ root: String?, documentPath: String, home: String?) -> String? {
+        guard let root else { return nil }
+        let normalized = (root as NSString).standardizingPath
+        if normalized == "/" { return (documentPath as NSString).deletingLastPathComponent }
+        if let home {
+            let base = (home as NSString).standardizingPath
+            if normalized == base || base.hasPrefix(normalized + "/") { return (documentPath as NSString).deletingLastPathComponent }
+        }
+        return root
     }
 
     /// Confluence page paths known to be where the tree shows the page today.

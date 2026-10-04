@@ -73,4 +73,13 @@ struct WebSessionTests {
         #expect(Core.Document.displayName(of: "https://example.com/") == "example.com")
         #expect(Core.Document.displayName(of: "http://localhost:3000/dashboard?tab=2") == "localhost:3000/dashboard?tab=2")
     }
+
+    @Test func aPageNeverReadsAHomeFolderWhole() {
+        let bound = AppModel.boundedResourceRoot
+        #expect(bound("/Users/me/site", "/Users/me/site/index.html", "/Users/me") == "/Users/me/site", "a project root stays")
+        #expect(bound("/Users/me", "/Users/me/Downloads/page.html", "/Users/me") == "/Users/me/Downloads", "a root on ~ shrinks to the page's folder")
+        #expect(bound("/Users", "/Users/me/x/page.html", "/Users/me") == "/Users/me/x", "nor anything above it")
+        #expect(bound("/", "/tmp/page.html", "/Users/me") == "/tmp")
+        #expect(bound(nil, "/tmp/page.html", "/Users/me") == nil, "no root: the page's folder, as before")
+    }
 }
