@@ -53,7 +53,20 @@ public struct HTMLViewerView: View {
                 }
             } trailing: {
                 if controller.mode == .rendered {
+                    if controller.isNoteMode {
+                        ToolHints([ToolHint(symbol: "escape", keys: ["esc"], "Leave", explained: "Leave element notes without picking anything")], inline: 1)
+                            .transition(.opacity.calmed)
+                    }
                     ToolGroup {
+                        Button { controller.isNoteMode.toggle() } label: {
+                            Image(systemName: "rectangle.dashed")
+                                .foregroundStyle(controller.isNoteMode ? Color.white : Color.primary)
+                                .padding(.horizontal, 3)
+                                .background(controller.isNoteMode ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+                        }
+                        .help(controller.isNoteMode ? "Click any element on the page to attach a note to it" : "Element Notes: attach a note to a button, an image, any element")
+                        .accessibilityLabel("Element Notes")
+                        .accessibilityAddTraits(controller.isNoteMode ? .isSelected : [])
                         Button { browser.reload() } label: { Image(systemName: "arrow.clockwise") }
                             .help(controller.page.isLive ? "Reload the page" : "Reload the page and run its scripts again")
                             .accessibilityLabel("Reload")
@@ -69,6 +82,7 @@ public struct HTMLViewerView: View {
             .overlay(alignment: .bottom) { LoadProgressLine(progress: controller.mode == .rendered ? controller.loadProgress : nil) }
             .animation(Motion.smooth, value: controller.mode)
             .animation(Motion.smooth, value: browser.refusal)
+            .animation(Motion.snappy, value: controller.isNoteMode)
             switch controller.mode {
             case .rendered:
                 RenderedHTMLView(controller: controller, browser: browser)

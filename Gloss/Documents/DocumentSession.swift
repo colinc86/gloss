@@ -253,6 +253,8 @@ final class DocumentSession: Identifiable {
                 }
                 viewer.isLocal = hostID == .local
                 viewer.hostID = hostID
+                viewer.onPick = { [weak self] pick in self?.beginNote(element: pick) }
+                viewer.onPageChanged = { [weak self] in self?.pageChanged() }
                 html = viewer
             }
             state = .text(controller)
@@ -276,7 +278,8 @@ final class DocumentSession: Identifiable {
             document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: .web, fingerprint: Fingerprint())
             let viewer = HTMLViewerController(livePage: url, proxy: proxy)
             viewer.hostID = hostID
-            viewer.onPageChanged = { [weak self] in self?.livePageChanged() }
+            viewer.onPick = { [weak self] pick in self?.beginNote(element: pick) }
+            viewer.onPageChanged = { [weak self] in self?.pageChanged() }
             isReadOnly = true
             html = viewer
             state = .text(viewer.source)
@@ -286,18 +289,75 @@ final class DocumentSession: Identifiable {
         }
     }
 
-    /// The page's text changed (it loaded, a script ran, a route changed): its notes follow the new text.
-    private func livePageChanged() {
+    /// The page's text changed (it loaded, a script ran, a route changed): its notes follow the new page. A live
+    /// page's text is also its source, so that is refreshed too; a served file's source is the file.
+    private func pageChanged() {
         guard let controller = textController else { return }
         let text = controller.text
         let hash = Data(text.utf8).sha256Hex
-        baseText = text
-        let fingerprint = Fingerprint(mtime: Date(), size: Int64(text.utf8.count), hash: hash)
-        fingerprintAtOpen = fingerprint
-        Task {
-            if let document { try? await noteStore.updateFingerprint(document.id, fingerprint) }
-            await reanchorAll(in: text, hash: hash)
+        if kind == .web {
+            baseText = text
+            let fingerprint = Fingerprint(mtime: Date(), size: Int64(text.utf8.count), hash: hash)
+            fingerprintAtOpen = fingerprint
+            Task {
+                if let document { try? await noteStore.updateFingerprint(document.id, fingerprint) }
+                await reanchorAll(in: text, hash: hash)
+                await reanchorElements(hash: hash)
+            }
+        } else {
+            Task { await reanchorElements(hash: hash) }
         }
+    }
+
+    /// Asks the page where each element note's element is now and moves, flags or orphans the notes accordingly.
+    private func reanchorElements(hash: String) async {
+        guard let html, let resolve = html.resolveElements else { return }
+        let items: [(id: NoteID, anchor: ElementAnchor)] = notes.compactMap { note in
+            if case .element(let anchor) = note.anchor { (note.id, anchor) } else { nil }
+        }
+        guard !items.isEmpty else { return }
+        let results = await resolve(items)
+        for (id, anchor) in items {
+            guard let note = notes.first(where: { $0.id == id }), let resolution = results[id] else { continue }
+            do {
+                switch ReAnchorer.element(anchor, resolution: resolution, newHash: hash) {
+                case .unchanged:
+                    // The page is exactly as it was when the note was made: an orphan's element is back.
+                    if note.state == .orphaned { try await noteStore.restoreDraft(id, anchor: .element(anchor)) }
+                case .moved(let moved):
+                    needsReview.remove(id)
+                    try await noteStore.updateAnchor(id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
+                case .movedNeedsReview(let moved):
+                    needsReview.insert(id)
+                    try await noteStore.updateAnchor(id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
+                case .orphaned:
+                    if note.state != .orphaned { try await noteStore.markOrphaned(id) }
+                }
+            } catch {
+                Log.notes.error("re-anchoring element note \(id.rawValue, privacy: .public) failed: \(error, privacy: .public)")
+            }
+        }
+        syncHighlights()
+    }
+
+    /// Starts a note on the element the user picked in note mode: the editor opens at the element, no Add Note
+    /// pill in between. On a served file the element's first text maps to its source line.
+    func beginNote(element pick: ElementPick) {
+        guard let html, let controller = textController else { return }
+        html.isNoteMode = false
+        html.pendingPick = nil
+        var line: Int?
+        if kind != .web, let offset = pick.textOffset, let alignment = html.alignment,
+           let projected = alignment.projected(NSRange(location: offset, length: 1)),
+           let source = html.projection.sourceRange(forProjected: projected) {
+            line = controller.lineIndex.position(forUTF16Offset: source.location).line
+        }
+        let anchor = ElementAnchor(
+            selector: pick.selector, tag: pick.tag, text: pick.text, html: pick.html, rect: pick.pageRect,
+            line: line, hash: Data(controller.text.utf8).sha256Hex
+        )
+        let rect = pick.windowRect ?? html.pageRect ?? CGRect(x: 40, y: 40, width: 1, height: 1)
+        noteEditor = NoteEditorState(anchor: .element(anchor), body: "", color: lastUsedColor, anchorRect: rect)
     }
 
     private func decode(_ data: Data) -> String {
@@ -659,6 +719,13 @@ final class DocumentSession: Identifiable {
             return
         }
         guard let controller = textController else { return }
+        if let html {
+            html.elementHighlights = notes.compactMap { note in
+                guard case .element(let anchor) = note.anchor, note.state != .orphaned else { return nil }
+                return ElementHighlight(id: note.id, selector: anchor.selector, tag: anchor.tag, text: anchor.text,
+                                        color: Theme.color(for: note.color), state: note.displayState, needsReview: needsReview.contains(note.id))
+            }
+        }
         let index = controller.lineIndex
         var highlights: [TextHighlight] = []
         var stillLive: [NoteID: NSRange] = [:]
@@ -719,7 +786,8 @@ final class DocumentSession: Identifiable {
             do {
                 switch ReAnchorer.text(anchor, in: text, newHash: hash) {
                 case .unchanged:
-                    break
+                    // The file is byte for byte what it was when the note was made: an orphan's text is back.
+                    if note.state == .orphaned { try await noteStore.restoreDraft(note.id, anchor: .text(anchor)) }
                 case .moved(let moved):
                     needsReview.remove(note.id)
                     try await noteStore.updateAnchor(note.id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
@@ -740,7 +808,7 @@ final class DocumentSession: Identifiable {
     /// coordinates, or nil when nothing is selected or an editor is already open. Reads the controllers'
     /// observable selection state, so SwiftUI re-evaluates it as the selection changes.
     var selectionAffordanceRect: CGRect? {
-        guard noteEditor == nil, reanchoringNoteID == nil else { return nil }
+        guard noteEditor == nil, reanchoringNoteID == nil, html?.isNoteMode != true else { return nil }
         if let csv = csvController {
             guard csv.hasSelection else { return nil }
             return csv.rectProvider(csv.selection)
@@ -867,6 +935,9 @@ final class DocumentSession: Identifiable {
            let found = rendered?.rect(forSource: range) ?? controller.rect(for: range) {
             rect = found
         }
+        if let html, case .element = note.anchor, let found = html.elementRects[note.id] ?? html.pageRect {
+            rect = found
+        }
         noteEditor = NoteEditorState(existingID: note.id, anchor: note.anchor, body: note.body, color: note.color, anchorRect: rect)
     }
 
@@ -878,12 +949,20 @@ final class DocumentSession: Identifiable {
                 try await noteStore.updateBody(existing, body: state.body)
                 try await noteStore.updateColor(existing, color: state.color)
             } else {
+                // The element's picture is taken before the note exists, so its own outline is not in the crop.
+                var elementCrop: (png: Data, width: Int, height: Int)?
+                if case .element(let anchor) = state.anchor, let snapshot = html?.snapshotProvider {
+                    elementCrop = try await snapshot(anchor.rect)
+                }
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
                 if case .image(let anchor) = state.anchor, let image = imageController {
                     try await saveCrop(of: anchor, from: image, for: note.id)
                 }
                 if case .pdf(let anchor) = state.anchor, let pdf = pdfController {
                     try await savePageRender(of: anchor, from: pdf, for: note.id)
+                }
+                if let elementCrop {
+                    try await saveElementCrop(elementCrop, for: note.id)
                 }
                 clearSelection()
             }
@@ -929,6 +1008,16 @@ final class DocumentSession: Identifiable {
         _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
     }
 
+    /// Writes the element's 2x PNG, taken by the browser, so the agent sees what the note points at.
+    private func saveElementCrop(_ crop: (png: Data, width: Int, height: Int), for noteID: NoteID) async throws {
+        let directory = attachmentDirectory
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let base = (fileName as NSString).deletingPathExtension.replacingOccurrences(of: "/", with: "-")
+        let url = directory.appendingPathComponent("\(base)-element-\(noteID.rawValue.suffix(6)).png")
+        try crop.png.write(to: url, options: .atomic)
+        _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
+    }
+
     func deleteNote(_ id: NoteID) async {
         do { try await noteStore.deleteNote(id) } catch { lastError = "Deleting the note failed: \(error)" }
         noteEditor = nil
@@ -949,6 +1038,14 @@ final class DocumentSession: Identifiable {
         }
         if let image = imageController, case .image = note.anchor {
             image.selectedNoteID = note.id
+            return
+        }
+        if let html, case .element(let anchor) = note.anchor {
+            if html.mode == .source, let line = anchor.line, let controller = textController {
+                controller.scroll(to: controller.lineIndex.contentRange(ofLine: line), select: select)
+            } else {
+                html.scrollToElement?(anchor.selector)
+            }
             return
         }
         guard let controller = textController, case .text = note.anchor,

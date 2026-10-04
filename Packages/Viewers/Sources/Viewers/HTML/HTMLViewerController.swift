@@ -117,8 +117,17 @@ public final class HTMLViewerController: RenderedDocumentController {
     /// A cheap hash of the page's text as last seen, so unchanged pages are not re-serialised.
     public internal(set) var textHash: String?
     /// The page's text changed (a load, a script, a route) and its notes should be looked at again: text notes
-    /// against `source.text`, element notes through the browser's `resolve`.
+    /// against `source.text`, element notes through `resolveElements`.
     @ObservationIgnored public var onPageChanged: @MainActor () -> Void = {}
+    /// The user picked an element in note mode (also left in `pendingPick`).
+    @ObservationIgnored public var onPick: @MainActor (ElementPick) -> Void = { _ in }
+    /// A PNG of a page rect (CSS pixels from the page's top-left), scrolled into view first; nil while no page is
+    /// shown. Set by the browser while this page is current.
+    @ObservationIgnored public var snapshotProvider: (@MainActor (ElementRect) async throws -> (png: Data, width: Int, height: Int)?)?
+    /// Where each element note's element is now, by selector and by text. Set by the browser while current.
+    @ObservationIgnored public var resolveElements: (@MainActor ([(id: NoteID, anchor: ElementAnchor)]) async -> [NoteID: ElementResolution])?
+    /// Scrolls the page to an element note's element. Set by the browser while current.
+    @ObservationIgnored public var scrollToElement: (@MainActor (String) -> Void)?
 
     /// A source range to scroll the page to, resolved by the view once the page has loaded.
     public internal(set) var pendingScroll: (range: NSRange, select: Bool)?

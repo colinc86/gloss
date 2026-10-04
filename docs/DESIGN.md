@@ -388,10 +388,35 @@ path. Dropping on the Dock icon is not supported yet.
   first-line indent; only a right- or centre-aligned first column keeps the leading tab its stop needs.
 - **Markdown toolbar**: the leading label is what a reader wants at a glance, "412 words · 2 min read", counted on
   the rendered text (no markup) at 230 words a minute, as writing apps show it.
-- **Web page toolbar**: the page's own `<title>` stands in for "Web page" (crossfading when it changes); in
-  Rendered mode a Reload button (`arrow.clockwise`) runs the page and its scripts again, keeping the scroll place.
+- **Review browser** (milestone 2): one web view (`WebBrowserController`) shows every HTML file and live page, so
+  Back and Forward cross from a file to a site and back and a single-page app changes route without reloading; the
+  document follows the page (a link to a file opens that file, an http(s) link becomes a web document, Back returns
+  to the file's own session). WebKit is the engine; the app is a browser for reviewing only: no bookmarks, passwords,
+  extensions or downloads (a response the view cannot show is refused with "Downloads aren't available here" in the
+  toolbar, in orange).
+- **Web page toolbar**: leading, Back and Forward (`chevron.left`/`chevron.right`, disabled at either end), then the
+  address: at rest a quiet caption, the file's `<title>` with a globe for a served file, the logical URL for a live
+  page (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form); a click makes it a field,
+  Return opens what was typed (`localhost:3000` is enough, the scheme is filled in), Escape puts the address back. A
+  page reached through an ssh host's loopback wears a teal `via asus` chip (`network`), the same mark the status bar
+  and the notes panel use. Trailing, in Rendered mode: Element Notes (`rectangle.dashed`, accent-filled while on,
+  with the inline hint `esc Leave`), Reload (`arrow.clockwise`, for a file it runs the page and its scripts again
+  keeping the scroll place), then the Rendered/Source switch; a live page's Source is its current DOM, read-only.
   While the page loads, a 2 pt accent line (`LoadProgressLine`) grows along the toolbar's bottom edge; at the end it
   fills, then fades after 350 ms, instead of vanishing mid-way.
+- **Element notes**: in Element Notes mode the pointer outlines the element under it in the accent colour with a
+  small `tag#id` label (an overlay above the page that takes no clicks and adds no text, so text offsets never
+  move), and a click opens the note editor at that element at once, no Add Note pill in between; Escape leaves the
+  mode, a pick leaves it too. A committed element note draws as a 2 pt outline in its colour with a 12% fill
+  (drafts full, sent 70%, resolved 35%, orphaned dashed, a `?` badge while it needs a glance), and carries a 2x crop
+  of the element taken before the outline exists. The note card reads `Element [data-testid="save"]`: the last
+  compound of a selector that prefers an id, then a `data-testid`, then a `tag:nth-of-type` path, never class
+  names. When the page changes, the element is found again by selector, then by text (one match moves the note
+  and flags it; several pick the nearest; none orphans it), and a page back exactly as it was returns an orphan to
+  a draft.
+- **Open Location** (File › Open Location…, ⇧⌘L): a sheet in the Open Quickly family with an address field and a Via
+  picker (This Mac, or an ssh host) that explains itself: localhost on another machine is reached through the app's
+  ssh connection, and the page is that host's document.
 - **Wrapped lines keep their indentation**: when lines wrap, a line's continuation rows start at its own
   indentation plus one four-space step (as Xcode and VS Code wrap), so a wrapped comment or argument list never reads
   as a new line of code. The indent is capped at 40% of the column for deeply nested lines (re-measured when the column's width changes by

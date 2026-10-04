@@ -71,20 +71,21 @@ enum WebBridge {
       window.addEventListener('popstate', reportURL);
       window.addEventListener('hashchange', reportURL);
 
-      // MARK: Serialisation for the source view (the overlay is left out).
-      function textHash() {
+      // MARK: Serialisation for the source view (the overlay is left out). The hash covers the whole DOM, not only
+      // its text, so a renamed id or a moved element counts as a change for the notes anchored to it.
+      function fnv(s) {
         let h = 2166136261;
-        const text = root().textContent;
-        for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
-        return h.toString(16) + ':' + text.length;
+        for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+        return h.toString(16) + ':' + s.length;
       }
-      function serialize() {
+      function withoutOverlay(body) {
         const parent = overlay && overlay.parentNode;
         if (parent) parent.removeChild(overlay);
-        const html = root().outerHTML;
-        const text = root().textContent;
-        if (parent) parent.appendChild(overlay);
-        return { html, text, textHash: textHash() };
+        try { return body(); } finally { if (parent) parent.appendChild(overlay); }
+      }
+      function textHash() { return withoutOverlay(() => fnv(root().outerHTML)); }
+      function serialize() {
+        return withoutOverlay(() => { const html = root().outerHTML; return { html, text: root().textContent, textHash: fnv(html) }; });
       }
 
       // MARK: Selectors and descriptions

@@ -94,7 +94,11 @@ public final class WebBrowserController {
         detachCurrent()
         current = controller
         if case .file = controller.page, let host = controller.hostID { lastFileHostID = host }
+        controller.snapshotProvider = { [weak self] rect in try await self?.snapshot(pageRect: rect) }
+        controller.resolveElements = { [weak self] items in await self?.resolve(items) ?? [:] }
+        controller.scrollToElement = { [weak self] selector in self?.scrollToElement(selector: selector) }
         highlightToken = controller.source.addHighlightObserver { [weak self] in self?.applyHighlights() }
+        observePageState(of: controller)
         if load {
             self.load(controller)
         } else {
@@ -102,6 +106,21 @@ public final class WebBrowserController {
             isLoaded = true
             controller.pageRect = topRect()
             refresh()
+        }
+    }
+
+    /// Note mode and element highlights change outside SwiftUI's updates (the session sets them), so the browser
+    /// watches them itself and pushes them to the page, re-arming after every change while the page is current.
+    private func observePageState(of controller: HTMLViewerController) {
+        withObservationTracking {
+            _ = controller.isNoteMode
+            _ = controller.elementHighlightsVersion
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.current === controller else { return }
+                self.sync()
+                self.observePageState(of: controller)
+            }
         }
     }
 
@@ -115,6 +134,9 @@ public final class WebBrowserController {
         appliedPickMode = false
         appliedElementVersion = -1
         current.isNoteMode = false
+        current.snapshotProvider = nil
+        current.resolveElements = nil
+        current.scrollToElement = nil
         // The next page starts without a selection; a stale one would show an Add Note button for nothing.
         current.selection = nil
         current.alignment = nil
@@ -327,7 +349,9 @@ public final class WebBrowserController {
             return
         }
         if let pick = message["pick"] as? [String: Any] {
-            current.pendingPick = elementPick(from: pick)
+            guard let picked = elementPick(from: pick) else { return }
+            current.pendingPick = picked
+            current.onPick(picked)
             return
         }
         if message["pickCancel"] != nil {
@@ -381,6 +405,32 @@ public final class WebBrowserController {
             result[NoteID(rawValue: id)] = ElementResolution(bySelector: candidate(entry["bySelector"]), byText: byText)
         }
         return result
+    }
+
+    /// A 2x PNG of a page rect (CSS pixels from the page's top-left). WebKit snapshots only what is on screen,
+    /// so the element is scrolled into view first; a part taller than the view is cut at the view's edge.
+    public func snapshot(pageRect: ElementRect) async throws -> (png: Data, width: Int, height: Int)? {
+        guard isLoaded else { return nil }
+        let bounds = webView.bounds
+        func viewport() async throws -> CGRect {
+            let offsets = try await webView.callAsyncJavaScript("return [window.scrollX, window.scrollY]", arguments: [:], in: nil, contentWorld: .defaultClient) as? [Double] ?? [0, 0]
+            return CGRect(x: pageRect.x - offsets[0], y: pageRect.y - offsets[1], width: pageRect.w, height: pageRect.h)
+        }
+        var rect = try await viewport()
+        if rect.minX < 0 || rect.minY < 0 || rect.maxX > bounds.width || rect.maxY > bounds.height {
+            _ = try? await webView.callAsyncJavaScript("window.scrollTo(Math.max(0, x - 16), Math.max(0, y - 16))", arguments: ["x": pageRect.x, "y": pageRect.y], in: nil, contentWorld: .defaultClient)
+            try? await Task.sleep(for: .milliseconds(150))
+            rect = try await viewport()
+        }
+        let capture = rect.insetBy(dx: -4, dy: -4).intersection(bounds)
+        guard !capture.isNull, capture.width >= 2, capture.height >= 2 else { return nil }
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = capture
+        configuration.snapshotWidth = NSNumber(value: Double(capture.width) * 2)
+        let image = try await webView.takeSnapshot(configuration: configuration)
+        guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return (png, bitmap.pixelsWide, bitmap.pixelsHigh)
     }
 
     /// Scrolls the page to an element note's element and pulses its outline.
