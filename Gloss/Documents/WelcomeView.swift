@@ -14,9 +14,13 @@ struct WelcomeView: View {
         let remoteHosts = model.hosts.entries.filter { $0.kind == .ssh }
         let recents = Array((explorer.recentsByHost[.local] ?? []).prefix(4))
         VStack(spacing: DS.Space.xl) {
-            Image(nsImage: NSApp.applicationIconImage)
+            // The icon's mark in one colour, so it sits in the chrome's grays instead of the Dock's colour.
+            Image("GlossMark")
+                .renderingMode(.template)
                 .resizable()
+                .scaledToFit()
                 .frame(width: 112, height: 112)
+                .foregroundStyle(.secondary)
                 .scaleEffect(appeared || Motion.isReduced ? 1 : 0.86)
                 .opacity(appeared ? 1 : 0)
                 .accessibilityHidden(true)
