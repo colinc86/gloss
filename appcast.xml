@@ -6,6 +6,36 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.1.2</title>
+      <pubDate>Mon, 05 Oct 2026 21:17:33 GMT</pubDate>
+      <sparkle:version>132</sparkle:version>
+      <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">Fixes for the first round of reports from 0.1.1, plus a few new things.</p>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li><strong>Drafts only leave Gloss when you press Send.</strong> The Claude Code and Codex prompt hook could hand every draft in a folder to the agent, unseen, whenever a prompt was submitted (including the prompt a send itself submits) and mark them sent. The hook is gone. After updating, open <strong>Settings › Agents</strong> and press <strong>Update</strong> on Claude Code and Codex to remove it from their settings (a backup is kept). Agents now only see notes you've sent them, and <strong>Copy as Packet</strong> leaves notes as drafts.</li>
+<li><strong>Notes keep their place when files change.</strong> When a note's text appears in several places, Gloss picks the one whose surrounding lines match, and flags the note for a look when it can't be sure. A file changed while it was closed has its notes found again when it opens. A sent note that loses its text and finds it again stays sent; a resolved note stays resolved.</li>
+<li><strong>The notes filter bar no longer wraps</strong> when the panel is narrow: it drops the title, then the counts.</li>
+</ul>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Back and Forward</strong> through the documents you've viewed, across folders and hosts: Go › Back (⌃⌘←) and Forward (⌃⌘→), or the chevrons in the toolbar.</li>
+<li><strong>Agents can show you things.</strong> Over MCP an agent can ask you a question beside the lines it's about (it waits under Attention; reply and send to answer), open a file at a range of lines, and add a project folder to your favorites.</li>
+<li><strong>Images in Jira issues and Confluence pages</strong> show inline, and attached images and PDFs open in their viewers so you can note a region of them.</li>
+<li><strong>Paths from notes to cards</strong> are smoother and move exactly with the page.</li>
+</ul>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/613627791" type="application/octet-stream" sparkle:edSignature="V2laImOZS0V3QkR5A4tCNx2mCfe/8gHYOFi/nE1VETwNsVrn1rwcPW65XV4UvOASYBbksfXzORA1AFOTFIW4Aw==" length="19133666"/>
+    </item>
+    <item>
       <title>Gloss 0.1.1</title>
       <pubDate>Mon, 05 Oct 2026 04:41:18 GMT</pubDate>
       <sparkle:version>125</sparkle:version>
