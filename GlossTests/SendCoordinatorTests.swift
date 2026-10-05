@@ -70,6 +70,26 @@ struct SendCoordinatorTests {
         #expect(coordinator.lastResult == nil)
     }
 
+    /// A hook that can't name its session's directory drains nothing, rather than every project's drafts.
+    @Test func aHookWithoutADirectoryGetsNoNotes() async throws {
+        let store = try makeStore()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-hookcwd-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(directory)/a", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        try "plan\n".write(toFile: "\(directory)/a/PLAN.md", atomically: true, encoding: .utf8)
+        let document = try await store.upsertDocument(hostID: .local, path: "\(directory)/a/PLAN.md", kind: .markdown, fingerprint: Fingerprint())
+        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "b", color: .blue)
+        let coordinator = SendCoordinator(noteStore: store, transports: [], stagers: [:])
+        for cwd in [nil, "", "relative/dir"] as [String?] {
+            let (text, ids) = try await coordinator.hookText(hostID: .local, cwd: cwd)
+            #expect(text.isEmpty && ids.isEmpty, "cwd \(String(describing: cwd))")
+        }
+        let (_, elsewhere) = try await coordinator.hookText(hostID: .local, cwd: "\(directory)/b")
+        #expect(elsewhere.isEmpty)
+        let (_, here) = try await coordinator.hookText(hostID: .local, cwd: "\(directory)/a")
+        #expect(here.count == 1)
+    }
+
     @Test func stagesAttachmentsIntoTheSendDirectory() async throws {
         let store = try makeStore()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-stage-\(UUID().uuidString)").path

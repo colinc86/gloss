@@ -30,9 +30,13 @@ try:
     print(json.load(open(sys.argv[1])).get("cwd") or "")
 except Exception:
     print("")' "$tmp" 2>/dev/null)
-else
+fi
+# No python3, or the Command Line Tools stub that prints nothing: read the field with sed instead.
+if [ -z "$cwd" ]; then
     cwd=$(sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp" 2>/dev/null | head -n 1)
 fi
+# Without the session's directory there is no telling whose notes these are; send none.
+case "$cwd" in /*) ;; *) exit 0 ;; esac
 
 command -v curl >/dev/null 2>&1 || exit 0
 out=$(curl -sf -m 3 --get --data-urlencode "cwd=$cwd" --data-urlencode "host=${GLOSS_HOST:-local}" -H "Authorization: Bearer $token" \

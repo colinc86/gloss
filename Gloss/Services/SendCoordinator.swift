@@ -192,6 +192,10 @@ final class SendCoordinator {
     /// it covers. Drafts only: a note the hook already delivered stays reachable through MCP but is not injected
     /// into every later prompt.
     func hookText(hostID: HostID?, cwd: String?) async throws -> (text: String, noteIDs: [NoteID]) {
+        // A hook that couldn't tell where its session runs (no cwd in the hook's JSON, no python3 to read it) gets
+        // nothing: with no prefix, or "" read as "/", it would drain every project's drafts into this one session
+        // and mark them sent, so the right session never sees them.
+        guard let cwd, cwd.hasPrefix("/") else { return ("", []) }
         let pending = try await noteStore.pendingNotes(hostID: hostID, pathPrefix: cwd).filter { $0.note.state == .draft }
         let (notes, attachments) = try await collect(noteIDs: pending.map(\.note.id))
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
