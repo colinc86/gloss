@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Gloss</title>
+    <link>https://github.com/colinc86/gloss/releases</link>
+    <description>Gloss releases</description>
+    <language>en</language>
+    <item>
+      <title>Gloss 0.1.0</title>
+      <pubDate>Mon, 05 Oct 2026 04:26:17 GMT</pubDate>
+      <sparkle:version>121</sparkle:version>
+      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">First release of Gloss.</p>
+<ul dir="auto">
+<li>Browse folders on this Mac and over ssh, and annotate any region of any file</li>
+<li>Send notes to Claude Code, Codex and OpenCode</li>
+<li>Review pull requests, Jira issues and Confluence pages</li>
+<li>Updates and in-app feedback</li>
+</ul>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/611476110" type="application/octet-stream" sparkle:edSignature="BBRY5yEBzZGiy53OAjtI6PgU9w1fWJhTj72xCSi2F0pQcobiWU9p2MIDOBhJec2aOkFicYVIei2o7nd0s9GDAw==" length="18891839"/>
+    </item>
+  </channel>
+</rss>
