@@ -5,8 +5,8 @@ import Sparkle
 /// Updates through Sparkle, from Gloss's releases on GitHub: its standard dialog shows the release notes and
 /// offers Install Update, Remind Me Later and Skip This Version; installing swaps the app in place and relaunches.
 ///
-/// While the repository is private, the feed (`SUFeedURL`, the contents API's `appcast.xml`) and the release files
-/// are read with the GitHub key from Settings › Integrations; without one there are no updates. When the repository
+/// While the repository is private, the feed (`SUFeedURL`, `appcast.xml` on raw.githubusercontent.com) and the
+/// release files are read with the GitHub key from Settings › Integrations; without one there are no updates. When the repository
 /// goes public, the feed moves to a public URL and the key goes (see the memory note on going public).
 ///
 /// Debug builds never start the updater: the copy in DerivedData must not be replaced by a release.
@@ -71,10 +71,11 @@ final class UpdaterDelegate: NSObject, SPUUpdaterDelegate {
         self.token = token
     }
 
-    /// Sent with every Sparkle request, all of which go to api.github.com: the contents API answers the feed with
-    /// the file itself for this `Accept`; the download swaps it for the release file's bytes.
+    /// Sent with every Sparkle request: the feed on raw.githubusercontent.com, which serves a private repository's
+    /// file to a key that can read it. Sparkle sets the feed's `Accept` itself (so the contents API, which picks
+    /// its answer by `Accept`, can't serve the feed); the download's is set below.
     nonisolated static func headers(token: String) -> [String: String] {
-        ["Authorization": "Bearer \(token)", "Accept": "application/vnd.github.raw", "X-GitHub-Api-Version": "2022-11-28"]
+        ["Authorization": "Bearer \(token)"]
     }
 
     /// Sparkle reads `httpHeaders` after this returns, so the key is the one saved right now.

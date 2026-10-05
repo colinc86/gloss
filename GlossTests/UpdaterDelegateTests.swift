@@ -25,7 +25,7 @@ struct UpdaterDelegateTests {
         key.value = "ghp_one"
         try delegate.updater(updater, mayPerform: .updatesInBackground)
         #expect(updater.httpHeaders?["Authorization"] == "Bearer ghp_one")
-        #expect(updater.httpHeaders?["Accept"] == "application/vnd.github.raw")
+        #expect(updater.httpHeaders?.keys.sorted() == ["Authorization"])
 
         key.value = "ghp_two"
         try delegate.updater(updater, mayPerform: .updates)

@@ -20,7 +20,7 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://api.github.com/repos/colinc86/gloss/contents/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/colinc86/gloss/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>piK+ii/vVsGnPYnyoMqEdxA9V+TYRhSAVpN5oDVaxY8=</string>
 	<key>SUScheduledCheckInterval</key>

@@ -46,15 +46,14 @@ The notes are what people see twice: as the release's description on GitHub and 
 
 ## How updates reach people
 
-- `SUFeedURL` is `https://api.github.com/repos/colinc86/gloss/contents/appcast.xml`; each item's enclosure is the
+- `SUFeedURL` is `https://raw.githubusercontent.com/colinc86/gloss/main/appcast.xml`; each item's enclosure is the
   release asset's API URL. While the repository is private both need the GitHub key from Settings › Integrations:
-  `UpdaterDelegate` puts it on Sparkle's requests (`Accept: application/vnd.github.raw` for the feed,
-  `application/octet-stream` for the zip, whose redirect to storage URLSession follows without the key) and
-  refuses a check when no key is saved.
-- **Going public:** point `SUFeedURL` at `https://raw.githubusercontent.com/colinc86/gloss/main/appcast.xml`, write
-  enclosures with the asset's `browser_download_url` (and rewrite the existing items), remove the delegate's key
-  handling and the "needs GitHub" wording, and release once. Copies already installed keep reading the API URL,
-  which then works without a key.
+  `UpdaterDelegate` puts `Authorization` on Sparkle's requests (and `Accept: application/octet-stream` on the
+  download, whose redirect to storage URLSession follows without the key) and refuses a check when no key is saved.
+  The feed can't come from the contents API: Sparkle sets the feed's `Accept` itself, and that API then answers with
+  JSON. (0.1.0 shipped with that URL, so 0.1.0 can't update itself.)
+- **Going public:** the feed URL stays. Write enclosures with the asset's `browser_download_url` (and rewrite the
+  existing items), remove the delegate's key handling and the "needs GitHub" wording, and release once.
 - Debug builds never start the updater. To try an update, build Release with an older version
   (`MARKETING_VERSION=0.0.9 CURRENT_PROJECT_VERSION=1`) into a scratch folder and run it from there.
 
