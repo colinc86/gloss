@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import Synchronization
 @preconcurrency import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -24,6 +25,17 @@ public final class HTTPListener: Sendable {
     }
 
     public typealias Handler = @Sendable (HTTPRequest, _ query: [String: String]) async -> HTTPResponse
+    /// Decides from the request line and headers alone (the body is nil) whether to read the request at all.
+    public typealias Authorizer = @Sendable (HTTPRequest, _ query: [String: String]) -> Bool
+
+    public struct Limits: Sendable {
+        /// Connections held at once; past this new ones are closed on accept. Agents and hooks hold a handful.
+        public var maximumConnections = 64
+        /// How long a request may take to arrive: from connecting, from its first line, or after the previous
+        /// response on a kept-alive connection, to its last byte.
+        public var requestTimeout: TimeAmount = .seconds(30)
+        public init() {}
+    }
 
     private let group: MultiThreadedEventLoopGroup
     private let channel: Channel
@@ -36,14 +48,21 @@ public final class HTTPListener: Sendable {
     }
 
     /// Binds 127.0.0.1:`port` (0 picks a free port) and serves until `stop()`.
-    public static func start(port: Int, handler: @escaping Handler) async throws -> HTTPListener {
+    public static func start(port: Int, authorize: Authorizer? = nil, limits: Limits = Limits(), handler: @escaping Handler) async throws -> HTTPListener {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
+        let open = Atomic<Int>(0)
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 64)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
-                channel.pipeline.configureHTTPServerPipeline().flatMap {
-                    channel.pipeline.addHandler(RequestHandler(handler: handler))
+                // The port is reverse-forwarded to remote hosts, where anyone logged in can open connections.
+                guard open.add(1, ordering: .relaxed).newValue <= limits.maximumConnections else {
+                    open.subtract(1, ordering: .relaxed)
+                    return channel.close()
+                }
+                channel.closeFuture.whenComplete { _ in open.subtract(1, ordering: .relaxed) }
+                return channel.pipeline.configureHTTPServerPipeline().flatMap {
+                    channel.pipeline.addHandler(RequestHandler(handler: handler, authorize: authorize, timeout: limits.requestTimeout))
                 }
             }
             .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -79,21 +98,70 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     private let handler: HTTPListener.Handler
+    private let authorize: HTTPListener.Authorizer?
     private var pending: Pending?
+    /// After a refusal on the head, the rest of that request is read and dropped.
+    private var discarding = false
     private var streamTask: Task<Void, Never>?
+    /// Closes a connection whose request doesn't arrive in time; cancelled once it has.
+    private var deadline: Scheduled<Void>?
     /// The port is reverse-forwarded to hosts, so anything on their loopback can POST; bound what we buffer.
     private static let maximumBodyBytes = 8 * 1024 * 1024
 
-    init(handler: @escaping HTTPListener.Handler) {
+    private let timeout: TimeAmount
+
+    init(handler: @escaping HTTPListener.Handler, authorize: HTTPListener.Authorizer?, timeout: TimeAmount) {
         self.handler = handler
+        self.authorize = authorize
+        self.timeout = timeout
+    }
+
+    func handlerAdded(context: ChannelHandlerContext) {
+        armDeadline(context: context)
+    }
+
+    func handlerRemoved(context: ChannelHandlerContext) {
+        deadline?.cancel()
+        deadline = nil
+    }
+
+    private func armDeadline(context: ChannelHandlerContext) {
+        deadline?.cancel()
+        let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+        deadline = context.eventLoop.scheduleTask(in: timeout) { bound.value.close(promise: nil) }
+    }
+
+    /// Answers with an empty response and closes, without reading further.
+    private func refuse(_ status: HTTPResponseStatus, context: ChannelHandlerContext) {
+        let head = HTTPResponseHead(version: .http1_1, status: status, headers: ["Content-Length": "0", "Connection": "close"])
+        context.write(wrapOutboundOut(.head(head)), promise: nil)
+        // The completion runs on this channel's event loop; NIOLoopBound checks that rather than assuming it.
+        let bound = NIOLoopBound(context, eventLoop: context.eventLoop)
+        context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in bound.value.close(promise: nil) }
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         switch unwrapInboundIn(data) {
         case .head(let head):
+            armDeadline(context: context)
+            // Refused before the body is buffered: a caller without the token can't make the server hold 8 MB.
+            guard HTTPListener.permits(head.headers) else {
+                discarding = true
+                refuse(.forbidden, context: context)
+                return
+            }
+            if let authorize {
+                let probe = Self.convert(Pending(head: head, body: context.channel.allocator.buffer(capacity: 0)))
+                guard authorize(probe.0, probe.1) else {
+                    discarding = true
+                    refuse(.unauthorized, context: context)
+                    return
+                }
+            }
+            discarding = false
             pending = Pending(head: head, body: context.channel.allocator.buffer(capacity: 0))
         case .body(var buffer):
-            guard pending != nil else { return }
+            guard pending != nil, !discarding else { return }
             if (pending?.body.readableBytes ?? 0) + buffer.readableBytes > Self.maximumBodyBytes {
                 pending = nil
                 let head = HTTPResponseHead(version: .http1_1, status: .payloadTooLarge, headers: ["Content-Length": "0", "Connection": "close"])
@@ -105,8 +173,10 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
             }
             pending?.body.writeBuffer(&buffer)
         case .end:
-            guard let request = pending else { return }
+            guard let request = pending, !discarding else { return }
             pending = nil
+            deadline?.cancel()
+            deadline = nil
             guard HTTPListener.permits(request.head.headers) else {
                 // A web page (any site open in a browser, or one rebinding its name to 127.0.0.1) must not reach the
                 // notes: answered with 403 and the connection closed.
@@ -121,7 +191,8 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
             streamTask = Task {
                 let (mcpRequest, query) = Self.convert(request)
                 let response = await handler(mcpRequest, query)
-                await Self.write(response, version: request.head.version, keepAlive: request.head.isKeepAlive, context: ctx, wrap: { self.wrapOutboundOut($0) })
+                // A kept-alive connection gets the same deadline for its next request, so idle ones don't hold slots.
+                await Self.write(response, version: request.head.version, keepAlive: request.head.isKeepAlive, context: ctx, wrap: { self.wrapOutboundOut($0) }, finished: { self.armDeadline(context: ctx) })
             }
         }
     }
@@ -150,7 +221,8 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
         return (HTTPRequest(method: request.head.method.rawValue, headers: headers, body: body, path: path), query)
     }
 
-    private static func write(_ response: HTTPResponse, version: HTTPVersion, keepAlive: Bool, context: ChannelHandlerContext, wrap: @escaping @Sendable (HTTPServerResponsePart) -> NIOAny) async {
+    /// `finished` runs on the event loop once a kept-alive response is fully written.
+    private static func write(_ response: HTTPResponse, version: HTTPVersion, keepAlive: Bool, context: ChannelHandlerContext, wrap: @escaping @Sendable (HTTPServerResponsePart) -> NIOAny, finished: @escaping @Sendable () -> Void) async {
         nonisolated(unsafe) let ctx = context
         let loop = ctx.eventLoop
         var head = HTTPResponseHead(version: version, status: HTTPResponseStatus(statusCode: response.statusCode))
@@ -174,7 +246,7 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             } catch {}
             loop.execute {
-                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { _ in if !keepAlive { ctx.close(promise: nil) } }
+                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { _ in if keepAlive { finished() } else { ctx.close(promise: nil) } }
             }
         default:
             let body = response.bodyData
@@ -187,7 +259,7 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
                     buffer.writeBytes(body)
                     ctx.write(wrap(.body(.byteBuffer(buffer))), promise: nil)
                 }
-                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { _ in if !keepAlive { ctx.close(promise: nil) } }
+                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { _ in if keepAlive { finished() } else { ctx.close(promise: nil) } }
             }
         }
     }

@@ -138,7 +138,9 @@ public actor MCPServer {
 
     public func start() async throws {
         guard listener == nil else { return }
-        let started = try await HTTPListener.start(port: requestedPort) { [weak self] request, query in
+        let token = token
+        let authorize: HTTPListener.Authorizer = { request, query in request.path == "/health" || Self.authorized(request, query: query, token: token) }
+        let started = try await HTTPListener.start(port: requestedPort, authorize: authorize) { [weak self] request, query in
             guard let self else { return .error(statusCode: 503, MCPError.internalError("server stopped")) }
             return await self.route(request, query: query)
         }

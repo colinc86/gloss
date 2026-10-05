@@ -153,6 +153,70 @@ struct MCPServerTests {
         #expect((health as? HTTPURLResponse)?.statusCode == 200, "the server still answers")
     }
 
+    /// Without the token a request is refused on its first line, before any of its body is held.
+    @Test func aCallerWithoutTheTokenIsRefusedBeforeItsBody() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-early-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"), token: String(repeating: "ab", count: 32))
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let port = try #require(await server.port)
+        // Claims 7 MB and sends a few bytes: refused at once rather than waited on.
+        let reply = try await Self.rawExchange(port: port, "POST /plugin/note HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 7000000\r\n\r\nabc")
+        #expect(reply.hasPrefix("HTTP/1.1 401"), "\(reply)")
+    }
+
+    /// A connection that never finishes its request is closed at the deadline, and the connection cap holds.
+    @Test func slowAndExcessConnectionsAreClosed() async throws {
+        var limits = HTTPListener.Limits()
+        limits.requestTimeout = .milliseconds(300)
+        limits.maximumConnections = 2
+        let listener = try await HTTPListener.start(port: 0, limits: limits) { _, _ in .data(Data("ok".utf8), headers: [:]) }
+        defer { Task { await listener.stop() } }
+        let started = ContinuousClock.now
+        let slow = try await Self.rawExchange(port: listener.port, "POST /x HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 10\r\n\r\nab")
+        #expect(slow.isEmpty, "closed without an answer: \(slow)")
+        #expect(ContinuousClock.now - started < .seconds(5))
+
+        let first = try Self.openSocket(port: listener.port)
+        let second = try Self.openSocket(port: listener.port)
+        defer { close(first); close(second) }
+        let third = try await Self.rawExchange(port: listener.port, "GET /x HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        #expect(third.isEmpty, "a third connection is closed on accept: \(third)")
+    }
+
+    static func openSocket(port: Int) throws -> Int32 {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(UInt16(port).bigEndian)
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let result = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        guard result == 0 else { close(fd); throw POSIXError(.ECONNREFUSED) }
+        return fd
+    }
+
+    /// Sends `request` raw and reads until the server closes (or 5 s pass); returns what came back.
+    static func rawExchange(port: Int, _ request: String) async throws -> String {
+        let fd = try openSocket(port: port)
+        defer { close(fd) }
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = request.utf8CString.withUnsafeBufferPointer { send(fd, $0.baseAddress, $0.count - 1, 0) }
+        return await Task.detached {
+            var received = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let count = recv(fd, &buffer, buffer.count, 0)
+                if count <= 0 { break }
+                received.append(contentsOf: buffer[0..<count])
+            }
+            return String(decoding: received, as: UTF8.self)
+        }.value
+    }
+
     /// A web page (a site open in a browser, or one rebinding its name to 127.0.0.1) is refused; agents, hooks and
     /// the plugin, which send no Origin and use a loopback Host, are served.
     @Test func webPagesCannotReachTheNotes() async throws {
