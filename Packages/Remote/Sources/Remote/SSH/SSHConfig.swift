@@ -24,13 +24,17 @@ public enum SSHConfig {
 
     public static func hostAliases(from path: String = defaultPath) -> [SSHConfigHost] {
         var seen: Set<String> = []
+        var visited: Set<String> = []
         var result: [SSHConfigHost] = []
-        collect(from: path, depth: 0, seen: &seen, into: &result)
+        collect(from: path, depth: 0, seen: &seen, visited: &visited, into: &result)
         return result
     }
 
-    private static func collect(from path: String, depth: Int, seen: inout Set<String>, into result: inout [SSHConfigHost]) {
-        guard depth <= maximumIncludeDepth, let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+    private static func collect(from path: String, depth: Int, seen: inout Set<String>, visited: inout Set<String>, into result: inout [SSHConfigHost]) {
+        // Each file is read once: a config that includes itself (or a glob over its own folder) otherwise fans out
+        // to N^depth reads, on the main thread.
+        let real = (path as NSString).resolvingSymlinksInPath
+        guard depth <= maximumIncludeDepth, visited.insert(real).inserted, let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#") else { continue }
@@ -48,7 +52,7 @@ public enum SSHConfig {
                     if expanded.hasPrefix("~") { expanded = NSHomeDirectory() + expanded.dropFirst() }
                     if !expanded.hasPrefix("/") { expanded = (NSHomeDirectory() as NSString).appendingPathComponent(".ssh/" + expanded) }
                     for file in glob(expanded) {
-                        collect(from: file, depth: depth + 1, seen: &seen, into: &result)
+                        collect(from: file, depth: depth + 1, seen: &seen, visited: &visited, into: &result)
                     }
                 }
             default:
@@ -96,9 +100,16 @@ public enum SSHConfig {
         }
     }
 
-    public static func resolve(_ alias: String, sshPath: String = "/usr/bin/ssh") async -> Resolved? {
-        guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: sshPath, arguments: ["-G", "--", alias])) else { return nil }
-        let output = String(decoding: await process.collectStdout(), as: UTF8.self)
+    /// `options` are the host's own `-o` arguments (a host added in Settings), so the answer matches what a
+    /// connection would use. A `Match exec` that never returns is cut off after `timeout`.
+    public static func resolve(_ alias: String, options: [String] = [], sshPath: String = "/usr/bin/ssh", timeout: Duration = .seconds(5)) async -> Resolved? {
+        guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: sshPath, arguments: ["-G"] + options + ["--", alias])) else { return nil }
+        guard let stdout = await withDeadline(timeout, { await process.collectStdout() }) else {
+            process.kill()
+            _ = try? await process.exitCode
+            return nil
+        }
+        let output = String(decoding: stdout, as: UTF8.self)
         guard (try? await process.exitCode) == 0 else { return nil }
         var values: [String: String] = [:]
         for line in output.split(separator: "\n") {

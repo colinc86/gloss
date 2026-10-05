@@ -53,7 +53,7 @@ final class HostsModel {
         var lines: [String] = ["Host: \(entry.name)" + (entry.origin == .manual ? " (added in Settings)" : " (from ~/.ssh/config)")]
         // The caption the design asks for: an alias listed under another name says what ssh calls it.
         if entry.alias != entry.name { lines.append("ssh alias: \(entry.alias)") }
-        if let resolved = await SSHConfig.resolve(entry.alias) {
+        if let resolved = await SSHConfig.resolve(entry.alias, options: entry.sshArguments) {
             lines.append("Destination: \(resolved.user.map { $0 + "@" } ?? "")\(resolved.hostName):\(resolved.port)")
             lines.append("Key agent: \(resolved.identityAgent ?? (ProcessInfo.processInfo.environment["SSH_AUTH_SOCK"] ?? "none"))")
         }

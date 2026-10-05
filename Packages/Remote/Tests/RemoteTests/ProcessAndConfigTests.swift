@@ -82,5 +82,23 @@ struct SSHConfigTests {
         let resolved = try #require(await SSHConfig.resolve("localhost"))
         #expect(resolved.hostName == "localhost")
         #expect(resolved.port == 22)
+        // A host added in Settings resolves with its own options, as a connection would.
+        let manual = try #require(await SSHConfig.resolve("gloss-added-host", options: ["-o", "HostName=build.example", "-o", "Port=2222", "-o", "User=ci"]))
+        #expect(manual.hostName == "build.example" && manual.port == 2222 && manual.user == "ci")
+    }
+
+    @Test func aConfigThatIncludesItselfIsReadOnce() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-sshloop-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(directory)/conf.d", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        // Six files that each include the whole folder: 6^8 reads without a visited set.
+        for index in 0..<6 {
+            _ = try write("Include \(directory)/conf.d/*\nHost h\(index)\n", name: "conf.d/\(index)", in: directory)
+        }
+        let main = try write("Include \(directory)/conf.d/*\nInclude \(directory)/config\nHost top\n", name: "config", in: directory)
+        let started = ContinuousClock.now
+        let aliases = SSHConfig.hostAliases(from: main).map(\.alias)
+        #expect(ContinuousClock.now - started < .seconds(1))
+        #expect(Set(aliases) == ["h0", "h1", "h2", "h3", "h4", "h5", "top"])
     }
 }
