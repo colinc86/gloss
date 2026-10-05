@@ -222,16 +222,24 @@ struct WebBridgeTests {
         harness.browser.sync()
         var picks = 0
         harness.page.onPick = { _ in picks += 1 }
+        // Events a page script makes are untrusted: none of them picks, or cancels the mode.
         _ = try await harness.js("""
             const el = document.querySelector('[data-testid=save]'); const r = el.getBoundingClientRect();
             const at = { bubbles: true, cancelable: true, clientX: r.left + 2, clientY: r.top + 2 };
-            el.dispatchEvent(new MouseEvent('mousedown', { ...at, button: 2 }));
             el.dispatchEvent(new MouseEvent('mousedown', { ...at, button: 0 }));
-            el.dispatchEvent(new MouseEvent('click', at)); return true
+            el.dispatchEvent(new MouseEvent('click', at));
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return true
+            """)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(picks == 0 && harness.page.pendingPick == nil, "a synthetic press picks nothing")
+        #expect(harness.page.isNoteMode, "a synthetic Escape doesn't leave note mode")
+        _ = try await harness.js("""
+            const r = document.querySelector('[data-testid=save]').getBoundingClientRect();
+            return window.__cc.pickAt(r.left + 2, r.top + 2)
             """)
         try await harness.wait("the pick") { harness.page.pendingPick != nil }
         try await Task.sleep(for: .milliseconds(200))
-        #expect(picks == 1, "one pick per left press: the right press and the click that follows post nothing")
+        #expect(picks == 1)
         #expect(harness.page.pendingPick?.selector == "[data-testid=\"save\"]")
         #expect(harness.page.pendingPick?.text == "Save")
         #expect(harness.page.pendingPick?.pageRect.w ?? 0 > 0)

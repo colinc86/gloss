@@ -236,6 +236,8 @@ final class DocumentSession: Identifiable {
             if kind == .pdf {
                 let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
                 guard let pdf = PDFDocument(data: data) else { throw FileSystemError.io("not a readable PDF") }
+                // PDFKit opens an encrypted file without complaint and draws blank pages.
+                guard !pdf.isLocked else { throw FileSystemError.io("it's password-protected. Open it in Preview to read it.") }
                 fingerprintAtOpen = fingerprint
                 document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
                 let controller = PDFViewerController(document: pdf)
@@ -801,6 +803,11 @@ final class DocumentSession: Identifiable {
         do {
             guard case .changed(let data, let fingerprint) = try await fileSystem.checkForChanges(at: path, since: expected),
                   let pdf = PDFDocument(data: data) else { return }
+            // Encrypted since it opened: its pages have no text, so re-anchoring would orphan every note.
+            guard !pdf.isLocked else {
+                lastError = "This PDF is now password-protected; its notes are left as they were."
+                return
+            }
             fingerprintAtOpen = fingerprint
             let controller = PDFViewerController(document: pdf)
             controller.onNoteClick = { [weak self] id in

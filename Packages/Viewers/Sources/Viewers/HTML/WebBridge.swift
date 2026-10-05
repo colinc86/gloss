@@ -51,6 +51,9 @@ enum WebBridge {
         if (!selection || selection.rangeCount === 0 || selection.isCollapsed) { post({}); return; }
         const range = selection.getRangeAt(0);
         const text = range.toString();
+        // A page selecting its whole huge body in a loop must not stream megabytes to the app; a note on more
+        // than this isn't a selection anyone made by hand.
+        if (text.length > 1000000) { post({}); return; }
         const box = range.getBoundingClientRect();
         post({ start: offsetOf(range.startContainer, range.startOffset), length: text.length, text,
                x: box.left, y: box.top, w: box.width, h: box.height });
@@ -279,6 +282,7 @@ enum WebBridge {
         return el && !inOverlay(el) && el !== root() && el !== document.body ? el : null;
       }
       function onMove(event) {
+        if (!event.isTrusted) return;
         const el = targetAt(event);
         if (!el) { clearHover(); return; }
         if (hover && hover.element === el) return;
@@ -296,12 +300,13 @@ enum WebBridge {
       function onPress(event) {
         event.preventDefault();
         event.stopPropagation();
-        if (event.button !== 0) return;
+        // Only the user's own press picks: a page dispatching a synthetic mousedown can't choose the element.
+        if (!event.isTrusted || event.button !== 0) return;
         const el = targetAt(event);
         if (el) post({ pick: describe(el) });
       }
       function swallow(event) { event.preventDefault(); event.stopPropagation(); }
-      function onKey(event) { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); post({ pickCancel: true }); } }
+      function onKey(event) { if (event.isTrusted && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); post({ pickCancel: true }); } }
       function setPickMode(on) {
         if (on === picking) return;
         picking = on;
@@ -328,6 +333,13 @@ enum WebBridge {
       let sheet = null;
       const labelCSS = OVERLAY + ' div[data-label]::after { content: attr(data-label); position: absolute; left: 0; top: -18px; font: 11px -apple-system, sans-serif; color: #fff; background: rgba(10,132,255,0.9); padding: 1px 5px; border-radius: 3px; white-space: nowrap; }\\n';
       window.__cc = {
+        // The pick a trusted press makes, by point. Lives on __cc, which only the app's content world sees: the
+        // page can't call it, and its synthetic events are ignored by onPress.
+        pickAt(x, y) {
+          const el = targetAt({ clientX: x, clientY: y });
+          if (el) post({ pick: describe(el) });
+          return !!el;
+        },
         highlight(list, css) {
           if (!sheet) sheet = new CSSStyleSheet();
           // A page that sets its own adoptedStyleSheets drops ours; put it back.

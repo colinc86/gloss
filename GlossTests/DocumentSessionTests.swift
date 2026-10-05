@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import PDFKit
 import Testing
 import Viewers
 @testable import Gloss
@@ -198,6 +199,19 @@ struct DocumentSessionTests {
         await grid.open()
         guard case .csv = grid.state else { Issue.record("a normal CSV is a grid"); return }
         grid.close()
+    }
+
+    @Test func aPasswordProtectedPDFSaysSoInsteadOfOpeningBlank() async throws {
+        let (directory, path) = try makeFile("", name: "secret.pdf")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let plain = PDFDocument()
+        plain.insert(PDFPage(), at: 0)
+        #expect(plain.write(to: URL(fileURLWithPath: path), withOptions: [.userPasswordOption: "open-sesame", .ownerPasswordOption: "owner"]))
+        let session = try makeSession(path: path)
+        await session.open()
+        guard case .failed(let message) = session.state else { Issue.record("opened \(session.state)"); return }
+        #expect(message.contains("password-protected"))
+        session.close()
     }
 
     @Test func overlappingConflictOffersSides() async throws {
