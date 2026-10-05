@@ -3,6 +3,24 @@ import Testing
 @testable import Core
 
 struct ReAnchorerTests {
+    /// Part of one line reports its columns (1-based, last one included); a whole line, however it was selected, and
+    /// a selection over several lines do not.
+    @Test func partialColumnsOnlyForPartOfOneLine() {
+        let doc = "let value = compute()\nnext line\n"
+        let index = LineIndex(doc)
+        func columns(_ location: Int, _ length: Int) -> ClosedRange<Int>? {
+            let anchor = ReAnchorer.make(from: NSRange(location: location, length: length), in: doc, index: index, hash: nil)
+            return anchor.partialColumns(lineLength: index.contentRange(ofLine: anchor.start.line).length)
+        }
+        #expect(columns(4, 5) == 5...9, "\"value\"")
+        #expect(columns(0, 3) == 1...3, "the start of the line")
+        #expect(columns(12, 9) == 13...21, "the end of the line")
+        #expect(columns(4, 1) == 5...5)
+        #expect(columns(0, 21) == nil, "the whole line")
+        #expect(columns(0, 22) == nil, "the whole line with its newline, as a triple click selects it")
+        #expect(columns(4, 22) == nil, "into the next line")
+    }
+
     let original = """
     # Plan
     intro line

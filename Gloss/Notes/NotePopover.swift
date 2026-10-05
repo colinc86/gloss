@@ -4,7 +4,8 @@ import SwiftUI
 import Viewers
 
 /// Comment editor shown beside a selection or an existing highlight: what you are commenting on, the comment, its
-/// colour, and the way out. Save is the one prominent action; Return saves, Shift-Return adds a line.
+/// colour, and the way out. Save is the one prominent action; Return saves, Shift-Return adds a line (standard enough
+/// that the popover does not spell it out).
 struct NotePopover: View {
     @State var state: NoteEditorState
     let onSave: (NoteEditorState) -> Void
@@ -23,7 +24,7 @@ struct NotePopover: View {
                 Text(state.isNew ? "New note" : "Edit note")
                     .font(.headline)
                 Spacer(minLength: DS.Space.s)
-                Label(state.anchor.summary, systemImage: state.anchor.symbol)
+                Label(location, systemImage: state.anchor.symbol)
                     .labelStyle(.titleAndIcon)
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundStyle(tint)
@@ -87,20 +88,19 @@ struct NotePopover: View {
                     .disabled(!canSave)
                     .animation(DS.Motion.snappy, value: canSave)
             }
-            HStack(spacing: DS.Space.xs) {
-                KeyCap("↩"); Text("saves")
-                Text("·").foregroundStyle(.quaternary)
-                KeyCap("⇧↩"); Text("new line")
-                Text("·").foregroundStyle(.quaternary)
-                Text("Markdown")
-            }
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
         }
         .padding(DS.Space.l)
         .frame(width: 380)
         .animation(DS.Motion.smooth, value: state.color)
         .animation(DS.Motion.smooth, value: state.isNew && state.body.isEmpty)
+    }
+
+    /// Where the note sits: the anchor's line (or region, page, cells), and the characters when only part of one
+    /// line is selected.
+    private var location: String {
+        guard let columns = state.columns else { return state.anchor.summary }
+        let characters = columns.count == 1 ? "char \(columns.lowerBound)" : "chars \(columns.lowerBound)–\(columns.upperBound)"
+        return "\(state.anchor.summary), \(characters)"
     }
 
     private var canSave: Bool { !state.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

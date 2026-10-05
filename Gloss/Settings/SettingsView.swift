@@ -63,16 +63,12 @@ struct SettingsView: View {
             .tabItem { Label("Editor", systemImage: "text.alignleft") }
 
             AgentsSettings(settings: settings)
-                .frame(height: 560)
+                .frame(height: 640)
                 .tabItem { Label("Agents", systemImage: "paperplane") }
 
             HostsSettings()
                 .frame(height: 440)
                 .tabItem { Label("Hosts", systemImage: "network") }
-
-            HooksSettings()
-                .frame(height: 390)
-                .tabItem { Label("Hooks", systemImage: "link") }
 
             IntegrationsSettings()
                 .frame(height: 660)
@@ -157,15 +153,21 @@ private struct HangingLine: NSViewRepresentable {
     }
 }
 
-/// How agents reach the app: the MCP server's state and port, one copyable registration per agent, OpenCode's
-/// servers, and where notes go now.
+/// Everything that connects an agent: the MCP server, the three agents Gloss sets up itself on this Mac and on each
+/// connected host (with the same registration to run by hand), the Herdr plugin, and copy for any other agent.
 private struct AgentsSettings: View {
     @Environment(AppModel.self) private var model
     @Bindable var settings: SettingsStore
 
+    private static let agents: [HookAgent] = [.claude, .codex, .opencode]
+
+    private var hostIDs: [HostID] {
+        [HostID.local] + model.connections.keys.sorted { $0.rawValue < $1.rawValue }
+    }
+
     var body: some View {
         let port = model.mcpListeningPort ?? settings.mcpPort
-        let snippets = MCPServer.snippets(port: port, token: model.mcpServer?.token)
+        let token = model.mcpServer?.token
         let status = Self.status(error: model.mcpStatus, listening: model.mcpListeningPort, configured: settings.mcpPort)
         Form {
             Section {
@@ -187,36 +189,88 @@ private struct AgentsSettings: View {
             } footer: {
                 Text("Agents read and resolve notes through this server. A port change applies after relaunch.")
             }
-            Section {
-                SnippetCard(agent: "Claude Code", text: snippets.claudeCommand)
-                SnippetCard(agent: "Codex", text: snippets.codexCommand)
-                SnippetCard(agent: "OpenCode", caption: "opencode.json", text: snippets.opencodeJSON)
-            } header: {
-                Text("Connect an agent")
-            } footer: {
-                Text("Run the command once in a terminal (or add the JSON to OpenCode's config). Hooks are installed from the Hooks tab.")
+            ForEach(hostIDs, id: \.self) { hostID in
+                hostSection(hostID, port: port, token: token, isLast: hostID == hostIDs.last)
             }
-            Section {
-                TextField("Servers", text: $settings.opencodeServers)
-            } header: {
-                Text("OpenCode")
-            } footer: {
-                Text("Base URLs of running OpenCode servers, separated by commas.")
-            }
-            Section("Sending") {
-                LabeledContent("Notes go to") {
-                    Text(model.send.lastTarget?.label ?? "No agent chosen yet")
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+            if model.hooks.lastReport != nil || model.hooks.lastError != nil {
+                Section {
+                    if let report = model.hooks.lastReport {
+                        Text(report).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let error = model.hooks.lastError {
+                        Text(error).font(.caption).foregroundStyle(.red)
+                    }
                 }
             }
+            OtherAgentsSection(snippets: MCPServer.snippets(port: port, token: token))
         }
         .formStyle(.grouped)
+        .task(id: hostIDs) { await model.hooks.refresh(hosts: hostIDs) }
+    }
+
+    /// One machine: each agent with its install state and, folded away, the registration to run by hand; then the
+    /// Herdr plugin, which is not an agent but lives on the same machine.
+    private func hostSection(_ hostID: HostID, port: Int, token: String?, isLast: Bool) -> some View {
+        let isLocal = hostID == .local
+        // A connected host whose entry is gone (its ssh config alias no longer listed) has no name to register under:
+        // no hand-run snippet for it, rather than the local one.
+        let alias = isLocal ? nil : model.hosts.entry(for: hostID)?.name
+        let snippets = isLocal || alias != nil ? MCPServer.snippets(port: port, host: alias, token: token) : nil
+        return Section {
+            ForEach(Self.agents) { agent in
+                row(agent: agent, hostID: hostID, configuration: snippets.map { Self.configuration(for: agent, in: $0) })
+            }
+            // Herdr's plugin only on a machine that has Herdr (or still carries the plugin, so it can be removed).
+            if model.herdrHosts.contains(hostID) || model.hooks.status[HooksModel.Key(hostID: hostID, agent: .herdrPlugin)].map({ $0 != .notInstalled }) == true {
+                row(agent: .herdrPlugin, hostID: hostID)
+                if model.hooks.status[HooksModel.Key(hostID: hostID, agent: .herdrPlugin)] == .installed {
+                    SnippetCard(agent: "Herdr keybinding", caption: "config.toml", text: HookInstaller.keybindingSnippet)
+                }
+            }
+        } header: {
+            Text(isLocal ? "This Mac" : alias ?? hostID.rawValue)
+        } footer: {
+            if isLast {
+                // Said where the decision is made: what Install touches, and how to undo it.
+                Label {
+                    Text("Nothing changes until you press Install. Before editing an agent's settings file, Gloss saves a copy beside it (*.gloss-backup-…, the last three kept); Remove takes out only what was added.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "lock.shield")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func row(agent: HookAgent, hostID: HostID, configuration: IntegrationRow.Configuration? = nil) -> some View {
+        let key = HooksModel.Key(hostID: hostID, agent: agent)
+        return IntegrationRow(
+            agent: agent,
+            status: model.hooks.status[key],
+            isBusy: model.hooks.busy.contains(key),
+            configuration: configuration,
+            install: { Task { await model.hooks.install(agent, on: hostID) } },
+            remove: { Task { await model.hooks.uninstall(agent, on: hostID) } }
+        )
     }
 }
 
 extension AgentsSettings {
+    /// What the copy button beside an agent puts on the clipboard: the registration Install runs, for whoever would
+    /// rather run it themselves, and what the tooltip says about it.
+    static func configuration(for agent: HookAgent, in snippets: MCPConfigSnippets) -> IntegrationRow.Configuration {
+        switch agent {
+        case .opencode:
+            .init(text: snippets.opencodeJSON, help: "Copy the opencode.json entry, to add it yourself. It is what Install writes.")
+        case .codex:
+            .init(text: snippets.codexCommand, help: "Copy the command that registers the MCP tools with Codex, to run it yourself. Drafts arriving with each prompt need the hook Install adds.")
+        default:
+            .init(text: snippets.claudeCommand, help: "Copy the command that registers the MCP tools with Claude Code, to run it yourself. Drafts arriving with each prompt need the hook Install adds.")
+        }
+    }
+
     /// What the server is doing: failed, not started yet, listening where the setting says, or listening on the old
     /// port until a relaunch.
     static func status(error: String?, listening: Int?, configured: Int) -> (color: Color, text: String) {
@@ -224,6 +278,28 @@ extension AgentsSettings {
         guard let listening else { return (.orange, "Starting…") }
         if listening != configured { return (.orange, "Listening on \(String(listening)); relaunch to use \(String(configured))") }
         return (.green, "Listening on 127.0.0.1:\(String(listening))")
+    }
+}
+
+/// Copy for an agent Gloss does not set up itself: the server's address and header, a generic mcpServers entry,
+/// and a prompt hook that reads drafts as plain text.
+private struct OtherAgentsSection: View {
+    let snippets: MCPConfigSnippets
+
+    var body: some View {
+        Section {
+            SnippetCard(agent: "Endpoint", caption: "Streamable HTTP", text: snippets.endpoint)
+            if !snippets.header.isEmpty {
+                SnippetCard(agent: "Header", text: snippets.header)
+            }
+            SnippetCard(agent: "MCP config", caption: "mcpServers", text: snippets.mcpJSON)
+            SnippetCard(agent: "Prompt hook", caption: "shell", text: snippets.promptHookCommand)
+        } header: {
+            Text("Other agents")
+        } footer: {
+            Text("Any agent that speaks MCP over HTTP can list, read and resolve notes (list_pending_notes, get_note, resolve_note, open_in_viewer, list_documents). One with a prompt hook can run the command from its working directory to receive the drafts there, which then count as sent. The clipboard and tmux need no setup at all.")
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 
@@ -513,69 +589,23 @@ private struct HostEditor: View {
     }
 }
 
-/// Install, update, or remove the UserPromptSubmit hooks and MCP registrations, here and on connected hosts.
-private struct HooksSettings: View {
-    @Environment(AppModel.self) private var model
-
-    private var hostIDs: [HostID] {
-        [HostID.local] + model.connections.keys.sorted { $0.rawValue < $1.rawValue }
-    }
-
-    var body: some View {
-        Form {
-            ForEach(hostIDs, id: \.self) { hostID in
-                Section(hostID == .local ? "This Mac" : (model.hosts.entry(for: hostID)?.name ?? hostID.rawValue)) {
-                    ForEach(HookAgent.allCases) { agent in
-                        row(agent: agent, hostID: hostID)
-                    }
-                    if model.hooks.status[HooksModel.Key(hostID: hostID, agent: .herdrPlugin)] == .installed {
-                        SnippetCard(agent: "Herdr keybinding", caption: "config.toml", text: HookInstaller.keybindingSnippet)
-                    }
-                }
-            }
-            Section {
-            } footer: {
-                // Said where the decision is made: what Install touches, and how to undo it.
-                Label {
-                    Text("Nothing changes until you press Install. Before editing an agent's settings file, Gloss saves a copy beside it (*.gloss-backup-…, the last three kept); Remove takes out only what was added.")
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "lock.shield")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            if let report = model.hooks.lastReport {
-                Text(report).font(.caption).foregroundStyle(.secondary)
-            }
-            if let error = model.hooks.lastError {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-        }
-        .formStyle(.grouped)
-        .task(id: hostIDs) { await model.hooks.refresh(hosts: hostIDs) }
-    }
-
-    private func row(agent: HookAgent, hostID: HostID) -> some View {
-        let key = HooksModel.Key(hostID: hostID, agent: agent)
-        return IntegrationRow(
-            agent: agent,
-            status: model.hooks.status[key],
-            isBusy: model.hooks.busy.contains(key),
-            install: { Task { await model.hooks.install(agent, on: hostID) } },
-            remove: { Task { await model.hooks.uninstall(agent, on: hostID) } }
-        )
-    }
-}
-
 /// One agent integration: what it does, whether it is set up, and the one action that moves it forward. Remove
 /// appears only when there is something to remove.
 private struct IntegrationRow: View {
+    /// Text the copy icon puts on the clipboard, and its tooltip.
+    struct Configuration {
+        var text: String
+        var help: String
+    }
+
     let agent: HookAgent
     let status: HookStatus?
     let isBusy: Bool
+    var configuration: Configuration?
     let install: () -> Void
     let remove: () -> Void
+    @State private var copied = false
+    @State private var resetCopied: Task<Void, Never>?
 
     private var symbol: String {
         switch agent {
@@ -628,6 +658,21 @@ private struct IntegrationRow: View {
             if isBusy {
                 ProgressView().controlSize(.small)
             } else {
+                if let configuration {
+                    InlineIconButton(title: copied ? "Copied" : configuration.help, symbol: copied ? "checkmark" : "doc.on.doc", emphasized: true) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(configuration.text, forType: .string)
+                        copied = true
+                        // A second click restarts the confirmation instead of letting the first one cut it short.
+                        resetCopied?.cancel()
+                        resetCopied = Task {
+                            try? await Task.sleep(for: .seconds(1.6))
+                            if !Task.isCancelled { copied = false }
+                        }
+                    }
+                    .contentTransition(.symbolEffect(.replace))
+                    .animation(DS.Motion.snappy, value: copied)
+                }
                 if status == .installed || isOutdated {
                     InlineIconButton(title: "Remove \(agent.displayName) integration", symbol: "trash", role: .destructive, emphasized: true, action: remove)
                 }

@@ -19,8 +19,8 @@ Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, a
 - `integrations.env` at the repo root holds real keys: gitignored, never committed, used only to read while testing; test notes go to the clipboard target, never to an agent with GitHub or Atlassian tools.
 - Only made-up identifiers go into the repo: fixtures, docs, and commit messages use `o/r`, `acme/…`, `example.atlassian.net`, `CP-7` and the like. A live check against a real account records what happened (“a merged three-file pull request”), never the real org, repo, pull request title, issue key, space, site or sha. Local hooks in `.git/hooks` refuse a commit that names a term in `.git/info/private-terms`; they are not in the repo, so a fresh clone needs them copied back.
 - Markdown viewer toggles rendered and source; anchors are stored in source coordinates. Text and markdown are editable; images, PDFs, spreadsheets are not.
-- Notes are created from a floating "Add Note" button beside the selection in every viewer; ⌘⇧N is a secondary shortcut, never the only path.
-- Agent hooks, MCP registration, and the Herdr plugin are installed only from Settings → Hooks, with backups, never silently.
+- Notes are created from a floating "Add Note" button beside the selection in every viewer; its shortcut, ⌘↩ while it shows (⌘⇧N otherwise, e.g. whole-file notes), is secondary, never the only path.
+- Agent hooks, MCP registration, and the Herdr plugin are installed only from Settings → Agents, with backups, never silently.
 - Not sandboxed, Developer ID signed and notarized (see `docs/RELEASE.md`).
 
 ## Layout

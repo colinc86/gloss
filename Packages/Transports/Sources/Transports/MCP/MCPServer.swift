@@ -2,6 +2,7 @@ import Core
 import Foundation
 import Security
 import MCP
+import Remote
 import Synchronization
 
 /// What the app provides: note storage plus packet and hook text built with the app's excerpt logic.
@@ -34,7 +35,14 @@ public struct MCPConfigSnippets: Sendable, Equatable {
     public var claudeCommand: String
     public var codexCommand: String
     public var opencodeJSON: String
+    /// The generic `mcpServers` entry, authorised by a header so it works in clients that drop query strings.
     public var mcpJSON: String
+    /// The endpoint without the token, for clients that take the URL and the header separately.
+    public var endpoint: String
+    /// `Authorization: Bearer <token>`; empty without a token.
+    public var header: String
+    /// A prompt hook for any agent: prints the drafts under the current directory as plain text and drains them.
+    public var promptHookCommand: String
 }
 
 /// The app's MCP server over streamable HTTP on the loopback interface, plus the plain endpoints the hook scripts
@@ -125,13 +133,30 @@ public actor MCPServer {
 
     public static func snippets(port: Int, host: String? = nil, token: String? = nil) -> MCPConfigSnippets {
         let url = url(port: port, host: host, token: token)
+        let endpoint = Self.url(port: port, host: host)
         let shellURL = url.contains("?") ? "'" + url.replacingOccurrences(of: "'", with: "'\\''") + "'" : url
         return MCPConfigSnippets(
             claudeCommand: "claude mcp add -s user --transport http \(serverName) \(shellURL)",
             codexCommand: "codex mcp add \(serverName) --url \(shellURL)",
             opencodeJSON: "\"mcp\": { \"\(serverName)\": { \"type\": \"remote\", \"url\": \"\(url)\", \"enabled\": true } }",
-            mcpJSON: "{ \"mcpServers\": { \"\(serverName)\": { \"type\": \"http\", \"url\": \"\(url)\" } } }"
+            mcpJSON: genericJSON(endpoint: endpoint, token: token),
+            endpoint: endpoint,
+            header: token.map { "Authorization: Bearer \($0)" } ?? "",
+            promptHookCommand: promptHookCommand(port: port, host: host, token: token)
         )
+    }
+
+    private static func genericJSON(endpoint: String, token: String?) -> String {
+        let headers = token.map { #", "headers": { "Authorization": "Bearer \#($0)" }"# } ?? ""
+        return #"{ "mcpServers": { "\#(serverName)": { "type": "http", "url": "\#(endpoint)"\#(headers) } } }"#
+    }
+
+    private static func promptHookCommand(port: Int, host: String?, token: String?) -> String {
+        var parts = [#"curl -sf -m 3 --get --data-urlencode "cwd=$PWD""#]
+        if let host, !host.isEmpty, host != "local" { parts.append("--data-urlencode " + ShellQuote.single("host=\(host)")) }
+        if let token { parts.append(#"-H "Authorization: Bearer \#(token)""#) }
+        parts.append("http://127.0.0.1:\(port)/hook/text")
+        return parts.joined(separator: " ")
     }
 
     // MARK: Lifecycle
@@ -196,6 +221,8 @@ public actor MCPServer {
             return await handleHook(flavour: "claude", query: query)
         case ("GET", "/hook/codex"):
             return await handleHook(flavour: "codex", query: query)
+        case ("GET", "/hook/text"):
+            return await handleHook(flavour: "text", query: query)
         case ("POST", "/plugin/note"):
             return await handlePluginNote(request.body ?? Data())
         case ("POST", "/plugin/open"):
@@ -265,6 +292,8 @@ public actor MCPServer {
         let host = query["host"].flatMap { $0.isEmpty ? nil : $0 } ?? "local"
         let text = (try? await dependencies.hookText(flavour, host, query["cwd"])) ?? ""
         guard !text.isEmpty else { return .ok(headers: ["Content-Length": "0"]) }
+        // Any other agent's hook gets the packet as it is; Claude Code and Codex read it from their JSON shape.
+        if flavour == "text" { return .data(Data(text.utf8), headers: ["Content-Type": "text/plain; charset=utf-8"]) }
         let payload: [String: Any] = ["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": text]]
         let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])) ?? Data()
         return .data(data, headers: ["Content-Type": "application/json"])

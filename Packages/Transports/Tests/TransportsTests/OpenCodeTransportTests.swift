@@ -5,12 +5,14 @@ import Testing
 @testable import Transports
 
 struct OpenCodeTransportTests {
-    @Test func parsesServerListsAndBuildsBodies() {
-        let servers = OpenCodeServer.parse("http://127.0.0.1:4096, user:secret@box.local:4097 ,, https://x.example/")
-        #expect(servers.map(\.baseURL.absoluteString) == ["http://127.0.0.1:4096", "http://box.local:4097", "https://x.example"])
-        #expect(OpenCodeServer.parse("https://x.example/opencode/").first?.baseURL.absoluteString == "https://x.example/opencode")
-        #expect(servers[1].username == "user" && servers[1].password == "secret" && servers[1].authorizationHeader == "Basic " + Data("user:secret".utf8).base64EncodedString())
-        #expect(servers[0].authorizationHeader == nil)
+    /// OpenCode's servers are found from its processes' listening sockets: loopback only, each port once.
+    @Test func findsListeningServersAndBuildsBodies() {
+        let lsof = "p59120\ncopencode\nf16\nn127.0.0.1:62140\nf17\nn[::1]:62140\np60001\ncopencode\nf9\nn*:4096\nf10\nn192.168.1.4:5000\nnlocalhost:7000\n"
+        #expect(OpenCodeServer.listening(in: lsof).map(\.baseURL.absoluteString) == ["http://127.0.0.1:62140", "http://127.0.0.1:4096", "http://127.0.0.1:7000"])
+        #expect(OpenCodeServer.listening(in: "").isEmpty)
+        let secured = OpenCodeServer(baseURL: URL(string: "http://127.0.0.1:4096")!, username: "user", password: "secret")
+        #expect(secured.authorizationHeader == "Basic " + Data("user:secret".utf8).base64EncodedString())
+        #expect(OpenCodeServer(baseURL: URL(string: "http://127.0.0.1:4096")!).authorizationHeader == nil)
         let packet = PacketBuilder.build([PacketNote(noteID: NoteID.new(), agentPath: "/tmp/a.md", source: .markdown, anchor: .wholeFile, comment: "c")])
         let body = OpenCodeTransport.promptBody(packet: packet, attachments: [StagedAttachment(noteID: NoteID.new(), agentPath: "/tmp/crop one.png")])
         let parts = body["parts"] as? [[String: Any]] ?? []

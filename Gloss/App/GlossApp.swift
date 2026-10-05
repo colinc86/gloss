@@ -95,13 +95,14 @@ struct AppCommands: Commands {
             .disabled(model.unsavedSessions.isEmpty)
         }
         CommandMenu("Notes") {
+            // ⌘↩ belongs to whatever the window offers: the Add Note button while a selection shows it, Send otherwise.
             Button { model.beginNoteInMainWindow() } label: { Label("New Note from Selection", systemImage: "note.text.badge.plus") }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .keyboardShortcut(model.selectionAwaitsNote ? KeyboardShortcut(.return, modifiers: .command) : KeyboardShortcut("n", modifiers: [.command, .shift]))
                 .disabled(model.activeSession == nil)
             Button { Task { await model.sendVisibleDrafts() } } label: {
                 Label(model.draftsAreFiltered ? "Send Shown Drafts" : "Send Drafts in Document", systemImage: "paperplane")
             }
-                .keyboardShortcut(.return, modifiers: [.command])
+                .keyboardShortcut(model.selectionAwaitsNote ? nil : KeyboardShortcut(.return, modifiers: .command))
                 .disabled(model.send.lastTarget == nil || model.visibleDrafts.isEmpty)
             Button { Task { await model.sendAllDrafts(scope: .all) } } label: { Label("Send All Drafts", systemImage: "paperplane.fill") }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])

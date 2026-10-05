@@ -42,6 +42,15 @@ public struct TextAnchor: Codable, Hashable, Sendable {
     }
 
     public var isSingleLine: Bool { start.line == end.line }
+
+    /// The selected characters when the selection is part of one line: its first and last column, 1-based and in
+    /// UTF-16 units as the editor counts them. Nil for a selection spanning lines, the whole line, or cells.
+    /// `lineLength` is that line's length without its terminator.
+    public func partialColumns(lineLength: Int) -> ClosedRange<Int>? {
+        guard isSingleLine, cells == nil, end.col > start.col else { return nil }
+        if start.col == 1, end.col - 1 >= lineLength { return nil }
+        return start.col...(end.col - 1)
+    }
 }
 
 /// A set of spreadsheet cells, or whole columns, inside a CSV text anchor.

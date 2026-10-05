@@ -46,7 +46,6 @@ final class SettingsStore {
     /// Sends started after a change use the new expiry at once, not after a relaunch.
     @ObservationIgnored var onStagedExpiryChange: (Int) -> Void = { _ in }
     var mcpPort = 47831 { didSet { persist("mcp.port", String(mcpPort)) } }
-    var opencodeServers = "http://127.0.0.1:4096" { didSet { persist("opencode.servers", opencodeServers) } }
     private(set) var loaded = false
 
     init(noteStore: NoteStore) {
@@ -63,7 +62,6 @@ final class SettingsStore {
         if let value = await read("editor.guides") { showIndentGuides = value == "1" }
         if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = days }
         if let value = await read("mcp.port"), let port = Int(value) { mcpPort = port }
-        if let value = await read("opencode.servers") { opencodeServers = value }
         loaded = true
     }
 

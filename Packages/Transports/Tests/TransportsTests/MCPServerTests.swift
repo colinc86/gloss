@@ -127,6 +127,15 @@ struct MCPServerTests {
         let hook = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let context = ((hook?["hookSpecificOutput"] as? [String: Any])?["additionalContext"] as? String) ?? ""
         #expect(context.contains("tighten the intro") && context.contains("/tmp/Café Notes/plan.md"))
+
+        // Any other agent's hook gets the same packet as plain text, no JSON around it.
+        let textURL = try #require(URL(string: "http://127.0.0.1:\(port)/hook/text?cwd=%2Ftmp%2FCaf%C3%A9+Notes"))
+        let (textData, textResponse) = try await URLSession.shared.data(from: textURL)
+        let text = String(decoding: textData, as: UTF8.self)
+        #expect((textResponse as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") == "text/plain; charset=utf-8")
+        #expect(text == context, "the packet itself, exactly what the Claude hook wraps")
+        let (emptyText, emptyResponse) = try await URLSession.shared.data(from: try #require(URL(string: "http://127.0.0.1:\(port)/hook/text?cwd=%2Fnowhere")))
+        #expect((emptyResponse as? HTTPURLResponse)?.statusCode == 200 && emptyText.isEmpty)
     }
 
     /// A body over the 8 MB cap is refused with 413 and the connection closed, and the server keeps serving.
@@ -273,6 +282,8 @@ struct MCPServerTests {
         #expect(try await status("/hook/claude?cwd=%2Ftmp", bearer: "wrong") == 401)
         #expect(try await status("/hook/claude?cwd=%2Ftmp", bearer: token) == 200)
         #expect(try await status("/hook/claude?cwd=%2Ftmp&token=\(token)") == 200, "as the registered MCP URL carries it")
+        #expect(try await status("/hook/text?cwd=%2Ftmp") == 401)
+        #expect(try await status("/hook/text?cwd=%2Ftmp", bearer: token) == 200)
         #expect(try await status("/health") == 200)
         #expect(try String(contentsOfFile: "\(directory)/mcp-port", encoding: .utf8) == "\(port)\n\(token)\n")
     }
@@ -282,6 +293,21 @@ struct MCPServerTests {
         #expect(MCPServer.url(port: 47831, host: "local") == "http://127.0.0.1:47831/mcp")
         #expect(MCPServer.url(port: 47831, host: "my box") == "http://127.0.0.1:47831/mcp?host=my%20box")
         #expect(MCPServer.snippets(port: 47831, host: "asus").claudeCommand == "claude mcp add -s user --transport http gloss 'http://127.0.0.1:47831/mcp?host=asus'")
+    }
+
+    /// The copy for any other agent: the endpoint and header apart, a generic mcpServers entry that authorises by
+    /// header rather than query string, and a prompt hook reading /hook/text.
+    @Test func genericSnippetsAuthoriseByHeader() {
+        let snippets = MCPServer.snippets(port: 47831, token: "abc123")
+        #expect(snippets.endpoint == "http://127.0.0.1:47831/mcp")
+        #expect(snippets.header == "Authorization: Bearer abc123")
+        #expect(snippets.mcpJSON == #"{ "mcpServers": { "gloss": { "type": "http", "url": "http://127.0.0.1:47831/mcp", "headers": { "Authorization": "Bearer abc123" } } } }"#)
+        #expect(snippets.promptHookCommand == #"curl -sf -m 3 --get --data-urlencode "cwd=$PWD" -H "Authorization: Bearer abc123" http://127.0.0.1:47831/hook/text"#)
+        #expect(snippets.claudeCommand.contains("token=abc123"), "the agent commands still carry it in the URL, as installs do")
+        let remote = MCPServer.snippets(port: 47831, host: "my box", token: "abc123")
+        #expect(remote.endpoint == "http://127.0.0.1:47831/mcp?host=my%20box")
+        #expect(remote.promptHookCommand.contains("--data-urlencode 'host=my box'"))
+        #expect(MCPServer.snippets(port: 47831).header.isEmpty)
     }
 
     @Test func servesToolsResourcesAndHooksOverHTTP() async throws {

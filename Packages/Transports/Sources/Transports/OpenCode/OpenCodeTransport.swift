@@ -1,7 +1,7 @@
 import Core
 import Foundation
 
-/// One OpenCode HTTP server from Settings: `http://127.0.0.1:4096` or `http://user:pass@host:port` for basic auth.
+/// One running OpenCode HTTP server. Found, not configured: see `discoverLocal()`.
 public struct OpenCodeServer: Sendable, Hashable {
     public var baseURL: URL
     public var username: String?
@@ -13,22 +13,31 @@ public struct OpenCodeServer: Sendable, Hashable {
         self.password = password
     }
 
-    /// Parses the comma-separated Settings value; credentials in the URL become basic auth.
-    public static func parse(_ list: String) -> [OpenCodeServer] {
-        list.split(separator: ",").compactMap { item in
-            var text = item.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            if !text.contains("://") { text = "http://" + text }
-            guard var components = URLComponents(string: text) else { return nil }
-            let user = components.user
-            let password = components.password
-            components.user = nil
-            components.password = nil
-            // Keep a path prefix (a reverse proxy mount), minus the trailing slash so appending works.
-            while components.path.hasSuffix("/") { components.path.removeLast() }
-            guard let url = components.url else { return nil }
-            let effectiveUser = user ?? (password != nil ? "opencode" : nil)
-            return OpenCodeServer(baseURL: url, username: effectiveUser, password: password)
+    /// The OpenCode servers running on this Mac, on whatever port they chose: the processes' listening sockets, read
+    /// from `lsof`. Only a server started to be reached (`opencode serve`) answers `GET /session`; the TUI's own
+    /// answers 403 (OpenCode 1.18), so the transport's probe leaves it out, as it does anything else that is listed.
+    public static func discoverLocal() async -> [OpenCodeServer] {
+        // lsof exits 1 when nothing matches; its output is still the answer.
+        guard let result = try? await LocalShell.run("/usr/sbin/lsof -nP -a -iTCP -sTCP:LISTEN -c '/opencode/' -F n", timeout: .seconds(3)) else { return [] }
+        return listening(in: String(decoding: result.stdout, as: UTF8.self))
+    }
+
+    /// Loopback servers from `lsof -F n` output (`n127.0.0.1:62140`, `n[::1]:4096`, `n*:4096`), each port once.
+    static func listening(in lsofOutput: String) -> [OpenCodeServer] {
+        var seen = Set<Int>()
+        return lsofOutput.split(whereSeparator: \.isNewline).compactMap { line in
+            guard line.hasPrefix("n"), let colon = line.lastIndex(of: ":"), let port = Int(line[line.index(after: colon)...]) else { return nil }
+            let address = line[line.index(after: line.startIndex)..<colon]
+            let host: String
+            switch address {
+            case "*", "localhost": host = "127.0.0.1"
+            case "[::1]": host = "[::1]"
+            default:
+                guard address.hasPrefix("127.") else { return nil }
+                host = String(address)
+            }
+            guard seen.insert(port).inserted, let url = URL(string: "http://\(host):\(port)") else { return nil }
+            return OpenCodeServer(baseURL: url)
         }
     }
 

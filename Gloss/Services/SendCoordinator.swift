@@ -116,6 +116,37 @@ final class SendCoordinator {
         return awaitingHost && target.transport != .clipboard ? target : fallback
     }
 
+    /// The agent last chosen in each folder, keyed by `folderKey`, so returning to a folder returns to its agent.
+    /// Loaded from the database on first use and saved whenever it changes.
+    private var folderTargets: [String: AgentTarget]?
+
+    nonisolated static func folderKey(hostID: HostID, path: String) -> String { "\(hostID.rawValue):\(path)" }
+
+    /// Records `target` as the one chosen in the folder `key`.
+    func remember(_ target: AgentTarget, forFolder key: String) async {
+        var map = await loadFolderTargets()
+        guard map[key]?.id != target.id else { return }
+        map[key] = target
+        folderTargets = map
+        if let data = try? JSONEncoder().encode(map), let json = String(data: data, encoding: .utf8) {
+            try? await noteStore.setSetting("send.folderTargets", json)
+        }
+    }
+
+    /// The agent last chosen in the folder `key`, when its session is among the live targets; nil otherwise.
+    func liveTarget(forFolder key: String) async -> AgentTarget? {
+        guard let stored = await loadFolderTargets()[key] else { return nil }
+        return targets.first { $0.id == stored.id }
+    }
+
+    private func loadFolderTargets() async -> [String: AgentTarget] {
+        if let folderTargets { return folderTargets }
+        let stored = (try? await noteStore.setting("send.folderTargets"))?.data(using: .utf8)
+        let map = stored.flatMap { try? JSONDecoder().decode([String: AgentTarget].self, from: $0) } ?? [:]
+        folderTargets = map
+        return map
+    }
+
     func rememberTarget(_ target: AgentTarget) {
         lastTarget = target
         Task {

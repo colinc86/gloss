@@ -68,10 +68,14 @@ struct ExplorerSidebar: View {
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
                 hostMenu
-                FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
+                // Only where Herdr exists: following needs its focus events. Kept while following, so it can be stopped.
+                if !model.herdrHosts.isEmpty || model.followHerdr {
+                    FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
+                }
             }
         }
         .onChange(of: model.explorer.selectedTabID) { _, _ in
+            Task { await model.folderBecameCurrent() }
             if let tab = model.explorer.selectedTab { model.pickedHost = tab.hostID }
         }
         .sheet(item: $remotePathPrompt) { prompt in

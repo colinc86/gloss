@@ -518,7 +518,7 @@ private struct NotePopoverHost: ViewModifier {
                         let local = selection.offsetBy(dx: -origin.x, dy: -origin.y)
                         AddNoteButton(color: session.lastUsedColor, action: { session.beginNote() })
                             .position(AddNoteButton.placement(for: local, in: proxy.size))
-                            .transition(AddNoteButton.transition.calmed)
+                            .transition(AddNoteButton.transition(emergingFrom: AddNoteButton.emergence(for: local, in: proxy.size)).calmed)
                             // Follows a growing selection smoothly instead of jumping.
                             .animation(DS.Motion.smooth, value: local)
                     }
@@ -559,7 +559,7 @@ struct AddNoteButton: View {
     /// The colour the new note will start with (the last one used), shown so the result is never a surprise.
     var color: NoteColor = .yellow
     let action: () -> Void
-    static let size = CGSize(width: 118, height: 30)
+    static let size = CGSize(width: 148, height: 30)
     @State private var hovering = false
 
     var body: some View {
@@ -575,6 +575,9 @@ struct AddNoteButton: View {
                 .shadow(color: tint.opacity(hovering ? 0.7 : 0.35), radius: hovering ? 5 : 3)
                 Text("Add Note")
                     .font(.callout.weight(.semibold))
+                Text("⌘↩")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, DS.Space.m)
             .frame(height: Self.size.height)
@@ -583,19 +586,31 @@ struct AddNoteButton: View {
         .scaleEffect(hovering ? 1.04 : 1, anchor: .bottomTrailing)
         .onHover { hovering = $0 }
         .animation(DS.Motion.snappy, value: hovering)
-        .help("Attach a \(color.rawValue) note to the selection (⌘⇧N)")
+        .help("Attach a \(color.rawValue) note to the selection (⌘↩)")
         .accessibilityLabel("Add note")
         .accessibilityIdentifier("addNoteButton")
     }
 
-    /// Springs out of the selection's corner; leaves quickly so it never lingers over the text.
-    static var transition: AnyTransition {
-        // Reduce Motion: a plain fade, no spring out of the corner.
+    /// Grows out of the selected line to where it rests, as if it unfolded from the text; leaves the same way,
+    /// quickly, so it never lingers over the text. `anchor` is the line's point in the button's own unit space.
+    static func transition(emergingFrom anchor: UnitPoint) -> AnyTransition {
+        // Reduce Motion: a plain fade, nothing growing.
         if Motion.isReduced { return .opacity.animation(DS.Motion.smooth) }
         return .asymmetric(
-            insertion: .scale(scale: 0.6, anchor: .bottomTrailing).combined(with: .opacity).animation(DS.Motion.bouncy),
-            removal: .scale(scale: 0.9, anchor: .bottomTrailing).combined(with: .opacity).animation(.easeOut(duration: 0.1))
+            insertion: .scale(scale: 0.2, anchor: anchor).combined(with: .opacity).animation(DS.Motion.bouncy),
+            removal: .scale(scale: 0.6, anchor: anchor).combined(with: .opacity).animation(.easeOut(duration: 0.1))
         )
+    }
+
+    /// Where the selected line meets the button, in the button's unit space (outside 0...1 when it is beyond the
+    /// button's edge): the edge of the selection the button sits against, under the button's middle (or the
+    /// selection's, when the selection is narrower), so the button grows straight out of the text.
+    static func emergence(for selection: CGRect, in bounds: CGSize) -> UnitPoint {
+        let center = placement(for: selection, in: bounds)
+        let frame = CGRect(x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height)
+        let lineY = frame.midY < selection.minY ? selection.minY : selection.maxY
+        let lineX = min(max(frame.midX, selection.minX), selection.maxX)
+        return UnitPoint(x: (lineX - frame.minX) / frame.width, y: (lineY - frame.minY) / frame.height)
     }
 
     /// Center point for `.position`, kept inside `bounds`.

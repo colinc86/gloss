@@ -127,12 +127,12 @@ public struct HookInstaller: Sendable {
         case .claude:
             try await installScript(into: &report)
             try await mergeHookFile(at: claudeSettingsPath, command: hookCommand(for: .claude), report: &report)
-            await registerMCP(remove: "claude mcp remove -s user \(Self.mcpServerName) >/dev/null 2>&1", add: "claude mcp add -s user --transport http \(Self.mcpServerName) \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias).claudeCommand)", report: &report)
+            await registerMCP(remove: "claude mcp remove -s user \(Self.mcpServerName) >/dev/null 2>&1", add: "claude mcp add -s user --transport http \(Self.mcpServerName) \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias, token: token).claudeCommand)", report: &report)
         case .codex:
             try await installScript(into: &report)
             try await mergeHookFile(at: codexHooksPath, command: hookCommand(for: .codex), report: &report)
             try await enableCodexHooks(report: &report)
-            await registerMCP(remove: "codex mcp remove \(Self.mcpServerName) >/dev/null 2>&1", add: "codex mcp add \(Self.mcpServerName) --url \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias).codexCommand)", report: &report)
+            await registerMCP(remove: "codex mcp remove \(Self.mcpServerName) >/dev/null 2>&1", add: "codex mcp add \(Self.mcpServerName) --url \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias, token: token).codexCommand)", report: &report)
             report.notices.append("Codex skips new hooks until you trust them: run /hooks inside Codex and trust the Gloss entry.")
         case .opencode:
             try await mergeOpenCodeConfig(report: &report)

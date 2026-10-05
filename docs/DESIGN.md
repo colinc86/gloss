@@ -233,7 +233,9 @@ path. Dropping on the Dock icon is not supported yet.
   the request… its prompt may be behind other windows", Cancel); Reconnecting (info, attempt n); Couldn't connect
   (warning, ssh's message, Details, Connect). A healthy connection says nothing; a connected host with a problem
   (missing ripgrep) is a quiet warning. Each stage is rendered offscreen in `ConnectionNoticeTests` for review.
-- **Follow mode**: the toolbar crosshair is a plain button whose symbol turns accent-coloured (and bounces)
+- **Follow mode**: shown only where Herdr exists (its binary on this Mac, or a connected host whose probe found
+  it), since following needs Herdr's focus events; the Herdr plugin row in Settings → Agents is gated the same way.
+  The toolbar crosshair is a plain button whose symbol turns accent-coloured (and bounces)
   while following; a toolbar toggle's solid "on" disc hid it. While a pane is followed, a card tops the sidebar:
   "FOLLOWING" with the agent's `StatusDot`, host (teal) and agent, pane id, and the pane's folder, plus a stop
   button; it slides in and out from the top. Follow problems (Herdr not running, an unknown machine) stay in the
@@ -315,11 +317,12 @@ path. Dropping on the Dock icon is not supported yet.
 - **Same-named files**: when two groups share a file name, each header adds, in `.caption` secondary after the name,
   the shortest run of parent folders that sets it apart ("…/docs", "…/proj"), as editors do for tabs
   (`PathDisambiguator`). Unique names stay bare, and the full path is in the tooltip.
-- **Note composer**: title, then an anchor chip tinted with the note's colour; a quote of up to three lines of the
+- **Note composer**: title, then an anchor chip tinted with the note's colour, naming the characters too when only
+  part of one line is selected ("Line 12, chars 5–20", UTF-16 columns as the editor counts them); a quote of up to three lines of the
   selected text under a colour rail, so the comment is written against what it is about (code keeps the editor's
   syntax colours, `SyntaxTheme.highlighted`, worked out once per quote; plain text and prose stay a quiet grey); the field with a
   placeholder prompt and a colour-tinted border; the swatches; Cancel and one prominent action ("Add Note" for new
-  notes, "Save" when editing); key hints as `KeyCap`s. Choosing a colour re-tints the chip, rail, and border
+  notes, "Save" when editing). No key hints: Return to save and Shift-Return for a new line are standard. Choosing a colour re-tints the chip, rail, and border
   together, and the selection ring slides between swatches with `DS.Motion.bouncy`.
   While a new note is empty, starter chips sit under the field (`StarterPhrases`: Explain, Fix, Add a test, Why):
   one click writes the start of the sentence ("Fix this: ") with the caret after it and the field focused, and the
@@ -327,9 +330,10 @@ path. Dropping on the Dock icon is not supported yet.
 - **ColorSwatches**: 14 pt gradient dots that grow slightly under the pointer; the selected one wears a ring in its
   own colour, shared across swatches with `matchedGeometryEffect`.
 - **Add Note button**: glass pill beside the selection with a dot in the colour the note will get (the last colour
-  used) and the label. It springs out of the selection's corner (`DS.Motion.bouncy`, scale from 0.6 anchored
-  bottom-trailing), follows a growing selection with `DS.Motion.smooth`, lifts 4% under the pointer, and leaves
-  in 0.1 s so it never lingers over text.
+  used), the label, and its key, ⌘↩ (which is the button's while it shows; Send has ⌘↩ otherwise). It grows out
+  of the selected line to where it rests (`DS.Motion.bouncy`, scale from 0.2 anchored on the point where the
+  selection's edge meets it, `AddNoteButton.emergence`), follows a growing selection with `DS.Motion.smooth`,
+  lifts 4% under the pointer, and leaves the same way in 0.1 s so it never lingers over text.
 - **Agent chip**: where notes go, as a rounded field: a `StatusDot`, the agent in semibold, its task in secondary
   (truncating), the pane in tertiary monospace, a folder badge when the agent works in the explorer's folder, and
   an up/down chevron; it opens the agent menu.
@@ -579,12 +583,18 @@ path. Dropping on the Dock icon is not supported yet.
 
 ### Settings
 
-- **Hooks tab**: four optional, independent integrations, so no Install button is prominent (glass, not glass
-  prominent); only Update, on an outdated row, asks for attention. A footer with a shield says what Install touches
-  and how to undo it: nothing changes until you press Install, each edited settings file is first copied beside
-  itself (`*.gloss-backup-…`, the last three kept), and Remove takes out only what was added.
+- **Agents tab**: one place for everything that connects an agent, top to bottom: the MCP server's status and port;
+  a section per machine (This Mac, then each connected host) with Claude Code, Codex and OpenCode, each installed
+  by its row, whose copy icon (its tooltip says what it copies) takes the registration Install runs, for whoever
+  would rather run it;
+  the Herdr plugin last on each machine; then "Other agents", copy for any harness Gloss does not set up (the
+  endpoint, the `Authorization` header, a generic `mcpServers` entry, and a prompt hook reading `/hook/text`).
+  Where notes go is the notes panel's agent chip, not a setting, so it is not repeated here. The integrations are optional and independent, so no Install button is prominent (glass,
+  not glass prominent); only Update, on an outdated row, asks for attention. A footer with a shield says what
+  Install touches and how to undo it: nothing changes until you press Install, each edited settings file is first
+  copied beside itself (`*.gloss-backup-…`, the last three kept), and Remove takes out only what was added.
 - **Settings**: every tab is a `.formStyle(.grouped)` form, 600 pt wide, with its own height so the window
-  resizes to each tab as System Settings does (General 236, Editor 330, Agents 560, Attachments 380, Hooks 390, the rest 440). Toggles
+  resizes to each tab as System Settings does (General 236, Editor 330, Agents 640, Integrations 660, Attachments 380, Hosts 440). Toggles
   carry a second line saying what they do; words match the rest of the app ("folder", never "root"). A setting
   shows its effect where it can: the editor font slider drives a live code preview, with the size in monospaced
   digits beside it. A setting must do something, at once: Editor's font size, wrapping, and indent guides

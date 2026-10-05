@@ -11,6 +11,8 @@ struct NoteEditorState: Identifiable {
     var color: NoteColor
     /// Where the popover points, in the viewer's coordinate space.
     var anchorRect: CGRect
+    /// The selected characters when the note is on part of one line, shown beside the line number.
+    var columns: ClosedRange<Int>? = nil
 
     var isNew: Bool { existingID == nil }
 }

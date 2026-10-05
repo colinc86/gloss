@@ -1106,7 +1106,9 @@ final class DocumentSession: Identifiable {
             guard range.length > 0 else { return }
             let anchor = ReAnchorer.make(from: range, in: controller.text, index: controller.lineIndex, hash: Data(controller.text.utf8).sha256Hex)
             let rect = rendered?.rect(forSource: range) ?? controller.rect(for: range) ?? .zero
-            noteEditor = NoteEditorState(anchor: .text(anchor), body: "", color: lastUsedColor, anchorRect: rect)
+            let lineLength = controller.lineIndex.contentRange(ofLine: anchor.start.line).length
+            noteEditor = NoteEditorState(anchor: .text(anchor), body: "", color: lastUsedColor, anchorRect: rect,
+                                         columns: anchor.partialColumns(lineLength: lineLength))
         } else {
             noteEditor = NoteEditorState(anchor: .wholeFile, body: "", color: lastUsedColor, anchorRect: CGRect(x: 40, y: 40, width: 1, height: 1))
         }
@@ -1173,7 +1175,11 @@ final class DocumentSession: Identifiable {
         if let html, case .element = note.anchor, let found = html.elementRects[note.id] ?? html.pageRect {
             rect = found
         }
-        noteEditor = NoteEditorState(existingID: note.id, anchor: note.anchor, body: note.body, color: note.color, anchorRect: rect)
+        var columns: ClosedRange<Int>?
+        if let controller = textController, case .text(let anchor) = note.anchor {
+            columns = anchor.partialColumns(lineLength: controller.lineIndex.contentRange(ofLine: anchor.start.line).length)
+        }
+        noteEditor = NoteEditorState(existingID: note.id, anchor: note.anchor, body: note.body, color: note.color, anchorRect: rect, columns: columns)
     }
 
     func commitNote(_ state: NoteEditorState) async {

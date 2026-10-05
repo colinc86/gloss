@@ -68,6 +68,9 @@ final class AppModel {
 
     /// Starts a note on the open document. The composer is a popover on the main window, so a command chosen
     /// while Settings or Keyboard Shortcuts is in front brings the main window forward first.
+    /// The Add Note button is showing: a selection waits for a note, so ⌘↩ makes one instead of sending.
+    var selectionAwaitsNote: Bool { activeSession?.selectionAffordanceRect != nil }
+
     func beginNoteInMainWindow() {
         guard let session = activeSession else { return }
         if let window = mainWindow, !window.isKeyWindow {
@@ -77,6 +80,9 @@ final class AppModel {
             session.beginNote()
         }
     }
+    /// The machines with Herdr installed: this Mac when its binary is found, a host when its probe saw one. Herdr's
+    /// follow mode and plugin are offered only where it exists.
+    private(set) var herdrHosts: Set<HostID> = HerdrTransport.locateHerdr() == nil ? [] : [.local]
     /// Remote home directories, learned from the probe when a host connects (hook installs need them).
     private(set) var hostHomes: [HostID: String] = [:]
     @ObservationIgnored private var cleanupTasks: [HostID: Task<Void, Never>] = [:]
@@ -155,7 +161,7 @@ final class AppModel {
         send.register(herdrTransport)
         send.register(TmuxTransport(registry: connectionRegistry))
         let settings = settings
-        send.register(OpenCodeTransport(servers: { await MainActor.run { OpenCodeServer.parse(settings.opencodeServers) } }))
+        send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
@@ -174,7 +180,10 @@ final class AppModel {
             let alias = self.hosts.entry(for: hostID)?.alias ?? hostID.rawValue
             Task {
                 await self.connectionRegistry.register(connection, alias: alias, for: hostID)
-                if let tools = try? await connection.tools(), !tools.home.isEmpty { self.hostHomes[hostID] = tools.home }
+                if let tools = try? await connection.tools() {
+                    if !tools.home.isEmpty { self.hostHomes[hostID] = tools.home }
+                    if tools.herdr { self.herdrHosts.insert(hostID) }
+                }
                 await self.forwardMCPPort(to: connection, alias: alias)
                 if self.followHerdr { self.startFollowing() }
             }
@@ -206,6 +215,7 @@ final class AppModel {
             guard let self else { return }
             self.connections[hostID] = nil
             self.fileSystems[hostID] = nil
+            self.herdrHosts.remove(hostID)
             // The forwards died with the connection; pages through this host start over on the next connect.
             self.tunnels[hostID] = nil
             for session in self.sessions.values where session.hostID == hostID && session.kind == .web {
@@ -400,15 +410,40 @@ final class AppModel {
         }
     }
 
-    /// The user picked a target: remember it, and show the agent's working directory when the target has one.
+    /// The user picked a target: remember it, and show the agent's working directory when the target has one. The
+    /// folder that ends up in front remembers the choice, so coming back to it comes back to this agent.
     func choose(target: AgentTarget) {
         send.rememberTarget(target)
-        guard target.transport == .herdr || target.transport == .tmux, let path = target.detail, path.hasPrefix("/") else { return }
+        guard target.transport == .herdr || target.transport == .tmux, let path = target.detail, path.hasPrefix("/") else {
+            Task { await rememberForCurrentFolder(target) }
+            return
+        }
+        // Opening the agent's folder switches tabs; that switch must not hand the folder's older agent back.
+        choosingTargetID = target.id
         Task {
+            defer { if choosingTargetID == target.id { choosingTargetID = nil } }
             guard await ensureConnected(target.hostID) else { return }
             pickedHost = target.hostID
             await explorer.openRoot(hostID: target.hostID, path: path)
+            await rememberForCurrentFolder(target)
         }
+    }
+
+    /// A choice being carried out by `choose(target:)`, while it opens the agent's folder.
+    @ObservationIgnored private var choosingTargetID: String?
+
+    private func rememberForCurrentFolder(_ target: AgentTarget) async {
+        guard let tab = explorer.selectedTab else { return }
+        await send.remember(target, forFolder: SendCoordinator.folderKey(hostID: tab.hostID, path: tab.path))
+    }
+
+    /// A folder came to the front: switch to the agent last chosen there, when its session is still live. Follow
+    /// mode pairs folders and panes itself, and a choice in progress has just picked the agent for this folder.
+    func folderBecameCurrent() async {
+        guard !followHerdr, choosingTargetID == nil, let tab = explorer.selectedTab,
+              let target = await send.liveTarget(forFolder: SendCoordinator.folderKey(hostID: tab.hostID, path: tab.path)),
+              target.id != send.lastTarget?.id, explorer.selectedTab === tab else { return }
+        send.rememberTarget(target)
     }
 
     func openDocument(hostID: HostID, path: String) {
@@ -1117,7 +1152,7 @@ final class AppModel {
                 let (text, noteIDs) = try await send.hookText(hostID: hostID, cwd: cwd)
                 // Drained notes count as sent through that hook; the agent resolves them over MCP afterwards.
                 if !noteIDs.isEmpty {
-                    let transport = flavour == "codex" ? TransportKind.codexHook : .claudeHook
+                    let transport = TransportKind.hook(flavour: flavour)
                     let targetJSON = (try? JSONSerialization.data(withJSONObject: ["cwd": cwd ?? ""])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
                     _ = try? await store.recordSend(transport: transport.rawValue, targetJSON: targetJSON, packetText: text, noteIDs: noteIDs, outcome: .delivered)
                 }

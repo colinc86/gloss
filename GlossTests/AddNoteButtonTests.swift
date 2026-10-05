@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SwiftUI
 import Testing
 @testable import Gloss
 
@@ -20,5 +21,19 @@ struct AddNoteButtonTests {
         #expect(right.x + size.width / 2 <= bounds.width - 8)
         let left = AddNoteButton.placement(for: CGRect(x: -50, y: 300, width: 20, height: 20), in: bounds)
         #expect(left.x - size.width / 2 >= 8)
+    }
+
+    /// The button grows out of the selection's edge it sits against: below itself when above the text, above
+    /// itself when below; under its middle, or under the selection when that is narrower than the button.
+    @Test func emergesFromTheSelectedLine() {
+        let bounds = CGSize(width: 800, height: 600)
+        let height = AddNoteButton.size.height
+        let above = AddNoteButton.emergence(for: CGRect(x: 100, y: 200, width: 300, height: 20), in: bounds)
+        #expect(above.x == 0.5)
+        #expect(abs(above.y - (height + 8) / height) < 0.001, "the selection's top, one gap under the button")
+        let below = AddNoteButton.emergence(for: CGRect(x: 100, y: 4, width: 300, height: 20), in: bounds)
+        #expect(abs(below.y - (-8 / height)) < 0.001, "the selection's bottom, one gap over the button")
+        let narrow = AddNoteButton.emergence(for: CGRect(x: 380, y: 200, width: 20, height: 20), in: bounds)
+        #expect(narrow.x > 0.5 && narrow.x <= 1, "toward the short selection under the button's trailing half")
     }
 }

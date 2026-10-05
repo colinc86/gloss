@@ -339,7 +339,7 @@ struct TargetPicker: View {
         case .herdr: "terminal"
         case .tmux: "rectangle.split.3x1"
         case .opencode: "network"
-        case .mcp, .claudeHook, .codexHook: "point.3.connected.trianglepath.dotted"
+        case .mcp, .claudeHook, .codexHook, .promptHook: "point.3.connected.trianglepath.dotted"
         case nil: "paperplane"
         }
     }

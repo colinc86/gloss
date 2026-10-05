@@ -120,4 +120,23 @@ struct SendCoordinatorTests {
         _ = try await ClipboardTransport().deliver(packet, attachments: [], to: ClipboardTransport.target)
         #expect(NSPasteboard.general.string(forType: .string) == packet.text)
     }
+
+    /// Each folder remembers the agent last chosen in it, across launches, and hands it back only while its
+    /// session is live.
+    @Test func foldersRememberTheirAgentWhileItIsLive() async throws {
+        let store = try makeStore()
+        let coordinator = SendCoordinator(noteStore: store, transports: [FakeTransport()], stagers: [:])
+        await coordinator.refreshTargets()
+        let project = SendCoordinator.folderKey(hostID: .local, path: "/work/project")
+        let gone = AgentTarget(transport: .tmux, hostID: .local, label: "closed", identityJSON: "{\"pane\":\"9\"}")
+        await coordinator.remember(FakeTransport.target, forFolder: project)
+        await coordinator.remember(gone, forFolder: SendCoordinator.folderKey(hostID: .local, path: "/work/other"))
+        #expect(await coordinator.liveTarget(forFolder: project)?.id == FakeTransport.target.id)
+        #expect(await coordinator.liveTarget(forFolder: SendCoordinator.folderKey(hostID: .local, path: "/work/other")) == nil, "its session is gone")
+        #expect(await coordinator.liveTarget(forFolder: SendCoordinator.folderKey(hostID: .local, path: "/elsewhere")) == nil)
+
+        let relaunched = SendCoordinator(noteStore: store, transports: [FakeTransport()], stagers: [:])
+        await relaunched.refreshTargets()
+        #expect(await relaunched.liveTarget(forFolder: project)?.id == FakeTransport.target.id, "kept in the database")
+    }
 }
