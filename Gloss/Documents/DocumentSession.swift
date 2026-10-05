@@ -66,7 +66,8 @@ final class DocumentSession: Identifiable {
     private(set) var attributesAtOpen: FileAttributes?
     /// The text as it was on disk when opened or last saved: the base for three-way merges.
     private(set) var baseText: String?
-    private(set) var usedLatin1 = false
+    /// The encoding the text was read in and is saved in; set only when disk text becomes `baseText`.
+    private(set) var textEncoding: TextEncoding = .utf8
     private(set) var isDirty = false
     private(set) var isReadOnly = false
     var banner: Banner?
@@ -258,7 +259,7 @@ final class DocumentSession: Identifiable {
             if kind == .csv, attributes.size <= Self.readOnlyThreshold {
                 let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
                 fingerprintAtOpen = fingerprint
-                baseText = decode(data)
+                baseText = adopt(data)
                 document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
                 let controller = CSVGridController(text: baseText ?? "", fileName: fileName)
                 state = .csv(controller)
@@ -277,12 +278,12 @@ final class DocumentSession: Identifiable {
             } else {
                 (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
             }
-            let text = decode(data)
+            let text = adopt(data)
             fingerprintAtOpen = fingerprint
             baseText = text
             let tooLarge = attributes.size > Self.readOnlyThreshold
             isReadOnly = tooLarge || hostID.isVirtual
-            if tooLarge { banner = .readOnlyLargeFile } else if usedLatin1 { banner = .decodedAsLatin1 }
+            if tooLarge { banner = .readOnlyLargeFile } else if !textEncoding.isUnicode { banner = .decodedAsLatin1 }
             document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
             // Highlighting stays on for a small read-only file (a pull request's); only size turns it off.
             let controller = TextEditorController(text: text, languageName: tooLarge ? nil : GrammarCatalog.languageName(forPath: path))
@@ -445,12 +446,17 @@ final class DocumentSession: Identifiable {
         noteEditor = NoteEditorState(anchor: .element(anchor), body: "", color: lastUsedColor, anchorRect: rect)
     }
 
+    /// Decodes without changing the encoding the document is saved in (a conflict check's read of the other side).
     private func decode(_ data: Data) -> String {
-        if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
-        usedLatin1 = true
-        return String(decoding: data, as: UTF8.self).isEmpty && !data.isEmpty
-            ? (String(data: data, encoding: .isoLatin1) ?? "")
-            : (String(data: data, encoding: .isoLatin1) ?? String(decoding: data, as: UTF8.self))
+        TextEncoding.decode(data).text
+    }
+
+    /// Decodes text that becomes the document's base, and records its encoding for saving. A read cut off inside
+    /// a multibyte character once flipped a UTF-8 file to Latin-1 for good; each read now decides afresh.
+    private func adopt(_ data: Data) -> String {
+        let (text, encoding) = TextEncoding.decode(data)
+        textEncoding = encoding
+        return text
     }
 
     /// Discards unsaved edits and shows what is on disk now.
@@ -460,11 +466,12 @@ final class DocumentSession: Identifiable {
         guard let controller = textController else { return }
         do {
             let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
-            let text = decode(data)
+            let (text, encoding) = TextEncoding.decode(data)
             if !discardingEdits, isDirty {
                 if text != baseText { banner = .externalChange }
                 return
             }
+            textEncoding = encoding
             fingerprintAtOpen = fingerprint
             baseText = text
             controller.replaceAll(with: text)
@@ -488,7 +495,7 @@ final class DocumentSession: Identifiable {
     private func reloadCSV() async {
         do {
             let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
-            let text = decode(data)
+            let text = adopt(data)
             fingerprintAtOpen = fingerprint
             baseText = text
             state = .csv(CSVGridController(text: text, fileName: fileName))
@@ -559,10 +566,20 @@ final class DocumentSession: Identifiable {
         }
     }
 
+    /// True when the file changed again after the version the conflict sheet shows; the conflict is then rebuilt
+    /// against the newest version instead of writing over one the user never saw.
+    private func changedSinceConflict(_ conflict: ConflictState) async -> Bool {
+        guard case .changed = try? await fileSystem.checkForChanges(at: path, since: conflict.theirsFingerprint) else { return false }
+        self.conflict = nil
+        await save()
+        return true
+    }
+
     /// Conflict resolution: overwrite with the editor's text.
     func keepMine() async {
-        guard let controller = textController else { return }
-        conflict = nil
+        guard let controller = textController, let conflict else { return }
+        if await changedSinceConflict(conflict) { return }
+        self.conflict = nil
         do { try await write(controller.text) } catch { lastError = "Save failed: \(error)" }
     }
 
@@ -575,7 +592,15 @@ final class DocumentSession: Identifiable {
     /// Conflict resolution: apply both sides when they do not overlap, then save.
     func mergeAndSave() async {
         guard let conflict, let merged = ThreeWayMerge.resolve(conflict.regions), let controller = textController else { return }
-        let text = merged.joined(separator: "\n") + (conflict.theirsText.hasSuffix("\n") ? "\n" : "")
+        if await changedSinceConflict(conflict) { return }
+        // Merged again on lines that keep their own endings, so CRLF, a missing final newline and U+2028 inside a
+        // string literal come through as they were; the sheet's lines (endings stripped) are only for showing.
+        let exact = ThreeWayMerge.resolve(ThreeWayMerge.merge(
+            base: Self.linesKeepingEndings(baseText ?? ""),
+            mine: Self.linesKeepingEndings(controller.text),
+            theirs: Self.linesKeepingEndings(conflict.theirsText)
+        ))
+        let text = exact?.joined() ?? Self.join(merged, like: conflict.theirsText)
         self.conflict = nil
         baseText = conflict.theirsText
         fingerprintAtOpen = conflict.theirsFingerprint
@@ -585,6 +610,28 @@ final class DocumentSession: Identifiable {
         invalidatedNotes = []
         do { try await write(text) } catch { lastError = "Save failed: \(error)" }
         await reanchorAll(in: text, hash: Data(text.utf8).sha256Hex)
+    }
+
+    /// Lines split after each LF, each keeping its ending (CRLF included); joined with "" they are the text again.
+    static func linesKeepingEndings(_ text: String) -> [String] {
+        var lines: [String] = []
+        var current = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            current.append(scalar)
+            if scalar == "\n" {
+                lines.append(String(current))
+                current = String.UnicodeScalarView()
+            }
+        }
+        if !current.isEmpty { lines.append(String(current)) }
+        return lines
+    }
+
+    /// Joins ending-less lines with the line ending `reference` uses, ending with one when it does.
+    static func join(_ lines: [String], like reference: String) -> String {
+        let ending = reference.contains("\r\n") ? "\r\n" : "\n"
+        let last = reference.unicodeScalars.last
+        return lines.joined(separator: ending) + (last == "\n" || last == "\r" ? ending : "")
     }
 
     /// Conflict resolution: write the edits somewhere else (local hosts only).
@@ -603,7 +650,11 @@ final class DocumentSession: Identifiable {
     }
 
     private func write(_ text: String) async throws {
-        let data = usedLatin1 ? (text.data(using: .isoLatin1) ?? Data(text.utf8)) : Data(text.utf8)
+        // Written back in the encoding it was read in. A character that encoding can't hold refuses the save rather
+        // than switching the whole file to UTF-8, which would garble every non-ASCII byte already in it.
+        guard let data = textEncoding.encode(text) else {
+            throw FileSystemError.io("This file is \(textEncoding.displayName), which can't hold some of the characters you typed. Remove them, or save a UTF-8 copy with Save As.")
+        }
         // Snapshot the anchors that belong to this text; typing during a slow save must not leak into them.
         let rangesSnapshot = liveRanges
         let invalidatedSnapshot = invalidatedNotes

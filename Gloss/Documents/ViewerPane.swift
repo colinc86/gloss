@@ -169,7 +169,7 @@ private struct BannerView: View {
         case .externalChange:
             (.warning, "exclamationmark.arrow.triangle.2.circlepath", "Changed on disk", "The file was saved elsewhere while you have unsaved edits here.")
         case .decodedAsLatin1:
-            (.info, "textformat.abc", "Shown as Latin-1", "This file isn't valid UTF-8, so some characters may look wrong.")
+            (.info, "textformat.abc", "Shown as \(session.textEncoding.displayName)", "This file isn't valid UTF-8, so some characters may look wrong. It's saved back as \(session.textEncoding.displayName), byte for byte where unchanged.")
         case .readOnlyLargeFile:
             (.info, "lock.doc", "Read-only", "Files over 2 MB open read-only.")
         case .tooLarge:

@@ -126,6 +126,62 @@ struct DocumentSessionTests {
         session.close()
     }
 
+    @Test func mergingKeepsCRLFAndTheMissingFinalNewline() async throws {
+        let (directory, path) = try makeFile("one\r\ntwo\r\nthree\r\nfour", name: "run.bat")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let session = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        controller.viewDidChangeText( "ONE\r\ntwo\r\nthree\r\nfour")
+        try await Task.sleep(for: .milliseconds(5))
+        try Data("one\r\ntwo\r\nthree\r\nFOUR".utf8).write(to: URL(fileURLWithPath: path))
+        await session.save()
+        #expect(session.conflict?.canMerge == true)
+        await session.mergeAndSave()
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data("ONE\r\ntwo\r\nthree\r\nFOUR".utf8))
+        session.close()
+    }
+
+    /// A version written while the conflict sheet was open is never overwritten unseen: the conflict is rebuilt.
+    @Test func resolvingAConflictRechecksTheFile() async throws {
+        let (directory, path) = try makeFile("a\nb\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let session = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        controller.viewDidChangeText( "a-mine\nb\n")
+        try await Task.sleep(for: .milliseconds(5))
+        try "a-theirs\nb\n".write(toFile: path, atomically: true, encoding: .utf8)
+        await session.save()
+        let first = try #require(session.conflict)
+        try await Task.sleep(for: .milliseconds(5))
+        try "a-theirs\nb\nc-third\n".write(toFile: path, atomically: true, encoding: .utf8)
+        await session.keepMine()
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "a-theirs\nb\nc-third\n", "not overwritten unseen")
+        let rebuilt = try #require(session.conflict)
+        #expect(rebuilt.theirsText == "a-theirs\nb\nc-third\n" && rebuilt.theirsFingerprint != first.theirsFingerprint)
+        session.close()
+    }
+
+    /// A non-UTF-8 file is saved in its own encoding, and a character it can't hold refuses the save.
+    @Test func savesInTheFilesOwnEncoding() async throws {
+        let (directory, path) = try makeFile("", name: "legacy.txt")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        try Data([0x93, 0x71, 0x94, 0x0A]).write(to: URL(fileURLWithPath: path))   // “q” in Windows-1252
+        let session = try makeSession(path: path)
+        await session.open()
+        #expect(session.textEncoding == .windows1252)
+        let controller = try #require(session.textController)
+        controller.viewDidChangeText( controller.text + "ok\n")
+        await session.save()
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data([0x93, 0x71, 0x94, 0x0A, 0x6F, 0x6B, 0x0A]))
+        controller.viewDidChangeText( controller.text + "→\n")
+        await session.save()
+        #expect(session.lastError?.contains("Windows-1252") == true)
+        #expect(try Data(contentsOf: URL(fileURLWithPath: path)).count == 7, "nothing written")
+        session.close()
+    }
+
     @Test func overlappingConflictOffersSides() async throws {
         let (directory, path) = try makeFile("a\nb\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }
