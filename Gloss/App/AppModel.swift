@@ -1074,7 +1074,8 @@ final class AppModel {
         if activeSession?.noteEditor == nil {
             await openRootIfNeeded(hostID: hostID, containing: question.path)
             showNotesPanel = true
-            reveal(note: note, in: document)
+            // Shown, not selected: a selection would offer Add Note over the agent's question.
+            reveal(note: note, in: document, select: false)
             bringForwardForAgent()
         }
         return note.id
