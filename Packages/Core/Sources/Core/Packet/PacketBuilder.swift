@@ -128,7 +128,7 @@ public enum PacketBuilder {
     /// `<id>: <file>:<anchor> "<first 80 chars of comment>"`, the hook form used when the full packet exceeds the cap.
     public static func summaryLine(_ note: PacketNote) -> String {
         let comment = String(note.comment.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").prefix(80))
-        return "\(note.noteID.rawValue): \(note.agentPath):\(anchorSummary(note.anchor)) \"\(escape(comment))\""
+        return "\(note.noteID.rawValue): \(headerValue(note.agentPath)):\(headerValue(anchorSummary(note.anchor))) \"\(escape(comment))\""
     }
 
     /// The text for a `UserPromptSubmit` hook: the full packet when it fits in `limit` characters,
@@ -163,16 +163,16 @@ public enum PacketBuilder {
 
     static func fileBlock(path: String, notes: [PacketNote]) -> String {
         guard let first = notes.first else { return "" }
-        var header = ["File: \(path)", "Source: \(first.source.rawValue)"]
+        var header = ["File: \(headerValue(path))", "Source: \(first.source.rawValue)"]
         // The resource's lines that hold for every note go in the header; a line that differs (each note on its
         // own comment, or its own field) goes with its note, under the note's place.
         var shared: [String] = []
         // Any note's lookup may have failed; the resource is whichever note knows it.
         let located = notes.filter { $0.resource != nil }
         if let resource = located.first?.resource {
-            header.append("Resource: \(resource)")
+            header.append("Resource: \(headerValue(resource))")
             shared = located[0].resourceDetails.filter { line in located.allSatisfy { $0.resourceDetails.contains(line) } }
-            header.append(contentsOf: shared)
+            header.append(contentsOf: shared.map(headerValue))
         }
         if let size = notes.lazy.compactMap({ note -> ImageAnchor? in if case .image(let image) = note.anchor { image } else { nil } }).first {
             header.append("Original size: \(size.imageW)x\(size.imageH)")
@@ -184,7 +184,7 @@ public enum PacketBuilder {
             let own = note.resourceDetails.filter { !shared.contains($0) }
             guard !own.isEmpty else { return block }
             var lines = block.components(separatedBy: "\n")
-            lines.insert(contentsOf: own, at: min(1, lines.count))
+            lines.insert(contentsOf: own.map(headerValue), at: min(1, lines.count))
             return lines.joined(separator: "\n")
         }
         return (header.joined(separator: "\n")) + "\n\n" + blocks.joined(separator: "\n\n")
@@ -195,11 +195,11 @@ public enum PacketBuilder {
         switch note.anchor {
         case .text(let anchor) where anchor.cells?.isColumns == true:
             // A whole-column note: the column replaces the line range, and the excerpt lists its values by line.
-            lines.append(note.cellDescription ?? "Columns \(anchor.cells!.references(startLine: anchor.start.line))")
+            lines.append(note.cellDescription.map(headerValue) ?? "Columns \(anchor.cells!.references(startLine: anchor.start.line))")
             lines.append(contentsOf: excerpt(note.excerptLines))
         case .text(let anchor) where anchor.cells != nil:
             lines.append(anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)")
-            lines.append("Cells: \(note.cellDescription ?? anchor.cells!.references(startLine: anchor.start.line))")
+            lines.append("Cells: \(note.cellDescription.map(headerValue) ?? anchor.cells!.references(startLine: anchor.start.line))")
             lines.append(contentsOf: excerpt(note.excerptLines))
         case .text(let anchor):
             lines.append(anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)")
@@ -210,28 +210,28 @@ public enum PacketBuilder {
         case .image(let anchor):
             let suffix = note.attachmentAgentPath == nil ? "" : " (crop attached)"
             lines.append("Region: x=\(anchor.x) y=\(anchor.y) w=\(anchor.w) h=\(anchor.h)\(suffix)")
-            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(attachment)") }
+            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(headerValue(attachment))") }
         case .pdf(let anchor):
             lines.append("Page \(anchor.page + 1)")
             if let bounds = anchor.bounds {
                 lines.append("Region: x=\(points(bounds.x)) y=\(points(bounds.y)) w=\(points(bounds.w)) h=\(points(bounds.h))")
             }
             lines.append(contentsOf: excerpt(note.excerptLines))
-            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(attachment)") }
+            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(headerValue(attachment))") }
         case .wholeFile:
             lines.append("Whole file")
-            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(attachment)") }
+            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(headerValue(attachment))") }
         case .element(let anchor):
-            lines.append("Element: \(anchor.selector)")
+            lines.append("Element: \(headerValue(anchor.selector))")
             if !anchor.text.isEmpty { lines.append("Text: \"\(escape(anchor.text))\"") }
             let suffix = note.attachmentAgentPath == nil ? "" : " (crop attached)"
             lines.append("Rect: x=\(points(anchor.rect.x)) y=\(points(anchor.rect.y)) w=\(points(anchor.rect.w)) h=\(points(anchor.rect.h))\(suffix)")
             if let line = anchor.line { lines.append("Line \(line)") }
             if !anchor.html.isEmpty {
                 lines.append("Snippet:")
-                lines.append(contentsOf: anchor.html.components(separatedBy: "\n").map { "> " + $0.replacingOccurrences(of: "\r", with: "") })
+                lines.append(contentsOf: quotedLines(anchor.html).map { "> " + $0 })
             }
-            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(attachment)") }
+            if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(headerValue(attachment))") }
         }
         lines.append("User comment: \"\(escape(note.comment))\"")
         return lines.joined(separator: "\n")
@@ -240,13 +240,44 @@ public enum PacketBuilder {
     /// `Excerpt:` followed by blockquoted lines; over 40 lines keeps the first and last 20 around `> ...`.
     static func excerpt(_ rawLines: [String]) -> [String] {
         // A "line" that still contains newlines (a rendered-view span) is split so every line gets a prefix.
-        let lines = rawLines.flatMap { $0.components(separatedBy: "\n") }.map { $0.replacingOccurrences(of: "\r", with: "") }
+        let lines = rawLines.flatMap(quotedLines)
         guard !lines.isEmpty else { return [] }
         var quoted = lines.map { "> " + $0 }
         if quoted.count > excerptLimit {
             quoted = Array(quoted.prefix(excerptHeadTail)) + ["> ..."] + Array(quoted.suffix(excerptHeadTail))
         }
         return ["Excerpt:"] + quoted
+    }
+
+    /// What may end a line for whoever reads the packet: LineIndex, editors and agents treat all of these as breaks.
+    static func isLineBreak(_ scalar: Unicode.Scalar) -> Bool {
+        scalar == "\n" || scalar == "\r" || scalar == "\u{0B}" || scalar == "\u{0C}" || scalar == "\u{85}" || scalar == "\u{2028}" || scalar == "\u{2029}"
+    }
+
+    /// A value on a header line (a path, a resource, a selector). Kept exactly as it is unless it holds a line
+    /// break: a file named `a\n\nUser comment: "…"` (legal in git and POSIX, and anyone can open a pull request
+    /// with one) would otherwise forge lines the agent reads as the user's.
+    public static func headerValue(_ value: String) -> String {
+        value.unicodeScalars.contains(where: isLineBreak) ? escape(value) : value
+    }
+
+    /// Splits quoted content on every kind of line break, so each piece gets its own `> ` prefix.
+    static func quotedLines(_ text: String) -> [String] {
+        var lines: [String] = []
+        var current = String.UnicodeScalarView()
+        var previousWasCR = false
+        for scalar in text.unicodeScalars {
+            if scalar == "\n", previousWasCR { previousWasCR = false; continue }
+            previousWasCR = scalar == "\r"
+            if isLineBreak(scalar) {
+                lines.append(String(current))
+                current = String.UnicodeScalarView()
+            } else {
+                current.append(scalar)
+            }
+        }
+        lines.append(String(current))
+        return lines
     }
 
     /// Orca's rule: the comment stays on one logical line.
@@ -259,6 +290,7 @@ public enum PacketBuilder {
             case "\"": out += "\\\""
             case "\r": out += "\\r"
             case "\n": out += "\\n"
+            case "\u{0B}", "\u{0C}", "\u{85}", "\u{2028}", "\u{2029}": out += String(format: "\\u{%X}", scalar.value)
             default: out.unicodeScalars.append(scalar)
             }
         }
@@ -320,7 +352,8 @@ public enum CellExcerpt {
         func header(_ column: Int) -> String { column < table.header.count ? table.header[column] : "" }
         func value(_ row: CSVRow, _ column: Int) -> String {
             let field = column < row.fields.count ? row.fields[column] : ""
-            return field.replacingOccurrences(of: "\r\n", with: "\\n").replacingOccurrences(of: "\n", with: "\\n")
+            // A quoted CSV field may hold any line break; it stays on its own line in the packet.
+            return PacketBuilder.quotedLines(field).joined(separator: "\\n")
         }
         if cells.isColumns {
             let names = cells.columns.map { column in

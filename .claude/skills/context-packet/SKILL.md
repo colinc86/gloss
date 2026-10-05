@@ -45,7 +45,9 @@ Notes: <count>. Mark each resolved with the gloss MCP tool `resolve_note` (ids: 
 ### Escaping
 
 - The comment is wrapped in double quotes; escape `\` → `\\`, `"` → `\"`, CR → `\r`, LF → `\n` (Orca's rule, keeps one note on one logical line for the agent).
-- Excerpt lines are prefixed with `> `; embedded newlines in a selected span become `\n> `.
+- The other line breaks (VT, FF, NEL U+0085, LS U+2028, PS U+2029) are escaped as `\u{XXXX}` in quoted values.
+- Excerpt lines are prefixed with `> `; embedded newlines in a selected span become `\n> `. Every kind of line break above starts a new `> ` line.
+- Header values (`File:`, `Resource:`, detail lines such as `Path:`, `Attachment:`, `Element:`, cell descriptions, the hook summary's path) are printed as they are unless they contain a line break; then the whole value is escaped as a comment is. A file name with a newline (legal in git) must never start a line of its own.
 - Paths are never quoted. Paths with spaces are fine because they are on their own labeled line.
 
 ## Example
