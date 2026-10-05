@@ -103,6 +103,37 @@ struct HookInstallerTests {
         #expect((removedObject?["mcp"] as? [String: Any])?.keys.sorted() == ["other"])
     }
 
+    /// Other ways of spelling the features table are edited in place or left for the user, never duplicated.
+    @Test func neverDefinesTheFeaturesTableTwice() {
+        #expect(HookInstaller.enableCodexHooks(in: "[ features ]\nx = 1\n") == "[ features ]\nhooks = true\nx = 1\n")
+        #expect(HookInstaller.enableCodexHooks(in: "[\"features\"]\nhooks = false\n") == "[\"features\"]\nhooks = true\n")
+        #expect(HookInstaller.enableCodexHooks(in: "features.web_search_request = true\n") == nil, "a dotted root key defines the table")
+        #expect(HookInstaller.enableCodexHooks(in: "features = { web_search_request = true }\n") == nil, "an inline table")
+        let dotted = "features.hooks = true\n"
+        #expect(HookInstaller.enableCodexHooks(in: dotted) == dotted, "already on, in dotted form")
+        #expect(HookInstaller.codexFeaturesNeedHandEdit("features = {}\n"))
+        #expect(HookInstaller.enableCodexHooks(in: "[profile]\nfeatures.x = 1\n") == "[profile]\nfeatures.x = 1\n\n[features]\nhooks = true\n", "a dotted key inside another table is that table's")
+    }
+
+    /// Uninstalling where nothing was installed creates no files and rewrites none.
+    @Test func uninstallLeavesMissingAndForeignFilesAlone() async throws {
+        let home = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-home-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: "\(home)/.claude", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        let foreign = "{\"model\":   \"opus\"}"
+        try foreign.write(toFile: "\(home)/.claude/settings.json", atomically: true, encoding: .utf8)
+        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, port: 47831) { _ in
+            ExecResult(exitStatus: 0, stdout: Data(), stderr: Data())
+        }
+        for agent in [HookAgent.claude, .codex, .opencode] {
+            _ = try await installer.uninstall(agent)
+        }
+        #expect(try String(contentsOfFile: "\(home)/.claude/settings.json", encoding: .utf8) == foreign, "not reformatted")
+        #expect(!FileManager.default.fileExists(atPath: installer.codexHooksPath))
+        #expect(!FileManager.default.fileExists(atPath: installer.opencodeConfigPath))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: "\(home)/.claude") == ["settings.json"], "no backup of an untouched file")
+    }
+
     /// Full install into a temporary HOME: script copied with mode 755, settings merged with a backup, MCP registration
     /// recorded through the runner, Codex features enabled, status reported, uninstall reverses it all.
     @Test func installsAndUninstallsInATemporaryHome() async throws {

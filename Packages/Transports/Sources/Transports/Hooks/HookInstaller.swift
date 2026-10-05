@@ -313,6 +313,9 @@ public struct HookInstaller: Sendable {
     /// Rewrites `hooks.UserPromptSubmit` so exactly one entry is ours (`command` nil removes it).
     private func mergeHookFile(at path: String, command: String?, report: inout HookInstallReport) async throws {
         let original = try await readIfPresent(path)
+        // Removing from a file that has no entry of ours (or no file at all) touches nothing: no `{}` file is
+        // created, and the user's file isn't reformatted.
+        if command == nil, original.map({ Self.hasOurEntry(in: $0) }) != true { return }
         let merged = try Self.mergeHookEntry(into: original ?? Data("{}".utf8), command: command, path: path)
         if original == merged { return }
         try await writeWithBackup(merged, to: path, original: original, report: &report)
@@ -320,13 +323,19 @@ public struct HookInstaller: Sendable {
 
     private func enableCodexHooks(report: inout HookInstallReport) async throws {
         let original = (try await readIfPresent(codexConfigPath)).map { String(decoding: $0, as: UTF8.self) } ?? ""
-        let updated = Self.enableCodexHooks(in: original)
+        guard let updated = Self.enableCodexHooks(in: original) else {
+            // A features table we can't edit line by line; appending another would make the TOML invalid and stop
+            // Codex from starting, so the user adds the line.
+            report.notices.append("\(codexConfigPath) defines features in a form the installer won't edit. Add hooks = true to its features table by hand.")
+            return
+        }
         if updated == original { return }
         try await writeWithBackup(Data(updated.utf8), to: codexConfigPath, original: Data(original.utf8), report: &report)
     }
 
     private func mergeOpenCodeConfig(remove: Bool = false, report: inout HookInstallReport) async throws {
         let original = try await readIfPresent(opencodeConfigPath)
+        if remove, original == nil { return }
         let merged = try Self.mergeOpenCode(into: original ?? Data("{}".utf8), url: remove ? nil : mcpURL, path: opencodeConfigPath)
         if original == merged { return }
         try await writeWithBackup(merged, to: opencodeConfigPath, original: original, report: &report)
@@ -343,8 +352,10 @@ public struct HookInstaller: Sendable {
         let attributes = try? await fileSystem.stat(path)
         if let original {
             let formatter = DateFormatter()
-            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            // UTC, so names sort in time order across a daylight-saving change and pruning keeps the newest.
+            formatter.dateFormat = "yyyyMMdd-HHmmss'Z'"
             formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "UTC")
             var backup = "\(path).gloss-backup-\(formatter.string(from: now()))"
             // Two installs within one second must not overwrite the first backup.
             var suffix = 1
@@ -363,7 +374,10 @@ public struct HookInstaller: Sendable {
     private func pruneBackups(of path: String) async {
         let name = PathUtilities.name(of: path) + ".gloss-backup-"
         guard let entries = try? await fileSystem.list(PathUtilities.parent(of: path)) else { return }
-        let backups = entries.filter { $0.name.hasPrefix(name) }.map(\.name).sorted()
+        // Oldest first by modification time, then name: names from older builds used local time.
+        let backups = entries.filter { $0.name.hasPrefix(name) }
+            .sorted { ($0.mtime ?? .distantPast, $0.name) < ($1.mtime ?? .distantPast, $1.name) }
+            .map(\.name)
         for old in backups.dropLast(Self.backupsToKeep) {
             try? await fileSystem.delete(PathUtilities.join(PathUtilities.parent(of: path), old))
         }
@@ -442,8 +456,10 @@ public struct HookInstaller: Sendable {
         return try JSONSerialization.data(withJSONObject: object, options: jsonOptions) + Data("\n".utf8)
     }
 
-    /// Ensures `[features]\nhooks = true` without rewriting any other line.
-    public nonisolated static func enableCodexHooks(in toml: String) -> String {
+    /// Ensures `[features]\nhooks = true` without rewriting any other line. Nil when the file defines `features`
+    /// some other way (a root `features.x = …` dotted key or a `features = { … }` inline table): TOML forbids a
+    /// second definition, so appending a `[features]` table would leave Codex unable to read its config.
+    public nonisolated static func enableCodexHooks(in toml: String) -> String? {
         let newline = toml.contains("\r\n") ? "\r\n" : "\n"
         var lines = toml.components(separatedBy: newline)
         func stripped(_ line: String) -> String {
@@ -451,7 +467,21 @@ public struct HookInstaller: Sendable {
             let code = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? line
             return code.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        guard let header = lines.firstIndex(where: { stripped($0) == "[features]" }) else {
+        /// `[ features ]` and `["features"]` name the same table as `[features]`.
+        func tableName(_ code: String) -> String? {
+            guard code.hasPrefix("["), !code.hasPrefix("[["), code.hasSuffix("]") else { return nil }
+            return code.dropFirst().dropLast().trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\"", with: "").replacingOccurrences(of: "'", with: "")
+        }
+        // Keys before the first table header belong to the root, where `features…` would define the table too.
+        for line in lines {
+            let code = stripped(line)
+            if code.hasPrefix("[") { break }
+            let key = code.prefix { $0 != "=" }.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\"", with: "")
+            guard key == "features" || key.hasPrefix("features.") || key.hasPrefix("features .") else { continue }
+            let compact = code.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\"", with: "")
+            return compact == "features.hooks=true" || lines.contains(where: { stripped($0).replacingOccurrences(of: " ", with: "") == "features.hooks=true" }) ? toml : nil
+        }
+        guard let header = lines.firstIndex(where: { tableName(stripped($0)) == "features" }) else {
             var out = toml
             if !out.isEmpty, !out.hasSuffix(newline) { out += newline }
             if !out.isEmpty { out += newline }
@@ -475,6 +505,11 @@ public struct HookInstaller: Sendable {
 
     public nonisolated static func codexHooksEnabled(_ toml: String) -> Bool {
         enableCodexHooks(in: toml) == toml
+    }
+
+    /// Whether `enableCodexHooks` would leave this config alone because it can't edit it safely.
+    public nonisolated static func codexFeaturesNeedHandEdit(_ toml: String) -> Bool {
+        enableCodexHooks(in: toml) == nil
     }
 
     nonisolated static func sha256(_ data: Data) -> String {
