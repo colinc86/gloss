@@ -10,8 +10,11 @@ Automatic`, `DEVELOPMENT_TEAM = 4WS4246RA4`, `ENABLE_HARDENED_RUNTIME = YES`, `E
    Developer ID Application (needs the Account Holder role). An *Apple Development* certificate is not enough:
    Gatekeeper only opens downloaded apps signed with Developer ID and notarized. Check with
    `security find-identity -v -p codesigning`.
-2. **Notary profile.** `xcrun notarytool store-credentials AC_PASSWORD --apple-id <id> --team-id 4WS4246RA4`, with
-   an app-specific password from account.apple.com.
+2. **Notary profile.** Create an app-specific password at account.apple.com (Sign-In and Security › App-Specific
+   Passwords) and **leave it there**: the profile keeps a copy and every release uses it, so deleting it on the
+   account breaks notarization (HTTP 401). Then, in a normal terminal (the password prompt needs one), run
+   `xcrun notarytool store-credentials AC_PASSWORD --apple-id <id> --team-id 4WS4246RA4` and paste it at the
+   prompt; never pass it with `--password` where it would be logged.
 3. **Sparkle's signing key.** Build the app once so Xcode fetches Sparkle, then run its `generate_keys`
    (`~/Library/Developer/Xcode/DerivedData/Gloss-*/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys`).
    It keeps the private EdDSA key in the login Keychain and prints the public key: put that in `SUPublicEDKey` in
