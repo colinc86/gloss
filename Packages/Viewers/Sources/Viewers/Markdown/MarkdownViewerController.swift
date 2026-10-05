@@ -47,6 +47,11 @@ public final class MarkdownViewerController {
 
     /// The document's folder on this Mac, for relative images; nil for remote documents.
     public let baseURL: URL?
+    /// The document's folder on its own host, for relative links; nil where links to files mean nothing (a pull
+    /// request's or a ticket's Markdown).
+    @ObservationIgnored public var documentDirectory: String?
+    /// Opens a relative or file: link's target as a document on the same host.
+    @ObservationIgnored public var onOpenDocument: (String) -> Void = { _ in }
 
     public init(source: TextEditorController, baseURL: URL? = nil) {
         self.source = source

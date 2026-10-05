@@ -55,6 +55,17 @@ public struct RenderedMarkdownView: NSViewRepresentable {
     @MainActor
     public final class Coordinator: NSObject, NSTextViewDelegate {
         let controller: MarkdownViewerController
+
+        /// Every click goes through `MarkdownLink`; returning true keeps NSTextView from opening the URL itself.
+        public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            switch MarkdownLink.classify(link, documentDirectory: controller.documentDirectory) {
+            case .external(let url): NSWorkspace.shared.open(url)
+            case .document(let path): controller.onOpenDocument(path)
+            case .sameDocument: break
+            case .refused: NSSound.beep()
+            }
+            return true
+        }
         private weak var textView: NSTextView?
         private weak var backdrop: HighlightBackdropView?
         private var appliedVersion = -1

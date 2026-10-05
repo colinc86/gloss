@@ -452,6 +452,7 @@ final class AppModel {
             return
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
+        session.openLinkedDocument = { [weak self] target in self?.openDocument(hostID: hostID, path: target) }
         // The deepest open root holding the file bounds what a rendered HTML page may read; looked up per request,
         // since the root can open after the document (launch with --open, a jump from a note).
         let home = hostID == .local ? NSHomeDirectory() : hostHomes[hostID]
