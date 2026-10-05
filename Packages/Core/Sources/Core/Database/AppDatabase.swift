@@ -22,7 +22,7 @@ public final class AppDatabase: Sendable {
             try backUpBeforeMigrating(queue, at: url)
         } catch {
             // A failed copy (a full disk, say) must not keep the notes closed; migrating is what happened before backups existed.
-            Logger(subsystem: "Gloss", category: "database").fault("Could not back up the database before migrating: \(error, privacy: .public)")
+            Logger(subsystem: "com.cnc.Gloss", category: "database").fault("Could not back up the database before migrating: \(error, privacy: .public)")
         }
         try Schema.migrator.migrate(queue)
         return AppDatabase(queue: queue, temporaryURL: nil)
