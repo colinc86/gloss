@@ -54,9 +54,19 @@ struct AppCommands: Commands {
             // There is no help book; the shortcuts window is the reference the app does have.
             Button { openWindow(id: "shortcuts") } label: { Label("Keyboard Shortcuts", systemImage: "keyboard") }
                 .keyboardShortcut("/", modifiers: [.command])
+            Divider()
+            if model.updates.isAvailable {
+                Button { model.updates.checkForUpdates() } label: { Label("Check for Updates…", systemImage: "arrow.down.circle") }
+                    .disabled(!model.updates.canCheckForUpdates)
+            }
+            Button { model.presentReport() } label: { Label("Report a Bug or Request a Feature…", systemImage: "ladybug") }
         }
         CommandGroup(replacing: .appInfo) {
             Button("About Gloss") { AboutPanel.show() }
+            if model.updates.isAvailable {
+                Button("Check for Updates…") { model.updates.checkForUpdates() }
+                    .disabled(!model.updates.canCheckForUpdates)
+            }
         }
         CommandGroup(after: .newItem) {
             Button {

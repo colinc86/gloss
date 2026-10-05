@@ -12,6 +12,7 @@
 		CC00000000000000000000A3 /* Remote in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A3 /* Remote */; };
 		CC00000000000000000000A4 /* Transports in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A4 /* Transports */; };
 		CC00000000000000000000A5 /* Integrations in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A5 /* Integrations */; };
+		CC00000000000000000000A6 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BB00000000000000000000A6 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,6 +65,7 @@
 				CC00000000000000000000A3 /* Remote in Frameworks */,
 				CC00000000000000000000A4 /* Transports in Frameworks */,
 				CC00000000000000000000A5 /* Integrations in Frameworks */,
+				CC00000000000000000000A6 /* Sparkle in Frameworks */,
 			);
 		};
 		3B84F6AE306F03BF003DBBFF /* Frameworks */ = {
@@ -115,6 +117,7 @@
 				BB00000000000000000000A3 /* Remote */,
 				BB00000000000000000000A4 /* Transports */,
 				BB00000000000000000000A5 /* Integrations */,
+				BB00000000000000000000A6 /* Sparkle */,
 			);
 			productName = "Gloss";
 			productReference = 3B84F6A2306F03BD003DBBFF /* Gloss.app */;
@@ -175,6 +178,7 @@
 				AA00000000000000000000A3 /* XCLocalSwiftPackageReference "Packages/Remote" */,
 				AA00000000000000000000A4 /* XCLocalSwiftPackageReference "Packages/Transports" */,
 				AA00000000000000000000A5 /* XCLocalSwiftPackageReference "Packages/Integrations" */,
+				AA00000000000000000000A6 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B84F6A3306F03BD003DBBFF /* Products */;
@@ -361,7 +365,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.Gloss";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -392,7 +396,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.Gloss";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -413,7 +417,7 @@
 				DEVELOPMENT_TEAM = 4WS4246RA4;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.GlossTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -434,7 +438,7 @@
 				DEVELOPMENT_TEAM = 4WS4246RA4;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.cnc.GlossTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -498,6 +502,17 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		AA00000000000000000000A6 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		BB00000000000000000000A1 /* Core */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -518,6 +533,11 @@
 		BB00000000000000000000A5 /* Integrations */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Integrations;
+		};
+		BB00000000000000000000A6 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA00000000000000000000A6 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -15,5 +15,13 @@
 			</array>
 		</dict>
 	</array>
+	<key>SUFeedURL</key>
+	<string>https://api.github.com/repos/colinc86/gloss/contents/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>SET_BY_GENERATE_KEYS</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 </dict>
 </plist>

@@ -26,9 +26,12 @@ struct SettingsView: View {
                         Text("Dotfiles appear in the file tree from the start; the eye under the tree switches them until you quit.")
                     }
                 }
+                if model.updates.isAvailable {
+                    UpdatesSection()
+                }
             }
             .formStyle(.grouped)
-            .frame(height: 236)
+            .frame(height: model.updates.isAvailable ? 380 : 236)
             .tabItem { Label("General", systemImage: "gear") }
 
             Form {
@@ -740,7 +743,7 @@ private struct IntegrationsSettings: View {
             } header: {
                 Label("GitHub", systemImage: "arrow.triangle.pull")
             } footer: {
-                Text("Pull requests open as documents: description, conversation, changed files at the head commit. A read-only fine-grained token with Pull requests and Contents access is enough.")
+                Text("Pull requests open as documents: description, conversation, changed files at the head commit. A read-only fine-grained token with Pull requests and Contents access is enough. While Gloss's repository is private, the same key fetches updates; sending feedback from the app also needs a key that can create issues, otherwise feedback finishes on GitHub.")
             }
             Section {
                 statusLine(integrations.atlassianStatus, unset: "No key saved")
@@ -920,6 +923,38 @@ private struct StorageRow: View {
                 .help("Show in Finder: \(folder.path)")
                 .accessibilityLabel("Show \(title) in Finder")
                 .disabled(!FileManager.default.fileExists(atPath: folder.path))
+            }
+        }
+    }
+}
+
+/// Settings › General › Updates: Sparkle's automatic checks, when it last looked, and a check now.
+private struct UpdatesSection: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var updates = model.updates
+        Section {
+            Toggle(isOn: $updates.automaticallyChecks) {
+                Text("Check for updates automatically")
+                Text("Once a day. When there's a new version you see what changed and choose whether to install it.")
+            }
+            LabeledContent {
+                Button("Check Now") { updates.checkForUpdates() }
+                    .disabled(!updates.canCheckForUpdates || model.integrations.github == nil)
+            } label: {
+                Text("Last checked")
+                if let last = updates.lastCheck {
+                    Text(last, format: .relative(presentation: .named))
+                } else {
+                    Text("Never")
+                }
+            }
+        } header: {
+            Text("Updates")
+        } footer: {
+            if model.integrations.github == nil {
+                Text("While Gloss's repository is private, updates need GitHub connected in Integrations.")
             }
         }
     }

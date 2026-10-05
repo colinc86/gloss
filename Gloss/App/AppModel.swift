@@ -23,6 +23,7 @@ final class AppModel {
     let hosts: HostsModel
     let hooks = HooksModel()
     let integrations: IntegrationsModel
+    let updates: UpdaterService
     /// Why the notes database could not be opened at launch, shown until dismissed; nil when it opened.
     var databaseFailure: String?
 
@@ -126,7 +127,14 @@ final class AppModel {
     ///   reaches a real service.
     init(launchOptions: AppLaunchOptions, integrationsSession: URLSession = .shared) {
         // A test host or a throwaway run keeps keys in memory: no Keychain prompt, nothing left behind.
-        integrations = IntegrationsModel(store: launchOptions.resetDatabase || launchOptions.isTestHost ? MemoryCredentialStore() : KeychainCredentialStore(), session: integrationsSession)
+        let integrations = IntegrationsModel(store: launchOptions.resetDatabase || launchOptions.isTestHost ? MemoryCredentialStore() : KeychainCredentialStore(), session: integrationsSession)
+        self.integrations = integrations
+        #if DEBUG
+        let updatable = false
+        #else
+        let updatable = !launchOptions.isTestHost
+        #endif
+        updates = UpdaterService(enabled: updatable) { [weak integrations] in integrations?.github?.token }
         self.launchOptions = launchOptions
         let database: AppDatabase
         do {
@@ -160,7 +168,6 @@ final class AppModel {
         }
         send.register(herdrTransport)
         send.register(TmuxTransport(registry: connectionRegistry))
-        let settings = settings
         send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
@@ -818,6 +825,12 @@ final class AppModel {
         isOpenLocationPresented = true
     }
 
+    var isReportPresented = false
+
+    func presentReport() {
+        isReportPresented = true
+    }
+
     /// Keeps a handful of recent clean sessions open; closes the rest so watchers and observations do not pile up.
     static let maximumOpenSessions = 8
     @ObservationIgnored private var activationOrder: [String] = []
@@ -1045,6 +1058,8 @@ final class AppModel {
         }
         #endif
         await integrations.load()
+        // After the keys are loaded: a check due at launch must find the GitHub key.
+        updates.start()
         scheduleIntegrationRegistration()
         await registration?.value
         explorer.showDotfiles = settings.showDotfilesByDefault

@@ -77,6 +77,14 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
+                        model.presentReport()
+                    } label: {
+                        Label("Report a Bug or Request a Feature", systemImage: "ladybug")
+                    }
+                    .help("Report a bug or request a feature")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
                         model.showNotesPanel.toggle()
                     } label: {
                         Label("Notes", systemImage: "note.text")
@@ -88,6 +96,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: Binding(get: { model.isOpenLocationPresented }, set: { model.isOpenLocationPresented = $0 })) {
             OpenLocationSheet()
+        }
+        .sheet(isPresented: Binding(get: { model.isReportPresented }, set: { model.isReportPresented = $0 })) {
+            ReportSheet()
         }
         .sheet(isPresented: Binding(get: { model.pullRequestPicker.isPresented }, set: { if !$0 { model.pullRequestPicker.dismiss() } })) {
             OpenPullRequestSheet()

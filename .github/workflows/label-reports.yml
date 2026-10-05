@@ -1,0 +1,29 @@
+# Reports sent from Gloss end with a marker. GitHub drops the labels a sender without push access asks for,
+# so this labels them instead: every bug report and feature request gets its label, whoever sent it.
+name: Label reports
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    if: contains(github.event.issue.body, '<!-- gloss-report:')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the report's label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          case "$BODY" in
+            *'<!-- gloss-report: bug -->'*) label=bug ;;
+            *'<!-- gloss-report: feature -->'*) label=enhancement ;;
+            *) exit 0 ;;
+          esac
+          gh issue edit "$NUMBER" --add-label "$label"

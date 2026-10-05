@@ -1,0 +1,14 @@
+name: Bug
+description: Something in Gloss isn't working.
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened, and what did you expect?
+      description: Steps to make it happen again help most.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Versions
+      description: From Gloss › About Gloss, e.g. "Gloss 0.1.0 (118) · macOS 26.0.1 · arm64".

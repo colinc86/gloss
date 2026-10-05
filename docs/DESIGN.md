@@ -132,6 +132,8 @@ behave like Mac search fields: Escape clears the text, a second Escape leaves th
 Commands that act in the main window bring it forward first: New Note from Selection, chosen while Settings or
 Keyboard Shortcuts is in front, raises the main window and then opens the composer (a popover there), instead of
 doing nothing (`AppModel.beginNoteInMainWindow`).
+Gloss › Check for Updates… sits under About, where Mac apps keep it, and again in Help beside Report a Bug or
+Request a Feature…; release builds only.
 Help › Keyboard Shortcuts (⌘/) opens a reference window (`ShortcutsWindow`): shortcuts grouped by where they work,
 each key a raised key cap, alternatives separated by a quiet "or", with a search field. It replaces the default
 help item, which pointed at a help book that does not exist. The menu groups are read from the menu bar itself (`ShortcutGroup.fromMenu`), so a new or changed shortcut appears there without anyone remembering to list it; the app menu and the standard Edit commands are left out. Only keys with no menu item (the note composer, viewers, the folder switcher) are listed by hand in `ShortcutGroup.contextual`.
@@ -594,7 +596,7 @@ path. Dropping on the Dock icon is not supported yet.
   Install touches and how to undo it: nothing changes until you press Install, each edited settings file is first
   copied beside itself (`*.gloss-backup-…`, the last three kept), and Remove takes out only what was added.
 - **Settings**: every tab is a `.formStyle(.grouped)` form, 600 pt wide, with its own height so the window
-  resizes to each tab as System Settings does (General 236, Editor 330, Agents 640, Integrations 660, Attachments 380, Hosts 440). Toggles
+  resizes to each tab as System Settings does (General 380 with its Updates section, 236 in debug builds without it, Editor 330, Agents 640, Integrations 660, Attachments 380, Hosts 440). Toggles
   carry a second line saying what they do; words match the rest of the app ("folder", never "root"). A setting
   shows its effect where it can: the editor font slider drives a live code preview, with the size in monospaced
   digits beside it. A setting must do something, at once: Editor's font size, wrapping, and indent guides
@@ -613,6 +615,18 @@ path. Dropping on the Dock icon is not supported yet.
   red failed, grey idle), the name, and a second line with the address and state (ssh config aliases show only the
   state, with an "ssh config" tag, since their address lives in that file). Hosts added in the app can be edited
   and removed; removal asks first.
+- **General › Updates** (release builds): "Check for updates automatically" (Sparkle's own setting), "Last checked"
+  with the relative date and Check Now; while the repository is private and no GitHub key is saved, the footer says
+  updates need GitHub connected in Integrations and Check Now is off. The update dialog itself is Sparkle's
+  standard one; the release notes in it use the system font and follow light and dark (the appcast's stylesheet).
+- **Feedback sheet** (`ladybug` in the toolbar, before the notes toggle; Help › Report a Bug or Request a Feature…):
+  480 pt, title "Send Feedback" and a line saying what it is for; a segmented Bug / Feature Request (ladybug,
+  sparkles); a title field whose prompt is an example of a good title; a description box with a placeholder asking
+  for what happened and what was expected (or what it would help with); a checkbox "Include Gloss and macOS
+  versions" with the exact line under it, dimmed when off. The footnote says who it is sent as ("Sent as @login"),
+  or "Opens on GitHub to finish." when there is no key, and the default button reads Send or Continue in Browser
+  to match. A refusal shows in orange above the buttons and turns Send into Continue in Browser. Sent, the sheet
+  becomes a green check that bounces once, "Thanks, we've got it.", with View Report and Done.
 - **Integrations** (`key`): one section per service, GitHub and Atlassian. Each has the Status line (dot and
   sentence: "Signed in as colinc86 · repo, user", "Colin Campbell · Jira and Confluence", or the service's own error),
   a `SecureField` for the token (its prompt says "Saved · paste a new one to replace it" once one is), Atlassian's

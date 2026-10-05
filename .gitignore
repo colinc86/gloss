@@ -20,3 +20,4 @@ integrations.env
 # Build artifacts
 Packages/.build/
 *.profraw
+build/

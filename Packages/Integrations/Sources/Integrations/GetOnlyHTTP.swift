@@ -159,7 +159,7 @@ public actor GetOnlyHTTP {
     }
 
     /// The `message` GitHub and Atlassian put in error bodies, when there is one.
-    nonisolated static func message(in data: Data) -> String? {
+    nonisolated public static func message(in data: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         if let message = object["message"] as? String { return message }
         if let messages = object["errorMessages"] as? [String], let first = messages.first { return first }

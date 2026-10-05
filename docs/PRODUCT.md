@@ -156,6 +156,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 | Herdr client | Hand-written NDJSON client | Simple protocol |
 | Other viewers | PDFKit, NSImageView with overlay, QLPreviewView | System frameworks |
 | Distribution | Developer ID signed, notarized, no App Sandbox | Needs ssh, ssh config, localhost listener |
+| Updates | Sparkle 2, appcast and releases on GitHub | The update dialog, signature checks and in-place install every Mac app user knows |
 
 **Process model.** One app process. SSH connections are child processes supervised by a connection manager actor. MCP server, Herdr clients, and file watchers are structured concurrency tasks.
 
@@ -231,11 +232,28 @@ Milestone 2 (scoped 2026-10-03) runs the same loop, select → note → send →
 - [x] `open_in_viewer` with a PR, issue or page URL opens it (an agent can say "look at this") — pull request and web URLs: `MCPServerTests.openInViewerUsesTheSessionHost` (url → github:/o/r/pull/12/Pull request.md, web:…) and the `gloss://open?url=` route opened a changed file live; issue and page URLs of the saved site resolve to the atlassian host (`AtlassianOpenTests.urlsOfTheSavedSiteRouteToTheAtlassianHost`, `mcpURLsResolveOnlyForTheSavedSite`); another site's URL stays a web page
 - [x] Every request the app makes with an integration key during a full live session is a GET — by construction: every client call goes through `GetOnlyHTTP.get`, the only verb the type has (`everyRequestIsAGet` records the methods of a session's requests and asserts `["GET"]`), and the phase C and D live sessions' request logs held only GET lines
 
+## Updates and feedback
+
+Scoped 2026-10-04. Gloss is released from its GitHub repository (`colinc86/gloss`) and keeps itself up to date the way other Mac apps do.
+
+- **Updates are Sparkle's.** Gloss › Check for Updates… (also in Help) and a daily check that Settings › General can turn off. When a newer version exists, Sparkle's dialog shows its release notes (the GitHub release's description) with Install Update, Remind Me Later and Skip This Version; installing replaces the app in place and relaunches it. Every release is notarized, and its zip is signed with the project's EdDSA key, which Sparkle checks before installing. `scripts/release.sh` builds, notarizes, publishes the release and lists it in `appcast.xml` at the repository root (see `docs/RELEASE.md`). Debug builds never check.
+- **While the repository is private**, the feed and the release files are read through the GitHub API with the key from Settings › Integrations; without a key there are no updates and a manual check says why. When the repository goes public the feed moves to a public URL and updates need no key.
+- **Feedback is a sheet.** The ladybug in the toolbar (and Help › Report a Bug or Request a Feature…) asks for Bug or Feature Request, a title and a description, and offers to include the app and macOS versions, shown before sending; nothing else about the machine is attached. With a GitHub key that can create issues it is filed as an issue on Gloss's repository, labelled `bug` or `enhancement`; otherwise, or when GitHub refuses the key, the same report opens on GitHub's new-issue form, filled in. A marker in the body lets the repository's `label-reports` workflow label reports from people without push access, whose requested labels GitHub drops.
+- **The one write.** Filing feedback is the only write the app makes to GitHub, and only to its own repository, from its own client (`IssueReporter`); the integrations clients stay GET-only.
+
+**Acceptance checks.**
+
+- [ ] `scripts/release.sh 0.1.0 notes.md` publishes a notarized `v0.1.0` with its zip and lists it in `appcast.xml`
+- [ ] A release build of 0.0.9 with the GitHub key saved finds 0.1.0, shows its notes, installs it and relaunches as 0.1.0
+- [ ] Without a key, Check for Updates says updates need GitHub connected; a scheduled check stays quiet
+- [ ] Turning off automatic checks in Settings › General stops the daily check
+- [ ] A bug report sent from the sheet arrives as an issue labelled `bug`; without a key, Continue in Browser opens the filled-in form
+
 ## Non-goals, risks, and open questions
 
 **Non-goals for milestone 1.** Not a terminal. Not a git client (status dimming only). Not an IDE (no LSP, debugging, builds). No remote helper daemon. No editing of images, PDFs, spreadsheets. No iOS, no multi-user sync.
 
-**Non-goals for milestone 2.** Not a general browser (no bookmarks, passwords, extensions, downloads). The app never writes to GitHub, Jira or Confluence. No side-by-side diff viewer. No editing of tickets or pages in the app. Absolute `fetch("http://localhost:…")` calls inside a proxied page reach this Mac, not the remote host; relative requests work.
+**Non-goals for milestone 2.** Not a general browser (no bookmarks, passwords, extensions, downloads). The app never writes to GitHub, Jira or Confluence (feedback filed on Gloss's own repository is the one exception; see Updates and feedback). No side-by-side diff viewer. No editing of tickets or pages in the app. Absolute `fetch("http://localhost:…")` calls inside a proxied page reach this Mac, not the remote host; relative requests work.
 
 **Risks.**
 
