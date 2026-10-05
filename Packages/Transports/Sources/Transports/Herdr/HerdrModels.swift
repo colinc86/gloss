@@ -12,6 +12,8 @@ public enum HerdrError: Error, Sendable, Equatable {
     case eventsLost
     case connection(String)
     case subscriptionRefused(String)
+    /// Herdr accepted the connection but did not answer in time.
+    case timedOut
 
     public static let lineLimit = 1_048_576
 }

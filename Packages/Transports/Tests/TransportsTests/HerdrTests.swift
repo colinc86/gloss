@@ -102,4 +102,66 @@ struct HerdrTests {
         guard result.status == 0 else { throw HerdrError.connection("cc failed") }
         return "\(directory)/claude"
     }
+
+    /// A Unix socket that accepts and, per connection, writes `reply` (if any) and then holds the connection open.
+    final class SilentSocket: @unchecked Sendable {
+        let path: String
+        private let fd: Int32
+        private let thread: Thread
+        init(reply: Data? = nil) throws {
+            let socketPath = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-h-\(UUID().uuidString.prefix(6)).sock")
+            let listener = socket(AF_UNIX, SOCK_STREAM, 0)
+            var address = sockaddr_un()
+            address.sun_family = sa_family_t(AF_UNIX)
+            _ = withUnsafeMutableBytes(of: &address.sun_path) { raw in socketPath.utf8CString.withUnsafeBytes { raw.copyMemory(from: $0) } }
+            let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+            guard bound == 0, listen(listener, 4) == 0 else { close(listener); throw POSIXError(.EADDRINUSE) }
+            path = socketPath
+            fd = listener
+            thread = Thread {
+                var held: [Int32] = []
+                while true {
+                    let client = accept(listener, nil, nil)
+                    if client < 0 { break }
+                    if let reply { _ = reply.withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) } }
+                    held.append(client)
+                }
+                held.forEach { close($0) }
+            }
+            thread.start()
+        }
+        func stop() {
+            shutdown(fd, SHUT_RDWR)
+            close(fd)
+            unlink(path)
+        }
+    }
+
+    @Test func aServerThatNeverAnswersTimesOut() async throws {
+        let server = try SilentSocket()
+        defer { server.stop() }
+        let started = ContinuousClock.now
+        await #expect(throws: HerdrError.timedOut) { _ = try await HerdrClient(socketPath: server.path).call("ping", timeout: .milliseconds(300)) }
+        #expect(ContinuousClock.now - started < .seconds(3))
+
+        // Cancelling the caller ends the call too.
+        let task = Task { _ = try await HerdrClient(socketPath: server.path).call("ping", timeout: .seconds(60)) }
+        try await Task.sleep(for: .milliseconds(100))
+        task.cancel()
+        let cancelled = ContinuousClock.now
+        await #expect(throws: (any Error).self) { try await task.value }
+        #expect(ContinuousClock.now - cancelled < .seconds(3))
+    }
+
+    @Test func anOversizedReplyLineIsAnErrorNotData() async throws {
+        var reply = Data(#"{"id":"1","result":{}}"#.utf8)
+        reply.append(0x0A)
+        reply.append(Data(repeating: 0x61, count: HerdrError.lineLimit + 70_000))
+        let server = try SilentSocket(reply: reply)
+        defer { server.stop() }
+        let client = HerdrClient(socketPath: server.path)
+        // The first, complete line is the reply; the call never sees the oversized tail.
+        let result = try await client.call("ping", timeout: .seconds(5))
+        #expect(result.isEmpty)
+    }
 }

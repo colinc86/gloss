@@ -13,14 +13,29 @@ public struct HerdrClient: Sendable {
 
     // MARK: Raw calls
 
-    /// Sends one request and returns the `result` object of the first reply line.
-    public func call(_ method: String, params: [String: any Sendable] = [:]) async throws -> [String: Any] {
+    /// How long one request may take, from connecting to its reply line.
+    public static let callTimeout: Duration = .seconds(15)
+
+    /// Sends one request and returns the `result` object of the first reply line. A wedged server (or a forwarded
+    /// socket whose far end never answers) fails with `timedOut` instead of hanging, and cancelling the calling
+    /// task closes the connection.
+    public func call(_ method: String, params: [String: any Sendable] = [:], timeout: Duration = HerdrClient.callTimeout) async throws -> [String: Any] {
         let line = try Self.requestLine(method: method, params: params)
         let connection = LineConnection(socketPath: socketPath)
         defer { connection.cancel() }
-        try await connection.open()
-        try await connection.send(line)
-        guard let first = try await connection.nextLine() else { throw HerdrError.emptyReply }
+        let watchdog = Task {
+            try await Task.sleep(for: timeout)
+            connection.fail(HerdrError.timedOut)
+        }
+        defer { watchdog.cancel() }
+        let first = try await withTaskCancellationHandler {
+            try await connection.open()
+            try await connection.send(line)
+            return try await connection.nextLine()
+        } onCancel: {
+            connection.fail(CancellationError())
+        }
+        guard let first else { throw HerdrError.emptyReply }
         return try Self.result(from: first)
     }
 
@@ -81,16 +96,24 @@ public struct HerdrClient: Sendable {
     // MARK: Events
 
     /// Opens a subscription and streams its frames until the server closes the connection or the consumer cancels.
-    /// Throws `HerdrError.eventsLost` when the server reports it fell behind.
+    /// Throws `HerdrError.eventsLost` when the server reports it fell behind. A slow consumer keeps the newest 256
+    /// events (each one is a hint to re-read state), so a flood can't grow memory; the subscription must be
+    /// acknowledged within `callTimeout`.
     public func subscribe(_ subscriptions: [[String: String]]) -> AsyncThrowingStream<HerdrEvent, any Error> {
         let socketPath = socketPath
-        return AsyncThrowingStream { continuation in
+        return AsyncThrowingStream(HerdrEvent.self, bufferingPolicy: .bufferingNewest(256)) { continuation in
             let connection = LineConnection(socketPath: socketPath)
             let task = Task {
                 do {
+                    let watchdog = Task {
+                        try await Task.sleep(for: Self.callTimeout)
+                        connection.fail(HerdrError.timedOut)
+                    }
                     try await connection.open()
                     try await connection.send(try Self.requestLine(method: "events.subscribe", params: ["subscriptions": subscriptions]))
-                    guard let ack = try await connection.nextLine() else { throw HerdrError.emptyReply }
+                    let ack = try await connection.nextLine()
+                    watchdog.cancel()
+                    guard let ack else { throw HerdrError.emptyReply }
                     let acked = try Self.result(from: ack)
                     guard acked["type"] as? String == "subscription_started" else { throw HerdrError.subscriptionRefused("\(acked)") }
                     while let line = try await connection.nextLine() {
@@ -146,7 +169,16 @@ final class LineConnection: Sendable {
 
     func open() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            state.withLock { $0.opened = continuation }
+            // Failed (timed out, cancelled) before opening began: a cancelled NWConnection never reports a state.
+            let early: (any Error)? = state.withLock { state in
+                if state.openResolved { return state.failure ?? HerdrError.connection("cancelled") }
+                state.opened = continuation
+                return nil
+            }
+            if let early {
+                continuation.resume(throwing: early)
+                return
+            }
             connection.stateUpdateHandler = { [self] newState in
                 switch newState {
                 case .ready:
@@ -198,8 +230,7 @@ final class LineConnection: Sendable {
                     return state.buffer.endIndex - tailStart > HerdrError.lineLimit
                 }
                 if oversized {
-                    finish(error: HerdrError.decoding("reply line over 1 MiB"))
-                    connection.cancel()
+                    fail(HerdrError.decoding("reply line over 1 MiB"))
                     return
                 }
                 deliverLines()
@@ -227,18 +258,28 @@ final class LineConnection: Sendable {
     }
 
     private func finish(error: (any Error)?) {
-        let waiter: (CheckedContinuation<Data?, any Error>, Data?)? = state.withLock { state in
+        let waiter: (CheckedContinuation<Data?, any Error>, Data?, (any Error)?)? = state.withLock { state in
             state.finished = true
             state.failure = state.failure ?? error
+            let failure = state.failure
+            // After a failure the buffer is dropped, not handed over as a line: it may be an oversized fragment.
+            if failure != nil { state.buffer = Data() }
             guard let waiter = state.waiter else { return nil }
             state.waiter = nil
-            // A final line without a trailing newline still counts.
+            // A final line without a trailing newline still counts on a clean close.
             let rest = state.buffer
             state.buffer = Data()
-            return (waiter, rest.isEmpty ? nil : rest)
+            return (waiter, rest.isEmpty ? nil : rest, failure)
         }
-        guard let (continuation, rest) = waiter else { return }
-        if let rest { continuation.resume(returning: rest) } else if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: nil) }
+        guard let (continuation, rest, failure) = waiter else { return }
+        if let failure { continuation.resume(throwing: failure) } else { continuation.resume(returning: rest) }
+    }
+
+    /// Ends the connection with `error`: a waiting open or read throws it, and so does every later read.
+    func fail(_ error: any Error) {
+        resolveOpen(error)
+        finish(error: error)
+        connection.cancel()
     }
 
     /// The next line, or nil at EOF. Throws when the connection failed.
