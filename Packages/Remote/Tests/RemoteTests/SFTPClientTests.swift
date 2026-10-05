@@ -31,6 +31,58 @@ struct SFTPClientTests {
         await client.close()
     }
 
+    /// Answers the INIT with a login banner before anything else, as a chatty .bashrc does.
+    final class BannerTransport: SFTPTransport, @unchecked Sendable {
+        let incoming: AsyncStream<Data>
+        private let continuation: AsyncStream<Data>.Continuation
+        let banner: Data
+        init(_ banner: String) {
+            self.banner = Data(banner.utf8)
+            (incoming, continuation) = AsyncStream.makeStream()
+        }
+        func send(_ data: Data) async throws { continuation.yield(banner) }
+        func close() { continuation.finish() }
+    }
+
+    @Test func aShellBannerFailsTheHandshakeInsteadOfHanging() async throws {
+        for banner in ["\nWelcome to devbox\n", "Last login: Sat Oct  4 10:00:00 2026\n"] {
+            let started = ContinuousClock.now
+            do {
+                _ = try await SFTPClient.connect(transport: BannerTransport(banner))
+                Issue.record("connected through a banner")
+            } catch SFTPClientError.protocolError(let message) {
+                #expect(message.contains("printed text before SFTP started"), "\(message)")
+            }
+            #expect(ContinuousClock.now - started < .seconds(2))
+        }
+        #expect(SFTPClient.bannerBeforeVersion(Data([0, 0, 0, 5, 2])) == nil, "a real VERSION header is not a banner")
+        #expect(SFTPClient.bannerBeforeVersion(Data([0, 0])) == nil, "too short to tell")
+    }
+
+    @Test func aReadThatNeverEndsStopsAtItsLimit() async throws {
+        let server = FakeSFTPServer()
+        server.putEndless("/home/test/zero")
+        server.putEndless("/home/test/liar", reportedSize: 100)
+        let client = try await SFTPClient.connect(transport: server)
+        await #expect(throws: SFTPClientError.fileTooLarge(limit: 64 * 1024)) { try await client.readFile("/home/test/zero", limit: 64 * 1024) }
+        await #expect(throws: SFTPClientError.fileTooLarge(limit: 64 * 1024)) { try await client.readFile("/home/test/liar", limit: 64 * 1024) }
+        // A size claim past the limit is refused before anything is allocated.
+        server.put("/home/test/huge", "tiny", reportedSize: .max)
+        await #expect(throws: SFTPClientError.fileTooLarge(limit: 64 * 1024)) { try await client.readFile("/home/test/huge", limit: 64 * 1024) }
+        await client.close()
+    }
+
+    @Test func absurdSizesDoNotTrap() async throws {
+        let server = FakeSFTPServer()
+        server.put("/home/test/huge", "tiny", reportedSize: .max)
+        let client = try await SFTPClient.connect(transport: server)
+        let fs = SFTPFileSystem(hostID: HostID.new(), channel: SFTPChannel(client: client))
+        #expect(try await fs.list("/home/test").first { $0.name == "huge" }?.size == .max)
+        #expect(try await fs.stat("/home/test/huge").size == .max)
+        await #expect(throws: FileSystemError.self) { try await fs.read("/home/test/huge") }
+        await client.close()
+    }
+
     @Test func fileSystemListsStatsAndWritesAtomically() async throws {
         let server = FakeSFTPServer()
         server.put("/home/test/a.md", "hello", permissions: 0o600)

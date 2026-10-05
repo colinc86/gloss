@@ -96,7 +96,7 @@ public struct SFTPFileSystem: FileSystemProvider {
                 DirectoryEntry(
                     name: entry.name, path: PathUtilities.join(directory, entry.name),
                     kind: Self.kind(entry.attributes.fileType), targetKind: entry.target.map { Self.kind($0.fileType) },
-                    size: entry.attributes.size.map(Int64.init), mtime: entry.attributes.mtime.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                    size: entry.attributes.size.map { Int64(clamping: $0) }, mtime: entry.attributes.mtime.map { Date(timeIntervalSince1970: TimeInterval($0)) },
                     mode: entry.attributes.mode
                 )
             }
@@ -126,6 +126,8 @@ public struct SFTPFileSystem: FileSystemProvider {
             return try await client.readFile(path)
         } catch let status as SFTPStatus {
             throw Self.map(status, path: path)
+        } catch SFTPClientError.fileTooLarge(let limit) {
+            throw FileSystemError.io("\(path) is larger than \(ByteCountFormatter.string(fromByteCount: Int64(clamping: limit), countStyle: .file)), or never ends")
         }
     }
 
@@ -231,7 +233,8 @@ public struct SFTPFileSystem: FileSystemProvider {
                         let attributes = try await client.stat(path)
                         if attributes.fileType == .directory {
                             let entries = try await client.listDirectory(path)
-                            let listing = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, ($0.attributes.size, $0.attributes.mtime)) })
+                            // A name can come twice when the folder changes between READDIR pages; keep the first rather than trap.
+                            let listing = Dictionary(entries.map { ($0.name, ($0.attributes.size, $0.attributes.mtime)) }, uniquingKeysWith: { first, _ in first })
                             if let previous = lastListing {
                                 var changed = Set(listing.keys).symmetricDifference(previous.keys)
                                 for (name, current) in listing {
@@ -277,7 +280,7 @@ public struct SFTPFileSystem: FileSystemProvider {
 
     static func attributes(_ attributes: SFTPAttributes) -> FileAttributes {
         FileAttributes(
-            kind: kind(attributes.fileType), size: Int64(attributes.size ?? 0),
+            kind: kind(attributes.fileType), size: Int64(clamping: attributes.size ?? 0),
             mtime: Date(timeIntervalSince1970: TimeInterval(attributes.mtime ?? 0)), mode: attributes.mode
         )
     }

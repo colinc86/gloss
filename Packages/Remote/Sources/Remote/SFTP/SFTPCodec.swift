@@ -183,8 +183,10 @@ public enum SFTPCodecError: Error, Equatable, Sendable {
 
 /// Pure encode and decode; the client adds pipelining around it.
 public enum SFTPCodec {
-    /// Packets above this are a framing error, not a huge read.
-    public static let maximumPacketLength: UInt32 = 256 * 1024 * 1024
+    /// Packets above this are a framing error, not a huge read. Reads are capped at 4 MiB and OpenSSH sends at most
+    /// 256 KiB, so 8 MiB is generous; a bigger "length" is text (a shell banner) read as a header, and waiting for
+    /// that many bytes would hang.
+    public static let maximumPacketLength: UInt32 = 8 * 1024 * 1024
 
     public static func encode(_ request: SFTPRequest, id: UInt32) -> Data {
         var body = BinaryWriter()

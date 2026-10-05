@@ -43,6 +43,8 @@ final class DocumentSession: Identifiable {
 
     static let readOnlyThreshold: Int64 = 2 * 1024 * 1024
     static let refuseThreshold: Int64 = 50 * 1024 * 1024
+    /// Images and PDFs are decoded whole; past this they are refused rather than read into memory.
+    static let mediaThreshold: Int64 = 200 * 1024 * 1024
 
     let id: String
     let hostID: HostID
@@ -195,6 +197,16 @@ final class DocumentSession: Identifiable {
         do {
             let attributes = try await fileSystem.stat(path)
             attributesAtOpen = attributes
+            // A FIFO, socket or device (or a link to one, such as /dev/zero) never reaches EOF: reading it
+            // would block or fill memory. Only regular files are read.
+            if attributes.kind == .other {
+                throw FileSystemError.io("\(fileName) is not a regular file")
+            }
+            if (kind == .image || kind == .pdf), attributes.size > Self.mediaThreshold {
+                banner = .tooLarge
+                state = .unsupported(kind)
+                return
+            }
             if kind == .image {
                 let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
                 let decoded = try ImageDecoder.decode(data, fileName: fileName)

@@ -8,6 +8,10 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
         var data: Data
         var permissions: UInt32
         var mtime: UInt32
+        /// Answers every READ with a full buffer and never EOF, like /dev/zero or a FIFO.
+        var endless = false
+        /// The size ATTRS report instead of the data's, as a broken or hostile server might.
+        var reportedSize: UInt64?
     }
 
     private struct State {
@@ -49,6 +53,16 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
                 directory = (directory as NSString).deletingLastPathComponent
             }
         }
+    }
+
+    /// A file whose READs never end, with the size its ATTRS claim.
+    func putEndless(_ path: String, reportedSize: UInt64 = 0) {
+        state.withLock { $0.files[path] = File(data: Data(), permissions: 0o644, mtime: 1_700_000_000, endless: true, reportedSize: reportedSize) }
+    }
+
+    func put(_ path: String, _ text: String, reportedSize: UInt64) {
+        put(path, text)
+        state.withLock { $0.files[path]?.reportedSize = reportedSize }
     }
 
     func contents(_ path: String) -> String? {
@@ -113,7 +127,7 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
     }
 
     private func attrs(_ file: File) -> SFTPAttributes {
-        SFTPAttributes(size: UInt64(file.data.count), uid: 501, gid: 20, permissions: 0o100000 | file.permissions, atime: file.mtime, mtime: file.mtime)
+        SFTPAttributes(size: file.reportedSize ?? UInt64(file.data.count), uid: 501, gid: 20, permissions: 0o100000 | file.permissions, atime: file.mtime, mtime: file.mtime)
     }
 
     private func directoryAttrs() -> SFTPAttributes {
@@ -182,6 +196,7 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
                 let handle = String(decoding: try reader.bytes(), as: UTF8.self)
                 let offset = Int(try reader.uint64()); let length = Int(try reader.uint32())
                 guard let open = state.handles[handle], let file = state.files[open.path] else { return [status(id, .failure)] }
+                if file.endless { return [reply(.data, id: id) { $0.append(Data(count: length)) }] }
                 guard offset < file.data.count else { return [status(id, .eof)] }
                 let slice = file.data.subdata(in: offset..<min(file.data.count, offset + length))
                 return [reply(.data, id: id) { $0.append(slice) }]

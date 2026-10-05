@@ -51,6 +51,8 @@ public enum SFTPClientError: Error, Sendable, Equatable {
     case unsupportedVersion(UInt32)
     /// The ssh subsystem exited before the handshake finished; carries ssh's stderr.
     case subsystemFailed(String)
+    /// A whole-file read passed its byte limit (a device, a FIFO behind a symlink, a log that never stops growing).
+    case fileTooLarge(limit: UInt64)
 }
 
 /// Pipelined SFTP v3 client: every call awaits its own continuation keyed by request id, so callers can
@@ -122,6 +124,13 @@ public actor SFTPClient {
 
     private func received(_ chunk: Data) {
         buffer.append(chunk)
+        if versionWaiter != nil, let banner = Self.bannerBeforeVersion(buffer) {
+            // A login script that prints on a non-interactive shell corrupts the stream before SFTP starts.
+            Self.log.error("Text before the SFTP VERSION reply")
+            failAll(SFTPClientError.protocolError("The remote shell printed text before SFTP started (\"\(banner)\"). Make its startup files quiet for non-interactive sessions."))
+            transport.close()
+            return
+        }
         while true {
             let frame: SFTPFrame?
             do {
@@ -144,6 +153,18 @@ public actor SFTPClient {
                 waiter.resume(returning: frame.reply)
             }
         }
+    }
+
+    /// The first packet must be a small VERSION (type 2). Anything else is printable text read as a header; returns
+    /// its start for the error message, or nil while the first packet still looks right or is incomplete.
+    static func bannerBeforeVersion(_ buffer: Data) -> String? {
+        guard buffer.count >= 5 else { return nil }
+        let bytes = Array(buffer.prefix(5))
+        let length = bytes[0..<4].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        guard length > 64 * 1024 || bytes[4] != SFTPPacketType.version.rawValue else { return nil }
+        let text = String(decoding: buffer.prefix(80), as: UTF8.self)
+            .unicodeScalars.map { $0.properties.isWhitespace ? " " : (($0.value < 0x20 || $0.value == 0x7F) ? "·" : String($0)) }.joined()
+        return text.trimmingCharacters(in: .whitespaces)
     }
 
     private func transportEnded() {
@@ -290,11 +311,15 @@ public actor SFTPClient {
 
     // MARK: Higher-level
 
-    /// Reads a whole file with up to 16 READs in flight, reassembled by offset.
-    public func readFile(_ path: String) async throws -> Data {
+    /// Reads a whole file with up to 16 READs in flight, reassembled by offset. Stops with `fileTooLarge` past
+    /// `limit` bytes: the size the server reports is only a hint (zero for `/dev/zero`, stale for a growing log,
+    /// anything at all from a broken server), so it bounds neither the loop nor the allocation.
+    public func readFile(_ path: String, limit: UInt64 = 256 << 20) async throws -> Data {
         let handle = try await open(path, flags: .read)
         defer { Task { try? await self.close(handle: handle) } }
-        let size = try await fstat(handle: handle).size ?? 0
+        let reported = try await fstat(handle: handle).size ?? 0
+        if reported > limit { throw SFTPClientError.fileTooLarge(limit: limit) }
+        let size = reported
         let chunk = limits.maxRead
         var result = Data(capacity: Int(size))
         var offset: UInt64 = 0
@@ -314,6 +339,7 @@ public actor SFTPClient {
                 guard let data, !data.isEmpty else { reachedEOF = true; break }
                 if UInt64(result.count) != start { result.count = Int(start) }
                 result.append(data)
+                if UInt64(result.count) > limit { throw SFTPClientError.fileTooLarge(limit: limit) }
                 if UInt64(data.count) < chunk { reachedEOF = true; break }
             }
             offset += UInt64(count) * chunk
@@ -321,6 +347,7 @@ public actor SFTPClient {
                 // Past the size we started with; one more read confirms EOF (the file may have grown).
                 if let extra = try await read(handle: handle, offset: UInt64(result.count), length: UInt32(chunk)), !extra.isEmpty {
                     result.append(extra)
+                    if UInt64(result.count) > limit { throw SFTPClientError.fileTooLarge(limit: limit) }
                 } else {
                     reachedEOF = true
                 }
