@@ -29,7 +29,7 @@ Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, a
 
 - `Gloss/` app target: `App/` (model, routes, launch options), `Explorer/`, `Documents/` (sessions, viewer pane, conflict sheet), `Notes/`, `Services/` (hosts, hooks, send coordinator), `Settings/`.
 - `Packages/Core` (ids, schema, note store, anchors, packet builder, local file system), `Packages/Remote` (child processes, ssh config, ControlMaster, SFTP, exec, search, staging), `Packages/Transports` (connection registry, tmux, Herdr, MCP server, hooks installer and script, OpenCode, Herdr plugin bundle), `Packages/Viewers` (text, markdown, image, PDF, CSV, QuickLook, the review browser), `Packages/Integrations` (GET-only GitHub and Atlassian clients, the pull request and Jira/Confluence file systems, ADF to Markdown). Each has its own tests.
-- `docs/` product and design notes plus release instructions. `.claude/skills/` holds the verified protocol references; read the relevant one before touching that area.
+- `README.md` is the front page; `docs/guide/` is the user guide (keep it in step with user-visible changes) and `docs/media/` holds the README's icon, GIF and still. `docs/` also has the product and design notes plus release instructions. `.claude/skills/` holds the verified protocol references; read the relevant one before touching that area.
 
 ## Build and test
 
