@@ -103,9 +103,10 @@ public enum SSHConfig {
     /// `options` are the host's own `-o` arguments (a host added in Settings), so the answer matches what a
     /// connection would use. A `Match exec` that never returns is cut off after `timeout`.
     public static func resolve(_ alias: String, options: [String] = [], sshPath: String = "/usr/bin/ssh", timeout: Duration = .seconds(5)) async -> Resolved? {
-        guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: sshPath, arguments: ["-G"] + options + ["--", alias])) else { return nil }
+        guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: sshPath, arguments: ["-G"] + options + ["--", alias], newProcessGroup: true)) else { return nil }
         guard let stdout = await withDeadline(timeout, { await process.collectStdout() }) else {
-            process.kill()
+            // The group: the hung `Match exec` shell is ssh's child and would outlive a kill of ssh alone.
+            process.killGroup()
             _ = try? await process.exitCode
             return nil
         }

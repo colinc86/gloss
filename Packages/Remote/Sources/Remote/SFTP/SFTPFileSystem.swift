@@ -280,7 +280,9 @@ public struct SFTPFileSystem: FileSystemProvider {
 
     static func attributes(_ attributes: SFTPAttributes) -> FileAttributes {
         FileAttributes(
-            kind: kind(attributes.fileType), size: Int64(clamping: attributes.size ?? 0),
+            // A server that leaves out permissions gives no type; that is not evidence of a FIFO or device, and
+            // documents refuse `.other`, so an unknown type is taken as a regular file.
+            kind: attributes.fileType == .unknown ? .file : kind(attributes.fileType), size: Int64(clamping: attributes.size ?? 0),
             mtime: Date(timeIntervalSince1970: TimeInterval(attributes.mtime ?? 0)), mode: attributes.mode
         )
     }

@@ -87,6 +87,22 @@ struct SSHConfigTests {
         #expect(manual.hostName == "build.example" && manual.port == 2222 && manual.user == "ci")
     }
 
+    @Test func aHungMatchExecIsKilledWithSSH() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-sshexec-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let marker = "gloss-hung-\(UUID().uuidString.prefix(8))"
+        let config = try write("Match exec \"/bin/sh -c 'sleep 37; true' \(marker)\"\n  User x\n", name: "config", in: directory)
+        let started = ContinuousClock.now
+        let resolved = await SSHConfig.resolve("somehost", options: ["-F", config], timeout: .milliseconds(500))
+        #expect(resolved == nil)
+        #expect(ContinuousClock.now - started < .seconds(4))
+        try await Task.sleep(for: .milliseconds(200))
+        let survivors = try ChildProcess.launch(ChildProcessSpec(executable: "/usr/bin/pgrep", arguments: ["-f", marker]))
+        let found = String(decoding: await survivors.collectStdout(), as: UTF8.self)
+        #expect(found.isEmpty, "the Match exec shell outlived ssh: \(found)")
+    }
+
     @Test func aConfigThatIncludesItselfIsReadOnce() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-sshloop-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: "\(directory)/conf.d", withIntermediateDirectories: true)

@@ -105,6 +105,10 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
     private var streamTask: Task<Void, Never>?
     /// Closes a connection whose request doesn't arrive in time; cancelled once it has.
     private var deadline: Scheduled<Void>?
+    /// Counts completed requests, so a finished response re-arms the deadline only if no later request (a
+    /// pipelined one, which NIO hands over as soon as the previous `.end` is written) is already being served.
+    private var served = 0
+    private var isRemoved = false
     /// The port is reverse-forwarded to hosts, so anything on their loopback can POST; bound what we buffer.
     private static let maximumBodyBytes = 8 * 1024 * 1024
 
@@ -121,6 +125,7 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
     }
 
     func handlerRemoved(context: ChannelHandlerContext) {
+        isRemoved = true
         deadline?.cancel()
         deadline = nil
     }
@@ -177,6 +182,8 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
             pending = nil
             deadline?.cancel()
             deadline = nil
+            served += 1
+            let generation = served
             guard HTTPListener.permits(request.head.headers) else {
                 // A web page (any site open in a browser, or one rebinding its name to 127.0.0.1) must not reach the
                 // notes: answered with 403 and the connection closed.
@@ -192,7 +199,10 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
                 let (mcpRequest, query) = Self.convert(request)
                 let response = await handler(mcpRequest, query)
                 // A kept-alive connection gets the same deadline for its next request, so idle ones don't hold slots.
-                await Self.write(response, version: request.head.version, keepAlive: request.head.isKeepAlive, context: ctx, wrap: { self.wrapOutboundOut($0) }, finished: { self.armDeadline(context: ctx) })
+                await Self.write(response, version: request.head.version, keepAlive: request.head.isKeepAlive, context: ctx, wrap: { self.wrapOutboundOut($0) }, finished: {
+                    // On the event loop, after a successful write: only if this was the latest request and nothing new began.
+                    if !self.isRemoved, self.served == generation, self.pending == nil { self.armDeadline(context: ctx) }
+                })
             }
         }
     }
@@ -246,7 +256,9 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
                 }
             } catch {}
             loop.execute {
-                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { _ in if keepAlive { finished() } else { ctx.close(promise: nil) } }
+                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { result in
+                    if !keepAlive { ctx.close(promise: nil) } else if case .success = result { finished() }
+                }
             }
         default:
             let body = response.bodyData
@@ -259,7 +271,9 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
                     buffer.writeBytes(body)
                     ctx.write(wrap(.body(.byteBuffer(buffer))), promise: nil)
                 }
-                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { _ in if keepAlive { finished() } else { ctx.close(promise: nil) } }
+                ctx.writeAndFlush(wrap(.end(nil))).whenComplete { result in
+                    if !keepAlive { ctx.close(promise: nil) } else if case .success = result { finished() }
+                }
             }
         }
     }

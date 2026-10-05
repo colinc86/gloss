@@ -105,13 +105,17 @@ public struct HerdrClient: Sendable {
             let connection = LineConnection(socketPath: socketPath)
             let task = Task {
                 do {
+                    let acknowledged = Mutex(false)
                     let watchdog = Task {
                         try await Task.sleep(for: Self.callTimeout)
-                        connection.fail(HerdrError.timedOut)
+                        // Only while still waiting: an ack that just arrived wins over a watchdog firing late.
+                        if !acknowledged.withLock({ $0 }) { connection.fail(HerdrError.timedOut) }
                     }
+                    defer { watchdog.cancel() }
                     try await connection.open()
                     try await connection.send(try Self.requestLine(method: "events.subscribe", params: ["subscriptions": subscriptions]))
                     let ack = try await connection.nextLine()
+                    acknowledged.withLock { $0 = true }
                     watchdog.cancel()
                     guard let ack else { throw HerdrError.emptyReply }
                     let acked = try Self.result(from: ack)
@@ -126,7 +130,8 @@ public struct HerdrClient: Sendable {
             }
             continuation.onTermination = { _ in
                 task.cancel()
-                connection.cancel()
+                // fail, not cancel: an open() that hasn't started yet must throw rather than wait on the watchdog.
+                connection.fail(CancellationError())
             }
         }
     }
@@ -262,10 +267,19 @@ final class LineConnection: Sendable {
             state.finished = true
             state.failure = state.failure ?? error
             let failure = state.failure
-            // After a failure the buffer is dropped, not handed over as a line: it may be an oversized fragment.
-            if failure != nil { state.buffer = Data() }
+            // After a failure the unterminated tail is dropped (it may be an oversized fragment); complete lines
+            // already received are still read before the failure is reported.
+            if failure != nil {
+                let tailStart = state.buffer.lastIndex(of: 0x0A).map { $0 + 1 } ?? state.buffer.startIndex
+                state.buffer.removeSubrange(tailStart..<state.buffer.endIndex)
+            }
             guard let waiter = state.waiter else { return nil }
             state.waiter = nil
+            if let newline = state.buffer.firstIndex(of: 0x0A) {
+                let line = state.buffer.subdata(in: state.buffer.startIndex..<newline)
+                state.buffer.removeSubrange(state.buffer.startIndex...newline)
+                return (waiter, line, nil)
+            }
             // A final line without a trailing newline still counts on a clean close.
             let rest = state.buffer
             state.buffer = Data()

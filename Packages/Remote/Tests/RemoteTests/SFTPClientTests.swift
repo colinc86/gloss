@@ -72,6 +72,12 @@ struct SFTPClientTests {
         await client.close()
     }
 
+    @Test func aServerThatSendsNoPermissionsStillOpensFiles() {
+        // No permissions flag means no type; that must not read as a FIFO or device, which documents refuse.
+        #expect(SFTPFileSystem.attributes(SFTPAttributes(size: 3)).kind == .file)
+        #expect(SFTPFileSystem.attributes(SFTPAttributes(size: 0, permissions: 0o010644)).kind == .other, "a real FIFO")
+    }
+
     @Test func absurdSizesDoNotTrap() async throws {
         let server = FakeSFTPServer()
         server.put("/home/test/huge", "tiny", reportedSize: .max)

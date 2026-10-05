@@ -14,13 +14,17 @@ public struct ChildProcessSpec: Sendable {
     public var extraEnvironment: [String: String]
     public var stdin: StdinMode
     public var workingDirectory: String?
+    /// Starts the child as the leader of its own process group, so `kill()` also reaches what it spawned (a
+    /// `Match exec` shell under `ssh -G`).
+    public var newProcessGroup: Bool
 
-    public init(executable: String, arguments: [String], extraEnvironment: [String: String] = [:], stdin: StdinMode = .null, workingDirectory: String? = nil) {
+    public init(executable: String, arguments: [String], extraEnvironment: [String: String] = [:], stdin: StdinMode = .null, workingDirectory: String? = nil, newProcessGroup: Bool = false) {
         self.executable = executable
         self.arguments = arguments
         self.extraEnvironment = extraEnvironment
         self.stdin = stdin
         self.workingDirectory = workingDirectory
+        self.newProcessGroup = newProcessGroup
     }
 }
 
@@ -113,7 +117,12 @@ public final class ChildProcess: Sendable {
         var emptyMask = sigset_t()
         sigemptyset(&emptyMask)
         posix_spawnattr_setsigmask(&attributes, &emptyMask)
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
+        var flags = POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK
+        if spec.newProcessGroup {
+            flags |= POSIX_SPAWN_SETPGROUP
+            posix_spawnattr_setpgroup(&attributes, 0)
+        }
+        posix_spawnattr_setflags(&attributes, Int16(flags))
         Self.disclaimResponsibility(&attributes)
 
         let environment = ProcessInfo.processInfo.environment.merging(spec.extraEnvironment) { _, new in new }
@@ -251,6 +260,11 @@ public final class ChildProcess: Sendable {
 
     public func kill() {
         if isRunning { Darwin.kill(processIdentifier, SIGKILL) }
+    }
+
+    /// SIGKILL to the child's whole process group; only for a child started with `newProcessGroup`.
+    public func killGroup() {
+        if isRunning { Darwin.kill(-processIdentifier, SIGKILL) }
     }
 
     /// Collects all of stdout as data.
