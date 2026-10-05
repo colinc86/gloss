@@ -104,12 +104,17 @@ struct NotesPanel: View {
                 SendToast()
             }
             .padding(DS.Space.m)
+            // Paths stop short of cards these cover.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                model.noteLink.panelToasts = frame.height > 2 * DS.Space.m + 1 ? frame : nil
+            }
         }
         .task { await model.send.refreshTargets() }
         // Clicking a card, or arrowing through the list, shows the note in the viewer; the list keeps focus.
         // A note on a host that is not connected stays put: arrowing past it must not start an ssh connect (and a
         // key prompt); its Reveal button connects on purpose.
         .onChange(of: panel.selectedNoteID) { _, _ in
+            model.noteLink.selectedNoteID = panel.selectedNoteID
             if panel.selectedNoteID != nil { listFocused = true }
             guard let entry = panel.selectedEntry, model.fileSystem(for: entry.document.hostID) != nil else { return }
             model.reveal(note: entry.note, in: entry.document, select: false)

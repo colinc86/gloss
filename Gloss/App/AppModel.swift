@@ -174,6 +174,11 @@ final class AppModel {
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
         noteLink.start()
+        noteLink.noteStyles = { [weak self] in
+            Dictionary((self?.activeSession?.notes ?? []).map { note in
+                (note.id, (color: note.color, settled: note.state == .resolved && note.resolveOutcome != .needsInput))
+            }, uniquingKeysWith: { first, _ in first })
+        }
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
             guard let self else { return }
             var fileSystem = fileSystem

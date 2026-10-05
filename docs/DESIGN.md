@@ -482,24 +482,34 @@ path. Dropping on the Dock icon is not supported yet.
   moved, and wraps at either end. Each step shows the note without selecting it (so Add Note never floats over a note
   that exists), pops the find indicator, and selects its card in the notes panel; the count reads "2 of 5" while a
   stepped-to note is current. Nothing to step to beeps.
-- **Link and paths** (`NoteLinkModel`, `NotePathOverlay`): two toggles after the note steppers in the status bar, in
-  the steppers' style (18 × 16, accent glyph on a faint accent chip when on, the glyph struck through by a thin
-  diagonal when off, since SF Symbols has no unlinked or broken path), also in the Notes menu (Follow Page in Notes
-  Panel, Show Paths to Notes); both remembered. **Link** (`link`) makes the notes panel follow the page: the
-  visible note nearest the middle of the page (one the middle runs through first, then the nearest edge, then the
-  one higher on the page) has its card scrolled to the middle of the list (smooth, instant with Reduce Motion). It
-  is one way, and it waits while the pointer is over the list, so the list never moves under the reader; turning it
-  on opens the panel. **Paths** (`point.bottomleft.forward.to.point.topright.scurvepath`), only while linked, draws
-  each visible note's mark in its colour over the whole window, hit-testing nothing: an outline 1.5 pt out from
-  its highlight (line rects grown and merged into one shape with 3 pt corners, so a multi-line note, a column of
-  cells or a region is one outline), then from the end of its first line, on the gap below it so it never strikes
-  through words, flat to the viewer's edge and an S-curve (level at both ends) into the top of the card's colour
-  rail, so highlight, path and rail read as one mark. 1.5 pt at 85 % (45 % when settled, like the rail); the
-  hovered or selected note's path is 2.5 pt, full strength, with the rail's glow, and drawn over the others. Parts
-  off the page are clipped; a card scrolled out of the list has no path. Every viewer that can place a note reports
-  it through `NoteGeometry` (text by line fragment, rendered Markdown, PDF regions and text, image regions, grid
-  cells and rows, a web page's element notes); Quick Look and text notes on a rendered HTML page have no place to
-  point at, so the toggles hide there or the note goes without a path.
+- **Link and paths** (`NoteLinkModel`, `NotePathLayerView`, `NotePathGeometry`): two toggles after the note steppers
+  in the status bar, in the steppers' style (18 × 16, accent glyph on a faint accent chip when on, the glyph struck
+  through by a thin diagonal when off, since SF Symbols has no unlinked or broken path), also in the Notes menu
+  (Follow Page in Notes Panel, Show Paths to Notes); both remembered. **Link** (`link`) makes the notes panel follow
+  the page: the visible note nearest the middle of the page (one the middle runs through first, then the nearest
+  edge, then the one higher on the page) has its card scrolled to the middle of the list (smooth, instant with
+  Reduce Motion). It is one way, and it waits while the pointer is over the list, so the list never moves under the
+  reader; turning it on opens the panel. **Paths** (`point.bottomleft.forward.to.point.topright.scurvepath`), only
+  while linked, joins each visible note to its card in the note's colour:
+  - *Outline*: 1.5 pt out from the highlight, built rather than merged: the highlight's pieces on one line (cells,
+    inline code, styled runs) are one span, wrapped lines and a paragraph gap join into one staircase, and every
+    corner, convex or concave, is rounded (3 pt, less where an edge is short), as macOS draws a multi-line
+    selection. Nothing inside the note is ever stroked.
+  - *Path*: it leaves from the outline itself, at the right end of its straight edge in the gap below the first line
+    (between the first two lines of a longer note), so it continues the outline and never crosses words or the note.
+    It runs level along that gap, then an S-curve with long level handles carries it across, starting 24 pt before the
+    viewer's edge (up to 72 pt for a tall rise, so the sweep leans out), and a 10 pt quarter turn bends it down into
+    the top of the card's colour rail, like a pipe into the bar.
+  - *Ribbon*: filled, not stroked: 1.5 pt (2.5 strong) for most of its length, easing over the last 30 % to the rail's
+    width (3, or 4) and tucked into the rail's rounded top, coloured from 75 % to the rail's full colour, so the line
+    becomes the bar. Settled notes at 45 %, as the rail. The hovered card's, the selected card's, and the note under
+    the pointer on the page draw strong (2.5 pt, the rail's glow) and over the others.
+  - *Motion*: drawn by AppKit layers in the window's frame view above the content, updated from the viewer's own
+    scroll notification, so outlines move in the same frame as the text; ribbons follow the cards as the list
+    scrolls and fade out over the last 12 pt as a card leaves the list. Showing and hiding fades in 0.2 s.
+  Every viewer that can place a note reports it through `NoteGeometry` (text by line fragment, rendered Markdown,
+  PDF regions and text, image regions, grid cells and rows, a web page's element notes); Quick Look and text notes on
+  a rendered HTML page have no place to point at, so the toggles hide there or the note goes without a path.
 - **Landing on a note**: every jump to a range (a ruler tick, a card in the notes panel, a search result) ends with
   AppKit's find indicator over the target, the brief yellow pop Xcode uses, so the eye finds where it landed
   instead of scanning. A note over several lines pops on its first line only; caret moves (no range) don't pop.

@@ -127,16 +127,20 @@ struct ContentView: View {
                 + Text(" Open it only if you followed this link yourself.")
         }
         .dropToOpen()
-        .overlay { NotePathOverlay().animation(DS.Motion.smooth, value: model.noteLink.drawsPaths) }
         .overlay(alignment: .bottom) { CopyHUD() }
         // The dot in the close button whenever any open document has unsaved edits, not only the visible one.
         .background(WindowEditedMarker(isEdited: !model.unsavedSessions.isEmpty))
         .background(WindowReader(reference: window))
-        .onChange(of: model.showNotesPanel, initial: true) { _, show in syncPanel(show) }
+        .onChange(of: model.showNotesPanel, initial: true) { _, show in
+            syncPanel(show)
+            model.noteLink.isPanelShown = show
+        }
         .onChange(of: window.isAttached) { _, _ in
             model.mainWindow = window.window
             model.openMainWindow = { [openWindow] in openWindow(id: "main") }
             syncPanel(model.showNotesPanel)
+            // The paths from notes to their cards are drawn over this window's content.
+            if let window = window.window { model.noteLink.install(in: window) }
         }
     }
 

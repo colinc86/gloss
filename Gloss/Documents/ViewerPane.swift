@@ -26,6 +26,8 @@ struct ViewerPane: View {
         .onDisappear {
             if let geometry = session.noteGeometry { model.noteLink.detach(geometry) }
         }
+        // The note under the pointer on the page draws its path strong, as hovering its card does.
+        .onChange(of: session.textController?.peek?.id) { _, id in model.noteLink.peekedNoteID = id }
         .sheet(isPresented: Binding(get: { session.isGoToLinePresented }, set: { session.isGoToLinePresented = $0 })) {
             GoToLineSheet(lineCount: session.textController.map { controller in
                 // A trailing newline starts an empty line that is not a real one.
