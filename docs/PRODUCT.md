@@ -26,7 +26,7 @@ The app is for one person working across a local Mac and several remote hosts, w
 | Context packet | The plain-text message built from one or more notes, with attachments on disk | the thing the agent actually reads |
 | Agent target | A specific agent session the packet can go to, reached through a transport | Claude Code in Herdr pane `w1:p2` on `workbox` |
 
-A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude Code or Codex hook, the OpenCode HTTP API, tmux keystrokes, or the clipboard. Targets are discovered, not configured by hand, wherever a transport can enumerate sessions.
+A transport is how a packet reaches a target: Herdr socket, the OpenCode HTTP API, tmux keystrokes, or the clipboard. MCP is the way back: agents read the notes they were sent and resolve them. A note leaves the app only when the user presses Send (decided 2026-10-05, issue #5). Targets are discovered, not configured by hand, wherever a transport can enumerate sessions.
 
 ## File explorer
 
@@ -64,7 +64,7 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 
 | Anchor type | Stored fields | Re-anchoring strategy |
 | --- | --- | --- |
-| Text range | Start and end as line and column, the exact selected text, three lines of context before and after, SHA-256 of the file at anchor time | Exact match on selected text near the old position, then fuzzy match on context, then flag as orphaned |
+| Text range | Start and end as line and column, the exact selected text, three lines of context before and after, SHA-256 of the file at anchor time | Exact match on the selected text; among several, the one whose surrounding lines match the stored context, nearest the old position on a tie (flagged for review unless its context clearly wins). Then fuzzy match on context, keeping a phrase's columns when its first and last words survive. Then orphaned. Run on reload, when a document opens (a file changed while closed), and when a packet reads a closed file |
 | Image region | Rectangle in original pixel coordinates, original width and height, image hash | Image unchanged: keep. Dimensions changed: scale proportionally and flag for review |
 | PDF region | Page index, bounds in page points, selected text if any, page count | Same page and text present: keep. Otherwise search nearby pages for the text |
 | Whole file | Path and file hash | Always valid while the file exists |
@@ -74,13 +74,13 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 
 **Link and paths.** Two toggles in the viewer's status bar (and the Notes menu) tie the notes panel to the page. Linked, the panel follows the page as it scrolls, keeping the card of the note nearest the middle of the page in the middle of the list, so the notes on screen are the notes in view. With paths on as well, each visible note is outlined in its colour and joined by a curve to the colour bar of its card, so on a document with many notes every highlight visibly leads to its card. It works in every viewer where a note has a place: text and code, Markdown, PDF, images, spreadsheets, and web pages' element notes.
 
-**Lifecycle.** draft → sent → resolved, plus orphaned. Sent notes record target, transport, and time, and each card shows where its latest send went and when (or why it failed). A resolved card shows the agent's resolve message, and Reopen as Draft (card context menu) takes it back. In the notes panel, Return shows the selected note in the viewer and Delete removes it at once, with Undo in a toast and in Edit › Undo; each card's context menu reveals, edits, sends, copies the note as a packet or its comment or path, resolves, and deletes. Resolved notes were marked done by an agent through MCP or by hand. Orphaned notes lost their anchor and need a glance before resending.
+**Lifecycle.** draft → sent → resolved, plus orphaned. Sent notes record target, transport, and time, and each card shows where its latest send went and when (or why it failed). A resolved card shows the agent's resolve message, and Reopen as Draft (card context menu) takes it back. In the notes panel, Return shows the selected note in the viewer and Delete removes it at once, with Undo in a toast and in Edit › Undo; each card's context menu reveals, edits, sends, copies the note as a packet (it stays a draft) or its comment or path, resolves, and deletes. Resolved notes were marked done by an agent through MCP or by hand. Orphaned notes lost their anchor and need a glance before resending.
 
 **Scope.** Notes live in the app database, keyed by host and absolute path, never in the file. They persist across restarts and survive agent edits.
 
 ## Sending to agents
 
-Send loop: highlight → write a note (draft) → build packet (text, grouped by file) → stage attachments (crops via SFTP) → deliver (Herdr, MCP, hooks, tmux) → agent works → agent resolves via the MCP `resolve_note` tool → note resolved, highlight fades, file reloads.
+Send loop: highlight → write a note (draft) → build packet (text, grouped by file) → stage attachments (crops via SFTP) → deliver (Herdr, OpenCode, tmux, clipboard) → agent works → agent resolves via the MCP `resolve_note` tool → note resolved, highlight fades, file reloads.
 
 **Packet format.** See the `context-packet` skill for the normative grammar. One header per file, then one block per note; excerpts blockquoted and truncated head and tail past 40 lines; attachments referenced by absolute path on the machine the agent runs on; closing line names the note ids and the resolve tool.
 
@@ -120,9 +120,7 @@ Notes: 2. Mark each resolved with the gloss MCP tool when done.
 | Transport | Direction | Covers | How it works |
 | --- | --- | --- | --- |
 | Herdr socket | Push | Any agent in a Herdr pane, local or remote | NDJSON over the Unix socket. `agent.list` discovers targets, `agent.prompt` submits with bracketed paste, `events.subscribe` drives follow mode and status badges. Remote servers reached by forwarding their socket over the app's SSH connection |
-| MCP server | Pull and resolve | Claude Code, Codex, OpenCode | Streamable HTTP on localhost. Tools: `list_pending_notes`, `get_note`, `resolve_note`, `list_documents`, and `open_in_viewer` (an agent shows the user a file at a line). Attachments as resources. Port reverse-forwarded for remote agents, whose registration URL carries `?host=<alias>` so paths resolve on their machine; the app writes each agent's config line on request |
-| Claude Code hook | Pull | Claude Code | `UserPromptSubmit` hook drains draft notes under the session's cwd into `additionalContext` (10,000 char limit); drained notes become `sent` and stay reachable through MCP until resolved, so they are not re-injected on every prompt. Notes on pull requests, tickets, pages and web pages are under no cwd and are not drained: they reach an agent by Send or `list_pending_notes` |
-| Codex hook | Pull | Codex | Same shape via `hooks.json`; experimental, needs the hooks feature flag |
+| MCP server | Read and resolve | Claude Code, Codex, OpenCode | Streamable HTTP on localhost. Agents see only notes the user has sent; drafts are never listed, read or resolved. Tools: `list_pending_notes`, `get_note`, `resolve_note`, `list_documents`, `open_in_viewer` (an agent shows the user a file at a line or a range of lines), `ask_user` (an agent asks the user about a place in a file; the question arrives as a note under Attention and the answer goes back when the user sends it), `add_favorite` and `list_favorites` (an agent keeps a project folder at hand in the explorer). Attachments as resources. Port reverse-forwarded for remote agents, whose registration URL carries `?host=<alias>` so paths resolve on their machine; the app writes each agent's config line on request |
 | OpenCode API | Push | OpenCode launched with a fixed port | `POST /session/:id/message` with text and image parts |
 | tmux | Push | Any agent in a tmux pane without Herdr | bracketed paste over the exec channel; pane chosen once per host |
 | Clipboard | Manual | Anything, including bare mosh or ssh | Packet as text; attachments by path |
@@ -132,7 +130,7 @@ Notes: 2. Mark each resolved with the gloss MCP tool when done.
 | Integration | Credential | What the app reads | Shown as |
 | --- | --- | --- | --- |
 | GitHub | Personal access token (read scopes are enough; the client never issues anything but GET) | Pull requests: metadata, description, review and issue comments, changed files at the head commit, the unified diff | A root `github:/owner/repo/pull/N` with `Pull request.md`, `Conversation.md`, `changes/…`, `pull-N.diff`; polled for a new head commit while open |
-| Atlassian | Site URL, email, API token | Jira issues (fields, description, comments) and Confluence pages (body and version), converted from the Atlassian document format to Markdown | `atlassian:/jira/PROJ/PROJ-123.md` and `atlassian:/confluence/SPACE/<ancestor ids…>/<id>/<Title>.md` (a page is its id: notes follow it through renames and moves, moving to the page's current path when it is next opened; until then the notes panel shows the path they were made on); polled for a new version while open |
+| Atlassian | Site URL, email, API token | Jira issues (fields, description, comments, attached images and PDFs) and Confluence pages (body, version, attached images and PDFs), converted from the Atlassian document format to Markdown with images inline | `atlassian:/jira/PROJ/PROJ-123.md` and `atlassian:/confluence/SPACE/<ancestor ids…>/<id>/<Title>.md` (a page is its id: notes follow it through renames and moves, moving to the page's current path when it is next opened; until then the notes panel shows the path they were made on); polled for a new version while open |
 | Web | None | Any URL in the review browser; `localhost` on a remote host through a port forward on the app's ssh connection | `web:<url>`, or a document of the ssh host when proxied |
 
 **Herdr plugin.** Ships with the app and is installed from Settings → Agents, locally or on a connected host: the bundle is copied to `~/.config/gloss/herdr-plugin/` and linked with `herdr plugin link`. A keybinding (snippet shown in Settings; the app never edits Herdr's config) sends selected pane text to Gloss as a note; a link handler opens `file://` links and `path:line[:col]` locations printed by an agent in the viewer, scrolled to that line (also `file://…#L12`); `gloss://open` and `/plugin/open` take an optional `line`. On this Mac the script calls the app's URL scheme; on a host it posts to the app's `/plugin/note` endpoint through the reverse-forwarded port. Its note links carry a per-user token from `~/Library/Application Support/Gloss/url-token` (0600): the app refuses note links without it, since any web page can open a `gloss://` link and a planted note would reach the agent as the user's words. Its open links carry the token too: an `open` link to a file or an ssh host without it asks the user to confirm, since a page could otherwise open (and render) a file it just downloaded or make the app connect to a host.
@@ -162,7 +160,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 
 **Process model.** One app process. SSH connections are child processes supervised by a connection manager actor. MCP server, Herdr clients, and file watchers are structured concurrency tasks.
 
-**Modules.** Swift packages `Core` (models, database, anchors, packet builder), `Remote` (SSH, SFTP, forwarding), `Transports` (Herdr, MCP, hooks, OpenCode, tmux, clipboard), `Viewers`, and the `App` target. Each package has its own tests.
+**Modules.** Swift packages `Core` (models, database, anchors, packet builder), `Remote` (SSH, SFTP, forwarding), `Transports` (Herdr, MCP, agent installs, OpenCode, tmux), `Viewers`, and the `App` target. Each package has its own tests.
 
 ## Data model
 
@@ -171,7 +169,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 | `host` | `id`, `name`, `kind` (local, ssh; milestone 2 adds web, github, atlassian with fixed ids `h_web`, `h_github`, `h_atlassian`), `last_connected_at`, `origin` (local, ssh_config, manual), `options_json` (HostName, User, Port, IdentityFile for app-added hosts; `alias` for an ssh config alias listed under another name, e.g. `github` listed as `github-ssh` because the integration host owns `github`; `site` for the `atlassian` host: the site its documents are about — when the saved site changes, that site's documents move under `/previous-sites/<host>` with their notes and its recent roots are forgotten) | Hosts used |
 | `root` | `id`, `host_id`, `path`, `last_opened_at`, `pinned` | Recent and pinned roots |
 | `document` | `id`, `host_id`, `path`, `kind` (text, code, markdown, image, pdf, csv, file; milestone 2 adds web, whose path is a URL), `last_hash`, `last_mtime`, `last_size` | File identity and conflict fingerprint |
-| `note` | `id`, `document_id`, `anchor_json`, `anchor_type`, `body`, `state`, `created_at`, `updated_at`, `color` | Note with typed anchor and state |
+| `note` | `id`, `document_id`, `anchor_json`, `anchor_type`, `body`, `state`, `created_at`, `updated_at`, `color`, `resolve_outcome`, `resolve_message`, `previous_state` (the state before orphaning) | Note with typed anchor and state |
 | `attachment` | `id`, `note_id`, `kind`, `local_path`, `width`, `height` | Crops and page renders |
 | `send` | `id`, `target_json`, `transport`, `packet_text`, `sent_at`, `outcome` | Delivery history |
 | `send_note` | `send_id`, `note_id` | Notes per send |
@@ -181,13 +179,13 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 
 **Anchor JSON.** Text `{start:{line,col}, end:{line,col}, text, before, after, hash?}`. Image `{x, y, w, h, imageW, imageH, hash?}`. PDF `{page, bounds:{x,y,w,h}, text, pageCount}`. Whole file `{}`. Element (milestone 2) `{selector, tag, text, html, rect:{x,y,w,h}, line?, hash?}` with `anchor_type = element`. `hash` is the SHA-256 of the file at anchor time (optional for backward compatibility; `col` counts UTF-16 units, `page` is 0-based in storage and printed 1-based).
 
-**Note states.** `draft`, `sent`, `resolved`, `orphaned`. draft→sent on delivery; sent→resolved by MCP or by hand; any→orphaned when re-anchoring fails; orphaned→draft when the anchor is fixed.
+**Note states.** `draft`, `sent`, `resolved`, `orphaned`. draft→sent on delivery; sent→resolved by MCP or by hand; draft or sent→orphaned when re-anchoring fails (a resolved note stays resolved: the agent rewriting its text is the expected outcome); orphaned→the state it had before when the anchor is found again or placed by hand (decided 2026-10-05, issue #6).
 
 ## Milestone 1
 
 Milestone 1 is the whole product. Done means every check passes on the local Mac and on one remote host over mosh with Herdr running.
 
-**Build order.** Local explorer and viewers → notes and clipboard transport → SSH and SFTP with remote editing → Herdr and MCP → hooks, OpenCode, tmux → Herdr plugin and polish.
+**Build order.** Local explorer and viewers → notes and clipboard transport → SSH and SFTP with remote editing → Herdr and MCP → OpenCode, tmux → Herdr plugin and polish.
 
 **Acceptance checks.** Ticked items were verified at the end of milestone 1 (2026-10-02); the note says how. Items marked "user" need a real agent session or a keybinding and are left for the user to confirm.
 
@@ -198,7 +196,7 @@ Milestone 1 is the whole product. Done means every check passes on the local Mac
 - [x] Annotate a PDF page region and send it the same way — same path; PDF region crops are covered by the Viewers tests
 - [x] Send three notes across two files as one packet and see all three flip to resolved when the agent calls the MCP tool — `AcceptanceRemoteTests.threeNotesAcrossTwoFilesResolveFromTheHost` resolves them from asus through the reverse-forwarded port
 - [x] Focus a different Herdr pane on another host and watch the tree follow it — follow events through the forwarded socket in `RemoteHerdrTests`; the in-app toggle was exercised locally (user: watch it on asus)
-- [ ] Type "address my notes" in Claude Code and in Codex with no manual paste and have the hook deliver pending notes — hook script verified live against the app; the install into the real settings is one click in Settings → Agents (user)
+- [~] ~~Type "address my notes" in Claude Code and in Codex with no manual paste and have the hook deliver pending notes~~ — withdrawn 2026-10-05 (issue #5): the hook also fired on the prompt a send submits and shipped every other draft, so drafts now leave only on Send
 - [x] Send a note to an OpenCode session through its HTTP API with an image part — verified against a real `opencode serve` (reply received)
 - [x] Send a note to an agent in a plain tmux pane with no Herdr — verified live, locally and on asus
 - [x] Copy a packet to the clipboard and paste it into a bare mosh session — clipboard verified (Phase 2); pasting into mosh is the terminal's job
@@ -259,6 +257,17 @@ Scoped 2026-10-05. **Acceptance checks.**
 - [x] Paths on: each visible note is outlined and joined to its card's rail, follows scrolling, and disappears for a card scrolled out of the list — verified live on the same file and on a 120-row CSV with row notes; `NoteLinkTests` covers the outline and the curve, `NoteGeometryTests` what the editor reports
 - [ ] PDF regions and text, image regions and a web page's element notes get paths too (user: needs notes made by hand in those viewers)
 
+## Issues from 0.1.1 (2026-10-05)
+
+Six reports filed from the app's feedback sheet. **Acceptance checks.**
+
+- [ ] #7 The notes filter bar never wraps: at the panel's narrowest it drops the selected title, then the counts (the selected option keeps its count; Attention keeps an orange dot) — `FilterBar` density rows (user: narrow the panel)
+- [ ] #3 Back and forward through documents across folders and hosts: Go › Back (⌃⌘←) and Forward (⌃⌘→) and the toolbar's chevrons, with their menus of recent places; a document closed since opens again with its folder; a deleted local file is skipped — `DocumentHistoryTests` (user: hop between two folders and a remote host)
+- [ ] #4 Agent control: `ask_user` puts a question on lines of a file, opens it in front of the terminal without taking the keyboard, shows as "claude asks" under Attention, and Reply turns it into a draft that goes back on Send; `add_favorite` pins and opens a folder; `open_in_viewer` selects a range — `MCPServerTests.agentsAskAndKeepFavorites`, `NoteStoreTests.anAgentQuestionIsAnsweredIntoADraft`, `AgentControlTests` (user: from a real Claude Code session)
+- [ ] #2 Jira and Confluence images: an issue's images and PDFs are files in `<KEY> attachments/` beside it and a page's in its folder's `attachments/`, shown inline in the rendered Markdown (Jira by file name, Confluence by file id) and listed under the issue's Attachments; each opens in the image or PDF viewer for region notes; downloads stay GET and never send the key to another host — `AtlassianAttachmentTests` (user: a real issue with a pasted screenshot)
+- [ ] #6 Notes keep their place: 25 notes on one document survive an agent rewrite (inserted preamble, a deleted section, a rewritten sentence, a reordered section) with every surviving note on its own text and the lost ones orphaned or flagged, never silently moved; identical lines in different sections keep their own notes; a file changed while closed re-anchors on open; a packet for a closed file quotes it as it is now; a sent note found again stays sent — `ReAnchorTortureTests`, `NoteStoreTests.aRecoveredOrphanKeepsItsState`, `DocumentNotesTests.openingAChangedFileReanchorsItsNotes`, `aPacketForAClosedChangedFileUsesTheTextAsItIsNow` (live: 20 notes, one sent to a real Claude Code, the agent edits the file — user)
+- [ ] #5 Drafts leave only on Send: with 20 drafts on a file, sending one through Herdr or tmux to a real Claude Code leaves 19 drafts, and the agent's session holds only the one; Copy as Packet leaves notes as drafts; an agent's `list_pending_notes` lists no drafts; Settings › Agents shows Update on a machine with the old prompt hook and Update removes it with a backup — `SendCoordinatorTests.sendingOneNoteChangesOnlyThatNote`, `copyingLeavesDrafts`, `MCPServerTests.agentsNeverSeeDrafts`, `HookInstallerTests.installRegistersMCPAndRemovesTheOldHook`
+
 ## Non-goals, risks, and open questions
 
 **Non-goals for milestone 1.** Not a terminal. Not a git client (status dimming only). Not an IDE (no LSP, debugging, builds). No remote helper daemon. No editing of images, PDFs, spreadsheets. No iOS, no multi-user sync.
@@ -272,14 +281,12 @@ Scoped 2026-10-05. **Acceptance checks.**
 | Rendered markdown selection maps imperfectly inside inline formatting | Medium | Block-granularity anchors when ambiguous; source view for fine edits |
 | Remote mtime polling misses rapid agent edits | Low | Hash as well as mtime on save; faster polling while focused |
 | Herdr socket forwarding behaves unexpectedly | Low | Fallback: `herdr` CLI over the exec channel |
-| Codex hooks stay experimental and change shape | Medium | Codex also has MCP and Herdr |
-| Hook context limit (10,000 chars) truncates batches | Medium | Summary plus ids; agent fetches full notes through MCP |
 | SFTP bugs on unusual servers | Low | Test on OpenSSH Linux and macOS; exec fallback for reads |
 | Large files freeze the text view | Medium | Over 2 MB read-only chunked; refuse over 50 MB in the text viewer |
 
 **Open questions.**
 
-- Should an agent be allowed to create notes through MCP, to ask anchored questions?
+- ~~Should an agent be allowed to create notes through MCP, to ask anchored questions?~~ Yes (decided 2026-10-05, issue #4): `ask_user` creates a question anchored to lines or text, shown like an agent's question on a sent note; at most 20 open per document.
 - Should notes be exportable as a markdown file in the repo for agents with no transport?
 - Herdr plugin: offered from Settings → Agents (decided during milestone 1), never installed silently.
 - Is a menu bar presence useful for quick capture when the main window is closed?

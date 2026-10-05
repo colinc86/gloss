@@ -58,12 +58,62 @@ struct NoteStoreTests {
         await #expect(throws: NoteStoreError.illegalTransition(from: .draft, to: .draft)) { try await store.reopen(note.id) }
         try await store.resolve(note.id)
 
+        // Resolved work stays resolved when its text goes: the agent rewriting it is the expected outcome.
+        try await store.markOrphaned(note.id)
+        #expect(try await store.note(note.id)?.state == .resolved)
+        try await store.reopen(note.id)
         try await store.markOrphaned(note.id)
         #expect(try await store.note(note.id)?.state == .orphaned)
         try await store.restoreDraft(note.id, anchor: .wholeFile)
         #expect(try await store.note(note.id)?.state == .draft)
         try await store.resolve(note.id)
         #expect(try await store.note(note.id)?.state == .resolved)
+    }
+
+    /// Issue #6: an orphan found again returns to the state it had. A sent note does not come back as a draft that
+    /// could be sent a second time.
+    @Test func aRecoveredOrphanKeepsItsState() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let sent = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "sent", color: .blue)
+        let draft = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "draft", color: .blue)
+        _ = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "p", noteIDs: [sent.id], outcome: .delivered)
+        let moved = Anchor.text(TextAnchor(start: .init(line: 9, col: 1), end: .init(line: 9, col: 4), text: "abc", before: "", after: ""))
+        for id in [sent.id, draft.id] { try await store.markOrphaned(id) }
+        #expect(try await store.note(sent.id)?.state == .orphaned)
+        #expect(try await store.note(draft.id)?.state == .orphaned)
+        for id in [sent.id, draft.id] { try await store.recoverOrphan(id, anchor: moved) }
+        #expect(try await store.note(sent.id)?.state == .sent)
+        #expect(try await store.note(draft.id)?.state == .draft)
+        #expect(try await store.note(sent.id)?.anchor == moved)
+        // Recovering a note that isn't orphaned only moves it.
+        try await store.recoverOrphan(sent.id, anchor: .wholeFile)
+        let after = try await store.note(sent.id)
+        #expect(after?.state == .sent && after?.anchor == .wholeFile)
+    }
+
+    /// Issue #4: an agent's question arrives as a note asking for the user, answered with Reply into a draft that
+    /// goes back only on Send; a document takes a bounded number of them.
+    @Test func anAgentQuestionIsAnsweredIntoADraft() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let anchor = Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 4, col: 2), text: "t", before: "", after: ""))
+        let asked = try await store.askUser(documentID: document.id, anchor: anchor, question: "Is the 15 minute TTL right?", author: "claude")
+        #expect(asked.state == .resolved && asked.resolveOutcome == .needsInput && asked.resolveMessage == "Is the 15 minute TTL right?")
+        #expect(asked.author == "claude" && asked.body.isEmpty && asked.anchor == anchor)
+        try await store.answer(asked.id, with: "Yes, keep it.")
+        let answered = try #require(try await store.note(asked.id))
+        #expect(answered.state == .draft && answered.author == "claude")
+        #expect(answered.body.contains("Is the 15 minute TTL right?") && answered.body.contains("Yes, keep it."))
+        #expect(try await store.pendingNotes(states: [.sent]).isEmpty, "nothing reaches an agent before Send")
+
+        for n in 0..<(NoteStore.agentQuestionLimit - 1) {
+            _ = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "q\(n)", author: "codex")
+        }
+        _ = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "last one that fits", author: "codex")
+        await #expect(throws: NoteStoreError.tooManyQuestions(NoteStore.agentQuestionLimit)) {
+            _ = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "one too many", author: "codex")
+        }
     }
 
     @Test func failedSendLeavesDrafts() async throws {

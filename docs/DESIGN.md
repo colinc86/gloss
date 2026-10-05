@@ -85,6 +85,10 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
   can't leave sidebar + viewer + panel impossible to fit (`NotesPanelRoom`; that state crashed AppKit at launch). The resize animates (0.2 s, none with Reduce Motion) outside SwiftUI's update and the panel appears when it ends;
   if the screen stops the window short of room, the panel stays closed with a beep rather than opening into an
   impossible layout.
+- **Back and Forward** (issue #3): two chevrons at the toolbar's leading edge (`.navigation`), as Safari and Xcode
+  place them, stepping through the documents shown across folders and hosts (Go › Back ⌃⌘←, Forward ⌃⌘→; ⌘[ and
+  ⌘] stay with the review browser's own history). A click takes one step; the chevron's menu lists the ten nearest
+  places, file name over its folder (and host when not this Mac), to jump several. Disabled at either end.
 - **Controls compact before they clip.** A `ModeSwitch` drops its titles for symbols (titles move to tooltips and
   stay the VoiceOver labels) and the image viewer's Fit becomes its symbol when the toolbar is tight
   (`ViewThatFits`). Avoid ViewThatFits in the window toolbar itself: a label that changes shape there changed the
@@ -172,6 +176,9 @@ path. Dropping on the Dock icon is not supported yet.
   The notes filters are All, Drafts, Sent, Resolved, and Attention (orange ▲): notes that lost their place plus
   questions back from agents, the same "needs attention" the tree's markers and the Dock badge use. Its count turns
   orange and bold when it is above zero, the one count in the bar that asks for you.
+  It compacts before anything wraps (issue #7, `ViewThatFits` over three rows): first the selected title goes, then
+  every count but the selected one's; an urgent option whose count is hidden keeps a 5 pt orange dot on its symbol.
+  Counts never wrap (`lineLimit(1)`, `fixedSize`), and tooltips and VoiceOver labels always carry title and count.
 - **KeyCap**: a key drawn as a small rounded cap, for hints next to the controls they describe.
 - **EmptyState**: teaches instead of reporting. A 40 pt hierarchical symbol that breathes, a `.title3` title, one
   sentence, up to three numbered steps (arriving 110 ms apart, each fading up 6 pt) on a faint rounded card, and an
@@ -301,6 +308,11 @@ path. Dropping on the Dock icon is not supported yet.
   says what belongs there and how notes arrive (Drafts: how to make one; Sent: "Nothing waiting on an agent";
   Resolved: what lands there). An empty Attention tab is good news and says so: "All clear" under a green seal.
   All use `EmptyState`, so they match "No notes yet"; the message cross-fades as the tab changes.
+- **An agent's own question** (`ask_user`, issue #4): a card with no comment of the user's, only the orange bubble
+  headed "claude asks" (the agent's name from its MCP client), on the lines it asked about, under Attention and on
+  the Dock badge like any question. When it arrives the document opens to it and the window comes forward without
+  taking the keyboard from the terminal (`orderFrontRegardless`), unless the user is writing a note, when it only
+  waits under Attention.
 - **Answering a question**: when an agent resolves a note with a question, the card leads its action row with an
   accent Reply (↩), also first in the context menu and the card's accessibility actions. It opens a one-line field
   under the question, already focused, with a Reply button beside it; Return answers, Escape puts it away. Answering
@@ -619,7 +631,8 @@ path. Dropping on the Dock icon is not supported yet.
   by its row, whose copy icon (its tooltip says what it copies) takes the registration Install runs, for whoever
   would rather run it;
   the Herdr plugin last on each machine; then "Other agents", copy for any harness Gloss does not set up (the
-  endpoint, the `Authorization` header, a generic `mcpServers` entry, and a prompt hook reading `/hook/text`).
+  endpoint, the `Authorization` header, and a generic `mcpServers` entry). A machine where an older build left its
+  prompt hook shows that agent's row as Update, the reason in orange ("…a prompt hook that sent drafts without Send").
   Where notes go is the notes panel's agent chip, not a setting, so it is not repeated here. The integrations are optional and independent, so no Install button is prominent (glass,
   not glass prominent); only Update, on an outdated row, asks for attention. A footer with a shield says what
   Install touches and how to undo it: nothing changes until you press Install, each edited settings file is first

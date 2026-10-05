@@ -41,6 +41,7 @@ public actor GetOnlyHTTP {
 
     private let session: URLSession
     private let log: Logger
+    private let redirects = KeyStaysHome()
     /// One representation per URL and Accept header: a pull request's JSON and its diff share a URL.
     private struct CacheKey: Hashable { var url: URL; var accept: String }
     private var cached: [CacheKey: (etag: String, reply: HTTPReply)] = [:]
@@ -111,7 +112,7 @@ public actor GetOnlyHTTP {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request, delegate: redirects)
         } catch {
             log("GET \(url.absoluteString) failed: \(error.localizedDescription)")
             throw IntegrationError.transport(error.localizedDescription)
@@ -137,7 +138,8 @@ public actor GetOnlyHTTP {
             // Raw file bodies are cached by their commit by the caller, and a diff can be megabytes; holding them
             // here too would keep every one of them.
             // File metadata carries a small file's bytes and is read at a fixed commit: nothing to revalidate.
-            if let etag = lowered["etag"], !key.accept.contains("raw"), !key.accept.contains("diff"), !key.accept.contains("object") { remember(key, (etag, reply)) }
+            // Attachment bytes (`*/*`) are cached by the caller, by attachment id.
+            if let etag = lowered["etag"], !["raw", "diff", "object", "*/*"].contains(where: key.accept.contains) { remember(key, (etag, reply)) }
             return reply
         case 401:
             throw IntegrationError.unauthorized(Self.message(in: data) ?? "")
@@ -186,5 +188,24 @@ extension JSONDecoder {
             throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "unreadable date \(string)")
         }
         return decoder
+    }
+}
+
+/// A redirect to another host (an attachment's bytes on a media or storage host) is followed without the user's
+/// key: those URLs carry their own short-lived token, and the key is only ever for the service it was made for.
+final class KeyStaysHome: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? {
+        var next = request
+        if !Self.sameOrigin(request.url, task.originalRequest?.url) {
+            next.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        return next
+    }
+
+    /// Scheme, host and port all equal: an https → http hop on the same host would send the key in the clear.
+    nonisolated static func sameOrigin(_ a: URL?, _ b: URL?) -> Bool {
+        guard let a, let b else { return false }
+        func port(_ url: URL) -> Int? { url.port ?? (url.scheme?.lowercased() == "https" ? 443 : url.scheme?.lowercased() == "http" ? 80 : nil) }
+        return a.scheme?.lowercased() == b.scheme?.lowercased() && a.host()?.lowercased() == b.host()?.lowercased() && port(a) == port(b)
     }
 }

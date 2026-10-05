@@ -87,6 +87,9 @@ final class DocumentSession: Identifiable {
     /// Whether the notes observation has delivered once; a page change before that waits for it.
     @ObservationIgnored private var notesDelivered = false
     @ObservationIgnored private var pendingPageReanchor = false
+    /// Set by `open`: the file may have changed while it was closed (an agent edits files Gloss isn't showing), so
+    /// its notes are checked against what was read once they arrive, before anyone acts on stale positions.
+    @ObservationIgnored private var pendingOpenReanchor: (@MainActor () async -> Void)?
     /// Live ranges of text notes while editing, before they are written back on save.
     @ObservationIgnored private var liveRanges: [NoteID: NSRange] = [:]
     @ObservationIgnored private var invalidatedNotes: Set<NoteID> = []
@@ -239,6 +242,15 @@ final class DocumentSession: Identifiable {
                     self.editNote(note)
                 }
                 state = .image(controller)
+                pendingOpenReanchor = { [weak self] in
+                    // What is showing now: a reload may have replaced the image read at open.
+                    guard let self, let decoded = self.imageController?.image else { return }
+                    for note in self.notes {
+                        guard case .image(let anchor) = note.anchor else { continue }
+                        try? await self.apply(ReAnchorer.image(anchor, newWidth: decoded.width, newHeight: decoded.height, newHash: decoded.hash), to: note, unchanged: .image(anchor))
+                    }
+                    self.syncHighlights()
+                }
                 startWatching()
                 observeNotes()
                 return
@@ -256,6 +268,15 @@ final class DocumentSession: Identifiable {
                     self.editNote(note)
                 }
                 state = .pdf(controller)
+                pendingOpenReanchor = { [weak self] in
+                    guard let self, let pdf = self.pdfController?.document else { return }
+                    let source = PDFDocumentTextSource(document: pdf)
+                    for note in self.notes {
+                        guard case .pdf(let anchor) = note.anchor else { continue }
+                        try? await self.apply(ReAnchorer.pdf(anchor, in: source), to: note, unchanged: .pdf(anchor))
+                    }
+                    self.syncHighlights()
+                }
                 startWatching()
                 observeNotes()
                 return
@@ -290,6 +311,12 @@ final class DocumentSession: Identifiable {
                     baseText = adopt(data)
                     document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
                     state = .csv(controller)
+                    // Grid anchors hash the text itself (see `CSVGridController.selectionAnchor`). The text is read
+                    // when the notes arrive, so a reload in between is what they are checked against.
+                    pendingOpenReanchor = { [weak self] in
+                        guard let self, let text = self.baseText else { return }
+                        await self.reanchorAll(in: text, hash: Data(text.utf8).sha256Hex)
+                    }
                     startWatching()
                     observeNotes()
                     return
@@ -322,7 +349,20 @@ final class DocumentSession: Identifiable {
             if kind == .markdown {
                 let folder = hostID == .local ? URL(fileURLWithPath: (path as NSString).deletingLastPathComponent, isDirectory: true) : nil
                 markdown = MarkdownViewerController(source: controller, baseURL: folder)
-                if !hostID.isVirtual { markdown?.documentDirectory = PathUtilities.parent(of: path) }
+                // Relative links open beside the document: files on a host, and a ticket's or page's attachments.
+                if !hostID.isVirtual || hostID == .atlassian { markdown?.documentDirectory = PathUtilities.parent(of: path) }
+                if folder == nil {
+                    // Pictures that live on the document's host (a remote file's, a ticket's attachments) are read
+                    // from it, within the size the image viewer takes.
+                    let fileSystem = fileSystem, directory = PathUtilities.parent(of: path)
+                    markdown?.loadImage = { source in
+                        let decoded = source.removingPercentEncoding ?? source
+                        let target = decoded.hasPrefix("/") ? decoded : (PathUtilities.join(directory, decoded) as NSString).standardizingPath
+                        guard let attributes = try? await fileSystem.stat(target), attributes.kind == .file, attributes.size <= Self.mediaThreshold,
+                              let data = try? await fileSystem.read(target), let image = NSImage(data: data), image.size.width > 0 else { return nil }
+                        return image
+                    }
+                }
                 markdown?.onOpenDocument = { [weak self] target in self?.openLinkedDocument(target) }
             } else if HTMLViewerController.handles(path: path) {
                 let fileSystem = fileSystem
@@ -341,6 +381,11 @@ final class DocumentSession: Identifiable {
                 html = viewer
             }
             state = .text(controller)
+            // The disk text as it is when the notes arrive: a reload in between replaced what open read.
+            pendingOpenReanchor = { [weak self] in
+                guard let self, let text = self.baseText else { return }
+                await self.reanchorAll(in: text, hash: self.fingerprintAtOpen?.hash ?? "")
+            }
             startWatching()
             observeNotes()
             refreshLineChanges()
@@ -424,21 +469,13 @@ final class DocumentSession: Identifiable {
                 resolution.byText = resolution.byText.map(withSourceLine)
             }
             do {
-                switch ReAnchorer.element(anchor, resolution: resolution, newHash: hash) {
-                case .unchanged:
-                    // The page is exactly as it was when the note was made: an orphan's element is back.
-                    if note.state == .orphaned { try await noteStore.restoreDraft(id, anchor: .element(anchor)) }
-                case .moved(let moved):
+                let result = ReAnchorer.element(anchor, resolution: resolution, newHash: hash)
+                // Found at its own selector with the same text: only the hash and rect moved, which every page tick
+                // on a busy page would otherwise write back.
+                if case .moved(.element(let next)) = result, note.state != .orphaned, next.selector == anchor.selector, next.text == anchor.text, next.line == anchor.line {
                     needsReview.remove(id)
-                    // Found at its own selector with the same text: only the hash and rect moved, which every
-                    // page tick on a busy page would otherwise write back.
-                    if case .element(let next) = moved, note.state != .orphaned, next.selector == anchor.selector, next.text == anchor.text, next.line == anchor.line { break }
-                    try await noteStore.updateAnchor(id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
-                case .movedNeedsReview(let moved):
-                    needsReview.insert(id)
-                    try await noteStore.updateAnchor(id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
-                case .orphaned:
-                    if note.state != .orphaned { try await noteStore.markOrphaned(id) }
+                } else {
+                    try await apply(result, to: note, unchanged: .element(anchor))
                 }
             } catch {
                 Log.notes.error("re-anchoring element note \(id.rawValue, privacy: .public) failed: \(error, privacy: .public)")
@@ -861,14 +898,7 @@ final class DocumentSession: Identifiable {
             let source = PDFDocumentTextSource(document: pdf)
             for note in notes {
                 guard case .pdf(let anchor) = note.anchor else { continue }
-                switch ReAnchorer.pdf(anchor, in: source) {
-                case .unchanged: break
-                case .moved(let moved): try await noteStore.updateAnchor(note.id, anchor: moved)
-                case .movedNeedsReview(let moved):
-                    needsReview.insert(note.id)
-                    try await noteStore.updateAnchor(note.id, anchor: moved)
-                case .orphaned: if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
-                }
+                try await apply(ReAnchorer.pdf(anchor, in: source), to: note, unchanged: .pdf(anchor))
             }
             syncHighlights()
         } catch {
@@ -892,14 +922,7 @@ final class DocumentSession: Identifiable {
             if let document { try await noteStore.updateFingerprint(document.id, fingerprint) }
             for note in notes {
                 guard case .image(let anchor) = note.anchor else { continue }
-                switch ReAnchorer.image(anchor, newWidth: decoded.width, newHeight: decoded.height, newHash: decoded.hash) {
-                case .unchanged: break
-                case .moved(let moved): try await noteStore.updateAnchor(note.id, anchor: moved)
-                case .movedNeedsReview(let moved):
-                    needsReview.insert(note.id)
-                    try await noteStore.updateAnchor(note.id, anchor: moved)
-                case .orphaned: if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
-                }
+                try await apply(ReAnchorer.image(anchor, newWidth: decoded.width, newHeight: decoded.height, newHash: decoded.hash), to: note, unchanged: .image(anchor))
             }
             syncHighlights()
         } catch {
@@ -921,6 +944,10 @@ final class DocumentSession: Identifiable {
                     self.syncHighlights()
                     if !self.notesDelivered {
                         self.notesDelivered = true
+                        if let reanchor = self.pendingOpenReanchor {
+                            self.pendingOpenReanchor = nil
+                            await reanchor()
+                        }
                         // A page that settled before its notes arrived still gets its notes looked at once.
                         if self.pendingPageReanchor { self.pendingPageReanchor = false; self.pageChanged() }
                     }
@@ -1021,25 +1048,33 @@ final class DocumentSession: Identifiable {
         }
     }
 
-    /// Re-anchors every text note against new content (reload after an external change).
+    /// Applies one note's re-anchoring result. A note found again takes its new anchor, and an orphan returns to the
+    /// state it had before (`recoverOrphan`); a lost one is orphaned, which leaves a resolved note as it is.
+    private func apply(_ result: ReAnchorResult, to note: Note, unchanged anchor: Anchor) async throws {
+        switch result {
+        case .unchanged:
+            // Exactly what it was when the note was made: an orphan's place is back.
+            if note.state == .orphaned { try await noteStore.recoverOrphan(note.id, anchor: anchor) }
+        case .moved(let moved), .movedNeedsReview(let moved):
+            if case .movedNeedsReview = result { needsReview.insert(note.id) } else { needsReview.remove(note.id) }
+            if note.state == .orphaned {
+                try await noteStore.recoverOrphan(note.id, anchor: moved)
+            } else if moved != anchor {
+                try await noteStore.updateAnchor(note.id, anchor: moved)
+            }
+        case .orphaned:
+            if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
+        }
+    }
+
+    /// Re-anchors every text note against new content (reload after an external change, or a file that changed
+    /// while it was closed).
     func reanchorAll(in text: String, hash: String) async {
         for note in notes {
             if Task.isCancelled { return }
             guard case .text(let anchor) = note.anchor else { continue }
             do {
-                switch ReAnchorer.text(anchor, in: text, newHash: hash) {
-                case .unchanged:
-                    // The file is byte for byte what it was when the note was made: an orphan's text is back.
-                    if note.state == .orphaned { try await noteStore.restoreDraft(note.id, anchor: .text(anchor)) }
-                case .moved(let moved):
-                    needsReview.remove(note.id)
-                    try await noteStore.updateAnchor(note.id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
-                case .movedNeedsReview(let moved):
-                    needsReview.insert(note.id)
-                    try await noteStore.updateAnchor(note.id, anchor: moved, state: note.state == .orphaned ? .draft : nil)
-                case .orphaned:
-                    if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
-                }
+                try await apply(ReAnchorer.text(anchor, in: text, newHash: hash), to: note, unchanged: .text(anchor))
             } catch {
                 Log.notes.error("re-anchoring \(note.id.rawValue, privacy: .public) failed: \(error, privacy: .public)")
             }
@@ -1157,7 +1192,7 @@ final class DocumentSession: Identifiable {
         cancelReanchor()
         Task {
             do {
-                try await noteStore.restoreDraft(id, anchor: newAnchor)
+                try await noteStore.recoverOrphan(id, anchor: newAnchor)
                 needsReview.remove(id)
             } catch {
                 lastError = "Re-anchoring failed: \(error)"

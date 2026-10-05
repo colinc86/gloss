@@ -174,6 +174,15 @@ public enum Schema {
             // config lists the name but not the alias.
             try Self.moveAliasesOffVirtualNames(db, includingRenamed: true)
         }
+        migrator.registerMigration("v6-orphan-state") { db in
+            // The state a note had when it lost its place, so finding it again puts it back as it was (a sent note
+            // stays sent) instead of always making it a draft.
+            try db.execute(sql: "ALTER TABLE note ADD COLUMN previous_state TEXT")
+        }
+        migrator.registerMigration("v7-note-author") { db in
+            // Who wrote the note: NULL for the user, the agent's name for a question an agent asked (issue #4).
+            try db.execute(sql: "ALTER TABLE note ADD COLUMN author TEXT")
+        }
         return migrator
     }
 

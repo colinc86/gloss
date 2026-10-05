@@ -13,7 +13,7 @@ struct AtlassianReadTests {
 
     @Test func readsAnIssueWithItsDescriptionAndComments() async throws {
         let stub = Stub()
-        stub.respond(to: "\(Self.site)/rest/api/3/issue/CP-7?fields=summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project", with: .json(Self.issueJSON))
+        stub.respond(to: "\(Self.site)/rest/api/3/issue/CP-7?fields=summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project,attachment", with: .json(Self.issueJSON))
         let issue = try await client(stub).issue(key: "CP-7")
         #expect(issue.key == "CP-7" && issue.summary == "Name the receiver" && issue.status == "In Progress" && issue.priority == "High")
         #expect(issue.assignee == "Colin Campbell" && issue.labels == ["infra"] && issue.parentKey == "CP-1" && issue.projectKey == "CP")
@@ -26,7 +26,7 @@ struct AtlassianReadTests {
 
     @Test func searchFollowsPageTokens() async throws {
         let stub = Stub()
-        let base = "\(Self.site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated&jql=assignee%20%3D%20currentUser()&maxResults=50"
+        let base = "\(Self.site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated,attachment&jql=assignee%20%3D%20currentUser()&maxResults=50"
         stub.respond(to: base, with: .json(#"{"issues":[{"key":"CP-1","fields":{"summary":"a","status":{"name":"Done"},"issuetype":{"name":"Bug"},"project":{"key":"CP"},"updated":"2026-10-03T12:00:00.000+0100"}}],"isLast":false,"nextPageToken":"t2"}"#))
         stub.respond(to: base + "&nextPageToken=t2", with: .json(#"{"issues":[{"key":"CP-2","fields":{"summary":"b","status":{"name":"To Do"},"issuetype":{"name":"Task"},"project":{"key":"CP"},"updated":"2026-10-02T12:00:00.000+0100"}}],"isLast":true}"#))
         let issues = try await client(stub).searchIssues(jql: "assignee = currentUser()")

@@ -121,7 +121,51 @@ final class AppModel {
         didSet {
             explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
             rememberLastDocument()
+            if let session = activeSession {
+                let entry = DocumentHistory.Entry(hostID: session.hostID, path: session.path)
+                // Arriving where Back or Forward was headed is not a new visit; arriving anywhere else (that open
+                // failed, or something else took over) forgets the target.
+                if entry == historyTarget { historyTarget = nil } else { historyTarget = nil; history.visit(entry) }
+            }
         }
+    }
+    /// Back and Forward through the documents shown (issue #3).
+    private(set) var history = DocumentHistory()
+    /// Where Back or Forward is opening, until it is shown.
+    @ObservationIgnored private var historyTarget: DocumentHistory.Entry?
+
+    func goBack() {
+        guard let entry = history.goBack(skipping: Self.isGone) else { return }
+        show(entry)
+    }
+
+    func goForward() {
+        guard let entry = history.goForward(skipping: Self.isGone) else { return }
+        show(entry)
+    }
+
+    /// Goes back or forward several steps at once, from the toolbar's menus.
+    func goBack(to entry: DocumentHistory.Entry) {
+        while history.canGoBack, let step = history.goBack(skipping: Self.isGone), step != entry {}
+        if let current = history.current { show(current) }
+    }
+
+    func goForward(to entry: DocumentHistory.Entry) {
+        while history.canGoForward, let step = history.goForward(skipping: Self.isGone), step != entry {}
+        if let current = history.current { show(current) }
+    }
+
+    /// Opens a place from the history, connecting its host and opening its folder as any open does, with the
+    /// explorer following.
+    private func show(_ entry: DocumentHistory.Entry) {
+        historyTarget = entry
+        openDocument(hostID: entry.hostID, path: entry.path)
+        revealActiveDocumentInExplorer()
+    }
+
+    /// A local file deleted since it was shown: Back and Forward pass over it.
+    nonisolated static func isGone(_ entry: DocumentHistory.Entry) -> Bool {
+        entry.hostID == .local && !DocumentKindDetector.isWebURL(entry.path) && !FileManager.default.fileExists(atPath: entry.path)
     }
 
     /// - integrationsSession: what the integration clients talk through; tests pass a stubbed session so nothing
@@ -859,7 +903,7 @@ final class AppModel {
     /// Opens a document and scrolls its text view to a 1-based line once it has loaded.
     /// Opens at a line: selected for a jump (a link, an agent pointing somewhere), or just the caret at its start
     /// when resuming, so the reopened file doesn't greet you with a selection and an Add Note button.
-    func openDocument(hostID: HostID, path: String, line: Int, select: Bool = true) {
+    func openDocument(hostID: HostID, path: String, line: Int, endLine: Int? = nil, select: Bool = true) {
         if hostID == .atlassian, let reference = AtlassianPath(path), reference.pageID != nil, !canonicalPages.contains(path) {
             // A page URL names the page's folder, and a page path may be from before a rename or a move: the
             // document opens at today's path once that is known.
@@ -871,8 +915,10 @@ final class AppModel {
         Task {
             for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
             guard let controller = session.textController else { return }
-            let line = controller.lineIndex.contentRange(ofLine: line)
-            let range = select ? line : NSRange(location: line.location, length: 0)
+            let first = controller.lineIndex.contentRange(ofLine: line)
+            let last = controller.lineIndex.contentRange(ofLine: max(line, endLine ?? line))
+            let lines = NSRange(location: first.location, length: last.location + last.length - first.location)
+            let range = select ? lines : NSRange(location: first.location, length: 0)
             if let rendered = session.rendered { rendered.scroll(toSource: range, select: select) } else { controller.scroll(to: range) }
         }
     }
@@ -959,13 +1005,94 @@ final class AppModel {
         }
         if hostID == .atlassian, let reference = AtlassianPath(path) {
             switch reference {
-            case .jiraIssue(let project, _): await explorer.openRoot(hostID: hostID, path: AtlassianPath.jiraProject(project).path)
-            case .confluencePage(let space, _, _, _), .confluencePageFolder(let space, _, _): await explorer.openRoot(hostID: hostID, path: AtlassianPath.confluenceSpace(space).path)
+            case .jiraIssue(let project, _), .jiraAttachments(let project, _), .jiraAttachment(let project, _, _):
+                await explorer.openRoot(hostID: hostID, path: AtlassianPath.jiraProject(project).path)
+            case .confluencePage(let space, _, _, _), .confluencePageFolder(let space, _, _), .confluenceAttachments(let space, _, _), .confluenceAttachment(let space, _, _, _):
+                await explorer.openRoot(hostID: hostID, path: AtlassianPath.confluenceSpace(space).path)
             default: break
             }
             return
         }
         await explorer.openRoot(hostID: hostID, path: PathUtilities.parent(of: path))
+    }
+
+    // MARK: Agent control (issue #4)
+
+    /// Shows the main window above the agent's terminal without taking the keyboard from it: the agent asked to
+    /// show the user something, not to move their typing.
+    func bringForwardForAgent() {
+        guard let window = mainWindow else { return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.orderFrontRegardless()
+    }
+
+    private func hostID(named name: String) async throws -> HostID {
+        if name == "local" { return .local }
+        guard let id = try await noteStore.hosts().first(where: { $0.name == name })?.id else { throw DeliveryError.failed("unknown host \(name)") }
+        return id
+    }
+
+    /// `add_favorite`: pins the folder in the explorer and opens it. False when it already was a favorite.
+    func addFavorite(host: String, path: String) async throws -> Bool {
+        let hostID = try await hostID(named: host)
+        guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { throw DeliveryError.failed("couldn't connect to \(host)") }
+        guard (try await fileSystem.stat(path)).kind == .directory else { throw DeliveryError.failed("\(path) is not a folder") }
+        let root = try await noteStore.recordRootOpened(hostID: hostID, path: path)
+        let added = !explorer.isPinned(hostID: hostID, path: path)
+        if added { await explorer.setPinned(root.id, hostID: hostID, path: path, true) }
+        await explorer.openRoot(hostID: hostID, path: path)
+        return added
+    }
+
+    /// `ask_user`: an agent's question about a place in a file becomes a note asking for the user, on the exact
+    /// text when it is found (nearest the given line), else on the lines, else on the whole file. The document
+    /// opens to it unless the user is in the middle of writing a note; either way it waits under Attention.
+    func ask(_ question: AgentQuestion) async throws -> NoteID {
+        let hostID = try await hostID(named: question.host)
+        guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { throw DeliveryError.failed("couldn't connect to \(question.host)") }
+        let attributes = try await fileSystem.stat(question.path)
+        guard attributes.kind == .file else { throw DeliveryError.failed("\(question.path) is not a file") }
+        var anchor = Anchor.wholeFile
+        if question.line != nil || question.text != nil, attributes.size <= DocumentSession.refuseThreshold {
+            let data = try await fileSystem.read(question.path)
+            if let text = String(data: data, encoding: .utf8) {
+                let index = LineIndex(text)
+                var range: NSRange?
+                if let quoted = question.text {
+                    range = Self.occurrence(of: quoted, in: text, index: index, nearLine: question.line)
+                }
+                if range == nil, let line = question.line {
+                    let first = index.contentRange(ofLine: line)
+                    let last = index.contentRange(ofLine: max(line, question.endLine ?? line))
+                    range = NSRange(location: first.location, length: last.location + last.length - first.location)
+                }
+                if let range { anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: data.sha256Hex)) }
+            }
+        }
+        let document = try await noteStore.upsertDocument(hostID: hostID, path: question.path, kind: DocumentKindDetector.kind(forPath: question.path), fingerprint: attributes.fingerprint)
+        let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent)
+        if activeSession?.noteEditor == nil {
+            await openRootIfNeeded(hostID: hostID, containing: question.path)
+            showNotesPanel = true
+            reveal(note: note, in: document)
+            bringForwardForAgent()
+        }
+        return note.id
+    }
+
+    /// Where `needle` occurs in `text`, nearest `line` when it occurs more than once.
+    nonisolated static func occurrence(of needle: String, in text: String, index: LineIndex, nearLine line: Int?) -> NSRange? {
+        let ns = text as NSString
+        var found: [NSRange] = []
+        var from = 0
+        while from < ns.length {
+            let range = ns.range(of: needle, options: [.literal], range: NSRange(location: from, length: ns.length - from))
+            guard range.location != NSNotFound else { break }
+            found.append(range)
+            from = range.location + max(1, range.length)
+        }
+        guard let line else { return found.first }
+        return found.min { abs(index.position(forUTF16Offset: $0.location).line - line) < abs(index.position(forUTF16Offset: $1.location).line - line) }
     }
 
     /// Creates a note from a URL or plugin: on `line` of the file, or on the whole file.
@@ -1169,18 +1296,6 @@ final class AppModel {
         var dependencies = MCPDependencies(
             noteStore: store,
             packet: { ids in try await send.packet(noteIDs: ids) },
-            hookText: { flavour, host, cwd in
-                let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
-                if host != "local", hostID == nil { return "" }
-                let (text, noteIDs) = try await send.hookText(hostID: hostID, cwd: cwd)
-                // Drained notes count as sent through that hook; the agent resolves them over MCP afterwards.
-                if !noteIDs.isEmpty {
-                    let transport = TransportKind.hook(flavour: flavour)
-                    let targetJSON = (try? JSONSerialization.data(withJSONObject: ["cwd": cwd ?? ""])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-                    _ = try? await store.recordSend(transport: transport.rawValue, targetJSON: targetJSON, packetText: text, noteIDs: noteIDs, outcome: .delivered)
-                }
-                return text
-            },
             createDraft: { host, path, cwd, text in
                 let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
                 guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }
@@ -1192,16 +1307,25 @@ final class AppModel {
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         )
         dependencies.resolveURL = { [weak self] url in self?.resolveURL(url) }
-        dependencies.openDocument = { [weak self] host, path, line in
+        dependencies.openDocument = { [weak self] host, path, line, endLine in
             let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
             guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }
             await MainActor.run {
                 guard let self else { return }
                 Task {
                     await self.openRootIfNeeded(hostID: hostID, containing: path)
-                    if let line { self.openDocument(hostID: hostID, path: path, line: line) } else { self.openDocument(hostID: hostID, path: path) }
+                    if let line { self.openDocument(hostID: hostID, path: path, line: line, endLine: endLine) } else { self.openDocument(hostID: hostID, path: path) }
+                    self.bringForwardForAgent()
                 }
             }
+        }
+        dependencies.addFavorite = { [weak self] host, path in
+            guard let self else { return false }
+            return try await self.addFavorite(host: host, path: path)
+        }
+        dependencies.askUser = { [weak self] question in
+            guard let self else { throw DeliveryError.failed("Gloss is closing") }
+            return try await self.ask(question)
         }
         // A test host serves without a token (its tests talk to the server directly); a real launch never does.
         let server = MCPServer(dependencies: dependencies, port: settings.mcpPort, token: launchOptions.isTestHost ? nil : MCPServer.loadOrCreateToken())
@@ -1311,10 +1435,9 @@ final class AppModel {
         await send(noteIDs: ids)
     }
 
-    /// Copies these notes as one packet; like any send, drafts in it become sent.
+    /// Copies these notes as one packet. They stay drafts: only Send marks a note sent.
     func copyPacket(noteIDs: [NoteID]) async {
-        guard !noteIDs.isEmpty else { return }
-        await send.send(noteIDs: noteIDs, to: ClipboardTransport.target)
+        await send.copy(noteIDs: noteIDs)
     }
 
     /// Opens the note's document and scrolls to it.

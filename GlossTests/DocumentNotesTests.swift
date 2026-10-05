@@ -93,4 +93,49 @@ struct DocumentNotesTests {
         #expect(try await store.note(lost.id)?.state == .orphaned)
         session.close()
     }
+
+    /// Issue #6: a file an agent changed while it was closed. Its notes are found again when it opens, before
+    /// anything is drawn or sent at the old lines; a sent note whose text is gone and comes back stays sent.
+    @Test func openingAChangedFileReanchorsItsNotes() async throws {
+        let (directory, path) = try makeFile("alpha\nbeta\ngamma\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        let moved = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 5), text: "beta", before: "alpha", after: "gamma", hash: "old")), body: "m", color: .blue)
+        let gone = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 3, col: 6), text: "gamma", before: "alpha\nbeta", after: "", hash: "old")), body: "g", color: .pink)
+        _ = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "p", noteIDs: [gone.id], outcome: .delivered)
+        // While closed: two lines added above, gamma removed.
+        try "new one\nnew two\nalpha\nbeta\nomega\n".write(toFile: path, atomically: true, encoding: .utf8)
+        let session = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store)
+        await session.open()
+        await waitUntil { session.notes.first { $0.id == gone.id }?.state == .orphaned }
+        guard case .text(let anchor) = try await store.note(moved.id)?.anchor else { Issue.record("expected text"); return }
+        #expect(anchor.start.line == 4, "beta followed the two new lines")
+        #expect(try await store.note(gone.id)?.state == .orphaned)
+
+        // gamma comes back: the note is found again and is still the sent note it was.
+        try "new one\nnew two\nalpha\nbeta\ngamma\n".write(toFile: path, atomically: true, encoding: .utf8)
+        await session.handleExternalChange()
+        await waitUntil { session.notes.first { $0.id == gone.id }?.state == .sent }
+        #expect(try await store.note(gone.id)?.state == .sent)
+        session.close()
+    }
+
+    /// A packet for a file that isn't open reads the file as it is now, so its excerpt and line numbers follow an
+    /// edit made since the note was written.
+    @Test func aPacketForAClosedChangedFileUsesTheTextAsItIsNow() async throws {
+        let (directory, path) = try makeFile("alpha\nbeta\ngamma\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 5), text: "beta", before: "alpha", after: "gamma", hash: "old")), body: "fix beta", color: .blue)
+        try "one\ntwo\nthree\nalpha\nbeta\ngamma\n".write(toFile: path, atomically: true, encoding: .utf8)
+        let coordinator = SendCoordinator(noteStore: store, transports: [], stagers: [:])
+        coordinator.fileSystemProvider = { _ in LocalFileSystem(deleteBehavior: .permanent) }
+        let packet = try await coordinator.packet(noteIDs: [note.id])
+        #expect(packet.text.contains("Line 5"), "\(packet.text)")
+        #expect(packet.text.contains("> beta"))
+        guard case .text(let anchor) = try await store.note(note.id)?.anchor else { Issue.record("expected text"); return }
+        #expect(anchor.start.line == 5, "and the note itself moved")
+    }
 }

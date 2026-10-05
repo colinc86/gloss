@@ -167,6 +167,15 @@ struct AppCommands: Commands {
             } label: { Label("Search Notes", systemImage: "magnifyingglass") }
             // No shortcut: ⌥⌘F is Find and Replace in most Mac apps, and the menu item is enough.
         }
+        CommandMenu("Go") {
+            // ⌃⌘← and ⌃⌘→, as Xcode goes back and forward; ⌘[ and ⌘] stay with the review browser's own history.
+            Button { model.goBack() } label: { Label("Back", systemImage: "chevron.backward") }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .control])
+                .disabled(!model.history.canGoBack)
+            Button { model.goForward() } label: { Label("Forward", systemImage: "chevron.forward") }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .control])
+                .disabled(!model.history.canGoForward)
+        }
         CommandGroup(after: .toolbar) {
             Toggle(isOn: Binding(
                 get: { model.explorer.showDotfiles },

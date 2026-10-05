@@ -12,19 +12,26 @@ public struct MarkdownRenderer {
     public struct Output: Sendable {
         public let text: NSAttributedString
         public let map: RenderedSourceMap
+        /// Relative image sources that were neither on this Mac nor given: the controller fetches them from the
+        /// document's host and renders again.
+        public var unresolvedImages: [String] = []
     }
 
     public static let sourceSpanKey = NSAttributedString.Key("gloss.sourceSpan")
     nonisolated public static let blockKey = NSAttributedString.Key("gloss.markdownBlock")
 
-    /// `baseURL` is the document's folder on this Mac; relative images resolve against it. Without one (remote
-    /// documents) images show as placeholders.
-    public static func render(_ source: String, baseURL: URL? = nil) -> Output {
+    /// `baseURL` is the document's folder on this Mac; relative images resolve against it. `images` are pictures
+    /// already fetched from a document's own host (an ssh host, a ticket's attachments), by source as written.
+    /// Anything else shows as a placeholder.
+    public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:]) -> Output {
         let document = Document(parsing: source, options: [.disableSmartOpts])
         var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
+        walker.images = images
         walker.visit(document)
         walker.finish()
-        return Output(text: walker.output, map: RenderedSourceMap(spans: walker.spans, blocks: walker.blocks))
+        var output = Output(text: walker.output, map: RenderedSourceMap(spans: walker.spans, blocks: walker.blocks))
+        output.unresolvedImages = walker.unresolvedImages
+        return output
     }
 
     // MARK: Styles
@@ -94,6 +101,8 @@ public struct MarkdownRenderer {
         let table: SourceLineTable
         let sourceNS: NSString
         let baseURL: URL?
+        var images: [String: NSImage] = [:]
+        var unresolvedImages: [String] = []
         var output = NSMutableAttributedString()
         var spans: [SourceSpan] = []
         var blocks: [SourceSpan] = []
@@ -553,12 +562,16 @@ public struct MarkdownRenderer {
         mutating func visitImage(_ image: Image) {
             let alt = image.plainText
             let (range, _) = exactness(image, rendered: alt)
-            if let picture = MarkdownImageLoader.image(source: image.source, baseURL: baseURL) {
+            if let picture = image.source.flatMap({ images[$0] }) ?? MarkdownImageLoader.image(source: image.source, baseURL: baseURL) {
                 let attachment = FittedImageAttachment()
                 attachment.image = picture
                 attachment.naturalSize = picture.size
                 append("\u{FFFC}", source: range, exact: false, extra: [.attachment: attachment])
                 return
+            }
+            // A relative picture this Mac doesn't have: its document's host may (an attachment, a remote file).
+            if baseURL == nil, let source = image.source, !source.isEmpty, URL(string: source)?.scheme == nil, !unresolvedImages.contains(source) {
+                unresolvedImages.append(source)
             }
             let saved = style
             style.color = .secondaryLabelColor

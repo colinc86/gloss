@@ -5,7 +5,8 @@ public enum TransportKind: String, Codable, Sendable, CaseIterable {
     case mcp
     case claudeHook = "claude-hook"
     case codexHook = "codex-hook"
-    /// Any other agent's prompt hook, reading `/hook/text` (Settings → Agents → Other agents).
+    /// The prompt hooks of builds before 0.2, which drained drafts into a prompt's context. Nothing sends through
+    /// them now; the cases stay so the send history those builds recorded still reads.
     case promptHook = "prompt-hook"
     case opencode
     case tmux
@@ -21,16 +22,6 @@ public enum TransportKind: String, Codable, Sendable, CaseIterable {
         case .opencode: "OpenCode"
         case .tmux: "tmux"
         case .clipboard: "Clipboard"
-        }
-    }
-
-    /// The transport a drain through `/hook/<flavour>` is recorded as: Codex's, any other agent's plain-text hook,
-    /// or Claude Code's.
-    public static func hook(flavour: String) -> TransportKind {
-        switch flavour {
-        case "codex": .codexHook
-        case "text": .promptHook
-        default: .claudeHook
         }
     }
 }

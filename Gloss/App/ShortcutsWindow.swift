@@ -30,7 +30,7 @@ nonisolated struct ShortcutGroup: Identifiable {
         ]),
     ]
 
-    private static let menuSymbols = ["File": "folder", "Edit": "pencil", "View": "sidebar.left", "Notes": "note.text",
+    private static let menuSymbols = ["File": "folder", "Edit": "pencil", "View": "sidebar.left", "Notes": "note.text", "Go": "arrow.left.arrow.right",
                                       "Window": "macwindow", "Help": "questionmark.circle"]
     /// Edit commands every Mac app has; listing them would bury the app's own.
     private static let standardEdit: Set<String> = ["Undo", "Redo", "Cut", "Copy", "Paste", "Paste and Match Style",

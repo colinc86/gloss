@@ -9,7 +9,7 @@ struct SchemaTests {
         "host": [("id", "TEXT"), ("name", "TEXT"), ("kind", "TEXT"), ("last_connected_at", "DATETIME"), ("origin", "TEXT"), ("options_json", "TEXT")],
         "root": [("id", "TEXT"), ("host_id", "TEXT"), ("path", "TEXT"), ("last_opened_at", "DATETIME"), ("pinned", "BOOLEAN")],
         "document": [("id", "TEXT"), ("host_id", "TEXT"), ("path", "TEXT"), ("kind", "TEXT"), ("last_hash", "TEXT"), ("last_mtime", "DATETIME"), ("last_size", "INTEGER")],
-        "note": [("id", "TEXT"), ("document_id", "TEXT"), ("anchor_json", "TEXT"), ("anchor_type", "TEXT"), ("body", "TEXT"), ("state", "TEXT"), ("created_at", "DATETIME"), ("updated_at", "DATETIME"), ("color", "TEXT"), ("resolve_outcome", "TEXT"), ("resolve_message", "TEXT")],
+        "note": [("id", "TEXT"), ("document_id", "TEXT"), ("anchor_json", "TEXT"), ("anchor_type", "TEXT"), ("body", "TEXT"), ("state", "TEXT"), ("created_at", "DATETIME"), ("updated_at", "DATETIME"), ("color", "TEXT"), ("resolve_outcome", "TEXT"), ("resolve_message", "TEXT"), ("previous_state", "TEXT"), ("author", "TEXT")],
         "attachment": [("id", "TEXT"), ("note_id", "TEXT"), ("kind", "TEXT"), ("local_path", "TEXT"), ("width", "INTEGER"), ("height", "INTEGER")],
         "send": [("id", "TEXT"), ("target_json", "TEXT"), ("transport", "TEXT"), ("packet_text", "TEXT"), ("sent_at", "DATETIME"), ("outcome", "TEXT")],
         "send_note": [("send_id", "TEXT"), ("note_id", "TEXT")],
@@ -90,7 +90,9 @@ struct SchemaTests {
         try Schema.migrator.migrate(queue)
         let after = try queue.read { db in try Schema.tableNames.map { try rows(db, $0) } }
         for (index, table) in Schema.tableNames.enumerated() where table != "host" {
-            #expect(before[index] == after[index], "\(table) rows survive the rebuild")
+            // Columns later migrations add (empty for old rows) are not part of the comparison.
+            let kept = after[index].map { row in row.filter { before[index].first?.keys.contains($0.key) ?? true } }
+            #expect(before[index] == kept, "\(table) rows survive the rebuild")
         }
         try queue.read { (db: Database) throws in
             #expect(try rows(db, "host").count == before[0].count + 3, "the three virtual hosts are added, no host is lost")

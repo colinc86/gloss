@@ -189,7 +189,7 @@ struct HTTPLayerProviderTests {
     @Test func aRepeatedPageTokenEndsTheSearch() async throws {
         let stub = Stub()
         let site = "https://example.atlassian.net"
-        let first = "\(site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated&jql=project%20%3D%20CP&maxResults=100"
+        let first = "\(site)/rest/api/3/search/jql?fields=summary,status,issuetype,project,updated,attachment&jql=project%20%3D%20CP&maxResults=100"
         stub.respond(to: first, with: .json(#"{"issues":[],"isLast":false,"nextPageToken":"t1"}"#))
         stub.respond(to: first + "&nextPageToken=t1", with: .json(#"{"issues":[],"isLast":false,"nextPageToken":"t1"}"#))
         let client = AtlassianClient(site: URL(string: site)!, email: "a@x.com", token: "t", session: stub.session())

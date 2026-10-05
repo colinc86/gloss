@@ -65,7 +65,19 @@ public actor AtlassianClient {
 
     // MARK: Jira
 
-    private static let issueFields = "summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project"
+    private static let issueFields = "summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project,attachment"
+
+    static func attachments(_ value: Any?) -> [AtlassianAttachment] {
+        (value as? [[String: Any]] ?? []).compactMap { entry in
+            guard let id = string(entry["id"]), let filename = entry["filename"] as? String else { return nil }
+            return AtlassianAttachment(id: id, filename: filename, mimeType: entry["mimeType"] as? String ?? "application/octet-stream", size: entry["size"] as? Int ?? 0)
+        }
+    }
+
+    /// The link an issue's Markdown uses for an attachment listed as `name`, relative to `KEY.md`.
+    nonisolated static func jiraAttachmentLink(key: String, name: String) -> String {
+        key + AtlassianPath.jiraAttachmentsSuffix + "/" + name
+    }
 
     private func object(_ reply: HTTPReply) throws -> [String: Any] {
         guard let object = try? JSONSerialization.jsonObject(with: reply.data) as? [String: Any] else { throw IntegrationError.malformed("not a JSON object") }
@@ -89,20 +101,37 @@ public actor AtlassianClient {
             guard let string = fields[field] as? String else { return nil }
             return try? decoder.decode(Date.self, from: Data("\"\(string)\"".utf8))
         }
-        let description = (fields["description"] as? [String: Any]).map(ADFMarkdown.markdown(from:))
+        // Jira's media nodes name Media Services files, not attachments; the file name (alt) is what links them.
+        let attachments = Self.attachments(fields["attachment"])
+        let listed = AtlassianAttachment.listed(attachments)
+        let listedNames = AtlassianAttachment.listedNames(listed)
+        let media: ADFMarkdown.MediaLink = { reference in
+            let names = [reference.alt, reference.name].compactMap { $0 }
+            guard let match = listed.first(where: { names.contains($0.filename) }), let name = listedNames[match.id] else { return nil }
+            return (jiraAttachmentLink(key: key, name: name), match.mimeType.hasPrefix("image/"))
+        }
+        let description = (fields["description"] as? [String: Any]).map { ADFMarkdown.markdown(from: $0, media: media) }
         let comments = ((fields["comment"] as? [String: Any])?["comments"] as? [[String: Any]] ?? []).compactMap { comment -> JiraIssue.Comment? in
             guard let id = comment["id"] as? String else { return nil }
-            let body = (comment["body"] as? [String: Any]).map(ADFMarkdown.markdown(from:)) ?? ""
+            let body = (comment["body"] as? [String: Any]).map { ADFMarkdown.markdown(from: $0, media: media) } ?? ""
             let created = (comment["created"] as? String).flatMap { try? decoder.decode(Date.self, from: Data("\"\($0)\"".utf8)) } ?? Date(timeIntervalSince1970: 0)
             return JiraIssue.Comment(id: id, author: (comment["author"] as? [String: Any])?["displayName"] as? String ?? "someone", created: created, body: body)
         }
-        return JiraIssue(
+        var issue = JiraIssue(
             key: key, id: id, summary: fields["summary"] as? String ?? "", issueType: name("issuetype") ?? "Issue", status: name("status") ?? "",
             priority: name("priority"), assignee: display("assignee"), reporter: display("reporter"), labels: fields["labels"] as? [String] ?? [],
             parentKey: (fields["parent"] as? [String: Any])?["key"] as? String, created: date("created") ?? Date(timeIntervalSince1970: 0),
             updated: date("updated") ?? Date(timeIntervalSince1970: 0), description: description, comments: comments.sorted { $0.created < $1.created },
             projectKey: (fields["project"] as? [String: Any])?["key"] as? String ?? String(key.split(separator: "-").first ?? "")
         )
+        issue.attachments = attachments
+        return issue
+    }
+
+    /// An issue attachment's bytes, asked for without the redirect to the media host so the request stays on the
+    /// site and the key is never sent elsewhere.
+    public func jiraAttachment(id: String) async throws -> Data {
+        try await http.get(url("rest/api/3/attachment/content/\(id)", query: ["redirect": "false"]), headers: ["Authorization": authorization, "Accept": "*/*"]).data
     }
 
     public func issue(key: String) async throws -> JiraIssue {
@@ -115,7 +144,7 @@ public actor AtlassianClient {
         var token: String?
         var seen: Set<String> = []
         repeat {
-            var query = ["jql": jql, "maxResults": String(min(limit, 100)), "fields": "summary,status,issuetype,project,updated"]
+            var query = ["jql": jql, "maxResults": String(min(limit, 100)), "fields": "summary,status,issuetype,project,updated,attachment"]
             if let token { query["nextPageToken"] = token }
             let page = try object(try await http.get(url("rest/api/3/search/jql", query: query), headers: headers))
             for issue in page["issues"] as? [[String: Any]] ?? [] {
@@ -123,7 +152,8 @@ public actor AtlassianClient {
                 results.append(JiraIssue.Summary(
                     key: key, summary: fields["summary"] as? String ?? "", status: (fields["status"] as? [String: Any])?["name"] as? String ?? "",
                     issueType: (fields["issuetype"] as? [String: Any])?["name"] as? String ?? "", projectKey: (fields["project"] as? [String: Any])?["key"] as? String ?? "",
-                    updated: date(fields["updated"]) ?? Date(timeIntervalSince1970: 0)
+                    updated: date(fields["updated"]) ?? Date(timeIntervalSince1970: 0),
+                    viewableAttachments: Self.attachments(fields["attachment"]).filter(\.isViewable).count
                 ))
             }
             token = page["isLast"] as? Bool == false ? page["nextPageToken"] as? String : nil
@@ -163,12 +193,33 @@ public actor AtlassianClient {
         return nil
     }
 
-    func page(from value: [String: Any], body: Bool) -> ConfluencePage? {
+    /// A page's attachments. Its media nodes name each one's `fileId`.
+    public func pageAttachments(id: String) async throws -> [AtlassianAttachment] {
+        try await results(startingAt: url("wiki/api/v2/pages/\(id)/attachments", query: ["limit": "250"])).compactMap { value in
+            guard let id = Self.string(value["id"]), let title = value["title"] as? String else { return nil }
+            return AtlassianAttachment(id: id, filename: title, mimeType: value["mediaType"] as? String ?? "application/octet-stream",
+                                       size: value["fileSize"] as? Int ?? 0, fileID: value["fileId"] as? String, downloadPath: value["downloadLink"] as? String)
+        }
+    }
+
+    /// A page attachment's bytes from its download link (under the site's `wiki`). Confluence redirects to its media
+    /// host, which is followed without the key.
+    public func pageAttachment(_ attachment: AtlassianAttachment) async throws -> Data {
+        guard let path = attachment.downloadPath, let target = URL(string: "wiki" + (path.hasPrefix("/") ? path : "/" + path), relativeTo: site)?.absoluteURL,
+              target.host() == site.host() else { throw IntegrationError.malformed("attachment without a download link on the site") }
+        return try await http.get(target, headers: ["Authorization": authorization, "Accept": "*/*"]).data
+    }
+
+    func page(from value: [String: Any], body: Bool, media: ADFMarkdown.MediaLink? = nil) -> ConfluencePage? {
         guard let id = Self.string(value["id"]), let title = value["title"] as? String else { return nil }
         let version = value["version"] as? [String: Any]
         var markdown: String?
         if body, let adf = ((value["body"] as? [String: Any])?["atlas_doc_format"] as? [String: Any])?["value"] as? String {
-            markdown = ADFMarkdown.markdown(fromJSON: Data(adf.utf8))
+            if let media, let object = try? JSONSerialization.jsonObject(with: Data(adf.utf8)) as? [String: Any] {
+                markdown = ADFMarkdown.markdown(from: object, media: media)
+            } else {
+                markdown = ADFMarkdown.markdown(fromJSON: Data(adf.utf8))
+            }
         }
         return ConfluencePage(
             id: id, title: title, spaceId: Self.string(value["spaceId"]) ?? "", parentId: Self.string(value["parentId"]),
@@ -209,9 +260,9 @@ public actor AtlassianClient {
         }
     }
 
-    /// One page with its body as Markdown.
-    public func page(id: String) async throws -> ConfluencePage {
-        guard let page = page(from: try object(try await http.get(url("wiki/api/v2/pages/\(id)", query: ["body-format": "atlas_doc_format"]), headers: headers)), body: true) else {
+    /// One page with its body as Markdown; `media` places its attached images.
+    public func page(id: String, media: ADFMarkdown.MediaLink? = nil) async throws -> ConfluencePage {
+        guard let page = page(from: try object(try await http.get(url("wiki/api/v2/pages/\(id)", query: ["body-format": "atlas_doc_format"]), headers: headers)), body: true, media: media) else {
             throw IntegrationError.malformed("page without id or title")
         }
         return page

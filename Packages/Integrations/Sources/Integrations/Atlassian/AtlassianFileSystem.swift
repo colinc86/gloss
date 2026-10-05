@@ -39,6 +39,12 @@ public actor AtlassianFileSystem: FileSystemProvider {
     /// Titles and versions seen in listings, so a folder names its own document without fetching the body.
     private var pageTitles: [String: ConfluencePage] = [:]
     private var pollers: [String: Poller] = [:]
+    /// Each page's attachments, as last listed.
+    private var pageAttachments: [String: (list: [AtlassianAttachment], fetchedAt: ContinuousClock.Instant)] = [:]
+    /// Attachment bytes by attachment id: an attachment never changes (a new upload is a new attachment).
+    private var attachmentBytes: [String: Data] = [:]
+    private var attachmentOrder: [String] = []
+
     /// Set when Jira or Confluence says the rate limit is spent; pollers wait until then.
     private var rateLimitedUntil: Date?
 
@@ -137,7 +143,14 @@ public actor AtlassianFileSystem: FileSystemProvider {
         if !refresh, let cached = pages[id], isFresh(cached.fetchedAt, nil) || pollers.keys.contains(where: { AtlassianPath($0)?.pageID == id }) { return cached }
         do {
             let page: ConfluencePage
-            do { page = try await client.page(id: id) } catch {
+            // The page's attached files, so its images show and link to their own documents.
+            let attachments = (try? await attachments(ofPage: id)) ?? []
+            let names = AtlassianAttachment.listedNames(attachments)
+            let media: ADFMarkdown.MediaLink = { reference in
+                guard let fileID = reference.id, let match = attachments.first(where: { $0.fileID == fileID }), let name = names[match.id] else { return nil }
+                return (AtlassianPath.confluenceAttachmentsFolder + "/" + name, match.mimeType.hasPrefix("image/"))
+            }
+            do { page = try await client.page(id: id, media: media) } catch {
                 noteRateLimit(error)
                 if !refresh, let cached = pages[id] { return cached }
                 throw error
@@ -149,6 +162,63 @@ public actor AtlassianFileSystem: FileSystemProvider {
         } catch {
             throw Self.fileSystemError(error, path: AtlassianPath.confluencePageFolder(space: space, id: id).path)
         }
+    }
+
+    // MARK: Attachments
+
+    private func attachments(ofPage id: String) async throws -> [AtlassianAttachment] {
+        if let cached = pageAttachments[id], ContinuousClock.now - cached.fetchedAt < listingLifetime { return cached.list }
+        let list = AtlassianAttachment.listed(try await client.pageAttachments(id: id))
+        pageAttachments[id] = (list, .now)
+        return list
+    }
+
+    private func jiraAttachments(_ key: String, project: String) async throws -> [AtlassianAttachment] {
+        AtlassianAttachment.listed(try await issueDocument(key, project: project).issue.attachments)
+    }
+
+    private func attachment(at path: AtlassianPath) async throws -> AtlassianAttachment {
+        let list: [AtlassianAttachment], name: String
+        switch path {
+        case .jiraAttachment(let project, let key, let fileName): (list, name) = (try await jiraAttachments(key, project: project), fileName)
+        case .confluenceAttachment(_, let id, let fileName, _):
+            do { list = try await attachments(ofPage: id) } catch { throw Self.fileSystemError(error, path: path.path) }
+            name = fileName
+        default: throw FileSystemError.notFound(path.path)
+        }
+        guard let found = Self.named(list)[name] else { throw FileSystemError.notFound(path.path) }
+        return found
+    }
+
+    /// Attachments by the name each is listed under (`AtlassianAttachment.listedNames`).
+    nonisolated static func named(_ list: [AtlassianAttachment]) -> [String: AtlassianAttachment] {
+        let names = AtlassianAttachment.listedNames(list)
+        return Dictionary(list.compactMap { attachment in names[attachment.id].map { ($0, attachment) } }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private func attachmentEntries(_ list: [AtlassianAttachment], in folder: String) -> [DirectoryEntry] {
+        Self.named(list).map { name, attachment in
+            DirectoryEntry(name: name, path: folder + "/" + name, kind: .file, size: Int64(attachment.size), mtime: nil, mode: 0o444)
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private func bytes(of attachment: AtlassianAttachment, at path: AtlassianPath) async throws -> Data {
+        let isJira = if case .jiraAttachment = path { true } else { false }
+        let cacheKey = (isJira ? "jira:" : "confluence:") + attachment.id
+        if let cached = attachmentBytes[cacheKey] { return cached }
+        let data: Data
+        do {
+            data = isJira ? try await client.jiraAttachment(id: attachment.id) : try await client.pageAttachment(attachment)
+        } catch {
+            noteRateLimit(error)
+            throw Self.fileSystemError(error, path: path.path)
+        }
+        attachmentBytes[cacheKey] = data
+        attachmentOrder.append(cacheKey)
+        // A handful of pictures, not every one ever opened.
+        while attachmentOrder.count > 24 { attachmentBytes[attachmentOrder.removeFirst()] = nil }
+        return data
     }
 
     /// Page folders, named by title; their paths nest under `parent`'s, so the tree's paths follow its nesting.
@@ -169,9 +239,17 @@ public actor AtlassianFileSystem: FileSystemProvider {
             // Roots are chosen in the picker; neither products' top level is browsed.
             return []
         case .jiraProject(let project):
-            return try await issueList(project).map { issue in
-                DirectoryEntry(name: "\(issue.key).md", path: AtlassianPath.jiraIssue(project: project, key: issue.key).path, kind: .file, mtime: issue.updated, mode: 0o444)
+            return try await issueList(project).flatMap { issue in
+                var entries = [DirectoryEntry(name: "\(issue.key).md", path: AtlassianPath.jiraIssue(project: project, key: issue.key).path, kind: .file, mtime: issue.updated, mode: 0o444)]
+                if issue.viewableAttachments > 0 {
+                    entries.append(DirectoryEntry(name: issue.key + AtlassianPath.jiraAttachmentsSuffix, path: AtlassianPath.jiraAttachments(project: project, key: issue.key).path, kind: .directory, mtime: issue.updated, mode: 0o555))
+                }
+                return entries
             }
+        case .jiraAttachments(let project, let key):
+            return attachmentEntries(try await jiraAttachments(key, project: project), in: directory)
+        case .confluenceAttachments(_, let id, _):
+            do { return attachmentEntries(try await attachments(ofPage: id), in: directory) } catch { throw Self.fileSystemError(error, path: directory) }
         case .confluenceSpace(let key):
             let space = try await space(key)
             do { return entries(for: try await client.pages(inSpace: space.id), space: key, under: nil) } catch { throw Self.fileSystemError(error, path: directory) }
@@ -189,10 +267,13 @@ public actor AtlassianFileSystem: FileSystemProvider {
             }
             let title = AtlassianPath.fileTitle(own.title)
             var entries = [DirectoryEntry(name: title + ".md", path: AtlassianPath.confluencePage(space: space, id: id, title: title, ancestors: ancestors).path, kind: .file, size: own.size, mtime: own.mtime, mode: 0o444)]
+            if let attached = try? await attachments(ofPage: id), !attached.isEmpty {
+                entries.append(DirectoryEntry(name: AtlassianPath.confluenceAttachmentsFolder, path: AtlassianPath.confluenceAttachments(space: space, id: id, ancestors: ancestors).path, kind: .directory, mtime: own.mtime, mode: 0o555))
+            }
             let folder = AtlassianPath.confluencePageFolder(space: space, id: id, ancestors: ancestors)
             do { entries += self.entries(for: try await client.children(ofPage: id), space: space, under: folder) } catch { throw Self.fileSystemError(error, path: directory) }
             return entries
-        case .jiraIssue, .confluencePage:
+        case .jiraIssue, .confluencePage, .jiraAttachment, .confluenceAttachment:
             throw FileSystemError.notADirectory(directory)
         }
     }
@@ -218,6 +299,12 @@ public actor AtlassianFileSystem: FileSystemProvider {
             // The title in the path is cosmetic: a renamed page keeps its document and its notes.
             let document = try await pageDocument(id, space: space)
             return FileAttributes(kind: .file, size: Int64(document.data.count), mtime: document.page.versionDate ?? Date(timeIntervalSince1970: 0), mode: 0o444)
+        case .jiraAttachments, .confluenceAttachments:
+            return FileAttributes(kind: .directory, size: 0, mtime: Date(timeIntervalSince1970: 0), mode: 0o555)
+        case .jiraAttachment, .confluenceAttachment:
+            let parsed = try parse(path)
+            let attachment = try await attachment(at: parsed)
+            return FileAttributes(kind: .file, size: Int64(attachment.size), mtime: Date(timeIntervalSince1970: 0), mode: 0o444)
         }
     }
 
@@ -227,6 +314,9 @@ public actor AtlassianFileSystem: FileSystemProvider {
             return try await issueDocument(key, project: project).data
         case .confluencePage(let space, let id, _, _):
             return try await pageDocument(id, space: space).data
+        case .jiraAttachment, .confluenceAttachment:
+            let parsed = try parse(path)
+            return try await bytes(of: try await attachment(at: parsed), at: parsed)
         default:
             throw FileSystemError.notFound(path)
         }
@@ -331,6 +421,12 @@ public actor AtlassianFileSystem: FileSystemProvider {
             // Without the page's facts the address is still worth giving.
             guard let document = try? await pageDocument(id, space: space) else { return PacketResource(url: client.site.appendingPathComponent("wiki/pages/\(id)")) }
             return PacketResource(url: client.pageURL(document.page), details: ["Version: \(document.page.version)"])
+        case .jiraAttachment(_, let key, let name)?:
+            // The agent reads the image from the attachment path the packet gives; this says whose file it is.
+            return PacketResource(url: client.browseURL(forIssue: key), details: ["Attachment: \(name)"])
+        case .confluenceAttachment(let space, let id, let name, _)?:
+            guard let document = try? await pageDocument(id, space: space) else { return PacketResource(url: client.site.appendingPathComponent("wiki/pages/\(id)"), details: ["Attachment: \(name)"]) }
+            return PacketResource(url: client.pageURL(document.page), details: ["Attachment: \(name)"])
         default:
             return nil
         }

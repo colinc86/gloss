@@ -26,6 +26,23 @@ enum AtlassianMarkdown {
         lines.append(contentsOf: bodyLines(issue.description ?? "_No description._"))
         let description = descriptionStart...lines.count
         var map: [(ClosedRange<Int>, String)] = []
+        // Every image and PDF, whether or not the text shows it (Jira's media nodes can't always be matched to a
+        // file): each opens in its viewer for region notes.
+        let viewable = AtlassianAttachment.listed(issue.attachments)
+        let names = AtlassianAttachment.listedNames(viewable)
+        if !viewable.isEmpty {
+            lines.append("")
+            lines.append("## Attachments")
+            lines.append("")
+            var allowed = CharacterSet.urlPathAllowed
+            allowed.remove(charactersIn: "()")
+            for attachment in viewable {
+                let link = AtlassianClient.jiraAttachmentLink(key: issue.key, name: names[attachment.id] ?? attachment.fileName)
+                let destination = link.addingPercentEncoding(withAllowedCharacters: allowed) ?? link
+                let label = attachment.filename.replacingOccurrences(of: "]", with: "\\]").replacingOccurrences(of: "[", with: "\\[")
+                lines.append(attachment.mimeType.hasPrefix("image/") ? "![\(label)](\(destination))" : "- [\(label)](\(destination))")
+            }
+        }
         if !issue.comments.isEmpty {
             lines.append("")
             lines.append("## Comments")

@@ -54,6 +54,13 @@ public final class MarkdownViewerController {
     @ObservationIgnored public var documentDirectory: String?
     /// Opens a relative or file: link's target as a document on the same host.
     @ObservationIgnored public var onOpenDocument: (String) -> Void = { _ in }
+    /// Fetches a relative picture from the document's own host (a remote file system, a ticket's attachments);
+    /// nil where images are local or not served. Set it before the first render that needs it.
+    @ObservationIgnored public var loadImage: ((String) async -> NSImage?)? {
+        didSet { if loadImage != nil { rebuildNow() } }
+    }
+    @ObservationIgnored private var fetchedImages: [String: NSImage] = [:]
+    @ObservationIgnored private var fetchingImages: Set<String> = []
 
     public init(source: TextEditorController, baseURL: URL? = nil) {
         self.source = source
@@ -87,10 +94,30 @@ public final class MarkdownViewerController {
 
     public func rebuildNow() {
         renderedContentVersion = source.contentVersion
-        let output = MarkdownRenderer.render(source.text, baseURL: baseURL)
+        let output = MarkdownRenderer.render(source.text, baseURL: baseURL, images: fetchedImages)
         rendered = output.text
         map = output.map
         renderedVersion += 1
+        fetch(output.unresolvedImages)
+    }
+
+    /// Fetches pictures the render couldn't show, then renders once more with whatever arrived. A picture that
+    /// can't be had is asked for once per document, not on every keystroke.
+    private func fetch(_ sources: [String]) {
+        guard let loadImage else { return }
+        let wanted = sources.filter { fetchedImages[$0] == nil && !fetchingImages.contains($0) }
+        guard !wanted.isEmpty else { return }
+        fetchingImages.formUnion(wanted)
+        Task { [weak self] in
+            var arrived = false
+            for source in wanted {
+                if let image = await loadImage(source) {
+                    self?.fetchedImages[source] = image
+                    arrived = true
+                }
+            }
+            if arrived { self?.rebuildNow() }
+        }
     }
 
     /// Collapses the rendered view's selection to its end. The view ignores its own delegate while applying a

@@ -5,6 +5,8 @@ description: Verified facts (as of 2026-10-01) for pushing and pulling context w
 
 # Agent integrations
 
+**Gloss installs no hooks** (since 2026-10-05, issue #5): a `UserPromptSubmit` hook fires on every prompt, including the one a Herdr or tmux send submits, so it cannot tell "the user chose these" from "a prompt happened". Drafts leave only on Send; agents read and resolve sent notes through MCP. The hook facts below stay for reference (and for removing the old entry, `gloss-notes.sh`).
+
 Everything below was checked against the live docs or binaries on this machine. Re-verify before relying on anything marked "unverified".
 
 ## Claude Code
@@ -53,7 +55,7 @@ Over SSH run the same through the exec channel; pipe the packet into `ssh <host>
 
 ## Shared MCP server surface (what every agent sees)
 
-Tools: `list_pending_notes(host?, path?)`, `get_note(id)`, `resolve_note(id, outcome?, message?)`, `list_documents()`, `open_in_viewer(path, line?, host?)` (host defaults to the session's: a remote registration URL is `http://127.0.0.1:<port>/mcp?host=<alias>`, quoted in the `mcp add` shell line). Resources: `note://<id>/attachment/<n>` serving image/png. Keep tool names stable; the packet's closing line names `resolve_note` literally.
+Tools (agents see `sent` notes only; drafts never): `list_pending_notes(host?, path?)`, `get_note(id)`, `resolve_note(id, outcome?, message?)`, `list_documents()`, `open_in_viewer(path|url, line?, end_line?, host?)`, `ask_user(path, question, line?, end_line?, text?, host?)` (a resolved `needs_input` note with `author` = the client's agent name, at most 20 open per document), `add_favorite(path, host?)`, `list_favorites()` (host defaults to the session's: a remote registration URL is `http://127.0.0.1:<port>/mcp?host=<alias>`, quoted in the `mcp add` shell line). Resources: `note://<id>/attachment/<n>` serving image/png. Keep tool names stable; the packet's closing line names `resolve_note` literally.
 
 Every route but `/health` needs the server's token (`Authorization: Bearer <token>` or `token=<token>` in the query): the registration URL carries `?token=…` (and `&host=<alias>` remotely), and the port file (`mcp-port`, 0600; `~/.config/gloss/mcp-port` on a host) holds the port on line 1 and the token on line 2 for the hook script and the Herdr plugin. `GET /hook/claude` and `/hook/codex` return the drafts under `cwd` (and `host`) in the UserPromptSubmit JSON shape; `GET /hook/text` returns the same packet as `text/plain` for any other agent's prompt hook (Settings → Agents → Other agents gives the curl line). All three drain what they return to `sent` (recorded as `claude-hook`, `codex-hook`, `prompt-hook`) and answer an empty 200 when there is nothing. The token lives in `~/Library/Application Support/Gloss/mcp-token`. Without it anyone else logged in to a host could reach the forwarded port and read the notes. Requests with an `Origin` or a non-loopback `Host` are refused too.
 

@@ -5,6 +5,8 @@ public enum NoteStoreError: Error, Equatable, Sendable {
     case noteNotFound(NoteID)
     case documentNotFound(DocumentID)
     case illegalTransition(from: NoteState, to: NoteState)
+    /// A document already holds this many open questions from agents.
+    case tooManyQuestions(Int)
 }
 
 /// All reads and writes of hosts, roots, documents, notes, sends, attachments, staged files,
@@ -269,11 +271,13 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// Draft and sent notes, optionally limited to one host and a path prefix (a file or a directory).
-    public func pendingNotes(hostID: HostID? = nil, pathPrefix: String? = nil) async throws -> [(note: Note, document: Document)] {
-        try await queue.read { db in
+    /// Open notes (draft and sent by default), optionally limited to one host and a path prefix (a file or a
+    /// directory). What agents see through MCP passes `[.sent]`: a draft stays the user's until they press Send.
+    public func pendingNotes(hostID: HostID? = nil, pathPrefix: String? = nil, states: Set<NoteState> = [.draft, .sent]) async throws -> [(note: Note, document: Document)] {
+        let stateValues = states.map(\.rawValue)
+        return try await queue.read { db in
             var request = NoteRecord
-                .filter(["draft", "sent"].contains(Column("state")))
+                .filter(stateValues.contains(Column("state")))
                 .including(required: NoteRecord.document)
             if let hostID {
                 request = request.filter(sql: "document.host_id = ?", arguments: [hostID.rawValue])
@@ -303,6 +307,43 @@ public struct NoteStore: Sendable {
                 anchorJson: try anchor.encodedJSON(), anchorType: anchor.type.rawValue,
                 body: body, state: NoteState.draft.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
                 resolveOutcome: nil, resolveMessage: nil
+            )
+            try record.insert(db)
+            return try Note(record: try Self.refetch(record, db))
+        }
+    }
+
+    /// Notes an agent may see: ones delivered to an agent at least once, and agents' own questions. A draft, an
+    /// orphaned draft or a note resolved by hand without being sent stays the user's.
+    public func sharedNoteIDs() async throws -> Set<NoteID> {
+        try await queue.read { db in
+            Set(try String.fetchAll(db, sql: """
+                SELECT note.id FROM note WHERE note.author IS NOT NULL OR EXISTS (
+                    SELECT 1 FROM send_note JOIN send ON send.id = send_note.send_id
+                    WHERE send_note.note_id = note.id AND send.outcome = 'delivered')
+                """).map(NoteID.init(rawValue:)))
+        }
+    }
+
+    /// Open questions one document may hold from agents, so a looping agent can't bury the user's own notes.
+    public static let agentQuestionLimit = 20
+
+    /// A question an agent asks the user about a place in a file (`ask_user`). It arrives the way an agent's
+    /// question on a sent note does, resolved with `needs_input`, so it shows under Attention, counts on the Dock,
+    /// and is answered with Reply; the answer makes it a draft that goes back only when the user sends it.
+    public func askUser(documentID: DocumentID, anchor: Anchor, question: String, author: String, color: NoteColor = .orange, at date: Date = Date()) async throws -> Note {
+        let date = Self.rounded(date)
+        return try await queue.write { db in
+            guard try DocumentRecord.exists(db, key: documentID.rawValue) else { throw NoteStoreError.documentNotFound(documentID) }
+            let open = try NoteRecord
+                .filter(Column("document_id") == documentID.rawValue && Column("author") != nil && Column("state") == NoteState.resolved.rawValue && Column("resolve_outcome") == ResolveOutcome.needsInput.rawValue)
+                .fetchCount(db)
+            guard open < Self.agentQuestionLimit else { throw NoteStoreError.tooManyQuestions(Self.agentQuestionLimit) }
+            let record = NoteRecord(
+                id: NoteID.new().rawValue, documentId: documentID.rawValue,
+                anchorJson: try anchor.encodedJSON(), anchorType: anchor.type.rawValue,
+                body: "", state: NoteState.resolved.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
+                resolveOutcome: ResolveOutcome.needsInput.rawValue, resolveMessage: question, author: author
             )
             try record.insert(db)
             return try Note(record: try Self.refetch(record, db))
@@ -383,8 +424,39 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// The note's text is gone. Remembers the state it had, so `recoverOrphan` can put it back. A resolved note
+    /// stays resolved: its work is done, and the agent rewriting the text it pointed at is the expected outcome,
+    /// not something to look at again.
     public func markOrphaned(_ id: NoteID, at date: Date = Date()) async throws {
-        try await transition(id, to: .orphaned, at: date)
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
+            let current = NoteState(rawValue: record.state) ?? .draft
+            guard current != .resolved else { return }
+            try Self.checkTransition(from: current, to: .orphaned)
+            record.previousState = current.rawValue
+            record.state = NoteState.orphaned.rawValue
+            record.updatedAt = date
+            try record.update(db)
+        }
+    }
+
+    /// An orphan found again (by re-anchoring, or placed by the user): it takes `anchor` and returns to the state
+    /// it had before it was orphaned, draft or sent, never silently becoming a draft that could be sent twice.
+    public func recoverOrphan(_ id: NoteID, anchor: Anchor, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
+            record.anchorJson = try anchor.encodedJSON()
+            record.anchorType = anchor.type.rawValue
+            if record.state == NoteState.orphaned.rawValue {
+                let previous = record.previousState.flatMap(NoteState.init(rawValue:)) ?? .draft
+                record.state = (previous == .sent ? NoteState.sent : .draft).rawValue
+                record.previousState = nil
+            }
+            record.updatedAt = date
+            try record.update(db)
+        }
     }
 
     /// `orphaned` → `draft` once the user has placed the anchor again.
@@ -729,7 +801,8 @@ extension Note {
             anchor: try Anchor(type: type, json: record.anchorJson), body: record.body,
             state: NoteState(rawValue: record.state) ?? .draft, color: NoteColor(rawValue: record.color) ?? .yellow,
             createdAt: record.createdAt, updatedAt: record.updatedAt,
-            resolveOutcome: record.resolveOutcome.flatMap(ResolveOutcome.init(rawValue:)), resolveMessage: record.resolveMessage
+            resolveOutcome: record.resolveOutcome.flatMap(ResolveOutcome.init(rawValue:)), resolveMessage: record.resolveMessage,
+            author: record.author
         )
     }
 }

@@ -55,6 +55,10 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     public var color: String
     public var resolveOutcome: String?
     public var resolveMessage: String?
+    /// The state before the note was orphaned; nil otherwise.
+    public var previousState: String? = nil
+    /// Nil for the user; an agent's name for a question it asked.
+    public var author: String? = nil
 }
 
 public struct AttachmentRecord: SnakeCaseRecord, Identifiable {

@@ -19,7 +19,8 @@ struct ContentView: View {
         case .atlassian:
             switch AtlassianPath(session.path) {
             case .jiraIssue(let project, _)?: "Jira · \(project)"
-            case .confluencePage(let space, _, _, _)?: "Confluence · \(space)"
+            case .jiraAttachment(_, let key, _)?: "Jira · \(key)"
+            case .confluencePage(let space, _, _, _)?, .confluenceAttachment(let space, _, _, _)?: "Confluence · \(space)"
             default: "Atlassian"
             }
         default: hosts.entry(for: session.hostID)?.name ?? ""
@@ -75,6 +76,10 @@ struct ContentView: View {
                     .inspectorColumnWidth(min: 300, ideal: 360, max: 480)
             }
             .toolbar {
+                ToolbarItemGroup(placement: .navigation) {
+                    HistoryButton(direction: .back)
+                    HistoryButton(direction: .forward)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         model.presentReport()
@@ -265,5 +270,34 @@ private struct CopyHUD: View {
         .padding(.bottom, 40)
         .animation(DS.Motion.bouncy, value: model.copyFlash?.id)
         .allowsHitTesting(false)
+    }
+}
+
+/// Back or Forward through the documents shown. A click takes one step; holding it (or its menu) lists the recent
+/// places to jump to, as Safari's and Xcode's history buttons do.
+private struct HistoryButton: View {
+    enum Direction { case back, forward }
+    @Environment(AppModel.self) private var model
+    let direction: Direction
+
+    var body: some View {
+        let entries = direction == .back ? model.history.recentBack() : model.history.recentForward()
+        Menu {
+            ForEach(entries, id: \.self) { entry in
+                Button {
+                    if direction == .back { model.goBack(to: entry) } else { model.goForward(to: entry) }
+                } label: {
+                    Text(PathUtilities.name(of: entry.path))
+                    Text(model.hosts.entry(for: entry.hostID).map { "\($0.name) · " + PathUtilities.parent(of: entry.path) } ?? PathUtilities.parent(of: entry.path))
+                }
+            }
+        } label: {
+            Label(direction == .back ? "Back" : "Forward", systemImage: direction == .back ? "chevron.backward" : "chevron.forward")
+        } primaryAction: {
+            if direction == .back { model.goBack() } else { model.goForward() }
+        }
+        .menuIndicator(.hidden)
+        .disabled(entries.isEmpty)
+        .help(direction == .back ? "Back (⌃⌘←)" : "Forward (⌃⌘→)")
     }
 }

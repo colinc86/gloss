@@ -1,3 +1,4 @@
+import AppKit
 import Core
 import Foundation
 import Observation
@@ -14,6 +15,11 @@ final class SendCoordinator {
     @ObservationIgnored var fileSystemProvider: (HostID) -> (any FileSystemProvider)? = { _ in nil }
     /// Text of open documents, so excerpts reflect unsaved edits.
     @ObservationIgnored var openTextProvider: (HostID, String) -> String? = { _, _ in nil }
+    /// Where Copy as Packet puts the text: the general pasteboard (tests swap it so they never touch the user's).
+    @ObservationIgnored var writeClipboard: (String) -> Void = { text in
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
     /// What a virtual host says a document is (a pull request's URL and file at its head), for the packet header.
     @ObservationIgnored var packetResourceProvider: (HostID, String, Int?) async -> PacketResource? = { _, _, _ in nil }
 
@@ -43,6 +49,8 @@ final class SendCoordinator {
         let target: AgentTarget
         /// Nil when delivered.
         let failure: String?
+        /// Copied as a packet rather than sent: the notes are still drafts.
+        var copied = false
 
         static func == (lhs: SendResult, rhs: SendResult) -> Bool { lhs.id == rhs.id }
     }
@@ -206,37 +214,33 @@ final class SendCoordinator {
         }
     }
 
+    /// Puts these notes on the clipboard as one packet without sending them: nothing is recorded and drafts stay
+    /// drafts, since a copy may never be pasted anywhere (issue #5). Choosing the Clipboard target and pressing
+    /// Send is the explicit way to mark them sent.
+    func copy(noteIDs: [NoteID]) async {
+        guard !noteIDs.isEmpty else { return }
+        lastError = nil
+        do {
+            let packet = try await packet(noteIDs: noteIDs)
+            writeClipboard(packet.text)
+            lastResult = SendResult(noteIDs: packet.noteIDs, target: ClipboardTransport.target, failure: nil, copied: true)
+        } catch {
+            lastError = "Copy failed: \(error)"
+            Log.transport.error("copy failed: \(error, privacy: .public)")
+        }
+    }
+
     /// Builds the packet text for the clipboard without recording a send.
     func packetText(noteIDs: [NoteID]) async throws -> String {
         try await packet(noteIDs: noteIDs).text
     }
 
-    /// The packet for these notes with attachments at their local paths (MCP and hook readers run on this Mac
-    /// or read the crops as resources).
+    /// The packet for these notes with attachments at their local paths (for the clipboard, and for MCP readers,
+    /// which run on this Mac or read the crops as resources).
     func packet(noteIDs: [NoteID]) async throws -> Packet {
         let (notes, attachments) = try await collect(noteIDs: noteIDs)
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
         return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged))
-    }
-
-    /// `UserPromptSubmit` context for the draft notes under `cwd` on a host, fitted to the hook limit, with the ids
-    /// it covers. Drafts only: a note the hook already delivered stays reachable through MCP but is not injected
-    /// into every later prompt.
-    func hookText(hostID: HostID?, cwd: String?) async throws -> (text: String, noteIDs: [NoteID]) {
-        // A hook that couldn't tell where its session runs (no cwd in the hook's JSON, no python3 to read it) gets
-        // nothing: with no prefix, or "" read as "/", it would drain every project's drafts into this one session
-        // and mark them sent, so the right session never sees them.
-        guard let cwd, cwd.hasPrefix("/") else { return ("", []) }
-        let pending = try await noteStore.pendingNotes(hostID: hostID, pathPrefix: cwd).filter { $0.note.state == .draft }
-        let (notes, attachments) = try await collect(noteIDs: pending.map(\.note.id))
-        let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
-        // Excerpts only add length: when the packet without them already exceeds the cap, the builder will use
-        // the summary form anyway, so reading every document (over SFTP, inside the hook's timeout) is skipped.
-        let headerOnly = notes.map { PacketNote(noteID: $0.note.id, agentPath: $0.document.path, source: Self.source(for: $0.document), anchor: $0.note.anchor, comment: $0.note.body) }
-        let packetNotes = PacketBuilder.build(headerOnly).text.count > PacketBuilder.hookDefaultLimit
-            ? headerOnly
-            : try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged)
-        return (PacketBuilder.hookText(packetNotes), notes.map(\.note.id))
     }
 
     func draftNoteIDs(documentID: DocumentID?) async -> [NoteID] {
@@ -261,14 +265,18 @@ final class SendCoordinator {
 
     private func packetNotes(for notes: [(note: Note, document: Document)], target: AgentTarget, staged: [StagedAttachment]) async throws -> [PacketNote] {
         var contents: [String: String] = [:]
+        /// Hashes of files read from disk here (not open), to tell whether a note's anchor still describes them.
+        var hashes: [String: String] = [:]
         var result: [PacketNote] = []
-        for (note, document) in notes {
+        for (original, document) in notes {
+            var note = original
             var excerpt: [String] = []
+            var excerptOverride: [String]?
             var cellDescription: String?
             if case .text(let anchor) = note.anchor, document.kind == .web {
                 // A page's source is its DOM on one long line; the selection is the excerpt that means something.
                 excerpt = anchor.text.components(separatedBy: "\n")
-            } else if case .text(let anchor) = note.anchor {
+            } else if case .text(var anchor) = note.anchor {
                 let key = "\(document.hostID.rawValue):\(document.path)"
                 if contents[key] == nil {
                     if let open = openTextProvider(document.hostID, document.path) {
@@ -277,15 +285,34 @@ final class SendCoordinator {
                         // A page that is not open has no text to read; the anchor's own text still travels.
                         contents[key] = ""
                     } else {
-                        contents[key] = try await readText(hostID: document.hostID, path: document.path) ?? ""
+                        let read = try await readText(hostID: document.hostID, path: document.path)
+                        contents[key] = read?.text ?? ""
+                        hashes[key] = read?.hash
                     }
                 }
+                // A file that changed since the note was made (an agent edited it while it wasn't open): find the
+                // note's text again, so the excerpt and the line numbers describe the file as it is now.
+                // Only an anchor that records what it was made on (its file's hash and text) can be looked for.
+                if let hash = hashes[key], let made = anchor.hash, made != hash, !anchor.text.isEmpty, let content = contents[key] {
+                    switch ReAnchorer.text(anchor, in: content, newHash: hash) {
+                    case .moved(let moved), .movedNeedsReview(let moved):
+                        note.anchor = moved
+                        try? await noteStore.updateAnchor(note.id, anchor: moved)
+                    case .orphaned:
+                        // Its text is gone from the file: quote what the note was made on rather than whatever now
+                        // sits at its old lines. The session marks it orphaned when the document opens.
+                        excerptOverride = anchor.text.components(separatedBy: "\n")
+                    case .unchanged:
+                        break
+                    }
+                }
+                if case .text(let current) = note.anchor { anchor = current }
                 if let cells = anchor.cells {
                     let made = CellExcerpt.make(anchor: anchor, cells: cells, content: contents[key] ?? "", fileName: (document.path as NSString).lastPathComponent)
                     excerpt = made.lines
                     cellDescription = made.description
                 } else {
-                    excerpt = ExcerptExtractor.lines(for: anchor, in: contents[key] ?? "")
+                    excerpt = excerptOverride ?? ExcerptExtractor.lines(for: anchor, in: contents[key] ?? "")
                 }
             } else if case .pdf(let anchor) = note.anchor, let text = anchor.text {
                 excerpt = text.components(separatedBy: "\n")
@@ -309,10 +336,11 @@ final class SendCoordinator {
         return result
     }
 
-    private func readText(hostID: HostID, path: String) async throws -> String? {
+    private func readText(hostID: HostID, path: String) async throws -> (text: String, hash: String)? {
         guard let fileSystem = fileSystemProvider(hostID) else { return nil }
         let data = try await fileSystem.read(path)
-        return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return nil }
+        return (text, data.sha256Hex)
     }
 
     private func targetJSON(_ target: AgentTarget) -> String {

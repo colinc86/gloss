@@ -189,14 +189,69 @@ public enum ReAnchorer {
         let index = LineIndex(normalized)
         let selected = normalizeNewlines(anchor.text)
 
-        // 1. Exact match on the selected text, nearest the old position.
-        if !selected.isEmpty, let range = nearestOccurrence(of: selected, in: normalized, index: index, toLine: anchor.start.line) {
-            let rebuilt = make(from: range, in: normalized, index: index, hash: newHash)
-            return .moved(.text(rebuilt))
+        // 1. Exact match on the selected text; among several, the one whose surrounding lines match best.
+        if !selected.isEmpty, let match = bestOccurrence(of: selected, anchor: anchor, in: normalized, index: index) {
+            let rebuilt = make(from: match.range, in: normalized, index: index, hash: newHash)
+            return match.ambiguous ? .movedNeedsReview(.text(rebuilt)) : .moved(.text(rebuilt))
         }
 
         // 2. Fuzzy match on the context lines.
         return fuzzyText(anchor, selected: selected, normalized: normalized, index: index, newHash: newHash)
+    }
+
+    /// Below this many characters a phrase is too common to look for inside a rewritten line.
+    static let distinctiveLength = 12
+
+    /// Every exact occurrence of the selected text, scored by how well the lines around it match the anchor's
+    /// context (the agent inserting lines above moves the text, not its neighbours), with the distance from the
+    /// old line breaking ties. With several occurrences the move is silent only when the best one's neighbours are
+    /// clearly the note's (two thirds of the context lines) and clearly beat the next; otherwise it is `ambiguous`:
+    /// the note still moves, but asks for a glance.
+    /// Nil when no occurrence is near enough and none is recognisable by its context.
+    static func bestOccurrence(of needle: String, anchor: TextAnchor, in haystack: String, index: LineIndex) -> (range: NSRange, ambiguous: Bool)? {
+        let ns = haystack as NSString
+        var occurrences: [NSRange] = []
+        var searchRange = NSRange(location: 0, length: ns.length)
+        while searchRange.location < ns.length {
+            let found = ns.range(of: needle, options: [.literal], range: searchRange)
+            guard found.location != NSNotFound else { break }
+            occurrences.append(found)
+            let next = found.location + max(1, found.length)
+            searchRange = NSRange(location: next, length: ns.length - next)
+        }
+        guard !occurrences.isEmpty else { return nil }
+        if occurrences.count == 1 { return (occurrences[0], false) }
+
+        let lines = (1...max(1, index.lineCount)).map { haystack.line($0, index: index) ?? "" }
+        let before = anchor.before.isEmpty ? [] : anchor.before.components(separatedBy: "\n")
+        let after = anchor.after.isEmpty ? [] : anchor.after.components(separatedBy: "\n")
+        let limit = max(200, Int(Double(index.lineCount) * 0.2))
+        struct Candidate { var range: NSRange; var context: Double; var distance: Int; var column: Int }
+        let candidates = occurrences.map { range -> Candidate in
+            let start = index.position(forUTF16Offset: range.location)
+            let end = index.position(forUTF16Offset: range.location + range.length)
+            var scores: [Double] = []
+            if !before.isEmpty { scores.append(similarity(before, context(lines, before: start.line).components(separatedBy: "\n"))) }
+            if !after.isEmpty { scores.append(similarity(after, context(lines, after: end.line).components(separatedBy: "\n"))) }
+            let context = scores.isEmpty ? 0 : scores.reduce(0, +) / Double(scores.count)
+            return Candidate(range: range, context: context, distance: abs(start.line - anchor.start.line), column: abs(start.col - anchor.start.col))
+        }
+        // Context first; a small pull towards the old place, so equal contexts (repeated blocks) keep their order.
+        func score(_ candidate: Candidate) -> Double {
+            candidate.context - 0.05 * min(Double(candidate.distance) / Double(limit), 1)
+        }
+        let ranked = candidates.sorted { lhs, rhs in
+            let l = score(lhs), r = score(rhs)
+            if l != r { return l > r }
+            if lhs.distance != rhs.distance { return lhs.distance < rhs.distance }
+            return lhs.column < rhs.column
+        }
+        let best = ranked[0], runnerUp = ranked[1]
+        // Far from where it was and not recognisable by its neighbours: leave it to the context search instead.
+        if best.context < 0.34, best.distance > limit { return nil }
+        let recognised = best.context >= 0.67 && score(best) - score(runnerUp) >= 0.15
+        let untouched = best.distance == 0 && best.context >= 1
+        return (best.range, !(recognised || untouched))
     }
 
     /// The last non-blank line of `before` (first of `after`) is the probe; blank lines between the probe and the
@@ -243,6 +298,12 @@ public enum ReAnchorer {
         let newLines = Array(lines[(span.lowerBound - 1)...(span.upperBound - 1)])
         let score = oldLines.isEmpty ? 1.0 : similarity(oldLines, newLines)
         guard bracketed || score >= reviewScore else { return .orphaned }
+        // A selection inside a line (a phrase, not whole lines): keep it a phrase when its start and end can still
+        // be found in the span, rather than widening the note to the whole lines.
+        if let narrowed = narrowed(selected, toSpan: span, in: normalized, index: index) {
+            let rebuilt = make(from: narrowed, in: normalized, index: index, hash: newHash)
+            return .movedNeedsReview(.text(rebuilt))
+        }
         let start = TextPosition(line: span.lowerBound, col: 1)
         let end = TextPosition(line: span.upperBound, col: (newLines.last?.utf16.count ?? 0) + 1)
         let rebuilt = TextAnchor(
@@ -251,6 +312,31 @@ public enum ReAnchorer {
         )
         let accept = bracketed ? bracketedAcceptScore : acceptScore
         return score >= accept ? .moved(.text(rebuilt)) : .movedNeedsReview(.text(rebuilt))
+    }
+
+    /// The part of the span that begins with the selection's first words and ends with its last, when the selection
+    /// was shorter than its lines. Nil for whole-line selections, or when either end is gone.
+    static func narrowed(_ selected: String, toSpan span: ClosedRange<Int>, in content: String, index: LineIndex) -> NSRange? {
+        let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= distinctiveLength else { return nil }
+        let first = index.contentRange(ofLine: span.lowerBound)
+        let last = index.contentRange(ofLine: span.upperBound)
+        let spanRange = NSRange(location: first.location, length: last.location + last.length - first.location)
+        let ns = content as NSString
+        let spanText = ns.substring(with: spanRange)
+        // Only worth it when the selection did not cover its lines.
+        guard trimmed != spanText.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        let length = min(16, trimmed.count / 3)
+        let head = String(trimmed.prefix(length)), tail = String(trimmed.suffix(length))
+        let headRange = ns.range(of: head, options: [.literal], range: spanRange)
+        guard headRange.location != NSNotFound else { return nil }
+        let afterHead = NSRange(location: headRange.location, length: spanRange.location + spanRange.length - headRange.location)
+        let tailRange = ns.range(of: tail, options: [.literal, .backwards], range: afterHead)
+        guard tailRange.location != NSNotFound, tailRange.location + tailRange.length > headRange.location + headRange.length else { return nil }
+        let range = NSRange(location: headRange.location, length: tailRange.location + tailRange.length - headRange.location)
+        // A phrase that grew past twice its length is no longer the same phrase.
+        guard range.length <= (selected as NSString).length * 2 else { return nil }
+        return range
     }
 
     /// Builds a text anchor for a selection range of `content`, including context lines and hash.
@@ -274,24 +360,6 @@ public enum ReAnchorer {
 
     static func normalizeNewlines(_ string: String) -> String {
         string.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-    }
-
-    static func nearestOccurrence(of needle: String, in haystack: String, index: LineIndex, toLine line: Int) -> NSRange? {
-        let ns = haystack as NSString
-        var occurrences: [NSRange] = []
-        var searchRange = NSRange(location: 0, length: ns.length)
-        while searchRange.location < ns.length {
-            let found = ns.range(of: needle, options: [.literal], range: searchRange)
-            guard found.location != NSNotFound else { break }
-            occurrences.append(found)
-            let next = found.location + max(1, found.length)
-            searchRange = NSRange(location: next, length: ns.length - next)
-        }
-        guard !occurrences.isEmpty else { return nil }
-        let withDistance = occurrences.map { ($0, abs(index.position(forUTF16Offset: $0.location).line - line)) }
-        let best = withDistance.min { $0.1 < $1.1 }!
-        let limit = max(200, Int(Double(index.lineCount) * 0.2))
-        return occurrences.count == 1 || best.1 <= limit ? best.0 : nil
     }
 
     static func nearestLine(equalTo target: String, in lines: [String], toLine line: Int, limit: Int) -> Int? {

@@ -1,11 +1,13 @@
 import Core
 import Foundation
+import MCP
 import NIOHTTP1
 import Testing
 @testable import Transports
 
 struct MCPServerTests {
-    /// A store with `count` pending notes on one local file, the first with a PNG attachment.
+    /// A store with `count` sent notes on one local file, the first with a PNG attachment, plus one draft the agent
+    /// must never see.
     static func makeStore(count: Int, attachmentDirectory: String) async throws -> (NoteStore, [NoteID]) {
         let store = NoteStore(database: try AppDatabase.inMemory())
         let document = try await store.upsertDocument(hostID: .local, path: "/tmp/demo/README.md", kind: .markdown, fingerprint: Fingerprint())
@@ -17,6 +19,9 @@ struct MCPServerTests {
         let png = "\(attachmentDirectory)/crop.png"
         try Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]).write(to: URL(fileURLWithPath: png))
         _ = try await store.addAttachment(noteID: ids[0], kind: .crop, localPath: png, width: 4, height: 4)
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "", noteIDs: ids, outcome: .delivered)
+        let secret = try await store.upsertDocument(hostID: .local, path: "/tmp/demo/DRAFTS.md", kind: .markdown, fingerprint: Fingerprint())
+        _ = try await store.createNote(documentID: secret.id, anchor: .wholeFile, body: "unsent draft", color: .yellow)
         return (store, ids)
     }
 
@@ -30,11 +35,6 @@ struct MCPServerTests {
                     notes.append(PacketNote(noteID: id, agentPath: document.path, source: .markdown, anchor: note.anchor, comment: note.body))
                 }
                 return PacketBuilder.build(notes)
-            },
-            hookText: { _, host, cwd in
-                let hostID = host == "local" ? HostID.local : nil
-                let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: cwd)
-                return PacketBuilder.hookText(pending.map { PacketNote(noteID: $0.note.id, agentPath: $0.document.path, source: .markdown, anchor: $0.note.anchor, comment: $0.note.body) })
             },
             createDraft: { _, path, cwd, text in
                 let document = try await store.upsertDocument(hostID: .local, path: path ?? "\(cwd ?? "/tmp")/.gloss-inbox.md", kind: .markdown, fingerprint: Fingerprint())
@@ -77,7 +77,7 @@ struct MCPServerTests {
         _ = try await store.upsertHost(name: "asus", kind: .ssh)
         let opened = OpenLog()
         var dependencies = Self.dependencies(store: store)
-        dependencies.openDocument = { host, path, line in await opened.record("\(host)|\(path)|\(line.map(String.init) ?? "-")") }
+        dependencies.openDocument = { host, path, line, end in await opened.record("\(host)|\(path)|\(line.map(String.init) ?? "-")" + (end.map { "-\($0)" } ?? "")) }
         // The app knows which URLs it has a host for (a pull request); any other http(s) URL is a web page.
         dependencies.resolveURL = { url in url.host() == "github.com" ? ("github", "/o/r/pull/12/Pull request.md") : nil }
         let server = MCPServer(dependencies: dependencies, port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
@@ -106,36 +106,99 @@ struct MCPServerTests {
         #expect(try await call(local, ["url": "https://github.com/o/r/pull/12"]).text == "showing github:/o/r/pull/12/Pull request.md")
         #expect(try await call(local, ["url": "https://example.com/docs", "line": 4]).text == "showing web:https://example.com/docs at line 4")
         #expect(try await call(local, ["url": "ftp://example.com/x"]).isError, "a URL with no viewer is refused")
+        #expect(try await call(local, ["path": "/tmp/a.swift", "line": 3, "end_line": 9]).text == "showing local:/tmp/a.swift at lines 3-9")
+        #expect(try await call(local, ["path": "/tmp/a.swift", "line": 9, "end_line": 3]).isError, "a range must not run backwards")
+        #expect(try await call(local, ["path": "/tmp/a.swift", "end_line": 3]).isError, "end_line needs line")
         #expect(try await call(local, [:]).isError, "path or url is required")
-        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-", "github|/o/r/pull/12/Pull request.md|-", "web|https://example.com/docs|4"])
+        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-", "github|/o/r/pull/12/Pull request.md|-", "web|https://example.com/docs|4", "local|/tmp/a.swift|3-9"])
     }
 
-    /// The hook finds notes under a non-ASCII working directory, encoded the way `curl --data-urlencode` sends it.
-    @Test func hookFindsNotesUnderNonASCIIDirectories() async throws {
-        let store = NoteStore(database: try AppDatabase.inMemory())
-        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/Café Notes/plan.md", kind: .markdown, fingerprint: Fingerprint())
-        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "tighten the intro", color: .yellow)
-        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-hook-\(UUID().uuidString.prefix(8))")
+    /// Drafts stay in the app until the user sends them: no tool lists, reads or resolves one, and the old hook
+    /// routes are gone.
+    @Test func agentsNeverSeeDrafts() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-drafts-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: directory) }
-        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
+        let (store, ids) = try await Self.makeStore(count: 2, attachmentDirectory: directory)
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/demo/README.md", kind: .markdown, fingerprint: Fingerprint())
+        let draft = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "not yet", color: .yellow)
+        let dependencies = Self.dependencies(store: store)
+        func call(_ name: String, _ arguments: [String: Value] = [:]) async throws -> (text: String, isError: Bool) {
+            let result = try await MCPServer.callTool(.init(name: name, arguments: arguments), dependencies: dependencies)
+            let text = result.content.compactMap { if case .text(let text, _, _) = $0 { text } else { nil } }.joined(separator: "\n")
+            return (text, result.isError ?? false)
+        }
+        let listing = try await call("list_pending_notes")
+        #expect(listing.text.contains(ids[0].rawValue) && !listing.text.contains(draft.id.rawValue) && !listing.text.contains("unsent draft"))
+        #expect(try await call("get_note", ["id": .string(draft.id.rawValue)]).isError)
+        #expect(try await call("resolve_note", ["id": .string(draft.id.rawValue)]).isError)
+        #expect(try await store.note(draft.id)?.state == .draft)
+        let documents = try await call("list_documents")
+        #expect(!documents.text.contains("DRAFTS.md") && !documents.text.contains("draft="), "\(documents.text)")
+        // An orphaned draft, or one resolved by hand, was never given to an agent either.
+        try await store.markOrphaned(draft.id)
+        #expect(try await call("get_note", ["id": .string(draft.id.rawValue)]).isError)
+        let secret = try await store.pendingNotes(states: [.draft]).first { $0.document.path.hasSuffix("DRAFTS.md") }!.note
+        try await store.resolve(secret.id)
+        #expect(try await call("get_note", ["id": .string(secret.id.rawValue)]).isError)
+        #expect(!(try await call("list_documents").text.contains("DRAFTS.md")))
+        let resources = try await MCPServer.resources(dependencies: dependencies)
+        #expect(resources.allSatisfy { !$0.uri.contains(draft.id.rawValue) })
+
+        let server = MCPServer(dependencies: dependencies, port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
         try await server.start()
         defer { Task { await server.stop() } }
         let port = try #require(await server.port)
-        let url = try #require(URL(string: "http://127.0.0.1:\(port)/hook/claude?cwd=%2Ftmp%2FCaf%C3%A9+Notes&host=local"))
-        let (data, _) = try await URLSession.shared.data(from: url)
-        let hook = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let context = ((hook?["hookSpecificOutput"] as? [String: Any])?["additionalContext"] as? String) ?? ""
-        #expect(context.contains("tighten the intro") && context.contains("/tmp/Café Notes/plan.md"))
+        for flavour in ["claude", "codex", "text"] {
+            let (_, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/hook/\(flavour)?cwd=%2Ftmp%2Fdemo")!)
+            #expect((response as? HTTPURLResponse)?.statusCode == 404, "/hook/\(flavour) is gone")
+        }
+    }
 
-        // Any other agent's hook gets the same packet as plain text, no JSON around it.
-        let textURL = try #require(URL(string: "http://127.0.0.1:\(port)/hook/text?cwd=%2Ftmp%2FCaf%C3%A9+Notes"))
-        let (textData, textResponse) = try await URLSession.shared.data(from: textURL)
-        let text = String(decoding: textData, as: UTF8.self)
-        #expect((textResponse as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") == "text/plain; charset=utf-8")
-        #expect(text == context, "the packet itself, exactly what the Claude hook wraps")
-        let (emptyText, emptyResponse) = try await URLSession.shared.data(from: try #require(URL(string: "http://127.0.0.1:\(port)/hook/text?cwd=%2Fnowhere")))
-        #expect((emptyResponse as? HTTPURLResponse)?.statusCode == 200 && emptyText.isEmpty)
+    /// Issue #4: an agent asks the user about lines it wrote, keeps a folder at hand, and reads the favorites back.
+    /// The question carries the agent's name from its client, and the session's host as the default.
+    @Test func agentsAskAndKeepFavorites() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-ask-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        _ = try await store.upsertHost(name: "asus", kind: .ssh)
+        let asked = QuestionLog()
+        var dependencies = Self.dependencies(store: store)
+        dependencies.askUser = { question in
+            await asked.record(question)
+            return NoteID.new()
+        }
+        dependencies.addFavorite = { host, path in
+            let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }!.id
+            let root = try await store.recordRootOpened(hostID: hostID, path: path)
+            guard !root.pinned else { return false }
+            try await store.setRootPinned(root.id, true)
+            return true
+        }
+        func call(_ name: String, _ arguments: [String: Value], agentHost: String = "local", agentName: String = "claude") async throws -> (text: String, isError: Bool) {
+            let result = try await MCPServer.callTool(.init(name: name, arguments: arguments), dependencies: dependencies, agentHost: agentHost, agentName: agentName)
+            return (result.content.compactMap { if case .text(let text, _, _) = $0 { text } else { nil } }.joined(separator: "\n"), result.isError ?? false)
+        }
+        let ok = try await call("ask_user", ["path": .string("/tmp/demo/README.md"), "question": .string("Does this intro read right?"), "line": .int(2), "end_line": .int(4)])
+        #expect(!ok.isError && ok.text.hasPrefix("asked the user"), "\(ok.text)")
+        _ = try await call("ask_user", ["path": .string("/home/me/x.md"), "question": .string("Keep this?"), "text": .string("keep me")], agentHost: "asus", agentName: "codex")
+        #expect(await asked.questions == [
+            AgentQuestion(host: "local", path: "/tmp/demo/README.md", question: "Does this intro read right?", line: 2, endLine: 4, agent: "claude"),
+            AgentQuestion(host: "asus", path: "/home/me/x.md", question: "Keep this?", text: "keep me", agent: "codex"),
+        ])
+        #expect(try await call("ask_user", ["path": .string("/tmp/a.md"), "question": .string("  ")]).isError, "a question is required")
+        #expect(try await call("ask_user", ["path": .string("a.md"), "question": .string("q")]).isError, "paths are absolute")
+        #expect(try await call("ask_user", ["path": .string("/a.md"), "question": .string("q"), "host": .string("nowhere")]).isError)
+
+        #expect(try await call("add_favorite", ["path": .string("/Users/me/proj")]).text == "added local:/Users/me/proj to the favorites")
+        #expect(try await call("add_favorite", ["path": .string("/Users/me/proj")]).text == "local:/Users/me/proj is already a favorite")
+        _ = try await call("add_favorite", ["path": .string("/home/me/app")], agentHost: "asus")
+        let favorites = try await call("list_favorites", [:]).text
+        #expect(favorites.contains("local:/Users/me/proj") && favorites.contains("asus:/home/me/app"), "\(favorites)")
+
+        #expect(MCPServer.agentName(client: "claude-code") == "claude" && MCPServer.agentName(client: "codex-mcp-client") == "codex")
+        #expect(MCPServer.agentName(client: nil) == "agent")
     }
 
     /// A body over the 8 MB cap is refused with 413 and the connection closed, and the server keeps serving.
@@ -244,7 +307,7 @@ struct MCPServerTests {
         headers.replaceOrAdd(name: "Origin", value: "null")
         #expect(!HTTPListener.permits(headers), "a sandboxed frame")
 
-        // End to end: the same hook request with and without an Origin.
+        // End to end: the same request with and without an Origin.
         let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-origin-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -278,12 +341,10 @@ struct MCPServerTests {
             let (_, response) = try await URLSession.shared.data(for: request)
             return (response as? HTTPURLResponse)?.statusCode ?? -1
         }
-        #expect(try await status("/hook/claude?cwd=%2Ftmp") == 401, "someone else on the host, without the token")
-        #expect(try await status("/hook/claude?cwd=%2Ftmp", bearer: "wrong") == 401)
-        #expect(try await status("/hook/claude?cwd=%2Ftmp", bearer: token) == 200)
-        #expect(try await status("/hook/claude?cwd=%2Ftmp&token=\(token)") == 200, "as the registered MCP URL carries it")
-        #expect(try await status("/hook/text?cwd=%2Ftmp") == 401)
-        #expect(try await status("/hook/text?cwd=%2Ftmp", bearer: token) == 200)
+        #expect(try await status("/plugin/open") == 401, "someone else on the host, without the token")
+        #expect(try await status("/plugin/open", bearer: "wrong") == 401)
+        #expect(try await status("/mcp", bearer: token) == 400, "past the token: the route answers (send initialize first)")
+        #expect(try await status("/mcp?token=\(token)") == 400, "as the registered MCP URL carries it")
         #expect(try await status("/health") == 200)
         #expect(try String(contentsOfFile: "\(directory)/mcp-port", encoding: .utf8) == "\(port)\n\(token)\n")
     }
@@ -295,22 +356,20 @@ struct MCPServerTests {
         #expect(MCPServer.snippets(port: 47831, host: "asus").claudeCommand == "claude mcp add -s user --transport http gloss 'http://127.0.0.1:47831/mcp?host=asus'")
     }
 
-    /// The copy for any other agent: the endpoint and header apart, a generic mcpServers entry that authorises by
-    /// header rather than query string, and a prompt hook reading /hook/text.
+    /// The copy for any other agent: the endpoint and header apart, and a generic mcpServers entry that authorises
+    /// by header rather than query string.
     @Test func genericSnippetsAuthoriseByHeader() {
         let snippets = MCPServer.snippets(port: 47831, token: "abc123")
         #expect(snippets.endpoint == "http://127.0.0.1:47831/mcp")
         #expect(snippets.header == "Authorization: Bearer abc123")
         #expect(snippets.mcpJSON == #"{ "mcpServers": { "gloss": { "type": "http", "url": "http://127.0.0.1:47831/mcp", "headers": { "Authorization": "Bearer abc123" } } } }"#)
-        #expect(snippets.promptHookCommand == #"curl -sf -m 3 --get --data-urlencode "cwd=$PWD" -H "Authorization: Bearer abc123" http://127.0.0.1:47831/hook/text"#)
         #expect(snippets.claudeCommand.contains("token=abc123"), "the agent commands still carry it in the URL, as installs do")
         let remote = MCPServer.snippets(port: 47831, host: "my box", token: "abc123")
         #expect(remote.endpoint == "http://127.0.0.1:47831/mcp?host=my%20box")
-        #expect(remote.promptHookCommand.contains("--data-urlencode 'host=my box'"))
         #expect(MCPServer.snippets(port: 47831).header.isEmpty)
     }
 
-    @Test func servesToolsResourcesAndHooksOverHTTP() async throws {
+    @Test func servesToolsAndResourcesOverHTTP() async throws {
         let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: directory) }
@@ -322,7 +381,7 @@ struct MCPServerTests {
         #expect(try String(contentsOf: portFile, encoding: .utf8) == "\(port)\n")
         let base = URL(string: "http://127.0.0.1:\(port)")!
         do {
-            // initialize: a session id comes back; no Origin header is sent, as curl and the hook script do.
+            // initialize: a session id comes back; no Origin header is sent, as curl and agents' clients do.
             let initialize = try await Self.rpc(base, session: nil, body: ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-06-18", "capabilities": [:], "clientInfo": ["name": "test", "version": "1"]]])
             let session = try #require(initialize.session)
             #expect(initialize.status == 200)
@@ -331,7 +390,7 @@ struct MCPServerTests {
 
             let tools = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": [:]])
             let names = ((tools.reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
-            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "list_documents", "open_in_viewer"])
+            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "list_documents", "open_in_viewer", "ask_user", "add_favorite", "list_favorites"])
 
             let pending = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "list_pending_notes", "arguments": ["host": "local", "path": "/tmp/demo"]]])
             let listing = (((pending.reply?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
@@ -358,21 +417,6 @@ struct MCPServerTests {
             let documents = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": ["name": "list_documents", "arguments": [:]]])
             let table = (((documents.reply?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
             #expect(table.contains("local:/tmp/demo/README.md") && table.contains("resolved=1"))
-
-            // The hook endpoint fits 49 pending notes into the 10,000 character cap.
-            let (hookData, hookResponse) = try await URLSession.shared.data(from: base.appendingPathComponent("hook/claude").appending(queryItems: [URLQueryItem(name: "cwd", value: "/tmp/demo"), URLQueryItem(name: "host", value: "local")]))
-            #expect((hookResponse as? HTTPURLResponse)?.statusCode == 200)
-            let hook = try JSONSerialization.jsonObject(with: hookData) as? [String: Any]
-            let context = ((hook?["hookSpecificOutput"] as? [String: Any])?["additionalContext"] as? String) ?? ""
-            #expect(!context.isEmpty && context.count <= 10_000 && (hook?["hookSpecificOutput"] as? [String: Any])?["hookEventName"] as? String == "UserPromptSubmit")
-            // curl sends "+" for spaces; the path prefix must still match.
-            let plusURL = URL(string: "http://127.0.0.1:\(port)/hook/claude?cwd=%2Ftmp%2Fdemo+dir&host=local")!
-            let plusDocument = try await store.upsertDocument(hostID: .local, path: "/tmp/demo dir/notes.md", kind: .markdown, fingerprint: Fingerprint())
-            _ = try await store.createNote(documentID: plusDocument.id, anchor: .wholeFile, body: "space case", color: .yellow)
-            let (plusData, plusResponse) = try await URLSession.shared.data(from: plusURL)
-            #expect((plusResponse as? HTTPURLResponse)?.statusCode == 200 && String(decoding: plusData, as: UTF8.self).contains("demo dir/notes.md"), "status \((plusResponse as? HTTPURLResponse)?.statusCode ?? 0) body: \(String(decoding: plusData, as: UTF8.self))")
-            let (emptyData, emptyHook) = try await URLSession.shared.data(from: base.appendingPathComponent("hook/codex").appending(queryItems: [URLQueryItem(name: "cwd", value: "/nowhere")]))
-            #expect((emptyHook as? HTTPURLResponse)?.statusCode == 200 && emptyData.isEmpty, "no notes: empty body so the hook script prints nothing")
 
             // The plugin endpoint creates a draft.
             var plugin = URLRequest(url: base.appendingPathComponent("plugin/note"))
@@ -404,4 +448,9 @@ struct MCPServerTests {
 private actor OpenLog {
     private(set) var lines: [String] = []
     func record(_ line: String) { lines.append(line) }
+}
+
+private actor QuestionLog {
+    private(set) var questions: [AgentQuestion] = []
+    func record(_ question: AgentQuestion) { questions.append(question) }
 }

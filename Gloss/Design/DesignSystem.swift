@@ -104,7 +104,14 @@ extension NotesPanelModel.Sort {
 
 /// A segmented filter that shows every option's count and names only the selected one. The selection is a capsule
 /// that slides between options (one shared geometry), so the eye follows the change instead of re-reading the row.
+/// As the bar narrows it drops the selected title, then the counts (the selected option keeps its count, and an
+/// urgent one with work waiting keeps an orange dot), so nothing ever wraps onto a second line (issue #7).
 struct FilterBar<Option: Hashable & Identifiable>: View {
+    /// How much each chip shows, widest first.
+    enum Density {
+        case titled, counted, symbols
+    }
+
     let options: [Option]
     @Binding var selection: Option
     let title: (Option) -> String
@@ -117,9 +124,17 @@ struct FilterBar<Option: Hashable & Identifiable>: View {
     @State private var hovered: Option?
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            row(.titled)
+            row(.counted)
+            row(.symbols)
+        }
+    }
+
+    private func row(_ density: Density) -> some View {
         HStack(spacing: DS.Space.xxs) {
             ForEach(options) { option in
-                chip(option)
+                chip(option, density: density)
             }
         }
         .padding(DS.Space.xxs + 1)
@@ -128,9 +143,10 @@ struct FilterBar<Option: Hashable & Identifiable>: View {
         .animation(DS.Motion.smooth, value: selection)
     }
 
-    private func chip(_ option: Option) -> some View {
+    private func chip(_ option: Option, density: Density) -> some View {
         let selected = option == selection
         let number = count(option)
+        let showsCount = density != .symbols || selected
         return Button {
             selection = option
         } label: {
@@ -138,23 +154,33 @@ struct FilterBar<Option: Hashable & Identifiable>: View {
                 Image(systemName: symbol(option))
                     .imageScale(.small)
                     .foregroundStyle(selected ? tint(option) : Color.secondary)
-                if selected {
+                    .overlay(alignment: .topTrailing) {
+                        // Work waiting where the count no longer shows.
+                        if !showsCount, urgent(option), number > 0 {
+                            Circle().fill(Color.orange).frame(width: 5, height: 5).offset(x: 3, y: -2)
+                        }
+                    }
+                if selected, density == .titled {
                     Text(title(option))
                         .fontWeight(.semibold)
                         .lineLimit(1)
                         .fixedSize()
                         .transition((AnyTransition.opacity.combined(with: .scale(scale: 0.9, anchor: .leading))).calmed)
                 }
-                Text("\(number)")
-                    .monospacedDigit()
-                    .foregroundStyle(selected ? AnyShapeStyle(.primary)
-                                     : number == 0 ? AnyShapeStyle(.tertiary)
-                                     : urgent(option) ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
-                    .fontWeight(urgent(option) && number > 0 && !selected ? .bold : nil)
-                    .contentTransition(.numericText(value: Double(number)))
+                if showsCount {
+                    Text("\(number)")
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize()
+                        .foregroundStyle(selected ? AnyShapeStyle(.primary)
+                                         : number == 0 ? AnyShapeStyle(.tertiary)
+                                         : urgent(option) ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                        .fontWeight(urgent(option) && number > 0 && !selected ? .bold : nil)
+                        .contentTransition(.numericText(value: Double(number)))
+                }
             }
             .font(.caption)
-            .padding(.horizontal, DS.Space.s + 2)
+            .padding(.horizontal, density == .symbols ? DS.Space.s : DS.Space.s + 2)
             .padding(.vertical, DS.Space.xs)
             .frame(maxWidth: selected ? nil : .infinity)
             .background {

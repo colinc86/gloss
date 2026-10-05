@@ -70,24 +70,51 @@ struct SendCoordinatorTests {
         #expect(coordinator.lastResult == nil)
     }
 
-    /// A hook that can't name its session's directory drains nothing, rather than every project's drafts.
-    @Test func aHookWithoutADirectoryGetsNoNotes() async throws {
+    /// Issue #5: sending one note of twenty touches only that note; the other nineteen stay drafts where they were.
+    @Test func sendingOneNoteChangesOnlyThatNote() async throws {
         let store = try makeStore()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-hookcwd-\(UUID().uuidString)").path
-        try FileManager.default.createDirectory(atPath: "\(directory)/a", withIntermediateDirectories: true)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-one-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: directory) }
-        try "plan\n".write(toFile: "\(directory)/a/PLAN.md", atomically: true, encoding: .utf8)
-        let document = try await store.upsertDocument(hostID: .local, path: "\(directory)/a/PLAN.md", kind: .markdown, fingerprint: Fingerprint())
-        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "b", color: .blue)
-        let coordinator = SendCoordinator(noteStore: store, transports: [], stagers: [:])
-        for cwd in [nil, "", "relative/dir"] as [String?] {
-            let (text, ids) = try await coordinator.hookText(hostID: .local, cwd: cwd)
-            #expect(text.isEmpty && ids.isEmpty, "cwd \(String(describing: cwd))")
+        let path = "\(directory)/PLAN.md"
+        let lines = (1...20).map { "line \($0) of the plan" }
+        try (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        var notes: [Note] = []
+        for (index, line) in lines.enumerated() {
+            let anchor = TextAnchor(start: .init(line: index + 1, col: 1), end: .init(line: index + 1, col: line.utf16.count + 1), text: line, before: "", after: "")
+            notes.append(try await store.createNote(documentID: document.id, anchor: .text(anchor), body: "note \(index)", color: .yellow))
         }
-        let (_, elsewhere) = try await coordinator.hookText(hostID: .local, cwd: "\(directory)/b")
-        #expect(elsewhere.isEmpty)
-        let (_, here) = try await coordinator.hookText(hostID: .local, cwd: "\(directory)/a")
-        #expect(here.count == 1)
+        let transport = FakeTransport()
+        let coordinator = SendCoordinator(noteStore: store, transports: [transport], stagers: [:])
+        coordinator.fileSystemProvider = { _ in LocalFileSystem(deleteBehavior: .permanent) }
+        await coordinator.send(noteIDs: [notes[7].id], to: FakeTransport.target)
+        #expect(transport.delivered.count == 1 && transport.delivered[0].0.noteIDs == [notes[7].id])
+        #expect(!transport.delivered[0].0.text.contains("note 8"), "no other note rides along")
+        for note in notes {
+            let now = try #require(try await store.note(note.id))
+            #expect(now.state == (note.id == notes[7].id ? .sent : .draft), "note \(note.body)")
+            // In place: the sent note's anchor may gain its context lines and the file's hash as the packet reads the
+            // file, but no note moves.
+            guard case .text(let was) = note.anchor, case .text(let isNow) = now.anchor else { Issue.record("expected text"); continue }
+            #expect(isNow.start == was.start && isNow.end == was.end && isNow.text == was.text, "note \(note.body)")
+            if note.id != notes[7].id { #expect(now.anchor == note.anchor, "unsent notes are untouched") }
+        }
+    }
+
+    /// Copy as Packet puts the notes on the clipboard and leaves them drafts, with nothing recorded as sent.
+    @Test func copyingLeavesDrafts() async throws {
+        let store = try makeStore()
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/gloss-copy/PLAN.md", kind: .markdown, fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "tighten this", color: .blue)
+        let coordinator = SendCoordinator(noteStore: store, transports: [], stagers: [:])
+        var copied: [String] = []
+        coordinator.writeClipboard = { copied.append($0) }
+        await coordinator.copy(noteIDs: [note.id])
+        #expect(copied.count == 1 && copied[0].contains("tighten this"))
+        #expect(try await store.note(note.id)?.state == .draft)
+        #expect(try await store.sends(for: note.id).isEmpty)
+        #expect(coordinator.lastResult?.copied == true && coordinator.lastResult?.noteIDs == [note.id])
     }
 
     @Test func stagesAttachmentsIntoTheSendDirectory() async throws {

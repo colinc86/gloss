@@ -120,43 +120,10 @@ public enum PacketBuilder {
         return "Notes: \(noteIDs.count). Mark each resolved with the gloss MCP tool `\(toolName)` (ids: \(ids)) when done."
     }
 
-    /// Ids listed in a hook closing line before it falls back to "and N more".
-    public static let hookClosingIDLimit = 40
-    /// Claude Code and Codex cap `additionalContext` here.
-    public static let hookDefaultLimit = 10_000
-
-    /// `<id>: <file>:<anchor> "<first 80 chars of comment>"`, the hook form used when the full packet exceeds the cap.
+    /// `<id>: <file>:<anchor> "<first 80 chars of comment>"`: one note on one line.
     public static func summaryLine(_ note: PacketNote) -> String {
         let comment = String(note.comment.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").prefix(80))
         return "\(note.noteID.rawValue): \(headerValue(note.agentPath)):\(headerValue(anchorSummary(note.anchor))) \"\(escape(comment))\""
-    }
-
-    /// The text for a `UserPromptSubmit` hook: the full packet when it fits in `limit` characters,
-    /// otherwise one summary line per note plus the instruction to fetch full notes through MCP.
-    public static func hookText(_ notes: [PacketNote], limit: Int = 10_000) -> String {
-        // Nothing pending: the hook must add no context at all, not an empty packet with a closing line.
-        if notes.isEmpty { return "" }
-        let full = build(notes)
-        if full.text.count <= limit { return full.text }
-        var lines = [
-            "\(notes.count) pending notes from Gloss (too large to inline). Call the gloss MCP tool `get_note` with an id for the full excerpt.",
-        ]
-        lines.append(contentsOf: notes.map(summaryLine))
-        lines.append("")
-        let closing = closingLine(noteIDs: notes.map(\.noteID), maxIDs: hookClosingIDLimit)
-        lines.append(closing)
-        var text = lines.joined(separator: "\n")
-        if text.count > limit {
-            // Keep as many whole summary lines as fit, then the closing line.
-            var kept: [String] = [lines[0]]
-            for line in notes.map(summaryLine) {
-                let candidate = (kept + [line, "", closing]).joined(separator: "\n")
-                if candidate.count > limit { break }
-                kept.append(line)
-            }
-            text = (kept + ["", closing]).joined(separator: "\n")
-        }
-        return text
     }
 
     // MARK: Blocks

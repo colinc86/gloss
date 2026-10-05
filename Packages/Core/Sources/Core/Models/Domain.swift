@@ -182,10 +182,13 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     /// What the agent reported through `resolve_note`, when it did.
     public var resolveOutcome: ResolveOutcome?
     public var resolveMessage: String?
+    /// The agent that wrote the note to ask the user something (`ask_user`); nil for the user's own notes.
+    public var author: String?
 
     public init(
         id: NoteID, documentID: DocumentID, anchor: Anchor, body: String, state: NoteState,
-        color: NoteColor, createdAt: Date, updatedAt: Date, resolveOutcome: ResolveOutcome? = nil, resolveMessage: String? = nil
+        color: NoteColor, createdAt: Date, updatedAt: Date, resolveOutcome: ResolveOutcome? = nil, resolveMessage: String? = nil,
+        author: String? = nil
     ) {
         self.id = id
         self.documentID = documentID
@@ -197,6 +200,7 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
         self.updatedAt = updatedAt
         self.resolveOutcome = resolveOutcome
         self.resolveMessage = resolveMessage
+        self.author = author
     }
 
     /// Notes an agent still has to act on.

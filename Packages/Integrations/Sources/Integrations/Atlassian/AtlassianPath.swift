@@ -3,15 +3,25 @@ import Foundation
 /// A path on the `atlassian` host: `/jira/<PROJECT>/<KEY>.md` is an issue; `/confluence/<SPACE>/<ancestor ids…>/<page id>`
 /// is a page's folder, holding `<Title>.md` (the page) and its child pages' folders. A page is its id: the ancestors
 /// and the title in a path are where it was and what it was called when the path was made, and a path from before a
-/// rename or a move still reads the page. Anything else is not served.
+/// rename or a move still reads the page. Images and PDFs attached to an issue are in `/jira/<PROJECT>/<KEY> attachments/`,
+/// a page's in its folder's `attachments/` (issue #2). Anything else is not served.
 public enum AtlassianPath: Equatable, Sendable {
     case jiraRoot
     case jiraProject(String)
     case jiraIssue(project: String, key: String)
+    case jiraAttachments(project: String, key: String)
+    case jiraAttachment(project: String, key: String, name: String)
     case confluenceRoot
     case confluenceSpace(String)
     case confluencePageFolder(space: String, id: String, ancestors: [String] = [])
     case confluencePage(space: String, id: String, title: String, ancestors: [String] = [])
+    case confluenceAttachments(space: String, id: String, ancestors: [String] = [])
+    case confluenceAttachment(space: String, id: String, name: String, ancestors: [String] = [])
+
+    /// The folder name beside `KEY.md` that holds an issue's attachments.
+    public static let jiraAttachmentsSuffix = " attachments"
+    /// The folder inside a page's folder that holds its attachments.
+    public static let confluenceAttachmentsFolder = "attachments"
 
     public init?(_ path: String) {
         let parts = path.split(separator: "/").map(String.init)
@@ -24,6 +34,15 @@ public enum AtlassianPath: Equatable, Sendable {
             case 2:
                 guard Self.isProjectKey(parts[1]) else { return nil }
                 self = .jiraProject(parts[1].uppercased())
+            case 3 where parts[2].hasSuffix(Self.jiraAttachmentsSuffix):
+                let key = String(parts[2].dropLast(Self.jiraAttachmentsSuffix.count)).uppercased()
+                guard Self.isIssueKey(key), key.hasPrefix(parts[1].uppercased() + "-") else { return nil }
+                self = .jiraAttachments(project: parts[1].uppercased(), key: key)
+            case 4:
+                guard parts[2].hasSuffix(Self.jiraAttachmentsSuffix) else { return nil }
+                let key = String(parts[2].dropLast(Self.jiraAttachmentsSuffix.count)).uppercased()
+                guard Self.isIssueKey(key), key.hasPrefix(parts[1].uppercased() + "-") else { return nil }
+                self = .jiraAttachment(project: parts[1].uppercased(), key: key, name: parts[3])
             case 3:
                 guard parts[2].lowercased().hasSuffix(".md") else { return nil }
                 let key = String(parts[2].dropLast(3)).uppercased()
@@ -37,7 +56,15 @@ public enum AtlassianPath: Equatable, Sendable {
             case 2: self = .confluenceSpace(parts[1])
             default:
                 let isID = { (part: String) in !part.isEmpty && part.allSatisfy { $0.isASCII && $0.isNumber } }
-                if parts.last!.hasSuffix(".md") {
+                if parts.count >= 4, parts[parts.count - 1] == Self.confluenceAttachmentsFolder {
+                    let folder = Array(parts[2..<(parts.count - 1)])
+                    guard let id = folder.last, folder.allSatisfy(isID) else { return nil }
+                    self = .confluenceAttachments(space: parts[1], id: id, ancestors: Array(folder.dropLast()))
+                } else if parts.count >= 5, parts[parts.count - 2] == Self.confluenceAttachmentsFolder {
+                    let folder = Array(parts[2..<(parts.count - 2)])
+                    guard let id = folder.last, folder.allSatisfy(isID) else { return nil }
+                    self = .confluenceAttachment(space: parts[1], id: id, name: parts.last!, ancestors: Array(folder.dropLast()))
+                } else if parts.last!.hasSuffix(".md") {
                     let folder = Array(parts[2..<(parts.count - 1)])
                     guard let id = folder.last, folder.allSatisfy(isID) else { return nil }
                     self = .confluencePage(space: parts[1], id: id, title: String(parts.last!.dropLast(3)), ancestors: Array(folder.dropLast()))
@@ -56,10 +83,14 @@ public enum AtlassianPath: Equatable, Sendable {
         case .jiraRoot: "/jira"
         case .jiraProject(let project): "/jira/\(project)"
         case .jiraIssue(let project, let key): "/jira/\(project)/\(key).md"
+        case .jiraAttachments(let project, let key): "/jira/\(project)/\(key)\(Self.jiraAttachmentsSuffix)"
+        case .jiraAttachment(let project, let key, let name): "/jira/\(project)/\(key)\(Self.jiraAttachmentsSuffix)/\(name)"
         case .confluenceRoot: "/confluence"
         case .confluenceSpace(let space): "/confluence/\(space)"
         case .confluencePageFolder(let space, let id, let ancestors): "/confluence/\(space)" + (ancestors + [id]).map { "/" + $0 }.joined()
         case .confluencePage(let space, let id, let title, let ancestors): "/confluence/\(space)" + (ancestors + [id]).map { "/" + $0 }.joined() + "/\(title).md"
+        case .confluenceAttachments(let space, let id, let ancestors): "/confluence/\(space)" + (ancestors + [id]).map { "/" + $0 }.joined() + "/\(Self.confluenceAttachmentsFolder)"
+        case .confluenceAttachment(let space, let id, let name, let ancestors): "/confluence/\(space)" + (ancestors + [id]).map { "/" + $0 }.joined() + "/\(Self.confluenceAttachmentsFolder)/\(name)"
         }
     }
 

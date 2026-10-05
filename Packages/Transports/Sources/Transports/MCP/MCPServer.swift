@@ -5,28 +5,52 @@ import MCP
 import Remote
 import Synchronization
 
-/// What the app provides: note storage plus packet and hook text built with the app's excerpt logic.
+/// What the app provides: note storage plus packets built with the app's excerpt logic.
 public struct MCPDependencies: Sendable {
     public var noteStore: NoteStore
     public var packet: @Sendable ([NoteID]) async throws -> Packet
-    /// `UserPromptSubmit` context for notes under `cwd` on `host`, already fitted to the hook limit. `flavour` is
-    /// `claude` or `codex`, so the app can record which hook drained the notes.
-    public var hookText: @Sendable (_ flavour: String, _ host: String, _ cwd: String?) async throws -> String
     /// A whole-file draft note from the Herdr plugin on a host where `open` cannot reach the app.
     public var createDraft: @Sendable (_ host: String, _ path: String?, _ cwd: String?, _ text: String) async throws -> NoteID
-    /// Opens a file in the viewer, for the plugin's link handler on a host.
-    /// Opens a file on a host, scrolled to a 1-based line when one is given.
-    public var openDocument: @Sendable (_ host: String, _ path: String, _ line: Int?) async throws -> Void = { _, _, _ in }
+    /// Opens a file on a host, scrolled to a 1-based line when one is given and selecting through `endLine` when that
+    /// is given too; for `open_in_viewer` and the plugin's link handler on a host.
+    public var openDocument: @Sendable (_ host: String, _ path: String, _ line: Int?, _ endLine: Int?) async throws -> Void = { _, _, _, _ in }
+    /// Makes a folder a favourite in the explorer and opens it; true when it was not one already (`add_favorite`).
+    public var addFavorite: @Sendable (_ host: String, _ path: String) async throws -> Bool = { _, _ in false }
+    /// An agent's question to the user about a place in a file (`ask_user`); the new note's id.
+    public var askUser: @Sendable (AgentQuestion) async throws -> NoteID = { _ in throw MCPError.internalError("asking is not available") }
     /// A resource URL (a GitHub pull request) as the host and path it opens under; nil when the app has no host for it.
     public var resolveURL: (@Sendable (URL) -> (host: String, path: String)?) = { _ in nil }
     public var appVersion: String
 
-    public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, hookText: @escaping @Sendable (String, String, String?) async throws -> String, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
+    public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
         self.noteStore = noteStore
         self.packet = packet
-        self.hookText = hookText
         self.createDraft = createDraft
         self.appVersion = appVersion
+    }
+}
+
+/// What `ask_user` hands the app: where, what, and who asks.
+public struct AgentQuestion: Sendable, Equatable {
+    public var host: String
+    public var path: String
+    public var question: String
+    /// 1-based lines the question is about; both nil for the whole file.
+    public var line: Int?
+    public var endLine: Int?
+    /// Exact text in the file the question is about, preferred over the lines when found.
+    public var text: String?
+    /// The asking agent's name as its client reported it ("claude", "codex", "opencode").
+    public var agent: String
+
+    public init(host: String, path: String, question: String, line: Int? = nil, endLine: Int? = nil, text: String? = nil, agent: String) {
+        self.host = host
+        self.path = path
+        self.question = question
+        self.line = line
+        self.endLine = endLine
+        self.text = text
+        self.agent = agent
     }
 }
 
@@ -41,12 +65,10 @@ public struct MCPConfigSnippets: Sendable, Equatable {
     public var endpoint: String
     /// `Authorization: Bearer <token>`; empty without a token.
     public var header: String
-    /// A prompt hook for any agent: prints the drafts under the current directory as plain text and drains them.
-    public var promptHookCommand: String
 }
 
-/// The app's MCP server over streamable HTTP on the loopback interface, plus the plain endpoints the hook scripts
-/// and the Herdr plugin call. One MCP `Server` per session, as the SDK's stateful transport requires.
+/// The app's MCP server over streamable HTTP on the loopback interface, plus the plain endpoints the Herdr plugin
+/// calls. Agents see only notes the user has sent: a draft never leaves the app until the user presses Send. One MCP `Server` per session, as the SDK's stateful transport requires.
 public actor MCPServer {
     public static let defaultPort = 47831
     public static let serverName = "gloss"
@@ -141,22 +163,13 @@ public actor MCPServer {
             opencodeJSON: "\"mcp\": { \"\(serverName)\": { \"type\": \"remote\", \"url\": \"\(url)\", \"enabled\": true } }",
             mcpJSON: genericJSON(endpoint: endpoint, token: token),
             endpoint: endpoint,
-            header: token.map { "Authorization: Bearer \($0)" } ?? "",
-            promptHookCommand: promptHookCommand(port: port, host: host, token: token)
+            header: token.map { "Authorization: Bearer \($0)" } ?? ""
         )
     }
 
     private static func genericJSON(endpoint: String, token: String?) -> String {
         let headers = token.map { #", "headers": { "Authorization": "Bearer \#($0)" }"# } ?? ""
         return #"{ "mcpServers": { "\#(serverName)": { "type": "http", "url": "\#(endpoint)"\#(headers) } } }"#
-    }
-
-    private static func promptHookCommand(port: Int, host: String?, token: String?) -> String {
-        var parts = [#"curl -sf -m 3 --get --data-urlencode "cwd=$PWD""#]
-        if let host, !host.isEmpty, host != "local" { parts.append("--data-urlencode " + ShellQuote.single("host=\(host)")) }
-        if let token { parts.append(#"-H "Authorization: Bearer \#(token)""#) }
-        parts.append("http://127.0.0.1:\(port)/hook/text")
-        return parts.joined(separator: " ")
     }
 
     // MARK: Lifecycle
@@ -217,12 +230,6 @@ public actor MCPServer {
             return await handleMCP(request, host: query["host"].flatMap { $0.isEmpty ? nil : $0 } ?? "local")
         case ("GET", "/health"):
             return .data(Data("ok\n".utf8), headers: ["Content-Type": "text/plain"])
-        case ("GET", "/hook/claude"):
-            return await handleHook(flavour: "claude", query: query)
-        case ("GET", "/hook/codex"):
-            return await handleHook(flavour: "codex", query: query)
-        case ("GET", "/hook/text"):
-            return await handleHook(flavour: "text", query: query)
         case ("POST", "/plugin/note"):
             return await handlePluginNote(request.body ?? Data())
         case ("POST", "/plugin/open"):
@@ -240,7 +247,7 @@ public actor MCPServer {
             }
             do {
                 let line = (object["line"] as? Int).flatMap { $0 > 0 ? $0 : nil }
-                try await dependencies.openDocument(host, path, line)
+                try await dependencies.openDocument(host, path, line, nil)
                 return .ok(headers: ["Content-Length": "0"])
             } catch {
                 return .error(statusCode: 500, MCPError.internalError("\(error)"))
@@ -268,9 +275,10 @@ public actor MCPServer {
         }
         let id = UUID().uuidString
         let transport = StatefulHTTPServerTransport(sessionIDGenerator: FixedSessionID(id), logger: nil)
-        let server = await makeServer(agentHost: host)
+        let client = ClientName()
+        let server = await makeServer(agentHost: host, client: client)
         do {
-            try await server.start(transport: transport)
+            try await server.start(transport: transport) { info, _ in client.set(info.name) }
         } catch {
             return .error(statusCode: 500, MCPError.internalError("\(error)"))
         }
@@ -286,17 +294,6 @@ public actor MCPServer {
     nonisolated static func isInitialize(_ body: Data) -> Bool {
         guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return false }
         return object["method"] as? String == "initialize"
-    }
-
-    private func handleHook(flavour: String, query: [String: String]) async -> HTTPResponse {
-        let host = query["host"].flatMap { $0.isEmpty ? nil : $0 } ?? "local"
-        let text = (try? await dependencies.hookText(flavour, host, query["cwd"])) ?? ""
-        guard !text.isEmpty else { return .ok(headers: ["Content-Length": "0"]) }
-        // Any other agent's hook gets the packet as it is; Claude Code and Codex read it from their JSON shape.
-        if flavour == "text" { return .data(Data(text.utf8), headers: ["Content-Type": "text/plain; charset=utf-8"]) }
-        let payload: [String: Any] = ["hookSpecificOutput": ["hookEventName": "UserPromptSubmit", "additionalContext": text]]
-        let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.withoutEscapingSlashes])) ?? Data()
-        return .data(data, headers: ["Content-Type": "application/json"])
     }
 
     private func handlePluginNote(_ body: Data) async -> HTTPResponse {
@@ -319,7 +316,7 @@ public actor MCPServer {
     static let toolSchemas: [Tool] = [
         Tool(
             name: "list_pending_notes",
-            description: "Notes the user wants addressed, newest first. Filter by host (\"local\", an ssh alias, or \"github\", \"atlassian\" or \"web\" for notes on pull requests, Jira issues and Confluence pages, and web pages) and/or an absolute path prefix.",
+            description: "Notes the user has sent you that are not resolved yet. Filter by host (\"local\", an ssh alias, or \"github\", \"atlassian\" or \"web\" for notes on pull requests, Jira issues and Confluence pages, and web pages) and/or an absolute path prefix.",
             inputSchema: ["type": "object", "properties": ["host": ["type": "string"], "path": ["type": "string", "description": "absolute file path or directory prefix"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true)
         ),
@@ -338,27 +335,52 @@ public actor MCPServer {
         Tool(
             name: "open_in_viewer",
             description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another. Give url instead for a GitHub pull request (https://github.com/o/r/pull/12, optionally /files/<path>), a Jira issue (https://<site>/browse/KEY) or Confluence page (https://<site>/wiki/spaces/KEY/pages/<id>) of the user's saved site, or any web page.",
-            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "url": ["type": "string", "description": "a pull request, Jira issue, Confluence page or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "host": ["type": "string", "description": "\"local\", an ssh alias, \"github\" or \"atlassian\"; defaults to your machine"]], "additionalProperties": false],
+            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "url": ["type": "string", "description": "a pull request, Jira issue, Confluence page or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "end_line": ["type": "integer", "minimum": 1, "description": "selects line through end_line"], "host": ["type": "string", "description": "\"local\", an ssh alias, \"github\" or \"atlassian\"; defaults to your machine"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true, idempotentHint: true, openWorldHint: false)
         ),
         Tool(
+            name: "ask_user",
+            description: "Ask the user something about a place in a file: content you made or changed that they should review, or a decision only they can make. The question appears in Gloss beside that text, under Attention; the user's answer comes back to you as a note when they send it. Give the lines, or the exact text, it is about; neither means the whole file. Don't use it for progress reports.",
+            inputSchema: ["type": "object", "properties": [
+                "path": ["type": "string", "description": "absolute path on your machine (or on host)"],
+                "question": ["type": "string"],
+                "line": ["type": "integer", "minimum": 1],
+                "end_line": ["type": "integer", "minimum": 1],
+                "text": ["type": "string", "description": "exact text in the file the question is about; found nearest line when given"],
+                "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"],
+            ], "required": ["path", "question"], "additionalProperties": false],
+            annotations: .init(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false)
+        ),
+        Tool(
+            name: "add_favorite",
+            description: "Keep a project folder at hand: adds it to the favorites in Gloss's explorer (if it isn't one) and opens it.",
+            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute folder path"], "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"]], "required": ["path"], "additionalProperties": false],
+            annotations: .init(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false)
+        ),
+        Tool(
+            name: "list_favorites",
+            description: "The folders the user keeps as favorites in Gloss, as host:path.",
+            inputSchema: ["type": "object", "properties": [:], "additionalProperties": false],
+            annotations: .init(readOnlyHint: true)
+        ),
+        Tool(
             name: "list_documents",
-            description: "Documents that currently have notes, with counts per state.",
+            description: "Documents with notes the user has sent you, with counts per state.",
             inputSchema: ["type": "object", "properties": [:], "additionalProperties": false],
             annotations: .init(readOnlyHint: true)
         ),
     ]
 
     /// Handlers are registered before the server starts, so the first `tools/list` can never race them.
-    private func makeServer(agentHost: String) async -> Server {
+    private func makeServer(agentHost: String, client: ClientName = ClientName()) async -> Server {
         let server = Server(
             name: Self.serverName, version: dependencies.appVersion,
-            instructions: "Notes the user attached to files. Call list_pending_notes, act on each, then resolve_note. To point the user at code, call open_in_viewer with a path and line.",
+            instructions: "Notes the user sent you about places in files. Call list_pending_notes for the open ones, act on each, then resolve_note. To show the user something, call open_in_viewer with a path and lines. When you made or changed something the user should review or decide on, call ask_user with the file, the lines, and your question: it appears in Gloss beside that text, and the answer comes back to you when the user sends it. add_favorite keeps a project folder at hand in Gloss's explorer.",
             capabilities: .init(resources: .init(subscribe: false, listChanged: false), tools: .init(listChanged: false))
         )
         let dependencies = dependencies
         await server.withMethodHandler(ListTools.self) { _ in ListTools.Result(tools: Self.toolSchemas) }
-        await server.withMethodHandler(CallTool.self) { params in try await Self.callTool(params, dependencies: dependencies, agentHost: agentHost) }
+        await server.withMethodHandler(CallTool.self) { params in try await Self.callTool(params, dependencies: dependencies, agentHost: agentHost, agentName: client.agentName) }
         await server.withMethodHandler(ListResources.self) { _ in ListResources.Result(resources: try await Self.resources(dependencies: dependencies)) }
         await server.withMethodHandler(ReadResource.self) { params in try await Self.readResource(uri: params.uri, dependencies: dependencies) }
         return server
@@ -368,7 +390,7 @@ public actor MCPServer {
         .text(text: string, annotations: nil, _meta: nil)
     }
 
-    nonisolated static func callTool(_ params: CallTool.Parameters, dependencies: MCPDependencies, agentHost: String = "local") async throws -> CallTool.Result {
+    nonisolated static func callTool(_ params: CallTool.Parameters, dependencies: MCPDependencies, agentHost: String = "local", agentName: String = "agent") async throws -> CallTool.Result {
         let store = dependencies.noteStore
         let arguments = params.arguments ?? [:]
         switch params.name {
@@ -377,7 +399,7 @@ public actor MCPServer {
             if let name = arguments["host"]?.stringValue, !name.isEmpty, hostID == nil {
                 return CallTool.Result(content: [text("unknown host \(name)")], isError: true)
             }
-            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue)
+            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue, states: Self.sharedStates)
             let hosts = Dictionary(uniqueKeysWithValues: try await store.hosts().map { ($0.id, $0.name) })
             let lines = pending.map { entry in
                 let preview = entry.note.body.replacingOccurrences(of: "\n", with: " ").prefix(80)
@@ -389,7 +411,7 @@ public actor MCPServer {
             let jsonText = String(data: (try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])) ?? Data(), encoding: .utf8) ?? "[]"
             return CallTool.Result(content: [text(lines.isEmpty ? "No pending notes." : lines.joined(separator: "\n")), text(jsonText)])
         case "get_note":
-            guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id) else {
+            guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), try await store.sharedNoteIDs().contains(id) else {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
             let packet = try await dependencies.packet([id])
@@ -400,7 +422,7 @@ public actor MCPServer {
             }
             return CallTool.Result(content: [text(body)])
         case PacketBuilder.toolName:
-            guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id) else {
+            guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), note.state != .draft, try await store.sharedNoteIDs().contains(id) else {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
             if note.state == .resolved { return CallTool.Result(content: [text("note \(raw) is already resolved")], isError: true) }
@@ -434,26 +456,99 @@ public actor MCPServer {
             if host != "local", try await hostID(named: host, store: store) == nil {
                 return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
             }
-            var line: Int?
-            if let raw = arguments["line"] {
-                guard let value = raw.intValue ?? raw.doubleValue.flatMap({ $0.isFinite ? Int(exactly: $0.rounded(.down)) : nil }) ?? raw.stringValue.flatMap({ Int($0) }), value > 0 else {
-                    return CallTool.Result(content: [text("line must be a positive integer")], isError: true)
-                }
-                line = value
+            let line: Int?, endLine: Int?
+            do {
+                (line, endLine) = try lines(arguments)
+            } catch {
+                return CallTool.Result(content: [text("\(error)")], isError: true)
             }
-            try await dependencies.openDocument(host, path, line)
-            return CallTool.Result(content: [text("showing \(host):\(path)\(line.map { " at line \($0)" } ?? "")")])
+            try await dependencies.openDocument(host, path, line, endLine)
+            let at = line.map { start in endLine.map { $0 > start ? " at lines \(start)-\($0)" : " at line \(start)" } ?? " at line \(start)" } ?? ""
+            return CallTool.Result(content: [text("showing \(host):\(path)\(at)")])
+        case "add_favorite":
+            let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
+            guard let path = arguments["path"]?.stringValue, path.hasPrefix("/") else {
+                return CallTool.Result(content: [text("path must be an absolute folder path")], isError: true)
+            }
+            if host != "local", try await hostID(named: host, store: store) == nil {
+                return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
+            }
+            let added = try await dependencies.addFavorite(host, path)
+            return CallTool.Result(content: [text(added ? "added \(host):\(path) to the favorites" : "\(host):\(path) is already a favorite")])
+        case "list_favorites":
+            var lines: [String] = []
+            for host in try await store.hosts() {
+                for root in try await store.roots(for: host.id) where root.pinned { lines.append("\(host.name):\(root.path)") }
+            }
+            return CallTool.Result(content: [text(lines.isEmpty ? "No favorites." : lines.joined(separator: "\n"))])
+        case "ask_user":
+            let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
+            guard let path = arguments["path"]?.stringValue, path.hasPrefix("/") else {
+                return CallTool.Result(content: [text("path must be absolute")], isError: true)
+            }
+            guard let question = arguments["question"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !question.isEmpty else {
+                return CallTool.Result(content: [text("question is required")], isError: true)
+            }
+            if host != "local", try await hostID(named: host, store: store) == nil {
+                return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
+            }
+            let line: Int?, endLine: Int?
+            do {
+                (line, endLine) = try lines(arguments)
+            } catch {
+                return CallTool.Result(content: [text("\(error)")], isError: true)
+            }
+            let quoted = arguments["text"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
+            do {
+                let id = try await dependencies.askUser(AgentQuestion(host: host, path: path, question: question, line: line, endLine: endLine, text: quoted, agent: agentName))
+                return CallTool.Result(content: [text("asked the user (note \(id.rawValue)); the answer comes back when they send it")])
+            } catch NoteStoreError.tooManyQuestions(let limit) {
+                return CallTool.Result(content: [text("that file already has \(limit) open questions; wait for answers")], isError: true)
+            }
         case "list_documents":
+            // Notes never sent are the user's own: only notes an agent was given count, and a document with none of
+            // them is not listed.
+            let shared = try await store.sharedNoteIDs()
             let documents = try await store.documentsWithNotes()
+                .map { (document: $0.document, notes: $0.notes.filter { shared.contains($0.id) }) }
+                .filter { !$0.notes.isEmpty }
             let hosts = Dictionary(uniqueKeysWithValues: try await store.hosts().map { ($0.id, $0.name) })
             let lines = documents.map { entry in
-                let counts = NoteState.allCases.map { state in "\(state.rawValue)=\(entry.notes.filter { $0.state == state }.count)" }.joined(separator: " ")
+                let counts = NoteState.allCases.filter { $0 != .draft }.map { state in "\(state.rawValue)=\(entry.notes.filter { $0.state == state }.count)" }.joined(separator: " ")
                 return "\(hosts[entry.document.hostID] ?? entry.document.hostID.rawValue):\(entry.document.path)\t\(counts)"
             }
             return CallTool.Result(content: [text(lines.isEmpty ? "No documents have notes." : lines.joined(separator: "\n"))])
         default:
             throw MCPError.methodNotFound("unknown tool \(params.name)")
         }
+    }
+
+    /// The open notes an agent may see: sent ones. Drafts stay in the app until the user sends them.
+    nonisolated static let sharedStates: Set<NoteState> = [.sent]
+
+    /// `line` and `end_line` as 1-based integers (end at or after line); both optional.
+    nonisolated static func lines(_ arguments: [String: Value]) throws -> (Int?, Int?) {
+        struct Refusal: Error, CustomStringConvertible { var description: String }
+        func positive(_ key: String) throws -> Int? {
+            guard let raw = arguments[key] else { return nil }
+            guard let value = raw.intValue ?? raw.doubleValue.flatMap({ $0.isFinite ? Int(exactly: $0.rounded(.down)) : nil }) ?? raw.stringValue.flatMap({ Int($0) }), value > 0 else {
+                throw Refusal(description: "\(key) must be a positive integer")
+            }
+            return value
+        }
+        let line = try positive("line"), end = try positive("end_line")
+        if end != nil, line == nil { throw Refusal(description: "end_line needs line") }
+        if let line, let end, end < line { throw Refusal(description: "end_line must not be before line") }
+        return (line, end)
+    }
+
+    /// The asking agent's name from its MCP client name: "claude-code" is claude, and so on.
+    nonisolated static func agentName(client: String?) -> String {
+        let name = client?.lowercased() ?? ""
+        if name.contains("claude") { return "claude" }
+        if name.contains("codex") { return "codex" }
+        if name.contains("opencode") { return "opencode" }
+        return name.isEmpty ? "agent" : name
     }
 
     nonisolated static func hostID(named name: String?, store: NoteStore) async throws -> HostID? {
@@ -464,7 +559,7 @@ public actor MCPServer {
 
     nonisolated static func resources(dependencies: MCPDependencies) async throws -> [Resource] {
         var resources: [Resource] = []
-        for entry in try await dependencies.noteStore.pendingNotes() {
+        for entry in try await dependencies.noteStore.pendingNotes(states: sharedStates) {
             let attachments = try await dependencies.noteStore.attachments(for: entry.note.id)
             for (index, attachment) in attachments.enumerated() {
                 resources.append(Resource(
@@ -498,4 +593,12 @@ private struct FixedSessionID: SessionIDGenerator {
     let id: String
     init(_ id: String) { self.id = id }
     func generateSessionID() -> String { id }
+}
+
+/// The MCP client's name for one session, captured when it initializes.
+final class ClientName: Sendable {
+    private let name = Mutex<String?>(nil)
+
+    func set(_ value: String) { name.withLock { $0 = value } }
+    var agentName: String { MCPServer.agentName(client: name.withLock { $0 }) }
 }

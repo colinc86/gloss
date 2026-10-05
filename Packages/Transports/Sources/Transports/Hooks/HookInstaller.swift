@@ -1,5 +1,4 @@
 import Core
-import CryptoKit
 import Foundation
 import Remote
 
@@ -26,34 +25,41 @@ public enum HookAgent: String, Sendable, CaseIterable, Identifiable {
 public enum HookStatus: Sendable, Equatable {
     case notInstalled
     case installed
-    /// Installed, but the script or the config entry differs from what this build would write.
+    /// Installed, but something differs from what this build would write (a stale MCP url, or the prompt hook that
+    /// older builds installed).
     case outdated(String)
 }
 
 public struct HookInstallReport: Sendable, Equatable {
     public var changedFiles: [String] = []
     public var backups: [String] = []
-    /// Things the user has to do by hand, e.g. trust the hook inside Codex, or register MCP when the CLI is missing.
+    /// Things the user has to do by hand, e.g. register MCP when the agent's CLI is missing.
     public var notices: [String] = []
 }
 
 public enum HookInstallerError: Error, Sendable, Equatable {
     case unparsable(path: String, reason: String)
-    case bundledScriptMissing
+    case bundledPluginMissing
     case commandFailed(String)
 }
 
-/// Installs the hook script and the per-agent configuration on a file system (this Mac or a host over SFTP), merging
-/// into existing files: every entry that is not ours is preserved byte for byte at the value level.
+/// Registers Gloss's MCP server with each agent and installs the Herdr plugin, on a file system (this Mac or a host
+/// over SFTP), merging into existing files: every entry that is not ours is preserved byte for byte at the value level.
+///
+/// Builds before 0.2 also installed a `UserPromptSubmit` hook (`gloss-notes.sh`) that handed every draft under the
+/// session's folder to the agent whenever any prompt was submitted, including the one a send itself submits, so
+/// drafts left without the user pressing Send. Drafts now leave only on Send: install and uninstall both take that
+/// hook out (with a backup), and status reports a machine that still has it as outdated.
 public struct HookInstaller: Sendable {
-    public static let scriptName = "gloss-notes.sh"
+    /// The old prompt hook's script, recognised only to remove it.
+    public static let legacyScriptName = "gloss-notes.sh"
     public static let mcpServerName = MCPServer.serverName
     /// Keep this many backups per file.
     public static let backupsToKeep = 3
 
     public var fileSystem: any FileSystemProvider
     public var home: String
-    /// Set on remote hosts: the hook command exports `GLOSS_HOST=<alias>` so the server attributes the notes correctly.
+    /// Set on remote hosts: the registered MCP url carries `host=<alias>` so the server resolves the agent's paths there.
     public var hostAlias: String?
     /// Runs one shell line (`sh -c`) where the files live, for the agents' own `mcp add` commands.
     public var run: @Sendable (String) async throws -> ExecResult
@@ -77,12 +83,12 @@ public struct HookInstaller: Sendable {
 
     // MARK: Paths and commands
 
-    public var scriptPath: String { PathUtilities.join(home, ".claude/hooks/\(Self.scriptName)") }
+    public var legacyScriptPath: String { PathUtilities.join(home, ".claude/hooks/\(Self.legacyScriptName)") }
     public var claudeSettingsPath: String { PathUtilities.join(home, ".claude/settings.json") }
     public var codexHooksPath: String { PathUtilities.join(home, ".codex/hooks.json") }
     public var codexConfigPath: String { PathUtilities.join(home, ".codex/config.toml") }
     public var opencodeConfigPath: String { PathUtilities.join(home, ".config/opencode/opencode.json") }
-    /// Remote hosts have no Application Support; the script reads the port from here.
+    /// Remote hosts have no Application Support; the Herdr plugin reads the port from here.
     public var remotePortFilePath: String { PathUtilities.join(home, ".config/gloss/mcp-port") }
     /// Tells the plugin which host alias it runs on, so notes land on the right host.
     public var hostFilePath: String { PathUtilities.join(home, ".config/gloss/host") }
@@ -102,20 +108,9 @@ public struct HookInstaller: Sendable {
     public var mcpURL: String { MCPServer.url(port: port, host: hostAlias, token: token) }
     private var shellMCPURL: String { mcpURL.contains("?") ? ShellQuote.single(mcpURL) : mcpURL }
 
-    public func hookCommand(for agent: HookAgent) -> String {
-        let prefix = hostAlias.map { "GLOSS_HOST=\(ShellQuote.single($0)) " } ?? ""
-        return "\(prefix)\"$HOME/.claude/hooks/\(Self.scriptName)\" \(agent.rawValue)"
-    }
-
-    public static func bundledScript() throws -> Data {
-        guard let url = Bundle.module.url(forResource: "gloss-notes", withExtension: "sh", subdirectory: "HookScripts"),
-              let data = FileManager.default.contents(atPath: url.path) else { throw HookInstallerError.bundledScriptMissing }
-        return data
-    }
-
     public static func bundledPluginFile(_ relativePath: String) throws -> Data {
         guard let root = Bundle.module.url(forResource: "HerdrPlugin", withExtension: nil),
-              let data = FileManager.default.contents(atPath: root.appendingPathComponent(relativePath).path) else { throw HookInstallerError.bundledScriptMissing }
+              let data = FileManager.default.contents(atPath: root.appendingPathComponent(relativePath).path) else { throw HookInstallerError.bundledPluginMissing }
         return data
     }
 
@@ -125,20 +120,17 @@ public struct HookInstaller: Sendable {
         var report = HookInstallReport()
         switch agent {
         case .claude:
-            try await installScript(into: &report)
-            try await mergeHookFile(at: claudeSettingsPath, command: hookCommand(for: .claude), report: &report)
+            try await removeLegacyHook(at: claudeSettingsPath, report: &report)
             await registerMCP(remove: "claude mcp remove -s user \(Self.mcpServerName) >/dev/null 2>&1", add: "claude mcp add -s user --transport http \(Self.mcpServerName) \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias, token: token).claudeCommand)", report: &report)
         case .codex:
-            try await installScript(into: &report)
-            try await mergeHookFile(at: codexHooksPath, command: hookCommand(for: .codex), report: &report)
-            try await enableCodexHooks(report: &report)
+            try await removeLegacyHook(at: codexHooksPath, report: &report)
             await registerMCP(remove: "codex mcp remove \(Self.mcpServerName) >/dev/null 2>&1", add: "codex mcp add \(Self.mcpServerName) --url \(shellMCPURL)", fallback: "Register the MCP server by hand: \(MCPServer.snippets(port: port, host: hostAlias, token: token).codexCommand)", report: &report)
-            report.notices.append("Codex skips new hooks until you trust them: run /hooks inside Codex and trust the Gloss entry.")
         case .opencode:
             try await mergeOpenCodeConfig(report: &report)
         case .herdrPlugin:
             try await installPlugin(report: &report)
         }
+        if agent == .claude || agent == .codex { await removeOrphanedFiles(report: &report) }
         return report
     }
 
@@ -146,10 +138,10 @@ public struct HookInstaller: Sendable {
         var report = HookInstallReport()
         switch agent {
         case .claude:
-            try await mergeHookFile(at: claudeSettingsPath, command: nil, report: &report)
+            try await removeLegacyHook(at: claudeSettingsPath, report: &report)
             _ = try? await run("claude mcp remove -s user \(Self.mcpServerName) >/dev/null 2>&1")
         case .codex:
-            try await mergeHookFile(at: codexHooksPath, command: nil, report: &report)
+            try await removeLegacyHook(at: codexHooksPath, report: &report)
             _ = try? await run("codex mcp remove \(Self.mcpServerName) >/dev/null 2>&1")
         case .opencode:
             try await mergeOpenCodeConfig(remove: true, report: &report)
@@ -160,19 +152,23 @@ public struct HookInstaller: Sendable {
                 report.changedFiles.append(path)
             }
         }
-        // The script is shared by both hooks and the port file by the hooks and the plugin: remove each only
-        // when nothing that reads it is left.
-        let claudeRemains = try await hookFileMentionsScript(claudeSettingsPath)
-        let codexRemains = try await hookFileMentionsScript(codexHooksPath)
-        let hooksRemain = claudeRemains || codexRemains
+        if agent != .opencode { await removeOrphanedFiles(report: &report) }
+        return report
+    }
+
+    /// The old hook script once neither agent's settings run it, and the port file once neither an old hook nor the
+    /// plugin reads it.
+    private func removeOrphanedFiles(report: inout HookInstallReport) async {
+        let claudeHook = await hookFileHasLegacyEntry(claudeSettingsPath)
+        let codexHook = await hookFileHasLegacyEntry(codexHooksPath)
+        let hooksRemain = claudeHook || codexHook
         let pluginRemains = (try? await fileSystem.stat(PathUtilities.join(pluginDirectory, "herdr-plugin.toml"))) != nil
         var orphaned: [String] = []
-        if agent != .opencode, !hooksRemain { orphaned.append(scriptPath) }
-        if agent != .opencode, !hooksRemain, !pluginRemains { orphaned.append(remotePortFilePath) }
+        if !hooksRemain { orphaned.append(legacyScriptPath) }
+        if !hooksRemain, !pluginRemains { orphaned.append(remotePortFilePath) }
         for path in orphaned where (try? await fileSystem.delete(path)) != nil {
             report.changedFiles.append(path)
         }
-        return report
     }
 
     /// The URL the agent's own config has for our MCP server, or nil when there is no entry to compare (the
@@ -219,21 +215,11 @@ public struct HookInstaller: Sendable {
     public func status(_ agent: HookAgent) async -> HookStatus {
         switch agent {
         case .claude, .codex:
-            let path = agent == .claude ? claudeSettingsPath : codexHooksPath
-            guard let data = try? await fileSystem.read(path), Self.hasOurEntry(in: data) else { return .notInstalled }
-            guard let installed = try? await fileSystem.read(scriptPath) else { return .outdated("hook script is missing") }
-            if let bundled = try? Self.bundledScript(), Self.sha256(installed) != Self.sha256(bundled) { return .outdated("hook script differs from this build") }
-            if !Self.hasEntry(in: data, command: hookCommand(for: agent)) { return .outdated("hook command differs") }
-            if agent == .codex, let toml = try? await fileSystem.read(codexConfigPath), !Self.codexHooksEnabled(String(decoding: toml, as: UTF8.self)) {
-                return .outdated("[features] hooks is not enabled")
+            if await hookFileHasLegacyEntry(agent == .claude ? claudeSettingsPath : codexHooksPath) {
+                return .outdated(Self.legacyHookReason)
             }
-            if hostAlias != nil, (try? await fileSystem.read(remotePortFilePath)) != portFileContents {
-                return .outdated("port file does not match this app (port \(port) and its token)")
-            }
-            if let registered = await registeredMCPURL(for: agent), registered != mcpURL {
-                return .outdated("MCP url differs")
-            }
-            return .installed
+            guard let registered = await registeredMCPURL(for: agent) else { return .notInstalled }
+            return registered == mcpURL ? .installed : .outdated("MCP url differs")
         case .herdrPlugin:
             for file in Self.pluginFiles {
                 guard let installed = try? await fileSystem.read(PathUtilities.join(pluginDirectory, file)) else { return .notInstalled }
@@ -261,24 +247,6 @@ public struct HookInstaller: Sendable {
         } catch FileSystemError.notFound {
             return nil
         }
-    }
-
-    private func installScript(into report: inout HookInstallReport) async throws {
-        let bundled = try Self.bundledScript()
-        try await fileSystem.makeDirectory(PathUtilities.parent(of: scriptPath))
-        if hostAlias != nil {
-            // The port can change between installs while the script and the hook entry stay the same.
-            let portLine = portFileContents
-            if try await readIfPresent(remotePortFilePath) != portLine {
-                try await fileSystem.makeDirectory(PathUtilities.parent(of: remotePortFilePath))
-                _ = try await fileSystem.writeAtomically(portLine, to: remotePortFilePath, preservingModeFrom: privateFile)
-                report.changedFiles.append(remotePortFilePath)
-            }
-        }
-        if try await readIfPresent(scriptPath) == bundled { return }
-        let executable = FileAttributes(kind: .file, size: Int64(bundled.count), mtime: now(), mode: 0o755)
-        _ = try await fileSystem.writeAtomically(bundled, to: scriptPath, preservingModeFrom: executable)
-        report.changedFiles.append(scriptPath)
     }
 
     /// Copies the plugin bundle next to the port file and links it with `herdr plugin link`.
@@ -310,27 +278,16 @@ public struct HookInstaller: Sendable {
         report.notices.append("Bind a key in Herdr's config.toml:\n" + Self.keybindingSnippet)
     }
 
-    /// Rewrites `hooks.UserPromptSubmit` so exactly one entry is ours (`command` nil removes it).
-    private func mergeHookFile(at path: String, command: String?, report: inout HookInstallReport) async throws {
-        let original = try await readIfPresent(path)
-        // Removing from a file that has no entry of ours (or no file at all) touches nothing: no `{}` file is
-        // created, and the user's file isn't reformatted.
-        if command == nil, original.map({ Self.hasOurEntry(in: $0) }) != true { return }
-        let merged = try Self.mergeHookEntry(into: original ?? Data("{}".utf8), command: command, path: path)
-        if original == merged { return }
-        try await writeWithBackup(merged, to: path, original: original, report: &report)
-    }
+    /// Why a machine with the old prompt hook shows Update.
+    public static let legacyHookReason = "An older Gloss added a prompt hook that sent drafts without Send. Update removes it."
 
-    private func enableCodexHooks(report: inout HookInstallReport) async throws {
-        let original = (try await readIfPresent(codexConfigPath)).map { String(decoding: $0, as: UTF8.self) } ?? ""
-        guard let updated = Self.enableCodexHooks(in: original) else {
-            // A features table we can't edit line by line; appending another would make the TOML invalid and stop
-            // Codex from starting, so the user adds the line.
-            report.notices.append("\(codexConfigPath) defines features in a form the installer won't edit. Add hooks = true to its features table by hand.")
-            return
-        }
-        if updated == original { return }
-        try await writeWithBackup(Data(updated.utf8), to: codexConfigPath, original: Data(original.utf8), report: &report)
+    /// Takes the old prompt hook's entry out of `hooks.UserPromptSubmit`. A file without one (or no file at all) is
+    /// not touched: no `{}` file is created, and the user's file isn't reformatted.
+    private func removeLegacyHook(at path: String, report: inout HookInstallReport) async throws {
+        guard let original = try await readIfPresent(path), Self.hasLegacyEntry(in: original) else { return }
+        let cleaned = try Self.removingLegacyEntry(from: original, path: path)
+        if original == cleaned { return }
+        try await writeWithBackup(cleaned, to: path, original: original, report: &report)
     }
 
     private func mergeOpenCodeConfig(remove: Bool = false, report: inout HookInstallReport) async throws {
@@ -383,9 +340,9 @@ public struct HookInstaller: Sendable {
         }
     }
 
-    private func hookFileMentionsScript(_ path: String) async throws -> Bool {
+    private func hookFileHasLegacyEntry(_ path: String) async -> Bool {
         guard let data = try? await fileSystem.read(path) else { return false }
-        return Self.hasOurEntry(in: data)
+        return Self.hasLegacyEntry(in: data)
     }
 
     // MARK: Pure merge logic
@@ -394,33 +351,27 @@ public struct HookInstaller: Sendable {
 
     nonisolated static func isOurs(_ entry: Any) -> Bool {
         guard let entry = entry as? [String: Any], let hooks = entry["hooks"] as? [[String: Any]] else { return false }
-        return hooks.contains { ($0["command"] as? String)?.contains(scriptName) == true }
+        return hooks.contains { ($0["command"] as? String)?.contains(legacyScriptName) == true }
     }
 
     /// Strips our handler from a group; nil when nothing else is left in it.
     nonisolated static func withoutOurHandler(_ entry: Any) -> Any? {
         guard var group = entry as? [String: Any], let hooks = group["hooks"] as? [[String: Any]] else { return entry }
-        let others = hooks.filter { ($0["command"] as? String)?.contains(scriptName) != true }
+        let others = hooks.filter { ($0["command"] as? String)?.contains(legacyScriptName) != true }
         if others.count == hooks.count { return entry }
         guard !others.isEmpty else { return nil }
         group["hooks"] = others
         return group
     }
 
-    public nonisolated static func hasOurEntry(in data: Data) -> Bool {
+    public nonisolated static func hasLegacyEntry(in data: Data) -> Bool {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let submit = (object["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [Any] else { return false }
         return submit.contains(where: isOurs)
     }
 
-    nonisolated static func hasEntry(in data: Data, command: String) -> Bool {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let submit = (object["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]] else { return false }
-        return submit.contains { entry in (entry["hooks"] as? [[String: Any]])?.contains { $0["command"] as? String == command } == true }
-    }
-
-    /// Removes every previous Gloss entry from `hooks.UserPromptSubmit` and appends one for `command`.
-    public nonisolated static func mergeHookEntry(into data: Data, command: String?, path: String = "settings.json") throws -> Data {
+    /// The settings without any Gloss handler in `hooks.UserPromptSubmit`; empty structures it leaves are dropped.
+    public nonisolated static func removingLegacyEntry(from data: Data, path: String = "settings.json") throws -> Data {
         var object: [String: Any]
         do {
             guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw HookInstallerError.unparsable(path: path, reason: "top level is not an object") }
@@ -431,10 +382,7 @@ public struct HookInstaller: Sendable {
             throw HookInstallerError.unparsable(path: path, reason: "\(error)")
         }
         var hooks = object["hooks"] as? [String: Any] ?? [:]
-        var submit = (hooks["UserPromptSubmit"] as? [Any] ?? []).compactMap(withoutOurHandler)
-        if let command {
-            submit.append(["hooks": [["type": "command", "command": command, "timeout": 10]]])
-        }
+        let submit = (hooks["UserPromptSubmit"] as? [Any] ?? []).compactMap(withoutOurHandler)
         if submit.isEmpty { hooks["UserPromptSubmit"] = nil } else { hooks["UserPromptSubmit"] = submit }
         if hooks.isEmpty { object["hooks"] = nil } else { object["hooks"] = hooks }
         return try JSONSerialization.data(withJSONObject: object, options: jsonOptions) + Data("\n".utf8)
@@ -454,66 +402,6 @@ public struct HookInstaller: Sendable {
         }
         if mcp.isEmpty { object["mcp"] = nil } else { object["mcp"] = mcp }
         return try JSONSerialization.data(withJSONObject: object, options: jsonOptions) + Data("\n".utf8)
-    }
-
-    /// Ensures `[features]\nhooks = true` without rewriting any other line. Nil when the file defines `features`
-    /// some other way (a root `features.x = …` dotted key or a `features = { … }` inline table): TOML forbids a
-    /// second definition, so appending a `[features]` table would leave Codex unable to read its config.
-    public nonisolated static func enableCodexHooks(in toml: String) -> String? {
-        let newline = toml.contains("\r\n") ? "\r\n" : "\n"
-        var lines = toml.components(separatedBy: newline)
-        func stripped(_ line: String) -> String {
-            // The value without a trailing comment or line ending.
-            let code = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? line
-            return code.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        /// `[ features ]` and `["features"]` name the same table as `[features]`.
-        func tableName(_ code: String) -> String? {
-            guard code.hasPrefix("["), !code.hasPrefix("[["), code.hasSuffix("]") else { return nil }
-            return code.dropFirst().dropLast().trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\"", with: "").replacingOccurrences(of: "'", with: "")
-        }
-        // Keys before the first table header belong to the root, where `features…` would define the table too.
-        for line in lines {
-            let code = stripped(line)
-            if code.hasPrefix("[") { break }
-            let key = code.prefix { $0 != "=" }.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\"", with: "")
-            guard key == "features" || key.hasPrefix("features.") || key.hasPrefix("features .") else { continue }
-            let compact = code.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\"", with: "")
-            return compact == "features.hooks=true" || lines.contains(where: { stripped($0).replacingOccurrences(of: " ", with: "") == "features.hooks=true" }) ? toml : nil
-        }
-        guard let header = lines.firstIndex(where: { tableName(stripped($0)) == "features" }) else {
-            var out = toml
-            if !out.isEmpty, !out.hasSuffix(newline) { out += newline }
-            if !out.isEmpty { out += newline }
-            return out + "[features]\(newline)hooks = true\(newline)"
-        }
-        var index = header + 1
-        while index < lines.count {
-            let code = stripped(lines[index])
-            if code.hasPrefix("[") { break }
-            if code.hasPrefix("hooks"), code.dropFirst(5).trimmingCharacters(in: .whitespaces).hasPrefix("=") {
-                let value = code.split(separator: "=", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-                if value == "true" { return toml }
-                lines[index] = "hooks = true"
-                return lines.joined(separator: newline)
-            }
-            index += 1
-        }
-        lines.insert("hooks = true", at: header + 1)
-        return lines.joined(separator: newline)
-    }
-
-    public nonisolated static func codexHooksEnabled(_ toml: String) -> Bool {
-        enableCodexHooks(in: toml) == toml
-    }
-
-    /// Whether `enableCodexHooks` would leave this config alone because it can't edit it safely.
-    public nonisolated static func codexFeaturesNeedHandEdit(_ toml: String) -> Bool {
-        enableCodexHooks(in: toml) == nil
-    }
-
-    nonisolated static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 

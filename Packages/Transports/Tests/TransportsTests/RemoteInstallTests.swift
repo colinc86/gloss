@@ -5,11 +5,11 @@ import Testing
 @testable import Transports
 
 struct RemoteInstallTests {
-    /// `GLOSS_REMOTE_HOST=<alias>`: installs the hook, the Codex entry, and the Herdr plugin into a temporary home on
-    /// the host over SFTP and exec. Only `herdr plugin link/unlink/list` run for real there (and are undone);
+    /// `GLOSS_REMOTE_HOST=<alias>`: registers the agents and installs the Herdr plugin into a temporary home on the
+    /// host over SFTP and exec, removing an old prompt hook left there. Only `herdr plugin link/unlink/list` run for real there (and are undone);
     /// the agents' `mcp add` commands are answered by a stub so the host's real agent configs are never touched.
     @Test(.enabled(if: TestGates.remoteHost != nil))
-    func installsHooksAndPluginIntoATemporaryRemoteHome() async throws {
+    func installsAgentsAndPluginIntoATemporaryRemoteHome() async throws {
         let alias = try #require(TestGates.remoteHost)
         let control = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-test-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(atPath: control, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -30,23 +30,22 @@ struct RemoteInstallTests {
         }
         do {
             try await fileSystem.makeDirectory(PathUtilities.join(home, ".claude"))
-            _ = try await fileSystem.writeAtomically(Data(#"{"permissions":{"allow":["Bash(ls *)"]}}"#.utf8), to: PathUtilities.join(home, ".claude/settings.json"), preservingModeFrom: nil)
+            // What an older build left on the host: the prompt hook beside the user's own settings, and its script.
+            let legacy = #"{"permissions":{"allow":["Bash(ls *)"]},"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"GLOSS_HOST='x' \"$HOME/.claude/hooks/gloss-notes.sh\" claude"}]}]}}"#
+            _ = try await fileSystem.writeAtomically(Data(legacy.utf8), to: installer.claudeSettingsPath, preservingModeFrom: nil)
+            try await fileSystem.makeDirectory(PathUtilities.join(home, ".claude/hooks"))
+            _ = try await fileSystem.writeAtomically(Data("#!/bin/sh\n".utf8), to: installer.legacyScriptPath, preservingModeFrom: nil)
+            #expect(await installer.status(.claude) == .outdated(HookInstaller.legacyHookReason))
             let claude = try await installer.install(.claude)
-            #expect(claude.changedFiles.contains(installer.scriptPath) && claude.changedFiles.contains(installer.remotePortFilePath))
+            #expect(claude.changedFiles.contains(installer.claudeSettingsPath) && claude.changedFiles.contains(installer.legacyScriptPath))
             let settings = try await fileSystem.read(installer.claudeSettingsPath)
-            #expect(HookInstaller.hasEntry(in: settings, command: "GLOSS_HOST='\(alias)' \"$HOME/.claude/hooks/gloss-notes.sh\" claude"))
+            #expect(!HookInstaller.hasLegacyEntry(in: settings))
             #expect(((try JSONSerialization.jsonObject(with: settings) as? [String: Any])?["permissions"] as? [String: Any])?["allow"] as? [String] == ["Bash(ls *)"])
-            let mode = try await connection.exec("stat -c %a \(ShellQuote.single(installer.scriptPath)) 2>/dev/null || stat -f %Lp \(ShellQuote.single(installer.scriptPath))").stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
-            #expect(mode == "755")
-            #expect(await installer.status(.claude) == .installed)
+            #expect((try? await fileSystem.stat(installer.legacyScriptPath)) == nil)
+            #expect(await commands.lines.contains { $0.hasPrefix("claude mcp add -s user --transport http gloss ") && $0.contains("host=\(alias)") })
 
-            // The script on the host finds the port file and stays silent when the forwarded server is absent.
-            let probe = try await connection.exec("printf '{\"cwd\":\"/tmp\"}' | HOME=\(ShellQuote.single(home)) sh \(ShellQuote.single(installer.scriptPath)) claude; echo \"exit=$?\"")
-            #expect(probe.stdoutText == "exit=0\n" && probe.stderrText.isEmpty, "\(probe.stdoutText) \(probe.stderrText)")
-
-            let codex = try await installer.install(.codex)
-            #expect(codex.notices.contains { $0.contains("/hooks") })
-            #expect(await installer.status(.codex) == .installed)
+            _ = try await installer.install(.codex)
+            #expect(await commands.lines.contains { $0.hasPrefix("codex mcp add gloss --url ") })
 
             if tools.herdr {
                 let before = try await connection.exec(LocalShell.pathPrefix + "herdr plugin list --json").stdoutText
@@ -64,7 +63,6 @@ struct RemoteInstallTests {
             _ = try await installer.uninstall(.claude)
             _ = try await installer.uninstall(.codex)
             #expect(await installer.status(.claude) == .notInstalled)
-            #expect((try? await fileSystem.stat(installer.scriptPath)) == nil)
         } catch {
             // Unlink first (it only needs exec), then remove the host's plugin dirs and the temporary home.
             _ = try? await installer.uninstall(.herdrPlugin)

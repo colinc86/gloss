@@ -201,25 +201,10 @@ struct PacketBuilderTests {
         #expect(PacketBuilder.build([]).text == "Notes: 0. Mark each resolved with the gloss MCP tool `resolve_note` (ids: ) when done.")
     }
 
-    @Test func summaryLineAndHookFallback() {
+    @Test func summaryLineTrimsTheComment() {
         let long = String(repeating: "x", count: 100)
         let note = PacketNote(noteID: markdownID, agentPath: "/p/a.md", source: .markdown, anchor: textAnchor(3, 5), comment: long)
-        let summary = PacketBuilder.summaryLine(note)
-        #expect(summary == "\(markdownID.rawValue): /p/a.md:3-5 \"\(String(repeating: "x", count: 80))\"")
-
-        let big = (0..<400).map { i in
-            PacketNote(noteID: NoteID.new(), agentPath: "/p/f\(i).md", source: .markdown, anchor: textAnchor(1, 3), comment: "comment \(i)", excerptLines: ["one", "two", "three"])
-        }
-        let full = PacketBuilder.build(big).text
-        #expect(full.count > 10_000)
-        let hook = PacketBuilder.hookText(big)
-        #expect(hook.count <= 10_000)
-        #expect(hook.hasPrefix("400 pending notes"))
-        #expect(hook.contains("and 360 more via `list_pending_notes`"))
-        #expect(hook.contains("`get_note`"))
-        #expect(hook.hasSuffix("when done."))
-        let small = PacketBuilder.hookText([note])
-        #expect(small == PacketBuilder.build([note]).text)
+        #expect(PacketBuilder.summaryLine(note) == "\(markdownID.rawValue): /p/a.md:3-5 \"\(String(repeating: "x", count: 80))\"")
     }
 
     @Test func excerptExtractorHandlesLineEndingsAndBounds() {

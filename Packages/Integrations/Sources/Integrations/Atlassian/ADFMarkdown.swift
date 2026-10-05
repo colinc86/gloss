@@ -14,6 +14,35 @@ public enum ADFMarkdown {
         return blocks.joined(separator: "\n\n").trimmingCharacters(in: .newlines) + "\n"
     }
 
+    /// A media node as the document names it: its Media Services id, and the alt text or file name it may carry.
+    public struct MediaReference: Sendable, Equatable {
+        public var id: String?
+        public var alt: String?
+        public var name: String?
+    }
+
+    /// Where a media node's file is served, as a link relative to the document; nil leaves it named in brackets.
+    public typealias MediaLink = @Sendable (MediaReference) -> (link: String, isImage: Bool)?
+
+    @TaskLocal static var mediaLink: MediaLink?
+
+    /// The document with its media resolved: an image the app serves becomes an image, any other file a link.
+    public static func markdown(from document: [String: Any], media: @escaping MediaLink) -> String {
+        $mediaLink.withValue(media) { markdown(from: document) }
+    }
+
+    /// `![alt](link)` or `[name](link)` for a resolved media node, else nil.
+    static func resolvedMedia(_ attrs: [String: Any]) -> String? {
+        let reference = MediaReference(id: attrs["id"] as? String, alt: attrs["alt"] as? String, name: attrs["name"] as? String)
+        guard let resolve = mediaLink, let target = resolve(reference) else { return nil }
+        let label = escapeInline(reference.alt ?? reference.name ?? "attachment")
+        // Spaces and parentheses ("Screenshot (2).png") would end a Markdown link early.
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "()")
+        let destination = target.link.addingPercentEncoding(withAllowedCharacters: allowed) ?? target.link
+        return (target.isImage ? "!" : "") + "[" + label + "](" + destination + ")"
+    }
+
     struct Context {
         var listDepth = 0
     }
@@ -59,6 +88,7 @@ public enum ADFMarkdown {
         case "mediaSingle", "mediaGroup":
             return children.compactMap { media in
                 let mediaAttrs = media["attrs"] as? [String: Any] ?? [:]
+                if let resolved = resolvedMedia(mediaAttrs) { return resolved }
                 let name = mediaAttrs["alt"] as? String ?? mediaAttrs["name"] as? String ?? mediaAttrs["id"] as? String ?? "attachment"
                 return "\\[image: " + escapeInline(name) + "\\]"
             }.joined(separator: "\n")
@@ -189,6 +219,7 @@ public enum ADFMarkdown {
             case "inlineCard", "blockCard", "embedCard":
                 return (attrs["url"] as? String).flatMap(safeLink).map { "<" + $0 + ">" } ?? ""
             case "mediaInline", "media":
+                if let resolved = resolvedMedia(attrs) { return resolved }
                 return "\\[file: " + escapeInline(attrs["alt"] as? String ?? attrs["name"] as? String ?? attrs["id"] as? String ?? "attachment") + "\\]"
             case "date":
                 if let stamp = attrs["timestamp"] as? String, let millis = Double(stamp) {

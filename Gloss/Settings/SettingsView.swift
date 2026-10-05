@@ -268,9 +268,9 @@ extension AgentsSettings {
         case .opencode:
             .init(text: snippets.opencodeJSON, help: "Copy the opencode.json entry, to add it yourself. It is what Install writes.")
         case .codex:
-            .init(text: snippets.codexCommand, help: "Copy the command that registers the MCP tools with Codex, to run it yourself. Drafts arriving with each prompt need the hook Install adds.")
+            .init(text: snippets.codexCommand, help: "Copy the command that registers the MCP tools with Codex, to run it yourself.")
         default:
-            .init(text: snippets.claudeCommand, help: "Copy the command that registers the MCP tools with Claude Code, to run it yourself. Drafts arriving with each prompt need the hook Install adds.")
+            .init(text: snippets.claudeCommand, help: "Copy the command that registers the MCP tools with Claude Code, to run it yourself.")
         }
     }
 
@@ -284,8 +284,7 @@ extension AgentsSettings {
     }
 }
 
-/// Copy for an agent Gloss does not set up itself: the server's address and header, a generic mcpServers entry,
-/// and a prompt hook that reads drafts as plain text.
+/// Copy for an agent Gloss does not set up itself: the server's address and header, and a generic mcpServers entry.
 private struct OtherAgentsSection: View {
     let snippets: MCPConfigSnippets
 
@@ -296,11 +295,10 @@ private struct OtherAgentsSection: View {
                 SnippetCard(agent: "Header", text: snippets.header)
             }
             SnippetCard(agent: "MCP config", caption: "mcpServers", text: snippets.mcpJSON)
-            SnippetCard(agent: "Prompt hook", caption: "shell", text: snippets.promptHookCommand)
         } header: {
             Text("Other agents")
         } footer: {
-            Text("Any agent that speaks MCP over HTTP can list, read and resolve notes (list_pending_notes, get_note, resolve_note, open_in_viewer, list_documents). One with a prompt hook can run the command from its working directory to receive the drafts there, which then count as sent. The clipboard and tmux need no setup at all.")
+            Text("Any agent that speaks MCP over HTTP can list, read and resolve the notes you've sent (list_pending_notes, get_note, resolve_note, open_in_viewer, list_documents). Drafts stay in Gloss until you press Send. The clipboard and tmux need no setup at all.")
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -621,8 +619,8 @@ private struct IntegrationRow: View {
 
     private var purpose: String {
         switch agent {
-        case .claude: "Hands drafts to Claude Code with each prompt and registers the MCP tools."
-        case .codex: "Hands drafts to Codex with each prompt and registers the MCP tools."
+        case .claude: "Registers the MCP tools so Claude Code can read and resolve the notes you send."
+        case .codex: "Registers the MCP tools so Codex can read and resolve the notes you send."
         case .opencode: "Registers the MCP tools so OpenCode can read and resolve notes."
         case .herdrPlugin: "A Herdr keybinding that turns selected terminal text into a note."
         }

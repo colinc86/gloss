@@ -47,7 +47,7 @@ Notes: <count>. Mark each resolved with the gloss MCP tool `resolve_note` (ids: 
 - The comment is wrapped in double quotes; escape `\` → `\\`, `"` → `\"`, CR → `\r`, LF → `\n` (Orca's rule, keeps one note on one logical line for the agent).
 - The other line breaks (VT, FF, NEL U+0085, LS U+2028, PS U+2029) are escaped as `\u{XXXX}` in quoted values.
 - Excerpt lines are prefixed with `> `; embedded newlines in a selected span become `\n> `. Every kind of line break above starts a new `> ` line.
-- Header values (`File:`, `Resource:`, detail lines such as `Path:`, `Attachment:`, `Element:`, cell descriptions, the hook summary's path) are printed as they are unless they contain a line break; then the whole value is escaped as a comment is. A file name with a newline (legal in git) must never start a line of its own.
+- Header values (`File:`, `Resource:`, detail lines such as `Path:`, `Attachment:`, `Element:`, cell descriptions, a summary line's path) are printed as they are unless they contain a line break; then the whole value is escaped as a comment is. A file name with a newline (legal in git) must never start a line of its own.
 - Paths are never quoted. Paths with spaces are fine because they are on their own labeled line.
 
 ## Example
@@ -94,7 +94,7 @@ The app only ever reads these resources; the agent makes every change with its o
 
 ## Size rules
 
-- Hook delivery (Claude Code and Codex `additionalContext`) is capped at 10,000 characters. Over that, the hook emits a summary line per note (`<id>: <file>:<anchor> "<first 80 chars of comment>"`) and the instruction to call `get_note` through MCP for the full excerpt.
+- There is no hook delivery (removed 2026-10-05, issue #5): a packet reaches an agent only when the user sends it. Agents see only sent notes through MCP; drafts never leave the app.
 - Direct delivery (Herdr, tmux, OpenCode, clipboard) has no cap, but excerpts are truncated at 40 lines regardless.
 
 ## Resolution contract

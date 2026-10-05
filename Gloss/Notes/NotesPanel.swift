@@ -433,19 +433,22 @@ struct NoteCard: View {
                         colouredExcerpt = SyntaxTheme.highlighted(excerpt, language: GrammarCatalog.languageName(forPath: document.path))
                     }
                 }
-                HStack(alignment: .top, spacing: DS.Space.m) {
-                    Text(bodyText)
-                        .font(.callout)
-                        .foregroundStyle(isSettled ? .secondary : .primary)
-                        .lineLimit(isCompact ? 1 : 6)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let thumbnail {
-                        Spacer(minLength: 0)
-                        thumbnailView(thumbnail)
+                // An agent's own question (ask_user) has no comment of the user's above it: the bubble is the note.
+                if !note.body.isEmpty || thumbnail != nil {
+                    HStack(alignment: .top, spacing: DS.Space.m) {
+                        Text(bodyText)
+                            .font(.callout)
+                            .foregroundStyle(isSettled ? .secondary : .primary)
+                            .lineLimit(isCompact ? 1 : 6)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let thumbnail {
+                            Spacer(minLength: 0)
+                            thumbnailView(thumbnail)
+                        }
                     }
                 }
                 if !isCompact, note.state == .resolved, let message = note.resolveMessage, !message.isEmpty {
-                    AgentMessageBubble(message: message, needsInput: needsInput, agent: lastSend.flatMap(NotesPanelModel.agentName))
+                    AgentMessageBubble(message: message, needsInput: needsInput, agent: note.author ?? lastSend.flatMap(NotesPanelModel.agentName))
                         // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
                         .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
                                                              removal: .opacity).calmed)
@@ -1115,7 +1118,9 @@ private struct SendToast: View {
                     .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
                     .id(result.id)
                 } else {
-                    card(symbol: "checkmark.circle.fill", tint: .green, title: "Sent \(noun(result.noteIDs.count))", detail: "to " + name(result.target)) {
+                    card(symbol: result.copied ? "doc.on.clipboard.fill" : "checkmark.circle.fill", tint: .green,
+                         title: result.copied ? "Copied \(noun(result.noteIDs.count))" : "Sent \(noun(result.noteIDs.count))",
+                         detail: result.copied ? "Still drafts until you send them" : "to " + name(result.target)) {
                         dismissButton
                     }
                     .overlay(alignment: .bottom) {

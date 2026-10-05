@@ -5,7 +5,7 @@ import OSLog
 import Remote
 import Transports
 
-/// Install state of the agent hooks and MCP registrations, locally and on connected hosts, for Settings.
+/// Install state of the agents' MCP registrations and the Herdr plugin, locally and on connected hosts, for Settings.
 @MainActor
 @Observable
 final class HooksModel {
@@ -20,9 +20,8 @@ final class HooksModel {
     private(set) var lastError: String?
 
     @ObservationIgnored var installerProvider: (HostID) async -> HookInstaller? = { _ in nil }
-    /// The last operation queued per host. Agents share files on a host (the hook script, the port file), so an
-    /// uninstall of one must not run while another is half installed: it would see no other hooks and delete the
-    /// script the first is about to point at.
+    /// The last operation queued per host. Agents share files on a host (the port file, and the old hook script
+    /// while it is being removed), so one operation must not run while another is half done.
     @ObservationIgnored private var queues: [HostID: Task<Void, Never>] = [:]
 
     func refresh(hosts: [HostID]) async {
