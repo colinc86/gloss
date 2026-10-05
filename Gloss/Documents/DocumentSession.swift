@@ -168,7 +168,15 @@ final class DocumentSession: Identifiable {
     /// A failed open as a sentence for the viewer, not a Swift error dump.
     /// - virtual: a pull request, ticket or page: its provider's own words say what went wrong (a refused key, a
     ///   repository the token cannot see), not a file's.
+    /// Decodes (and hashes) off the main actor: a large photo took the whole UI with it.
+    nonisolated static func decodeImage(_ data: Data, fileName: String) async throws -> DecodedImage {
+        try await Task.detached(priority: .userInitiated) { try ImageDecoder.decode(data, fileName: fileName) }.value
+    }
+
     nonisolated static func openFailure(_ error: any Error, virtual: Bool = false) -> String {
+        if case .tooManyPixels(let width, let height) = error as? ImageDecodeError {
+            return "This image is \(width)×\(height) pixels, too large to show. Images up to 100 megapixels open here."
+        }
         if virtual {
             switch error as? FileSystemError {
             case .notFound: return "Not found, or your API key can't see it."
@@ -212,7 +220,7 @@ final class DocumentSession: Identifiable {
             }
             if kind == .image {
                 let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
-                let decoded = try ImageDecoder.decode(data, fileName: fileName)
+                let decoded = try await Self.decodeImage(data, fileName: fileName)
                 fingerprintAtOpen = fingerprint
                 document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
                 let controller = ImageViewerController(image: decoded)
@@ -260,14 +268,20 @@ final class DocumentSession: Identifiable {
             }
             if kind == .csv, attributes.size <= Self.readOnlyThreshold {
                 let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
-                fingerprintAtOpen = fingerprint
-                baseText = adopt(data)
-                document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
-                let controller = CSVGridController(text: baseText ?? "", fileName: fileName)
-                state = .csv(controller)
-                startWatching()
-                observeNotes()
-                return
+                let controller = CSVGridController(text: TextEncoding.decode(data).text, fileName: fileName)
+                if controller.isTooWide {
+                    // Thousands of columns: shown as text, which the code below reads from these same bytes.
+                    kind = .text
+                    sniffed = (data, fingerprint)
+                } else {
+                    fingerprintAtOpen = fingerprint
+                    baseText = adopt(data)
+                    document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
+                    state = .csv(controller)
+                    startWatching()
+                    observeNotes()
+                    return
+                }
             }
             if attributes.size > Self.refuseThreshold {
                 banner = .tooLarge
@@ -500,9 +514,15 @@ final class DocumentSession: Identifiable {
         do {
             let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
             let text = adopt(data)
+            let controller = CSVGridController(text: text, fileName: fileName)
+            // Grown too wide since it opened: keep the grid it had rather than build thousands of columns.
+            guard !controller.isTooWide else {
+                lastError = "This file now has more than \(CSVGridController.maximumColumns) columns; reopen it to see it as text."
+                return
+            }
             fingerprintAtOpen = fingerprint
             baseText = text
-            state = .csv(CSVGridController(text: text, fileName: fileName))
+            state = .csv(controller)
             if let document { try await noteStore.updateFingerprint(document.id, fingerprint) }
             // Grid anchors hash the text itself (see `CSVGridController.selectionAnchor`).
             await reanchorAll(in: text, hash: Data(text.utf8).sha256Hex)
@@ -812,7 +832,7 @@ final class DocumentSession: Identifiable {
         guard let expected = fingerprintAtOpen else { return }
         do {
             guard case .changed(let data, let fingerprint) = try await fileSystem.checkForChanges(at: path, since: expected) else { return }
-            let decoded = try ImageDecoder.decode(data, fileName: fileName)
+            let decoded = try await Self.decodeImage(data, fileName: fileName)
             fingerprintAtOpen = fingerprint
             let controller = ImageViewerController(image: decoded)
             controller.onNoteClick = { [weak self] id in

@@ -71,6 +71,11 @@ public final class CSVGridController {
 
     public var isTruncated: Bool { table.rows.count >= CSVParser.maximumRows }
 
+    /// A grid wider than this isn't a table anyone reads: one line of 2 million commas made 2 million columns
+    /// measured and built on the main thread. Such files open as text instead.
+    public static let maximumColumns = 1_000
+    public var isTooWide: Bool { table.columnCount > Self.maximumColumns }
+
     /// Columns whose every non-empty field is a number; the grid right-aligns them so magnitudes line up.
     @ObservationIgnored public private(set) lazy var numericColumns: Set<Int> = {
         var result: Set<Int> = []

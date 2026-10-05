@@ -6,7 +6,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 /// An image normalized to its upright pixel orientation. Anchors are stored in this pixel space.
-public struct DecodedImage: @unchecked Sendable {
+public nonisolated struct DecodedImage: @unchecked Sendable {
     public let cgImage: CGImage
     public let width: Int
     public let height: Int
@@ -21,23 +21,43 @@ public struct DecodedImage: @unchecked Sendable {
     }
 }
 
-public enum ImageDecodeError: Error {
+public nonisolated enum ImageDecodeError: Error, Equatable {
     case unreadable
+    /// More pixels than `ImageDecoder.maximumPixels`: a small file can declare a 50000×50000 image (10 GB decoded).
+    case tooManyPixels(width: Int, height: Int)
 }
 
-public enum ImageDecoder {
+public nonisolated enum ImageDecoder {
+    /// 100 megapixels, 400 MB decoded: above any photo or screenshot, below what takes the app down.
+    public static let maximumPixels = 100_000_000
+
+    static func checkPixels(width: Int, height: Int, limit: Int = maximumPixels) throws {
+        guard width > 0, height > 0 else { return }
+        if width.multipliedReportingOverflow(by: height).overflow || width * height > limit {
+            throw ImageDecodeError.tooManyPixels(width: width, height: height)
+        }
+    }
+
     /// Decodes PNG, JPEG, HEIC, GIF (first frame), WebP, TIFF, BMP through ImageIO and SVG through AppKit at 1x.
-    public static func decode(_ data: Data, fileName: String) throws -> DecodedImage {
+    /// The size is checked from the header before any pixels are decoded, and the image is decoded once here (not
+    /// on every redraw), so call it off the main actor.
+    public static func decode(_ data: Data, fileName: String, maximumPixels limit: Int = maximumPixels) throws -> DecodedImage {
         let hash = data.sha256Hex
         if fileName.lowercased().hasSuffix(".svg") {
-            guard let image = NSImage(data: data), let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw ImageDecodeError.unreadable }
+            guard let image = NSImage(data: data) else { throw ImageDecodeError.unreadable }
+            try checkPixels(width: Int(image.size.width.rounded(.up)), height: Int(image.size.height.rounded(.up)), limit: limit)
+            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw ImageDecodeError.unreadable }
             return DecodedImage(cgImage: cgImage, hash: hash)
         }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let raw = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { throw ImageDecodeError.unreadable }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        if let width = properties?[kCGImagePropertyPixelWidth] as? Int, let height = properties?[kCGImagePropertyPixelHeight] as? Int {
+            try checkPixels(width: width, height: height, limit: limit)
+        }
+        guard let raw = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
             throw ImageDecodeError.unreadable
         }
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        try checkPixels(width: raw.width, height: raw.height, limit: limit)
         let orientation = (properties?[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init(rawValue:)) ?? .up
         return DecodedImage(cgImage: upright(raw, orientation: orientation), hash: hash)
     }

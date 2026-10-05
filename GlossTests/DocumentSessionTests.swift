@@ -182,6 +182,24 @@ struct DocumentSessionTests {
         session.close()
     }
 
+    /// A "CSV" thousands of columns wide opens as text, not as a grid built column by column on the main thread.
+    @Test func aVeryWideCSVOpensAsText() async throws {
+        let (directory, path) = try makeFile(String(repeating: ",", count: 50_000) + "\n", name: "wide.csv")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let session = try makeSession(path: path)
+        await session.open()
+        #expect(session.textController != nil)
+        if case .csv = session.state { Issue.record("opened as a grid") }
+        session.close()
+
+        let (narrowDirectory, narrow) = try makeFile("a,b\n1,2\n", name: "ok.csv")
+        defer { try? FileManager.default.removeItem(atPath: narrowDirectory) }
+        let grid = try makeSession(path: narrow)
+        await grid.open()
+        guard case .csv = grid.state else { Issue.record("a normal CSV is a grid"); return }
+        grid.close()
+    }
+
     @Test func overlappingConflictOffersSides() async throws {
         let (directory, path) = try makeFile("a\nb\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }
