@@ -16,6 +16,9 @@ struct MarkdownLinkTests {
         #expect(classify("file:///System/Applications/Utilities/Terminal.app") == .document("/System/Applications/Utilities/Terminal.app"),
                 "a file link only opens as a document in the viewer, never launches")
         #expect(classify("#heading") == .sameDocument)
+        #expect(classify("a%2525.md") == .document("/repo/docs/a%25.md"), "decoded once")
+        guard case .refused = classify("//intranet/docs/spec.md") else { Issue.record("scheme-relative"); return }
+        guard case .refused = classify("file:notes.md") else { Issue.record("relative file:"); return }
     }
 
     @Test func withoutAFolderRelativeAndFileLinksAreRefused() {

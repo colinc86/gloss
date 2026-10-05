@@ -25,11 +25,14 @@ public enum MarkdownLink: Equatable, Sendable {
             return .external(url)
         case "file":
             // Only a plain local path, and only where this document's folder is on the same machine.
-            guard documentDirectory != nil, url.host == nil || url.host == "" || url.host == "localhost" else { return .refused(trimmed) }
+            guard documentDirectory != nil, url.host == nil || url.host == "" || url.host == "localhost", url.path.hasPrefix("/") else {
+                return .refused(trimmed)
+            }
             return .document((url.path as NSString).standardizingPath)
         case nil:
-            guard let documentDirectory else { return .refused(trimmed) }
-            let path = url.path.removingPercentEncoding ?? url.path
+            // `//server/path` names another machine, not a file beside this one.
+            guard let documentDirectory, url.host == nil || url.host == "" else { return .refused(trimmed) }
+            let path = url.path   // already percent-decoded; decoding again turned %2541 into A
             if path.isEmpty { return .sameDocument }
             let absolute = path.hasPrefix("/") ? path : (documentDirectory as NSString).appendingPathComponent(path)
             return .document((absolute as NSString).standardizingPath)

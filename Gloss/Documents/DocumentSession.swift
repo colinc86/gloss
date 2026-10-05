@@ -38,6 +38,8 @@ final class DocumentSession: Identifiable {
         var regions: [MergeRegion]
         var theirsText: String
         var theirsFingerprint: Fingerprint
+        /// The encoding the other side was read in; a merge adopts it along with its text.
+        var theirsEncoding: TextEncoding = .utf8
         var canMerge: Bool { ThreeWayMerge.resolve(regions) != nil }
     }
 
@@ -485,7 +487,14 @@ final class DocumentSession: Identifiable {
     func reloadFromDisk(discardingEdits: Bool = true) async {
         guard let controller = textController else { return }
         do {
-            let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
+            var (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
+            // A watcher read that caught the file mid-write (UTF-8 cut inside a character) is not a new encoding:
+            // read once more after the write has had a moment. A Latin-1 file that really ends in é looks the same,
+            // so the second read is taken as it is.
+            if !discardingEdits, textEncoding.isUnicode, TextEncoding.isUTF8CutShort(data) {
+                try? await Task.sleep(for: .milliseconds(300))
+                (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
+            }
             let (text, encoding) = TextEncoding.decode(data)
             if !discardingEdits, isDirty {
                 if text != baseText { banner = .externalChange }
@@ -497,7 +506,7 @@ final class DocumentSession: Identifiable {
             controller.replaceAll(with: text)
             rendered?.syncWithSourceIfReplaced()
             isDirty = false
-            banner = nil
+            banner = textEncoding.isUnicode ? nil : .decodedAsLatin1
             conflict = nil
             liveRanges = [:]
             invalidatedNotes = []
@@ -572,13 +581,13 @@ final class DocumentSession: Identifiable {
         do {
             if let expected = fingerprintAtOpen {
                 if case .changed(let current, let fingerprint) = try await fileSystem.checkForChanges(at: path, since: expected) {
-                    let theirs = decode(current)
+                    let (theirs, theirsEncoding) = TextEncoding.decode(current)
                     let regions = ThreeWayMerge.merge(
                         base: ExcerptExtractor.allLines(baseText ?? ""),
                         mine: ExcerptExtractor.allLines(controller.text),
                         theirs: ExcerptExtractor.allLines(theirs)
                     )
-                    conflict = ConflictState(regions: regions, theirsText: theirs, theirsFingerprint: fingerprint)
+                    conflict = ConflictState(regions: regions, theirsText: theirs, theirsFingerprint: fingerprint, theirsEncoding: theirsEncoding)
                     return
                 }
             }
@@ -586,6 +595,9 @@ final class DocumentSession: Identifiable {
         } catch FileSystemError.notFound {
             // Deleted since it was opened: the banner offers Save Here, which writes it back on purpose.
             banner = .deletedOnDisk
+        } catch let refusal as EncodingRefusal {
+            banner = .decodedAsLatin1
+            lastError = refusal.message
         } catch {
             lastError = "Save failed: \(Self.openFailure(error))"
             Log.viewer.error("save \(self.path, privacy: .public) failed: \(error, privacy: .public)")
@@ -601,12 +613,35 @@ final class DocumentSession: Identifiable {
         return true
     }
 
+    /// A save the file's encoding can't hold; the banner's Convert to UTF-8 is the way out.
+    struct EncodingRefusal: Error {
+        var encoding: TextEncoding
+        var message: String {
+            "Not saved: this file is \(encoding.displayName), which can't hold some of the characters you typed. Remove them, or choose Convert to UTF-8 above the text to save the whole file as UTF-8."
+        }
+    }
+
+    /// Saves from now on as UTF-8; the next save rewrites the file in it.
+    func convertToUTF8() {
+        guard !textEncoding.isUnicode, !isReadOnly else { return }
+        textEncoding = .utf8
+        isDirty = true
+        banner = nil
+    }
+
     /// Conflict resolution: overwrite with the editor's text.
     func keepMine() async {
         guard let controller = textController, let conflict else { return }
         if await changedSinceConflict(conflict) { return }
         self.conflict = nil
-        do { try await write(controller.text) } catch { lastError = "Save failed: \(error)" }
+        do {
+            try await write(controller.text)
+        } catch let refusal as EncodingRefusal {
+            banner = .decodedAsLatin1
+            lastError = refusal.message
+        } catch {
+            lastError = "Save failed: \(error)"
+        }
     }
 
     /// Conflict resolution: drop the edits and take the disk version.
@@ -630,6 +665,7 @@ final class DocumentSession: Identifiable {
         self.conflict = nil
         baseText = conflict.theirsText
         fingerprintAtOpen = conflict.theirsFingerprint
+        textEncoding = conflict.theirsEncoding
         controller.replaceAll(with: text)
         rendered?.syncWithSourceIfReplaced()
         liveRanges = [:]
@@ -678,9 +714,7 @@ final class DocumentSession: Identifiable {
     private func write(_ text: String) async throws {
         // Written back in the encoding it was read in. A character that encoding can't hold refuses the save rather
         // than switching the whole file to UTF-8, which would garble every non-ASCII byte already in it.
-        guard let data = textEncoding.encode(text) else {
-            throw FileSystemError.io("This file is \(textEncoding.displayName), which can't hold some of the characters you typed. Remove them, or save a UTF-8 copy with Save As.")
-        }
+        guard let data = textEncoding.encode(text) else { throw EncodingRefusal(encoding: textEncoding) }
         // Snapshot the anchors that belong to this text; typing during a slow save must not leak into them.
         let rangesSnapshot = liveRanges
         let invalidatedSnapshot = invalidatedNotes

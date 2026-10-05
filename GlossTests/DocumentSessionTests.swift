@@ -178,9 +178,26 @@ struct DocumentSessionTests {
         #expect(try Data(contentsOf: URL(fileURLWithPath: path)) == Data([0x93, 0x71, 0x94, 0x0A, 0x6F, 0x6B, 0x0A]))
         controller.viewDidChangeText( controller.text + "→\n")
         await session.save()
-        #expect(session.lastError?.contains("Windows-1252") == true)
+        #expect(session.lastError?.contains("Windows-1252") == true && session.lastError?.contains("Convert to UTF-8") == true)
+        #expect(session.banner == .decodedAsLatin1)
         #expect(try Data(contentsOf: URL(fileURLWithPath: path)).count == 7, "nothing written")
+        session.lastError = nil
+        session.convertToUTF8()
+        await session.save()
+        #expect(session.lastError == nil)
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "\u{201C}q\u{201D}\nok\n→\n")
         session.close()
+
+        // A UTF-8 file with a byte-order mark keeps it.
+        let bom = "\(directory)/script.ps1"
+        try (Data([0xEF, 0xBB, 0xBF]) + Data("Write-Host 'é'\r\n".utf8)).write(to: URL(fileURLWithPath: bom))
+        let script = try makeSession(path: bom)
+        await script.open()
+        let editor = try #require(script.textController)
+        editor.viewDidChangeText(editor.text + "# done\r\n")
+        await script.save()
+        #expect(try Data(contentsOf: URL(fileURLWithPath: bom)) == Data([0xEF, 0xBB, 0xBF]) + Data("Write-Host 'é'\r\n# done\r\n".utf8))
+        script.close()
     }
 
     /// A "CSV" thousands of columns wide opens as text, not as a grid built column by column on the main thread.

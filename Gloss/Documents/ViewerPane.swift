@@ -122,6 +122,8 @@ private struct BannerView: View {
                 Button("Keep Mine") { session.dismissBanner() }
                 Button("Reload") { Task { await session.reloadFromDisk() } }
                     .buttonStyle(.glassProminent)
+            case .decodedAsLatin1 where !session.isReadOnly:
+                Button("Convert to UTF-8") { session.convertToUTF8() }
             case .reanchoring:
                 Button("Cancel") { session.cancelReanchor() }
             case .deletedOnDisk:
