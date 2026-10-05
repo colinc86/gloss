@@ -23,7 +23,13 @@ struct AppRoutingTests {
         await model.start()
         #expect(model.explorer.tabs.count == 1)
         let encoded = "\(root)/b.swift".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        // Without the token (any web page can open the link) the user is asked first, and nothing opens yet.
         await URLRouter.handle(URL(string: "gloss://open?host=local&path=\(encoded)")!, model: model)
+        #expect(model.pendingLinkOpen == AppModel.PendingLinkOpen(hostID: .local, hostName: nil, path: "\(root)/b.swift", line: nil))
+        #expect(model.activeSession == nil)
+        model.pendingLinkOpen = nil
+        await URLRouter.handle(URL(string: "gloss://open?host=local&path=\(encoded)&token=\(URLRouter.token() ?? "")")!, model: model)
+        #expect(model.pendingLinkOpen == nil)
         #expect(model.explorer.tabs.count == 1, "the existing root contains the file; no new tab")
         #expect(model.activeSession?.path == "\(root)/b.swift")
         // A link without the user's token (any web page can open one) creates nothing.

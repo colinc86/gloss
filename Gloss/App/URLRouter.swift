@@ -98,6 +98,12 @@ enum URLRouter {
         }
     }
 
+    /// Opens a routed document, adding a root for it when needed; also what confirming a link does.
+    static func open(hostID: HostID, path: String, line: Int?, model: AppModel) async {
+        await model.openRootIfNeeded(hostID: hostID, containing: path)
+        if let line { model.openDocument(hostID: hostID, path: path, line: line) } else { model.openDocument(hostID: hostID, path: path) }
+    }
+
     static func handle(_ url: URL, model: AppModel) async {
         let hosts = Dictionary(uniqueKeysWithValues: ((try? await model.noteStore.hosts()) ?? []).map { ($0.name, $0.id) })
         guard let route = parse(url, hosts: hosts, atlassianSite: model.integrations.atlassian?.site) else {
@@ -112,9 +118,13 @@ enum URLRouter {
             Log.app.error("Refused an untrusted link that would open a tunnel to \(hostID.rawValue, privacy: .public)")
         case .note where !trusted:
             Log.app.error("Refused an untrusted link that would create a note")
+        case .open(let hostID, let path, let line) where !trusted && !hostID.isVirtual && !DocumentKindDetector.isWebURL(path):
+            // Any web page can open a link. Unasked, it could open (and render, scripts and all) a file it just
+            // downloaded, add its folder as a root, or make the app connect to an ssh host; so the user confirms.
+            let hostName = hostID == .local ? nil : hosts.first { $0.value == hostID }?.key
+            model.pendingLinkOpen = AppModel.PendingLinkOpen(hostID: hostID, hostName: hostName, path: path, line: line)
         case .open(let hostID, let path, let line):
-            await model.openRootIfNeeded(hostID: hostID, containing: path)
-            if let line { model.openDocument(hostID: hostID, path: path, line: line) } else { model.openDocument(hostID: hostID, path: path) }
+            await open(hostID: hostID, path: path, line: line, model: model)
         case .note(let hostID, let path, let cwd, let line, let text, let file, let color):
             var body = text
             // `file=` carries a long selection from the Herdr plugin. Only the app's own inbox is honoured: any

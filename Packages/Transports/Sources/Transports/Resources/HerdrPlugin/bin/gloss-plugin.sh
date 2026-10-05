@@ -61,6 +61,9 @@ open)
         url="gloss://open?host=$(encode "$host")&path=$(encode "$path")"
         [ -n "$line" ] && url="$url&line=$line"
         [ -n "${GLOSS_PLUGIN_DRY_RUN:-}" ] && { printf '%s\n' "$url"; exit 0; }
+        # With the user's token the file opens straight away; a link without it makes the app ask first.
+        token=$(head -n 1 "$home/Library/Application Support/Gloss/url-token" 2>/dev/null | tr -cd '0-9a-f')
+        [ -n "$token" ] && url="$url&token=$token"
         open "$url" >/dev/null 2>&1
         exit 0
     fi

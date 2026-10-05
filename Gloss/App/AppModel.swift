@@ -25,6 +25,16 @@ final class AppModel {
     let integrations: IntegrationsModel
     /// Why the notes database could not be opened at launch, shown until dismissed; nil when it opened.
     var databaseFailure: String?
+
+    /// A file a `gloss://open` link without the token asked to open, waiting for the user to confirm.
+    struct PendingLinkOpen: Equatable {
+        var hostID: HostID
+        /// The ssh host's name, nil for this Mac.
+        var hostName: String?
+        var path: String
+        var line: Int?
+    }
+    var pendingLinkOpen: PendingLinkOpen?
     let quickOpen = QuickOpenModel()
     let pullRequestPicker = PullRequestPickerModel()
     let atlassianPicker = AtlassianPickerModel()
