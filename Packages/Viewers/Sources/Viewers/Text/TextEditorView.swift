@@ -75,6 +75,11 @@ public struct TextEditorView: NSViewRepresentable {
             textView.structuralExpansion = { [controller] range in controller.structuralExpansion(of: range) }
             textView.onHoverCharacter = { [weak controller] index in controller?.hover(at: index) }
             controller.rectProvider = { [weak self] range in self?.rect(for: range) }
+            controller.noteGeometry.viewport = { [weak textView] in textView?.visibleWindowRect() }
+            controller.noteGeometry.visibleNoteRects = { [weak textView, weak controller] in
+                guard let textView, let controller else { return [:] }
+                return textView.visibleHighlightRects(for: controller.highlights.filter { !$0.isInvalidated }.map { ($0.id, $0.range) })
+            }
             textView.textLayoutManager?.renderingAttributesValidator = { [weak self] layoutManager, fragment in
                 MainActor.assumeIsolated { self?.validateRenderingAttributes(layoutManager, fragment) }
             }
@@ -96,6 +101,7 @@ public struct TextEditorView: NSViewRepresentable {
                     gutter?.needsDisplay = true
                     backdrop?.needsDisplay = true
                     self?.widthMayHaveChanged()
+                    self?.controller.noteGeometry.changed()
                 }
             })
             observers.append(NotificationCenter.default.addObserver(
@@ -117,6 +123,7 @@ public struct TextEditorView: NSViewRepresentable {
                     self?.recolorVisibleIfStale()
                     // A peek points at where the note was; once the text scrolls it would point at nothing.
                     self?.controller.dismissPeek()
+                    self?.controller.noteGeometry.changed()
                 }
             })
         }
@@ -283,6 +290,7 @@ public struct TextEditorView: NSViewRepresentable {
             // The ruler appears with a file's first note and goes with its last.
             ruler?.needsDisplay = true
             ruler?.superview?.needsLayout = true
+            controller.noteGeometry.changed()
         }
 
         /// The validator only runs when a fragment is laid out, so invalidating rendering attributes alone leaves

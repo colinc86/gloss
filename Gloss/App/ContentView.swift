@@ -127,6 +127,7 @@ struct ContentView: View {
                 + Text(" Open it only if you followed this link yourself.")
         }
         .dropToOpen()
+        .overlay { NotePathOverlay().animation(DS.Motion.smooth, value: model.noteLink.drawsPaths) }
         .overlay(alignment: .bottom) { CopyHUD() }
         // The dot in the close button whenever any open document has unsaved edits, not only the visible one.
         .background(WindowEditedMarker(isEdited: !model.unsavedSessions.isEmpty))

@@ -155,6 +155,11 @@ struct AppCommands: Commands {
             Divider()
             Toggle(isOn: Binding(get: { model.showNotesPanel }, set: { model.showNotesPanel = $0 })) { Label("Show Notes Panel", systemImage: "sidebar.trailing") }
                 .keyboardShortcut("n", modifiers: [.command, .option])
+            Toggle(isOn: Binding(get: { model.noteLink.isLinked }, set: { model.setNotesLinked($0) })) { Label("Follow Page in Notes Panel", systemImage: "link") }
+            Toggle(isOn: Binding(get: { model.noteLink.showsPaths }, set: { model.noteLink.showsPaths = $0 })) {
+                Label("Show Paths to Notes", systemImage: "point.bottomleft.forward.to.point.topright.scurvepath")
+            }
+            .disabled(!model.noteLink.isLinked)
             Button {
                 model.notesPanel.searchFocusPending = true
                 model.showNotesPanel = true

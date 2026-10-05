@@ -50,6 +50,8 @@ public final class PDFViewerController {
     @ObservationIgnored public var onNoteClick: (NoteID) -> Void = { _ in }
     /// Set by the view: page-space rect → container coordinates.
     @ObservationIgnored public var rectProvider: (Int, CGRect) -> CGRect? = { _, _ in nil }
+    /// Where this viewer's notes are on screen, for the notes panel's link and paths.
+    @ObservationIgnored public let noteGeometry = NoteGeometry()
 
     /// `findString` walks every page, and the view asks for the same (page, text) on every highlight pass.
     /// `document` is immutable, so nothing here goes stale; a reloaded file gets a new controller and an empty cache.

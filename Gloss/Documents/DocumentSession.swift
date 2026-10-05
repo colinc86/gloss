@@ -165,6 +165,14 @@ final class DocumentSession: Identifiable {
         return nil
     }
 
+    /// Where the viewer in front reports its notes' positions, for the notes panel's link and paths; nil where the
+    /// page has none to report (Quick Look).
+    var noteGeometry: NoteGeometry? {
+        if let markdown { return markdown.mode == .rendered ? markdown.noteGeometry : markdown.source.noteGeometry }
+        if let html { return html.isShowingRendered ? html.noteGeometry : html.source.noteGeometry }
+        return textController?.noteGeometry ?? pdfController?.noteGeometry ?? imageController?.noteGeometry ?? csvController?.noteGeometry
+    }
+
     // MARK: Open and reload
 
     /// A failed open as a sentence for the viewer, not a Swift error dump.

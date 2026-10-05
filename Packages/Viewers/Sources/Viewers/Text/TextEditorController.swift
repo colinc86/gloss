@@ -59,6 +59,9 @@ public final class TextEditorController {
         rectProvider(range)
     }
 
+    /// Where this editor's notes are on screen, for the notes panel's link and paths.
+    @ObservationIgnored public let noteGeometry = NoteGeometry()
+
     // MARK: Note peek
 
     /// The note under the pointer, shown as a peek card after a short rest; nil when none.

@@ -53,6 +53,8 @@ public final class CSVGridController {
     @ObservationIgnored public var onSelectionChange: () -> Void = {}
     /// Set by the view: on-screen rectangle of a selection, in top-left window coordinates.
     @ObservationIgnored public var rectProvider: (GridSelection) -> CGRect? = { _ in nil }
+    /// Where this viewer's notes are on screen, for the notes panel's link and paths.
+    @ObservationIgnored public let noteGeometry = NoteGeometry()
 
     @ObservationIgnored private var rowHighlights: [Int: TextHighlight] = [:]
     @ObservationIgnored private var columnHighlights: [Int: TextHighlight] = [:]

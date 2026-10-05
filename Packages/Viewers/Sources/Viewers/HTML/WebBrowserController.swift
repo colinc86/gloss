@@ -110,6 +110,7 @@ public final class WebBrowserController {
         }
         detachCurrent()
         current = controller
+        bindGeometry(controller)
         if case .file = controller.page { hostKeys[Self.hostKey(controller.hostID)] = controller.hostID }
         controller.snapshotProvider = { [weak self] rect in try await self?.snapshot(pageRect: rect) }
         controller.resolveElements = { [weak self] items in await self?.resolve(items) ?? [:] }
@@ -194,6 +195,9 @@ public final class WebBrowserController {
         // The next page starts without a selection; a stale one would show an Add Note button for nothing.
         current.selection = nil
         current.alignment = nil
+        // Its boxes were measured on this view; shown again, it has none until its page is laid out anew.
+        current.elementRects = [:]
+        current.noteGeometry.changed()
     }
 
     private func load(_ controller: HTMLViewerController) {
@@ -497,6 +501,15 @@ public final class WebBrowserController {
             committed(URL(string: url))
             return
         }
+        if let reported = message["elementRects"] as? [String: Any] {
+            // Only the notes panel's link reads these as the page scrolls; while nothing follows, the boxes from the
+            // last highlight pass are enough.
+            guard current.noteGeometry.onChange != nil else { return }
+            let rects = windowRects(reported)
+            if rects != current.elementRects { current.elementRects = rects }
+            current.noteGeometry.changed()
+            return
+        }
         if let pick = message["pick"] as? [String: Any] {
             guard let picked = elementPick(from: pick) else { return }
             current.pendingPick = picked
@@ -526,6 +539,34 @@ public final class WebBrowserController {
             selector: selector, tag: tag, text: pick["text"] as? String ?? "", html: pick["html"] as? String ?? "",
             windowRect: viewport.flatMap { webView.topLeftWindowRect($0) }, pageRect: page, textOffset: pick["textOffset"] as? Int
         )
+    }
+
+    /// The page's element boxes (viewport coordinates) in top-left window coordinates.
+    private func windowRects(_ map: [String: Any]) -> [NoteID: CGRect] {
+        var rects: [NoteID: CGRect] = [:]
+        for (id, entry) in map {
+            if let r = rect(entry), let window = webView.topLeftWindowRect(CGRect(x: r.x, y: r.y, width: max(r.w, 2), height: max(r.h, 2))) {
+                rects[NoteID(rawValue: id)] = window
+            }
+        }
+        return rects
+    }
+
+    /// Element notes as their boxes, clipped to the page on screen.
+    private func bindGeometry(_ controller: HTMLViewerController) {
+        controller.noteGeometry.viewport = { [weak webView] in
+            guard let webView, webView.window != nil else { return nil }
+            return webView.topLeftWindowRect(webView.bounds)
+        }
+        controller.noteGeometry.visibleNoteRects = { [weak self, weak controller, weak webView] in
+            // The view shows one page at a time; another page's boxes would point at whatever is there now.
+            guard let controller, self?.current === controller, let webView, webView.window != nil,
+                  let viewport = webView.topLeftWindowRect(webView.bounds) else { return [:] }
+            return controller.elementRects.compactMapValues { rect in
+                let clipped = rect.intersection(viewport)
+                return clipped.isNull || clipped.isEmpty ? nil : [clipped]
+            }
+        }
     }
 
     private func rect(_ value: Any?) -> ElementRect? {
@@ -620,15 +661,12 @@ public final class WebBrowserController {
         webView.callAsyncJavaScript("return window.__cc ? window.__cc.highlightElements(list) : {}", arguments: ["list": list], in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
                 guard let self, let current = self.current, current === started else { return }
-                var rects: [NoteID: CGRect] = [:]
                 if case .success(let value) = result, let map = value as? [String: Any] {
-                    for (id, entry) in map {
-                        if let r = self.rect(entry), let window = self.webView.topLeftWindowRect(CGRect(x: r.x, y: r.y, width: max(r.w, 2), height: max(r.h, 2))) {
-                            rects[NoteID(rawValue: id)] = window
-                        }
-                    }
+                    current.elementRects = self.windowRects(map)
+                } else {
+                    current.elementRects = [:]
                 }
-                current.elementRects = rects
+                current.noteGeometry.changed()
             }
         }
     }

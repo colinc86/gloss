@@ -47,6 +47,8 @@ public final class ImageViewerController {
     @ObservationIgnored public var onNoteClick: (NoteID) -> Void = { _ in }
     /// Set by the view: converts a pixel rect to the scroll view's coordinates for popovers.
     @ObservationIgnored public var rectProvider: (CGRect) -> CGRect? = { _ in nil }
+    /// Where this viewer's notes are on screen, for the notes panel's link and paths.
+    @ObservationIgnored public let noteGeometry = NoteGeometry()
 
     public init(image: DecodedImage) {
         self.image = image

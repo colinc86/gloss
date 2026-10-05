@@ -67,11 +67,25 @@ public struct CSVGridView: NSViewRepresentable {
         controller.onHighlightsChange = { [weak coordinator = context.coordinator] in coordinator?.refreshAppearance() }
         controller.onSelectionChange = { [weak coordinator = context.coordinator] in coordinator?.refreshAppearance() }
         controller.rectProvider = { [weak coordinator = context.coordinator] selection in coordinator?.rect(for: selection) }
+        controller.noteGeometry.viewport = { [weak table] in
+            guard let table, table.window != nil else { return nil }
+            return table.topLeftWindowRect(table.visibleRect)
+        }
+        controller.noteGeometry.visibleNoteRects = { [weak coordinator = context.coordinator] in coordinator?.visibleNoteRects() ?? [:] }
+        scroll.contentView.postsBoundsChangedNotifications = true
+        context.coordinator.scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak controller] _ in
+            MainActor.assumeIsolated { controller?.noteGeometry.changed() }
+        }
         return scroll
     }
 
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.refreshAppearance()
+    }
+
+    public static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+        if let observer = coordinator.scrollObserver { NotificationCenter.default.removeObserver(observer) }
+        coordinator.scrollObserver = nil
     }
 
     @MainActor
@@ -82,6 +96,33 @@ public struct CSVGridView: NSViewRepresentable {
 
         init(controller: CSVGridController) {
             self.controller = controller
+        }
+
+        var scrollObserver: (any NSObjectProtocol)?
+
+        /// Each note's cells on screen: a row note as its rows, a cell or column note as its cells (the overlay joins
+        /// touching ones into one outline).
+        func visibleNoteRects() -> [NoteID: [CGRect]] {
+            guard let table, table.window != nil else { return [:] }
+            let visible = table.visibleRect
+            let rows = table.rows(in: visible)
+            let columns = table.columnIndexes(in: visible)
+            var result: [NoteID: [CGRect]] = [:]
+            func add(_ id: NoteID, _ rect: CGRect) {
+                let clipped = rect.intersection(visible)
+                guard !clipped.isNull, !clipped.isEmpty, let window = table.topLeftWindowRect(clipped) else { return }
+                result[id, default: []].append(window)
+            }
+            for row in rows.location..<(rows.location + rows.length) {
+                let rowNote = controller.rowHighlight(row)
+                if let rowNote { add(rowNote.id, table.rect(ofRow: row)) }
+                for tableColumn in columns {
+                    guard let column = dataColumn(tableColumn), let highlight = controller.highlight(row: row, column: column),
+                          highlight != rowNote else { continue }
+                    add(highlight.id, table.frameOfCell(atColumn: tableColumn, row: row))
+                }
+            }
+            return result
         }
 
         /// Data column for a table column index; nil for the line-number column.
@@ -98,6 +139,7 @@ public struct CSVGridView: NSViewRepresentable {
         /// Repaints row tints, cell tints, and the selection on the rows that are on screen.
         func refreshAppearance() {
             guard let table else { return }
+            controller.noteGeometry.changed()
             table.enumerateAvailableRowViews { rowView, row in
                 rowView.backgroundColor = rowColor(row) ?? .clear
                 for column in 0..<table.numberOfColumns {

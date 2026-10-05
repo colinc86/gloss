@@ -167,6 +167,10 @@ public struct PDFViewerView: NSViewRepresentable {
         let controller: PDFViewerController
         private weak var container: PDFContainerView?
         private var observers: [any NSObjectProtocol] = []
+        /// Each note's rects in page space, worked out once per set of highlights (the document never changes); a
+        /// scroll only converts and clips them.
+        private var notePageRects: [NoteID: (page: Int, rects: [CGRect])] = [:]
+        private var notePageRectsFor: [PDFHighlight]?
         private var appliedScroll = 0
 
         init(controller: PDFViewerController) {
@@ -188,7 +192,10 @@ public struct PDFViewerView: NSViewRepresentable {
             if let clip = pdfView.subviews.compactMap({ $0 as? NSScrollView }).first?.contentView {
                 clip.postsBoundsChangedNotifications = true
                 observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.container?.overlay.needsDisplay = true }
+                    MainActor.assumeIsolated {
+                        self?.container?.overlay.needsDisplay = true
+                        self?.controller.noteGeometry.changed()
+                    }
                 })
             }
             controller.onHighlightsChange = { [weak self] in self?.sync() }
@@ -196,6 +203,11 @@ public struct PDFViewerView: NSViewRepresentable {
                 guard let self, let container = self.container, let pdfPage = self.controller.document.page(at: page) else { return nil }
                 return container.pdfView.topLeftWindowRect(container.pdfView.convert(bounds, from: pdfPage))
             }
+            controller.noteGeometry.viewport = { [weak self] in
+                guard let pdfView = self?.container?.pdfView, pdfView.window != nil else { return nil }
+                return pdfView.topLeftWindowRect(pdfView.bounds)
+            }
+            controller.noteGeometry.visibleNoteRects = { [weak self] in self?.visibleNoteRects() ?? [:] }
         }
 
         func detach() {
@@ -209,6 +221,7 @@ public struct PDFViewerView: NSViewRepresentable {
             _ = controller.selectedNoteID
             container.overlay.needsDisplay = true
             applyTextHighlights()
+            controller.noteGeometry.changed()
             if appliedScroll != controller.pendingScrollVersion, let target = controller.pendingScroll {
                 appliedScroll = controller.pendingScrollVersion
                 if let page = controller.document.page(at: target.page) {
@@ -250,6 +263,36 @@ public struct PDFViewerView: NSViewRepresentable {
             guard let pdfView = container?.pdfView else { return }
             if let page = pdfView.currentPage { controller.currentPage = controller.document.index(for: page) }
             container?.overlay.needsDisplay = true
+            controller.noteGeometry.changed()
+        }
+
+        /// Region notes as their box; text notes as the lines of the text they were made on.
+        private func visibleNoteRects() -> [NoteID: [CGRect]] {
+            guard let pdfView = container?.pdfView, pdfView.window != nil else { return [:] }
+            let visible = pdfView.bounds
+            let onScreen = Set(pdfView.visiblePages.map { controller.document.index(for: $0) })
+            var result: [NoteID: [CGRect]] = [:]
+            if notePageRectsFor != controller.highlights {
+                notePageRectsFor = controller.highlights
+                notePageRects = [:]
+                for highlight in controller.highlights {
+                    guard let page = controller.document.page(at: highlight.page) else { continue }
+                    if let bounds = highlight.bounds {
+                        notePageRects[highlight.id] = (highlight.page, [bounds])
+                    } else if let text = highlight.text, let selection = controller.selections(matching: text, onPage: highlight.page).first {
+                        notePageRects[highlight.id] = (highlight.page, selection.selectionsByLine().map { $0.bounds(for: page) })
+                    }
+                }
+            }
+            for (id, entry) in notePageRects where onScreen.contains(entry.page) {
+                guard let page = controller.document.page(at: entry.page) else { continue }
+                let rects = entry.rects.compactMap { rect -> CGRect? in
+                    let clipped = pdfView.convert(rect, from: page).intersection(visible)
+                    return clipped.isNull || clipped.isEmpty ? nil : pdfView.topLeftWindowRect(clipped)
+                }
+                if !rects.isEmpty { result[id] = rects }
+            }
+            return result
         }
     }
 }

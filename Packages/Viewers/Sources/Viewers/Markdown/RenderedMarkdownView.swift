@@ -89,16 +89,27 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             backdrop = HighlightBackdropView.install(in: textView)
             if let clip = textView.enclosingScrollView?.contentView {
                 clip.postsBoundsChangedNotifications = true
-                scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak backdrop = self.backdrop] _ in
-                    MainActor.assumeIsolated { backdrop?.needsDisplay = true }
+                scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak backdrop = self.backdrop, weak controller] _ in
+                    MainActor.assumeIsolated {
+                        backdrop?.needsDisplay = true
+                        controller?.noteGeometry.changed()
+                    }
                 }
             }
             if let scroll = textView.enclosingScrollView {
                 frameObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroll, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.updateReadableWidth() }
+                    MainActor.assumeIsolated {
+                        self?.updateReadableWidth()
+                        self?.controller.noteGeometry.changed()
+                    }
                 }
             }
             controller.renderedRectProvider = { [weak self] range in self?.rect(for: range) }
+            controller.noteGeometry.viewport = { [weak textView] in textView?.visibleWindowRect() }
+            controller.noteGeometry.visibleNoteRects = { [weak textView, weak controller] in
+                guard let textView, let controller else { return [:] }
+                return textView.visibleHighlightRects(for: controller.renderedHighlights().filter { !$0.isInvalidated }.map { ($0.id, $0.range) })
+            }
             highlightToken = controller.source.addHighlightObserver { [weak self] in self?.invalidateHighlights() }
         }
 
@@ -106,6 +117,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             backdrop?.entries = controller.renderedHighlights().filter { !$0.isInvalidated }.map {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.state == .orphaned ? Theme.color(for: $0.color) : Theme.highlightBackground(for: $0.highlight), orphaned: $0.state == .orphaned)
             }
+            controller.noteGeometry.changed()
         }
 
         func detach() {

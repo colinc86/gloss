@@ -199,6 +199,8 @@ enum WebBridge {
             if (entry.element.isConnected) place(entry.box, entry.element); else entry.box.style.display = 'none';
           }
           if (hover) place(hover.box, hover.element);
+          // The app draws paths to element notes: it needs their boxes after every scroll and resize.
+          if (boxes.size) post({ elementRects: elementRects() });
         });
       }
       function findCandidates(item) {

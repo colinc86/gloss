@@ -51,6 +51,7 @@ public struct ImageViewerView: NSViewRepresentable {
         private var appliedZoom = 0
         private var observer: (any NSObjectProtocol)?
         private var frameObserver: (any NSObjectProtocol)?
+        private var boundsObserver: (any NSObjectProtocol)?
         /// Until the user zooms, the image keeps fitting the pane as it settles and resizes.
         private var autoFit = true
 
@@ -65,7 +66,29 @@ public struct ImageViewerView: NSViewRepresentable {
                 guard let self, let canvas = self.canvas else { return nil }
                 return canvas.topLeftWindowRect(rect)
             }
-            controller.onHighlightsChange = { [weak canvas] in canvas?.needsDisplay = true }
+            controller.onHighlightsChange = { [weak canvas, weak controller] in
+                canvas?.needsDisplay = true
+                controller?.noteGeometry.changed()
+            }
+            controller.noteGeometry.viewport = { [weak scrollView] in
+                guard let scrollView, scrollView.window != nil else { return nil }
+                return scrollView.contentView.topLeftWindowRect(scrollView.contentView.bounds)
+            }
+            controller.noteGeometry.visibleNoteRects = { [weak canvas, weak controller] in
+                guard let canvas, let controller, canvas.window != nil else { return [:] }
+                let visible = canvas.visibleRect
+                var result: [NoteID: [CGRect]] = [:]
+                for highlight in controller.highlights {
+                    let clipped = highlight.rect.intersection(visible)
+                    if !clipped.isNull, !clipped.isEmpty, let rect = canvas.topLeftWindowRect(clipped) { result[highlight.id] = [rect] }
+                }
+                return result
+            }
+            // Scrolling and zooming both move the clip view's bounds.
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak controller] _ in
+                MainActor.assumeIsolated { controller?.noteGeometry.changed() }
+            }
             observer = NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveMagnifyNotification, object: scrollView, queue: .main) { [weak self, weak canvas] _ in
                 MainActor.assumeIsolated {
                     self?.autoFit = false   // a pinch is a choice
@@ -87,6 +110,8 @@ public struct ImageViewerView: NSViewRepresentable {
         func detach() {
             if let observer { NotificationCenter.default.removeObserver(observer) }
             if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
+            if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+            boundsObserver = nil
             observer = nil
             frameObserver = nil
         }

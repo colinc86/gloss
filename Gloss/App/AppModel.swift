@@ -18,6 +18,7 @@ final class AppModel {
     private(set) var fileSystems: [HostID: any FileSystemProvider] = [:]
     let explorer: ExplorerModel
     let notesPanel: NotesPanelModel
+    let noteLink: NoteLinkModel
     let send: SendCoordinator
     let settings: SettingsStore
     let hosts: HostsModel
@@ -151,6 +152,7 @@ final class AppModel {
         noteStore = store
         explorer = ExplorerModel(noteStore: store)
         notesPanel = NotesPanelModel(noteStore: store)
+        noteLink = NoteLinkModel(noteStore: store)
         settings = SettingsStore(noteStore: store)
         hosts = HostsModel(noteStore: store)
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
@@ -171,6 +173,7 @@ final class AppModel {
         send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
+        noteLink.start()
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in
             guard let self else { return }
             var fileSystem = fileSystem
@@ -1330,6 +1333,12 @@ final class AppModel {
             guard let session = sessions["\(document.hostID.rawValue):\(path)"] else { return }
             await body(session)
         }
+    }
+
+    /// Link on opens the notes panel: following a panel that isn't there would do nothing visible.
+    func setNotesLinked(_ linked: Bool) {
+        noteLink.isLinked = linked
+        if linked { showNotesPanel = true }
     }
 
     /// Next or Previous Note: the active document's next open note, with its card selected in the notes panel.

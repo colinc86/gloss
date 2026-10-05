@@ -44,12 +44,19 @@ struct NotesPanel: View {
                 )
             } else {
                 let places = PathDisambiguator.places(for: visible.map(\.document.path))
+                ScrollViewReader { proxy in
                 List(selection: $panel.selectedNoteID) {
                     ForEach(visible) { group in
                         Section {
                             ForEach(group.notes) { note in
                                 NoteCard(note: note, document: group.document)
                                     .tag(note.id)
+                                    .id(note.id)
+                                    // Where the card is, for the path drawn from its note on the page.
+                                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                                        model.noteLink.card(note.id, movedTo: frame)
+                                    }
+                                    .onDisappear { model.noteLink.card(note.id, movedTo: nil) }
                             }
                         } header: {
                             DocumentGroupHeader(document: group.document, count: group.notes.count, place: places[group.document.path],
@@ -77,6 +84,17 @@ struct NotesPanel: View {
                 .onDeleteCommand {
                     guard let note = panel.selectedEntry?.note else { return }
                     Task { await model.notesPanel.delete(note.id) }
+                }
+                // Linked, the list follows the page: the note nearest the middle of the page comes to the middle.
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.noteLink.panelViewport = $0 }
+                .onHover { model.noteLink.isPointerInPanel = $0 }
+                .onChange(of: visible.flatMap { $0.notes.map(\.id) }, initial: true) { _, ids in
+                    model.noteLink.listedIDs = Set(ids)
+                }
+                .onChange(of: model.noteLink.focusRequest) {
+                    guard let id = model.noteLink.focusNoteID else { return }
+                    withAnimation(Motion.isReduced ? nil : DS.Motion.smooth) { proxy.scrollTo(id, anchor: .center) }
+                }
                 }
             }
         }
@@ -450,7 +468,11 @@ struct NoteCard: View {
         .padding(.vertical, DS.Space.s)
         .padding(.horizontal, DS.Space.xs)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { inside in
+            hovering = inside
+            // The note's path on the page is drawn strong while its card is under the pointer.
+            if inside { model.noteLink.hoveredNoteID = note.id } else if model.noteLink.hoveredNoteID == note.id { model.noteLink.hoveredNoteID = nil }
+        }
         .animation(DS.Motion.snappy, value: hovering)
         .animation(DS.Motion.bouncy, value: note.state)
         .animation(DS.Motion.smooth, value: isCompact)

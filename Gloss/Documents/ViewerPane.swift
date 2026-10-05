@@ -19,6 +19,13 @@ struct ViewerPane: View {
             StatusBar(session: session)
         }
         .animation(DS.Motion.smooth, value: session.banner)
+        // The notes panel's link follows whichever view of the document is in front.
+        .onChange(of: session.noteGeometry.map(ObjectIdentifier.init), initial: true) {
+            model.noteLink.attach(session.noteGeometry)
+        }
+        .onDisappear {
+            if let geometry = session.noteGeometry { model.noteLink.detach(geometry) }
+        }
         .sheet(isPresented: Binding(get: { session.isGoToLinePresented }, set: { session.isGoToLinePresented = $0 })) {
             GoToLineSheet(lineCount: session.textController.map { controller in
                 // A trailing newline starts an empty line that is not a real one.
@@ -212,6 +219,10 @@ private struct StatusBar: View {
                 selectionSummary(controller)
             }
             openNotes
+            if !session.notes.isEmpty, session.noteGeometry != nil {
+                NoteLinkToggles()
+                    .transition(.opacity)
+            }
             changedLines
             if session.isReadOnly {
                 Image(systemName: "lock.fill")
@@ -913,6 +924,71 @@ private struct NoteStepper: View {
             StepButton(symbol: "chevron.up", help: "Previous Note (⇧⌘')") { model.stepNote(forward: false) }
             StepButton(symbol: "chevron.down", help: "Next Note (⌘')") { model.stepNote(forward: true) }
         }
+    }
+}
+
+/// Link and paths, after the note stepper: the notes panel following the page, and curves from each note on the
+/// page to its card. Off shows the glyph struck through; paths need link, so its toggle waits for it.
+private struct NoteLinkToggles: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let link = model.noteLink
+        HStack(spacing: 0) {
+            LinkToggle(symbol: "link", label: "Follow Page in Notes Panel", isOn: link.isLinked,
+                       help: link.isLinked ? "Stop following the page in the notes panel" : "Follow the page in the notes panel") {
+                model.setNotesLinked(!link.isLinked)
+            }
+            LinkToggle(symbol: "point.bottomleft.forward.to.point.topright.scurvepath", label: "Show Paths to Notes", isOn: link.drawsPaths,
+                       help: !link.isLinked ? "Follow the page in the notes panel to draw paths to notes"
+                           : link.showsPaths ? "Hide the paths from notes to their cards" : "Draw paths from notes to their cards") {
+                link.showsPaths.toggle()
+            }
+            .disabled(!link.isLinked)
+        }
+        .animation(DS.Motion.snappy, value: link.isLinked)
+        .animation(DS.Motion.snappy, value: link.showsPaths)
+    }
+}
+
+/// A status bar toggle in the stepper's style: accent when on, struck through when off.
+private struct LinkToggle: View {
+    let symbol: String
+    let label: String
+    let isOn: Bool
+    let help: String
+    let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(hovering && isEnabled ? .primary : .secondary))
+                .overlay {
+                    if !isOn {
+                        // The struck-through glyph: SF Symbols has no unlinked or broken path.
+                        Capsule()
+                            .frame(width: 1.25, height: 15)
+                            .rotationEffect(.degrees(-45))
+                            .foregroundStyle(hovering && isEnabled ? .primary : .secondary)
+                            .transition(.scale(scale: 0.2).combined(with: .opacity).calmed)
+                    }
+                }
+                .frame(width: 18, height: 16)
+                .background(isOn ? Color.accentColor.opacity(0.14) : hovering && isEnabled ? Color.primary.opacity(0.08) : .clear,
+                            in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+                .opacity(isEnabled ? 1 : 0.4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .onHover { hovering = $0 }
+        .animation(DS.Motion.snappy, value: hovering)
+        .help(help)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isToggle)
     }
 }
 

@@ -72,6 +72,8 @@ A transport is how a packet reaches a target: Herdr socket, MCP pull, a Claude C
 
 **Creating a note.** Select a range or drag a rectangle, then click the floating Add Note button (or press the shortcut). A popover takes the comment with markdown: Return saves, Shift-Return (or Option-Return) adds a line, Escape cancels. Notes show as colored highlights in the viewer and as cards in the notes panel, grouped by document. The panel filters by state, color, and a text search over note bodies, file names, and resolve messages, and sorts by position in the file, newest, oldest, color, or state; the sort order is remembered.
 
+**Link and paths.** Two toggles in the viewer's status bar (and the Notes menu) tie the notes panel to the page. Linked, the panel follows the page as it scrolls, keeping the card of the note nearest the middle of the page in the middle of the list, so the notes on screen are the notes in view. With paths on as well, each visible note is outlined in its colour and joined by a curve to the colour bar of its card, so on a document with many notes every highlight visibly leads to its card. It works in every viewer where a note has a place: text and code, Markdown, PDF, images, spreadsheets, and web pages' element notes.
+
 **Lifecycle.** draft → sent → resolved, plus orphaned. Sent notes record target, transport, and time, and each card shows where its latest send went and when (or why it failed). A resolved card shows the agent's resolve message, and Reopen as Draft (card context menu) takes it back. In the notes panel, Return shows the selected note in the viewer and Delete removes it at once, with Undo in a toast and in Edit › Undo; each card's context menu reveals, edits, sends, copies the note as a packet or its comment or path, resolves, and deletes. Resolved notes were marked done by an agent through MCP or by hand. Orphaned notes lost their anchor and need a glance before resending.
 
 **Scope.** Notes live in the app database, keyed by host and absolute path, never in the file. They persist across restarts and survive agent edits.
@@ -248,6 +250,14 @@ Scoped 2026-10-04. Gloss is released from its GitHub repository (`colinc86/gloss
 - [ ] Without a key, Check for Updates says updates need GitHub connected; a scheduled check stays quiet
 - [ ] Turning off automatic checks in Settings › General stops the daily check
 - [ ] A bug report sent from the sheet arrives as an issue labelled `bug`; without a key, Continue in Browser opens the filled-in form
+
+## Link and paths
+
+Scoped 2026-10-05. **Acceptance checks.**
+
+- [x] Link on: scrolling a note-heavy Markdown file keeps the card of the note nearest the middle of the page centred in the notes panel — verified live on `docs/DESIGN.md` with 18 notes, rendered view; `NoteLinkTests` covers the choice of note
+- [x] Paths on: each visible note is outlined and joined to its card's rail, follows scrolling, and disappears for a card scrolled out of the list — verified live on the same file and on a 120-row CSV with row notes; `NoteLinkTests` covers the outline and the curve, `NoteGeometryTests` what the editor reports
+- [ ] PDF regions and text, image regions and a web page's element notes get paths too (user: needs notes made by hand in those viewers)
 
 ## Non-goals, risks, and open questions
 

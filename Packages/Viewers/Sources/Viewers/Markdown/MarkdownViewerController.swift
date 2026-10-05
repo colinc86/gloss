@@ -37,6 +37,8 @@ public final class MarkdownViewerController {
     public var renderedSelection = NSRange(location: 0, length: 0)
     /// Set by the rendered view: on-screen rectangle of a rendered range.
     @ObservationIgnored public var renderedRectProvider: (NSRange) -> CGRect? = { _ in nil }
+    /// Where the rendered view's notes are on screen; in source mode the source editor's `noteGeometry` applies.
+    @ObservationIgnored public let noteGeometry = NoteGeometry()
     public var pendingRenderedScroll: NSRange?
     public var pendingRenderedScrollVersion = 0
     /// See `TextEditorController.pendingScrollSelects`.
