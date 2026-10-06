@@ -354,16 +354,16 @@ path. Dropping on the Dock icon is not supported yet.
 - **Agent chip wraps instead of clipping**: the task sits beside the agent only when it fits whole; otherwise the
   chip grows to two lines (agent, pane, folder badge; then the task in `.caption` secondary). A one-word stub such as
   "Reor…" tells nothing, so it is never shown.
-- **Send drafts button**: the panel's primary action, `.glassProminent`, "Send 2" with the count rolling as drafts
-  change; disabled with a reason in the tooltip (no agent, no drafts) instead of silently.
-  It sends what you see: the open document's drafts, narrowed to the colours the panel is filtered to when a colour
-  filter is on; its count and tooltip say so ("Send this document's 2 blue drafts"). Everything at once is the
-  explicit Send All Drafts in the ⋯ menu. Nothing hidden from view goes to an agent, and copying a document's
-  packet (⇧⌘C, or the ⋯ menu) copies exactly what Send would send. While the filter is on, the button carries
-  the filter's colours as dots on a small white capsule ("Send ◉ 2"; white so a blue dot doesn't vanish into the blue
-  button), springing in and out with the filter.
+- **Selection bar** (issue #8): select cards (click, ⌘-click, ⇧-click, ⌘A) and a bar slides in under the colour
+  strip, tinted accent: "3 selected", then `.glassProminent` Send with the count (the paper plane takes off as the
+  send starts), Resolve, Reopen as Drafts, a ⋯ menu (Copy as Packet, Colour, everything again in words), Delete, and ✕
+  to clear the selection. Each action counts only the notes it applies to (Send takes drafts and sent notes, Reopen
+  resolved ones) and is absent when none apply. Right-clicking a selected card offers the same, worded for the
+  selection ("Send 3 Notes to claude"). The panel's header has no Send of its own: what goes is what you selected,
+  which is the one place to say it. Whole-document sends stay in the Notes menu (Send Drafts in Document ⌘↩, Send
+  All Drafts ⇧⌘↩, Copy Packet for Document ⇧⌘C), and they still send only what the panel shows.
 - **Delete is undoable, not confirmed**: deleting a note (trash button, context menu, or the Delete key) happens at
-  once; a glass toast ("Note deleted", the note's first line, Undo) rises over the bottom of the panel for 6 s
+  once, and several selected go as one ("3 notes deleted", one Undo brings them all back); a glass toast ("Note deleted", the note's first line, Undo) rises over the bottom of the panel for 6 s
   (held while the pointer is on it), and Edit › Undo (⌘Z) does the same. Undo restores the note with its id,
   image attachments, and send history (`NoteStore.deleteNoteForUndo` / `restore`). A question before every delete
   gets clicked through; a way back doesn't. Every delete path uses the same undoable delete (the composer's trash too), and each

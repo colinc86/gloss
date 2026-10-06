@@ -36,8 +36,9 @@ Pick the target from the send menu in the notes panel. It lists every live agent
 remembers the agent you last chose for it.
 
 - **Send** on a card sends that note.
-- **Send** in the panel header (⌘↩) sends the drafts the panel is showing for this document, so filters and search
-  decide what goes.
+- **Select** several cards (⌘-click, ⇧-click, or ⌘A) and press **Send** in the bar above the list.
+- **Notes › Send Drafts in Document** (⌘↩) sends the drafts the panel is showing for this document, so filters and
+  search decide what goes.
 - **Send All Drafts** (⇧⌘↩) sends every draft in every document.
 - **Copy Packet for Document** (⇧⌘C) copies the same text instead. Copied notes stay drafts; choose Clipboard
   as the target and press Send when you want them marked sent.

@@ -65,7 +65,13 @@ final class NotesPanelModel {
     @ObservationIgnored var searchFocusPending = false
     /// Empty means every color.
     var colorFilter: Set<NoteColor> = []
-    var selectedNoteID: NoteID?
+    /// The selected cards: one by a click, several by ⌘-click, ⇧-click or ⌘A (issue #8).
+    var selection: Set<NoteID> = []
+    /// The one selected note; nil when none or several are selected. Setting it selects just that note.
+    var selectedNoteID: NoteID? {
+        get { selection.count == 1 ? selection.first : nil }
+        set { selection = newValue.map { [$0] } ?? [] }
+    }
     @ObservationIgnored private var observation: Task<Void, Never>?
 
     init(noteStore: NoteStore) {
@@ -253,12 +259,42 @@ final class NotesPanelModel {
         return groups.lazy.flatMap(\.notes).first { $0.id == selectedNoteID }
     }
 
+    /// The selected notes in the order the list shows them (by document, then the panel's sort). Selected notes the
+    /// list no longer shows (filtered out since) are left out: what is acted on is what is seen.
+    var selectedNotes: [Note] {
+        guard !selection.isEmpty else { return [] }
+        return visibleGroups.flatMap(\.notes).filter { selection.contains($0.id) }
+    }
+
+    /// What each bulk action would touch among `notes`: only notes the action makes sense for.
+    nonisolated static func sendable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent } }
+    nonisolated static func resolvable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent } }
+    nonisolated static func reopenable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .resolved } }
+
     func resolve(_ id: NoteID) async {
         do { try await noteStore.resolve(id) } catch { Log.notes.error("resolve failed: \(error, privacy: .public)") }
     }
 
-    /// The note deleted last, offered back in the undo toast for a few seconds.
-    private(set) var lastDeleted: DeletedNote?
+    /// Resolves the drafts and sent notes among `ids`, by hand; others are left as they are.
+    func resolve(_ ids: [NoteID]) async {
+        let notes = Self.resolvable(groups.flatMap(\.notes).filter { ids.contains($0.id) })
+        for note in notes { await resolve(note.id) }
+    }
+
+    /// Reopens the resolved notes among `ids` as drafts.
+    func reopen(_ ids: [NoteID]) async {
+        let notes = Self.reopenable(groups.flatMap(\.notes).filter { ids.contains($0.id) })
+        for note in notes { await reopen(note.id) }
+    }
+
+    func setColor(_ ids: [NoteID], _ color: NoteColor) async {
+        for id in ids {
+            do { try await noteStore.updateColor(id, color: color) } catch { Log.notes.error("colour change failed: \(error, privacy: .public)") }
+        }
+    }
+
+    /// The notes deleted last, offered back together in the undo toast for a few seconds; empty when there is none.
+    private(set) var lastDeleted: [DeletedNote] = []
     /// Why the last Undo could not bring the note back, in a sentence; the toast says so and offers Try Again.
     private(set) var undoFailure: String?
     @ObservationIgnored private var undoTokens: [NoteID: UndoToken] = [:]
@@ -266,52 +302,78 @@ final class NotesPanelModel {
 
     /// Deletes at once (no confirmation) and makes it undoable: the toast's Undo, and Edit › Undo (⌘Z).
     func delete(_ id: NoteID) async {
-        do {
-            guard let deleted = try await noteStore.deleteNoteForUndo(id) else { return }
-            if let previous = lastDeleted, previous != deleted {
-                Log.notes.info("undo toast replaced: \(previous.id.rawValue, privacy: .public) by \(deleted.id.rawValue, privacy: .public)")
+        await delete([id])
+    }
+
+    /// Deletes several notes as one step: one toast, one Undo that brings them all back.
+    func delete(_ ids: [NoteID]) async {
+        var batch: [DeletedNote] = []
+        for id in ids {
+            do {
+                if let deleted = try await noteStore.deleteNoteForUndo(id) { batch.append(deleted) }
+            } catch {
+                Log.notes.error("delete failed: \(error, privacy: .public)")
             }
-            lastDeleted = deleted
-            undoFailure = nil
-            if let undo = NSApp.mainWindow?.undoManager ?? NSApp.keyWindow?.undoManager {
-                // Each delete gets its own undo target, so undoing one from the toast leaves the others' entries.
-                let token = UndoToken()
-                undoTokens[deleted.id] = token
-                undo.registerUndo(withTarget: token) { [weak self] _ in
-                    _ = MainActor.assumeIsolated { Task { await self?.undoDelete(deleted) } }
-                }
-                undo.setActionName("Delete Note")
+        }
+        guard !batch.isEmpty else { return }
+        if !lastDeleted.isEmpty, lastDeleted != batch {
+            Log.notes.info("undo toast replaced: \(self.lastDeleted.count, privacy: .public) by \(batch.count, privacy: .public) notes")
+        }
+        lastDeleted = batch
+        undoFailure = nil
+        selection.subtract(batch.map(\.id))
+        if let undo = NSApp.mainWindow?.undoManager ?? NSApp.keyWindow?.undoManager {
+            // Each delete gets its own undo target, so undoing one from the toast leaves the others' entries.
+            let token = UndoToken()
+            for deleted in batch { undoTokens[deleted.id] = token }
+            undo.registerUndo(withTarget: token) { [weak self] _ in
+                _ = MainActor.assumeIsolated { Task { await self?.undoDelete(batch) } }
             }
-        } catch {
-            Log.notes.error("delete failed: \(error, privacy: .public)")
+            undo.setActionName(batch.count == 1 ? "Delete Note" : "Delete \(batch.count) Notes")
         }
     }
 
     func undoDelete(_ deleted: DeletedNote) async {
-        // Undone from the toast: the Edit › Undo entry would now restore a note that is already back.
-        if let token = undoTokens.removeValue(forKey: deleted.id) {
-            for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) {
-                window.undoManager?.removeAllActions(withTarget: token)
+        await undoDelete([deleted])
+    }
+
+    /// Brings a deleted batch back and selects it. Notes that can't come back stay listed in the toast with Try Again.
+    func undoDelete(_ batch: [DeletedNote]) async {
+        // Undone from the toast: the Edit › Undo entry would now restore notes that are already back.
+        var tokens: [UndoToken] = []
+        for id in batch.map(\.id) {
+            if let token = undoTokens.removeValue(forKey: id), !tokens.contains(where: { $0 === token }) { tokens.append(token) }
+        }
+        for token in tokens {
+            for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) { window.undoManager?.removeAllActions(withTarget: token) }
+        }
+        var failed: [DeletedNote] = []
+        for deleted in batch {
+            do {
+                try await noteStore.restore(deleted)
+                Log.notes.info("undo toast: restored \(deleted.id.rawValue, privacy: .public)")
+            } catch {
+                Log.notes.error("undo delete failed: \(error, privacy: .public)")
+                failed.append(deleted)
             }
         }
-        do {
-            try await noteStore.restore(deleted)
-            Log.notes.info("undo toast: restored \(deleted.id.rawValue, privacy: .public)")
-            if lastDeleted == deleted {
-                lastDeleted = nil
+        let wasShown = lastDeleted == batch
+        if failed.isEmpty {
+            if wasShown {
+                lastDeleted = []
                 undoFailure = nil
             }
-            selectedNoteID = deleted.id
-        } catch {
-            Log.notes.error("undo delete failed: \(error, privacy: .public)")
+        } else if wasShown {
             // The toast stays and says so: a silent failure looked exactly like a note that had come back.
-            if lastDeleted == deleted { undoFailure = "Couldn't bring the note back. It may have changed elsewhere." }
+            lastDeleted = failed
+            undoFailure = failed.count == 1 ? "Couldn't bring the note back. It may have changed elsewhere." : "Couldn't bring \(failed.count) notes back. They may have changed elsewhere."
         }
+        selection = Set(batch.map(\.id)).subtracting(failed.map(\.id))
     }
 
     func dismissUndo() {
-        if let lastDeleted { Log.notes.info("undo toast dismissed: \(lastDeleted.id.rawValue, privacy: .public)") }
-        lastDeleted = nil
+        if !lastDeleted.isEmpty { Log.notes.info("undo toast dismissed: \(self.lastDeleted.count, privacy: .public) notes") }
+        lastDeleted = []
         undoFailure = nil
     }
 

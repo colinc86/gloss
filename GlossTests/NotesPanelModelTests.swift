@@ -206,14 +206,14 @@ struct NotesPanelModelTests {
         defer { model.stop() }
         let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
         await model.delete(note.id)
-        let deleted = try #require(model.lastDeleted)
+        let deleted = try #require(model.lastDeleted.first)
         // Brought back elsewhere first, so this restore collides with the row that is already there.
         try await store.restore(deleted)
         await model.undoDelete(deleted)
         #expect(model.undoFailure != nil, "a failed undo is said, not silent")
-        #expect(model.lastDeleted == deleted, "the toast stays, with Try Again")
+        #expect(model.lastDeleted == [deleted], "the toast stays, with Try Again")
         model.dismissUndo()
-        #expect(model.undoFailure == nil && model.lastDeleted == nil)
+        #expect(model.undoFailure == nil && model.lastDeleted.isEmpty)
     }
 
     @Test func aBlankReplyChangesNothing() async throws {
@@ -248,14 +248,65 @@ struct NoteDeleteUndoTests {
         let panel = NotesPanelModel(noteStore: store)
 
         await panel.delete(note.id)
-        let deleted = try #require(panel.lastDeleted)
+        let deleted = try #require(panel.lastDeleted.first)
         #expect(deleted.id == note.id)
         #expect(try await store.documentsWithNotes().flatMap(\.notes).isEmpty)
 
         await panel.undoDelete(deleted)
-        #expect(panel.lastDeleted == nil)
+        #expect(panel.lastDeleted.isEmpty)
         #expect(panel.selectedNoteID == note.id)
         #expect(try await store.documentsWithNotes().flatMap(\.notes).map(\.body) == ["come back"])
+    }
+
+    /// Issue #8: several notes deleted at once come back with one Undo, selected again.
+    @Test func aBulkDeleteIsOneUndo() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/undo-bulk.md", kind: .markdown, fingerprint: Fingerprint())
+        var ids: [NoteID] = []
+        for body in ["one", "two", "three"] { ids.append(try await store.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: .yellow).id) }
+        let panel = NotesPanelModel(noteStore: store)
+        panel.selection = Set(ids)
+        #expect(panel.selectedNoteID == nil, "several selected: no single note")
+
+        await panel.delete(ids)
+        #expect(panel.lastDeleted.count == 3 && panel.selection.isEmpty)
+        #expect(try await store.documentsWithNotes().isEmpty)
+        await panel.undoDelete(panel.lastDeleted)
+        #expect(panel.lastDeleted.isEmpty && panel.selection == Set(ids))
+        #expect(Set(try await store.documentsWithNotes().flatMap(\.notes).map(\.body)) == ["one", "two", "three"])
+    }
+}
+
+/// Issue #8: actions on several selected notes take only the notes they apply to.
+@MainActor
+struct NoteBulkActionTests {
+    @Test func bulkStatusAndColourChanges() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/bulk.md", kind: .markdown, fingerprint: Fingerprint())
+        let draft = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "draft", color: .yellow)
+        let sent = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "sent", color: .yellow)
+        let done = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "done", color: .yellow)
+        _ = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "p", noteIDs: [sent.id, done.id], outcome: .delivered)
+        try await store.resolve(done.id)
+        let all = [draft.id, sent.id, done.id]
+        let notes = [draft, sent, done].map { note in Note(id: note.id, documentID: note.documentID, anchor: note.anchor, body: note.body,
+                                                             state: note.id == draft.id ? .draft : note.id == sent.id ? .sent : .resolved,
+                                                             color: .yellow, createdAt: note.createdAt, updatedAt: note.updatedAt) }
+        #expect(NotesPanelModel.sendable(notes).map(\.id) == [draft.id, sent.id], "resolved notes are not sent again")
+        #expect(NotesPanelModel.reopenable(notes).map(\.id) == [done.id])
+
+        let panel = NotesPanelModel(noteStore: store)
+        panel.start()
+        defer { panel.stop() }
+        for _ in 0..<100 where panel.groups.flatMap(\.notes).count < 3 { try? await Task.sleep(for: .milliseconds(20)) }
+        await panel.resolve(all)
+        #expect(try await store.note(draft.id)?.state == .resolved)
+        #expect(try await store.note(sent.id)?.state == .resolved)
+        await panel.setColor(all, .green)
+        for id in all { #expect(try await store.note(id)?.color == .green) }
+        for _ in 0..<100 where panel.groups.flatMap(\.notes).contains(where: { $0.state != .resolved }) { try? await Task.sleep(for: .milliseconds(20)) }
+        await panel.reopen(all)
+        for id in all { #expect(try await store.note(id)?.state == .draft) }
     }
 }
 

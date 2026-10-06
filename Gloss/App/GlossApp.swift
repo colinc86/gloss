@@ -121,22 +121,23 @@ struct AppCommands: Commands {
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(model.visibleDrafts.isEmpty)
             Divider()
+            // The selection may be several notes (issue #8): each command takes the ones it applies to.
+            let selected = model.notesPanel.selectedNotes
+            let sendable = NotesPanelModel.sendable(selected), resolvable = NotesPanelModel.resolvable(selected)
+            let plural = selected.count > 1
             Button {
-                guard let id = model.notesPanel.selectedNoteID else { return }
-                Task { await model.send(noteIDs: [id]) }
-            } label: { Label("Send Selected Note", systemImage: "paperplane") }
-            .disabled(model.notesPanel.selectedNoteID == nil || model.send.lastTarget == nil)
+                Task { await model.send(noteIDs: sendable.map(\.id)) }
+            } label: { Label(plural ? "Send Selected Notes" : "Send Selected Note", systemImage: "paperplane") }
+            .disabled(sendable.isEmpty || model.send.lastTarget == nil)
             Button {
-                guard let id = model.notesPanel.selectedNoteID else { return }
-                Task { await model.copyPacket(noteIDs: [id]) }
-            } label: { Label("Copy Selected Note as Packet", systemImage: "doc.on.clipboard") }
-            .disabled(model.notesPanel.selectedNoteID == nil)
+                Task { await model.copyPacket(noteIDs: selected.map(\.id)) }
+            } label: { Label(plural ? "Copy Selected Notes as Packet" : "Copy Selected Note as Packet", systemImage: "doc.on.clipboard") }
+            .disabled(selected.isEmpty)
             Button {
-                guard let id = model.notesPanel.selectedNoteID else { return }
-                Task { await model.notesPanel.resolve(id) }
-            } label: { Label("Resolve Selected Note", systemImage: "checkmark.circle") }
+                Task { await model.notesPanel.resolve(resolvable.map(\.id)) }
+            } label: { Label(plural ? "Resolve Selected Notes" : "Resolve Selected Note", systemImage: "checkmark.circle") }
             .keyboardShortcut("d", modifiers: [.command, .shift])
-            .disabled(model.notesPanel.selectedNoteID == nil)
+            .disabled(resolvable.isEmpty)
             Divider()
             // ⌘' and ⇧⌘', as Xcode steps through issues.
             Button { model.stepNote(forward: true) } label: { Label("Next Note", systemImage: "chevron.down") }

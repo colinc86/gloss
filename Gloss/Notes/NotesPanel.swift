@@ -45,7 +45,7 @@ struct NotesPanel: View {
             } else {
                 let places = PathDisambiguator.places(for: visible.map(\.document.path))
                 ScrollViewReader { proxy in
-                List(selection: $panel.selectedNoteID) {
+                List(selection: $panel.selection) {
                     ForEach(visible) { group in
                         Section {
                             ForEach(group.notes) { note in
@@ -82,8 +82,9 @@ struct NotesPanel: View {
                     return .handled
                 }
                 .onDeleteCommand {
-                    guard let note = panel.selectedEntry?.note else { return }
-                    Task { await model.notesPanel.delete(note.id) }
+                    let ids = panel.selectedNotes.map(\.id)
+                    guard !ids.isEmpty else { return }
+                    Task { await model.notesPanel.delete(ids) }
                 }
                 // Linked, the list follows the page: the note nearest the middle of the page comes to the middle.
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { model.noteLink.panelViewport = $0 }
@@ -113,9 +114,9 @@ struct NotesPanel: View {
         // Clicking a card, or arrowing through the list, shows the note in the viewer; the list keeps focus.
         // A note on a host that is not connected stays put: arrowing past it must not start an ssh connect (and a
         // key prompt); its Reveal button connects on purpose.
-        .onChange(of: panel.selectedNoteID) { _, _ in
+        .onChange(of: panel.selection) { _, _ in
             model.noteLink.selectedNoteID = panel.selectedNoteID
-            if panel.selectedNoteID != nil { listFocused = true }
+            if !panel.selection.isEmpty { listFocused = true }
             guard let entry = panel.selectedEntry, model.fileSystem(for: entry.document.hostID) != nil else { return }
             model.reveal(note: entry.note, in: entry.document, select: false)
         }
@@ -183,41 +184,17 @@ struct NotesPanel: View {
                 sortMenu
             }
             ColorFilterStrip(counts: colorCounts, selection: $panel.colorFilter)
-            HStack(spacing: 6) {
-                TargetPicker()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .layoutPriority(1)
-                SendDraftsButton(
-                    count: model.visibleDrafts.count,
-                    colors: model.showNotesPanel ? model.notesPanel.colorFilter : [],
-                    filtered: model.draftsAreFiltered,
-                    isSending: model.send.isSending,
-                    hasTarget: model.send.lastTarget != nil
-                ) {
-                    Task { await model.sendVisibleDrafts() }
-                }
-                // Title case like every Mac menu, with how many notes each command touches; nothing to act on, no item.
-                let allDrafts = model.notesPanel.draftCount
-                let documentDrafts = model.visibleDrafts.count
-                Menu {
-                    Button("Send All Drafts\(allDrafts > 0 ? " (\(allDrafts))" : "")") { Task { await model.sendAllDrafts(scope: .all) } }
-                        .disabled(allDrafts == 0 || model.send.lastTarget == nil)
-                    Button("\(model.draftsAreFiltered ? "Copy Shown Drafts as Packet" : "Copy This Document's Drafts as Packet")\(documentDrafts > 0 ? " (\(documentDrafts))" : "")") {
-                        Task { await model.copyVisibleDrafts() }
-                    }
-                    .disabled(documentDrafts == 0)
-                    Divider()
-                    Button("Refresh Agents") { Task { await model.send.refreshTargets() } }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 28)
-                .help("More send options")
-                .accessibilityLabel("More send options")
+            if !panel.selectedNotes.isEmpty {
+                BulkActionBar(notes: panel.selectedNotes)
+                    .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
+            // Where notes go; what goes is chosen in the list, and the selection bar sends it (issue #8). Whole-document
+            // sends stay in the Notes menu (⌘↩, ⇧⌘↩).
+            TargetPicker()
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(8)
+        .animation(DS.Motion.snappy, value: panel.selectedNotes.isEmpty)
     }
 
     /// Notes per colour across every document (before search and filters, like the state counts).
@@ -334,6 +311,7 @@ struct TargetPicker: View {
                 Label("Copy Packet to Clipboard", systemImage: "doc.on.clipboard")
             }
             .help("Paste it into any terminal yourself")
+            Button("Refresh Agents") { Task { await model.send.refreshTargets() } }
         } label: {
             AgentChip(
                 target: model.send.lastTarget,
@@ -495,7 +473,15 @@ struct NoteCard: View {
                 .padding(-DS.Space.xs)
                 .animation(arrived ? DS.Motion.snappy : .easeOut(duration: 0.9), value: arrived)
         }
-        .contextMenu { commands(dividers: true) }
+        .contextMenu {
+            // Right-clicking one of several selected cards acts on all of them, as in Finder and Mail.
+            let selected = model.notesPanel.selectedNotes
+            if selected.count > 1, selected.contains(where: { $0.id == note.id }) {
+                BulkNoteCommands(notes: selected)
+            } else {
+                commands(dividers: true)
+            }
+        }
         // One element for VoiceOver: the card is read as a sentence, and every button and menu command is an action
         // on it, instead of a walk through the rail, the pill, and six unlabeled-looking icons.
         // While answering, the field has to stay reachable, so the card opens up to its children.
@@ -968,68 +954,6 @@ struct StatusDot: View {
     }
 }
 
-/// The panel's primary action: send this document's drafts. Says how many will go, and why it is unavailable.
-private struct SendDraftsButton: View {
-    let count: Int
-    /// The notes panel's colour filter; the button sends only those colours while it is set.
-    var colors: Set<NoteColor> = []
-    /// The panel's tab, colours, or search narrow what goes: the tooltip says "shown".
-    var filtered = false
-
-    /// "blue " or "blue and pink " while a colour filter is on; nothing otherwise.
-    private var colorWords: String {
-        guard !colors.isEmpty else { return "" }
-        let names = colors.map(\.rawValue).sorted()
-        return (names.count <= 2 ? names.joined(separator: " and ") : "\(names.count)-colour") + " "
-    }
-    let isSending: Bool
-    let hasTarget: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: DS.Space.xs) {
-                LaunchingPlane(isSending: isSending)
-                Text("Send")
-                // While a colour filter is on, Send sends only those colours: the button says so in their colours.
-                if !colors.isEmpty {
-                    // On a white capsule: a blue dot on the blue button would vanish (and its ring read as ○, the draft symbol).
-                    HStack(spacing: -2) {
-                        ForEach(colors.sorted { $0.rawValue < $1.rawValue }.prefix(3), id: \.self) { color in
-                            Circle()
-                                .fill(Color(nsColor: Theme.color(for: color)))
-                                .frame(width: 8, height: 8)
-                                .overlay(Circle().strokeBorder(.white, lineWidth: 1))
-                        }
-                    }
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 2)
-                    .background(.white, in: Capsule())
-                    .transition((AnyTransition.scale(scale: 0.6).combined(with: .opacity)).calmed)
-                    .accessibilityLabel(colorWords.trimmingCharacters(in: .whitespaces) + " only")
-                }
-                if count > 0 {
-                    Text("\(count)")
-                        .monospacedDigit()
-                        .contentTransition(.numericText(value: Double(count)))
-                }
-            }
-            .font(.callout.weight(.semibold))
-            .lineLimit(1)
-            .fixedSize()
-        }
-        .buttonStyle(.glassProminent)
-        .controlSize(.regular)
-        .disabled(!hasTarget || count == 0 || isSending)
-        .animation(DS.Motion.smooth, value: count)
-        .animation(DS.Motion.bouncy, value: colors)
-        .help(!hasTarget ? "Choose an agent first"
-              : count == 0 ? (filtered ? "No drafts shown for this document" : "No drafts in this document")
-              : filtered ? "Send the \(count) \(colorWords)draft\(count == 1 ? "" : "s") shown for this document (⌘↩)"
-              : "Send this document's \(count) draft\(count == 1 ? "" : "s") (⌘↩)")
-    }
-}
-
 /// The Send button's paper plane, which takes off when a send starts (from the button or ⌘↩): it flies up and away,
 /// tilting as it goes, a small spinner holds its place while the packet is in flight, and a fresh plane glides back in
 /// from below when the send is over. Under Reduce Motion the plane and spinner simply cross-fade.
@@ -1256,15 +1180,17 @@ private struct UndoDeleteToast: View {
     var body: some View {
         let panel = model.notesPanel
         ZStack {
-            if let deleted = panel.lastDeleted {
+            if let first = panel.lastDeleted.first {
+                let deleted = panel.lastDeleted
                 let failure = panel.undoFailure
                 HStack(spacing: DS.Space.m) {
                     Image(systemName: failure == nil ? "trash" : "exclamationmark.triangle.fill")
                         .foregroundStyle(failure == nil ? Color.secondary : Color.orange)
                         .contentTransition(.symbolEffect(.replace))
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(failure == nil ? "Note deleted" : "Undo didn't work").font(.callout.weight(.semibold))
-                        Text(failure ?? deleted.note.body)
+                        Text(failure != nil ? "Undo didn't work" : deleted.count == 1 ? "Note deleted" : "\(deleted.count) notes deleted")
+                            .font(.callout.weight(.semibold))
+                        Text(failure ?? (deleted.count == 1 ? first.note.body : deleted.map { $0.note.body.split(separator: "\n").first.map(String.init) ?? "" }.joined(separator: " · ")))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(failure == nil ? 1 : 2)
@@ -1284,17 +1210,117 @@ private struct UndoDeleteToast: View {
                 // Removed under the pointer (after Undo) it gets no hover-out; the next toast must still time out.
                 .onDisappear { hovering = false }
                 .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
-                .task(id: "\(deleted.note.id)-\(hovering)-\(failure != nil)") {
-                    // A failure stays until dismissed: it needs reading, and the deleted note is still recoverable.
+                .task(id: "\(deleted.map(\.note.id))-\(hovering)-\(failure != nil)") {
+                    // A failure stays until dismissed: it needs reading, and the deleted notes are still recoverable.
                     guard !hovering, failure == nil else { return }
                     try? await Task.sleep(for: .seconds(6))
                     guard !Task.isCancelled else { return }
                     if panel.lastDeleted == deleted { panel.dismissUndo() }
                 }
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel("Note deleted")
+                .accessibilityLabel(deleted.count == 1 ? "Note deleted" : "\(deleted.count) notes deleted")
             }
         }
-        .animation(DS.Motion.bouncy, value: panel.lastDeleted?.note.id)
+        .animation(DS.Motion.bouncy, value: panel.lastDeleted.map(\.note.id))
+    }
+}
+
+/// What several selected notes can have done to them at once (issue #8). Each action takes only the notes it makes
+/// sense for (Send the drafts and sent notes, Reopen the resolved ones) and says how many in its title.
+struct BulkNoteCommands: View {
+    @Environment(AppModel.self) private var model
+    let notes: [Note]
+
+    var body: some View {
+        let ids = notes.map(\.id)
+        let sendable = NotesPanelModel.sendable(notes)
+        let resolvable = NotesPanelModel.resolvable(notes)
+        let reopenable = NotesPanelModel.reopenable(notes)
+        if let target = model.send.lastTarget, !sendable.isEmpty {
+            Button("Send \(Self.noun(sendable.count)) to \(target.label)") { Task { await model.send(noteIDs: sendable.map(\.id)) } }
+        }
+        Button("Copy \(Self.noun(notes.count)) as Packet") { Task { await model.copyPacket(noteIDs: ids) } }
+        Divider()
+        if !resolvable.isEmpty {
+            Button("Resolve \(Self.noun(resolvable.count))") { Task { await model.notesPanel.resolve(resolvable.map(\.id)) } }
+        }
+        if !reopenable.isEmpty {
+            Button("Reopen \(Self.noun(reopenable.count)) as Drafts") { Task { await model.notesPanel.reopen(reopenable.map(\.id)) } }
+        }
+        Menu("Colour") {
+            ForEach(NoteColor.allCases, id: \.self) { color in
+                Button(color.rawValue.capitalized) { Task { await model.notesPanel.setColor(ids, color) } }
+            }
+        }
+        Divider()
+        Button("Delete \(Self.noun(notes.count))", role: .destructive) { Task { await model.notesPanel.delete(ids) } }
+    }
+
+    nonisolated static func noun(_ count: Int) -> String { count == 1 ? "1 Note" : "\(count) Notes" }
+}
+
+/// Shown above the list while notes are selected (one or more): how many, and the actions that apply to them all.
+private struct BulkActionBar: View {
+    @Environment(AppModel.self) private var model
+    let notes: [Note]
+
+    var body: some View {
+        let sendable = NotesPanelModel.sendable(notes)
+        let resolvable = NotesPanelModel.resolvable(notes)
+        let reopenable = NotesPanelModel.reopenable(notes)
+        HStack(spacing: DS.Space.s) {
+            Text("\(notes.count) selected")
+                .font(.callout.weight(.semibold))
+                .contentTransition(.numericText(value: Double(notes.count)))
+                .lineLimit(1)
+                .fixedSize()
+            Spacer(minLength: DS.Space.xs)
+            if !sendable.isEmpty {
+                Button {
+                    Task { await model.send(noteIDs: sendable.map(\.id)) }
+                } label: {
+                    HStack(spacing: DS.Space.xs) {
+                        LaunchingPlane(isSending: model.send.isSending)
+                        Text(notes.count == 1 ? "Send" : "Send \(sendable.count)")
+                    }
+                }
+                .buttonStyle(.glassProminent)
+                .disabled(model.send.lastTarget == nil || model.send.isSending)
+                .help(model.send.lastTarget.map { "Send the \(sendable.count) drafts and sent notes to \($0.label)" } ?? "Choose an agent above first")
+            }
+            if !resolvable.isEmpty {
+                InlineIconButton(title: "Resolve \(resolvable.count)", symbol: "checkmark.circle", emphasized: true) {
+                    Task { await model.notesPanel.resolve(resolvable.map(\.id)) }
+                }
+            }
+            if !reopenable.isEmpty {
+                InlineIconButton(title: "Reopen \(reopenable.count) as Drafts", symbol: "arrow.uturn.backward", emphasized: true) {
+                    Task { await model.notesPanel.reopen(reopenable.map(\.id)) }
+                }
+            }
+            Menu {
+                BulkNoteCommands(notes: notes)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More actions for the selected notes")
+            InlineIconButton(title: "Delete \(notes.count)", symbol: "trash", role: .destructive, emphasized: true) {
+                Task { await model.notesPanel.delete(notes.map(\.id)) }
+            }
+            InlineIconButton(title: "Clear the selection", symbol: "xmark", emphasized: true) {
+                model.notesPanel.selection = []
+            }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, DS.Space.s + 2)
+        .padding(.vertical, DS.Space.xs + 1)
+        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.accentColor.opacity(0.25)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(notes.count) notes selected")
     }
 }
