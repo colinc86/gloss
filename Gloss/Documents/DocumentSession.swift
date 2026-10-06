@@ -1259,6 +1259,18 @@ final class DocumentSession: Identifiable {
 
     /// Drops the viewer's selection after a note was made from it, so the Add Note button goes away and the
     /// note's own highlight shows where it sits.
+    /// Escape on a document: closes the note composer, or else puts the Add Note button away by clearing the
+    /// selection it sits beside. False when neither is showing, so Escape goes on to whatever else wants it.
+    func dismissNoteAffordance() -> Bool {
+        if noteEditor != nil {
+            noteEditor = nil
+            return true
+        }
+        guard selectionAffordanceRect != nil else { return false }
+        clearSelection()
+        return true
+    }
+
     private func clearSelection() {
         imageController?.selection = nil
         pdfController?.clearSelection()

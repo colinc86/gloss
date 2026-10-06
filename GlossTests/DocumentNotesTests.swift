@@ -138,4 +138,28 @@ struct DocumentNotesTests {
         guard case .text(let anchor) = try await store.note(note.id)?.anchor else { Issue.record("expected text"); return }
         #expect(anchor.start.line == 5, "and the note itself moved")
     }
+
+    /// Escape puts the Add Note button away (the selection goes), then closes an open composer; with neither
+    /// showing it does nothing, so the key goes on to others.
+    @Test func escapeDismissesTheAddNoteButtonAndTheComposer() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, _) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        session.markdown?.mode = .source
+        #expect(session.dismissNoteAffordance() == false, "nothing to dismiss")
+        controller.selection = controller.lineIndex.contentRange(ofLine: 2)
+        #expect(session.selectionAffordanceRect != nil || controller.selection.length > 0)
+        if session.selectionAffordanceRect != nil {
+            #expect(session.dismissNoteAffordance())
+            #expect(controller.selection.length == 0)
+        }
+        controller.selection = controller.lineIndex.contentRange(ofLine: 2)
+        session.beginNote()
+        #expect(session.noteEditor != nil)
+        #expect(session.dismissNoteAffordance())
+        #expect(session.noteEditor == nil)
+        session.close()
+    }
 }

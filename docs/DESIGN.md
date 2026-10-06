@@ -347,7 +347,10 @@ path. Dropping on the Dock icon is not supported yet.
   used), the label, and its key, ⌘↩ (which is the button's while it shows; Send has ⌘↩ otherwise). It grows out
   of the selected line to where it rests (`DS.Motion.bouncy`, scale from 0.2 anchored on the point where the
   selection's edge meets it, `AddNoteButton.emergence`), follows a growing selection with `DS.Motion.smooth`,
-  lifts 4% under the pointer, and leaves the same way in 0.1 s so it never lingers over text.
+  lifts 4% under the pointer, and leaves the same way in 0.1 s so it never lingers over text. Escape puts it away
+  (the selection goes with it) from anywhere in the main window but a search or filter field, and Escape in the
+  composer cancels it, as its Cancel button does (one key monitor in `AppModel`; the composer's field handles its
+  own, since NSTextView otherwise takes Escape for word completion).
 - **Agent chip**: where notes go, as a rounded field: a `StatusDot`, the agent in semibold, its task in secondary
   (truncating), the pane in tertiary monospace, a folder badge when the agent works in the explorer's folder, and
   an up/down chevron; it opens the agent menu.

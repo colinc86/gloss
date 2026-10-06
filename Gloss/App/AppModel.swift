@@ -1173,9 +1173,31 @@ final class AppModel {
     @ObservationIgnored private var started = false
 
     /// Applies `--root` and `--open`, or reopens the most recent root. Runs once even if several windows appear.
+    @ObservationIgnored private var escapeMonitor: Any?
+
+    /// Escape dismisses the Add Note button (and an open composer) from wherever the keyboard is in the main window.
+    /// The viewers' own views don't see it reliably: NSTextView takes Escape for word completion and PDFView and the
+    /// web view ignore it. A field editor (a search or filter field) keeps its own Escape.
+    private func installEscapeMonitor() {
+        guard escapeMonitor == nil else { return }
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
+            guard event.keyCode == 53, modifiers.isEmpty else { return event }
+            let handled = MainActor.assumeIsolated { self?.handleEscape(in: event.window) ?? false }
+            return handled ? nil : event
+        }
+    }
+
+    func handleEscape(in window: NSWindow?) -> Bool {
+        guard let window, window === mainWindow, window.attachedSheet == nil else { return false }
+        if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor { return false }
+        return activeSession?.dismissNoteAffordance() ?? false
+    }
+
     func start() async {
         guard !started, !launchOptions.isTestHost else { return }
         started = true
+        installEscapeMonitor()
         await settings.load()
         send.stagedFileExpiryDays = settings.stagedFileExpiryDays
         settings.onStagedExpiryChange = { [weak self] days in self?.send.stagedFileExpiryDays = days }

@@ -54,7 +54,7 @@ struct NotePopover: View {
                 .task(id: quote) { colouredQuote = SyntaxTheme.highlighted(quote, language: language) }
             }
             ZStack(alignment: .topLeading) {
-                NoteBodyEditor(text: $state.body, onSubmit: { if canSave { onSave(state) } })
+                NoteBodyEditor(text: $state.body, onSubmit: { if canSave { onSave(state) } }, onCancel: onCancel)
                 if state.body.isEmpty {
                     Text("What should the agent know?")
                         .font(.body)
@@ -215,10 +215,12 @@ struct KeyCap: View {
 }
 
 /// The comment field: a plain NSTextView so Return can save while Shift-Return (and Option-Return) still insert
-/// a newline, which SwiftUI's TextEditor cannot distinguish. Takes focus when it appears.
-private struct NoteBodyEditor: NSViewRepresentable {
+/// a newline, which SwiftUI's TextEditor cannot distinguish; Escape cancels. Takes focus when it appears. Shared by
+/// the composer and a card's inline editor.
+struct NoteBodyEditor: NSViewRepresentable {
     @Binding var text: String
     let onSubmit: () -> Void
+    var onCancel: () -> Void = {}
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = SubmitTextView()
@@ -237,6 +239,7 @@ private struct NoteBodyEditor: NSViewRepresentable {
         textView.string = text
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
+        textView.onCancel = onCancel
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
@@ -249,6 +252,7 @@ private struct NoteBodyEditor: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? SubmitTextView else { return }
         textView.onSubmit = onSubmit
+        textView.onCancel = onCancel
         if textView.string != text {
             textView.string = text
             // Setting `string` bypasses undo; older typing entries would now edit the wrong text.
@@ -278,6 +282,12 @@ private struct NoteBodyEditor: NSViewRepresentable {
     /// Control-Return (`insertNewlineIgnoringFieldEditor:`) keep their normal newline behaviour.
     final class SubmitTextView: NSTextView {
         var onSubmit: () -> Void = {}
+        var onCancel: () -> Void = {}
+
+        /// Escape. NSTextView would otherwise take it for word completion, so it never reached Cancel.
+        override func cancelOperation(_ sender: Any?) {
+            onCancel()
+        }
 
         /// The popover's window exists only after the view is attached, so focus is claimed here rather than
         /// in `makeNSView`; typing right after the popover opens must land in the field.
