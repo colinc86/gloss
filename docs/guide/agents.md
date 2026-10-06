@@ -15,6 +15,9 @@ yourself.
 
 Any other agent that speaks MCP over HTTP can use the endpoint and snippets at the bottom of the page.
 
+When an update to Gloss changes what an agent's set-up needs, a notification at the bottom right says which agent
+needs an update. **Open Settings** goes straight to Settings › Agents, where **Update** fixes it.
+
 ## Ways a note reaches an agent
 
 A note reaches an agent only when you press Send. Drafts stay in Gloss until then, and agents can't list or read them.
@@ -63,7 +66,7 @@ Agents can drive Gloss to show you their work:
 
 - `open_in_viewer` shows a file at a line or a range of lines, a pull request or a page.
 - `ask_user` puts a question beside the lines it's about, such as "Does this section read right?" It shows under
-  Attention, with the agent's name, and Gloss opens the file in front of your terminal without taking the keyboard.
+  Attention in a bubble headed with the agent's name ("Claude Code asks"), and Gloss opens the file in front of your terminal without taking the keyboard.
   Click **Reply** to answer; your answer becomes a draft, and goes back to the agent when you send it.
 - `add_favorite` adds a project folder to your favorites and opens it.
 

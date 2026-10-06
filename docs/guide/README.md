@@ -5,8 +5,8 @@ stands on its own.
 
 | Page | What's in it |
 | --- | --- |
-| [Getting started](getting-started.md) | Install, open a folder, find files, stay up to date |
-| [Notes](notes.md) | Making notes in every viewer, the notes panel, link and paths |
+| [Getting started](getting-started.md) | Install, open a folder, find files, pick up where you left off, stay up to date |
+| [Notes](notes.md) | Making notes in every viewer, the notes panel, working on several at once, link and paths |
 | [Connecting agents](agents.md) | Setting agents up, choosing where notes go, sending and resolving |
 | [Remote hosts](remote-hosts.md) | Files on other machines over ssh, remote editing, following Herdr |
 | [Integrations](integrations.md) | Pull requests, Jira issues, Confluence pages and the review browser |

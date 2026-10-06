@@ -6,7 +6,8 @@ never written into the file.
 ## Making a note
 
 Select something, then click the **Add Note** button that appears beside the selection (or press ⌘↩ while it shows).
-Write your comment and press Return. Shift-Return adds a line; Escape cancels.
+Write your comment and press Return. Shift-Return adds a line; Escape cancels. Escape also puts the Add Note button
+away if you change your mind before clicking it.
 
 What you can select depends on the viewer:
 
@@ -35,8 +36,8 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
   Undo.
 - Right-click a card to edit, send, copy it as a packet, resolve it, reopen it, or delete it. Editing happens right
   in the card: change the comment or color, Return to save, Escape to cancel.
-- **Select several** with ⌘-click, ⇧-click or ⌘A, and a bar appears above the list to send, resolve, reopen,
-  recolor, copy or delete them all at once. Each action only touches the notes it applies to (Send skips resolved
+- **Select several** with ⌘-click, ⇧-click or ⌘A, and a bar appears above the list to send, resolve, put back to
+  draft or delete them all at once; its ⋯ menu also recolors and copies them. Each action only touches the notes it applies to (Send skips resolved
   notes), and deleting several is undone in one step.
 
 ⌘' and ⇧⌘' step through the notes in the open document.
@@ -50,6 +51,10 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
 | Resolved | The agent (or you, with ⇧⌘D) marked it done or skipped. Its reply shows on the card. |
 | Needs your answer | The agent resolved it with a question, or asked you something about a file on its own. Click **Reply**, answer, and send it. |
 | Orphaned | The text it pointed at is gone. Look at it, then fix or delete it. If the text comes back, the note returns to the state it had. |
+
+On the page, drafts are filled in with their color, so the work still to send stands out. A sent note steps back to
+an underline, a resolved one to a faint dotted underline, and an orphan keeps a dashed one. Hover a note, or select
+its card, and it fills in again.
 
 When a file changes, whether it's open or not, Gloss finds each note's text again and moves the note. If the text
 appears in several places, it picks the one whose surrounding lines match; when it can't be sure, the note moves but
