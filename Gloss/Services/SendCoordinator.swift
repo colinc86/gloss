@@ -83,10 +83,43 @@ final class SendCoordinator {
 
     // MARK: Targets
 
-    /// Asks every transport at once, giving each a few seconds.
+    /// The folder in front whose agent sends should go to, or nil when nothing should pick one (no folder, follow
+    /// mode, or a choice in progress).
+    @ObservationIgnored var currentFolder: () -> (hostID: HostID, path: String)? = { nil }
+    /// The discovery in flight; a request made meanwhile waits for it and has it look once more.
+    @ObservationIgnored private var discovery: Task<Void, Never>?
+    @ObservationIgnored private var discoversAgain = false
+    /// When discovery last finished, so the picker can skip a refresh it has just had.
+    @ObservationIgnored private(set) var discoveredAt: Date?
+    /// Set when a folder comes to the front, until its agent is picked from a finished discovery or a target is set
+    /// some other way; a refresh at any other time leaves the target alone.
+    @ObservationIgnored private var folderPickOwed = false
+    /// Bumped whenever the target is set, so a pick that waited on the database yields to one made meanwhile.
+    @ObservationIgnored private var targetGeneration = 0
+
+    /// Asks every transport at once, giving each a few seconds, then picks the folder's agent if one is owed.
     func refreshTargets() async {
+        if let discovery {
+            discoversAgain = true
+            return await discovery.value
+        }
+        let task = Task {
+            repeat {
+                discoversAgain = false
+                await discoverTargets()
+            } while discoversAgain
+            discovery = nil
+        }
+        discovery = task
+        await task.value
+    }
+
+    private func discoverTargets() async {
         isDiscovering = true
-        defer { isDiscovering = false }
+        defer {
+            isDiscovering = false
+            discoveredAt = Date()
+        }
         var found: [AgentTarget] = []
         await withTaskGroup(of: [AgentTarget].self) { group in
             for transport in transports {
@@ -104,7 +137,61 @@ final class SendCoordinator {
         }
         // Transport order is the delivery priority (Herdr first, clipboard last); agents sort by label within one.
         targets = found.sorted { (Self.priority($0.transport), $0.label) < (Self.priority($1.transport), $1.label) }
-        if lastTarget == nil { lastTarget = await restoreLastTarget() }
+        // The folder in front beats the target used last, which may belong to another folder.
+        await selectFolderTarget()
+        if lastTarget == nil {
+            let restored = await restoreLastTarget()
+            if lastTarget == nil { lastTarget = restored }
+        }
+    }
+
+    /// The folder in front changed (or opened at launch): pick its agent now if agents have been found, and again
+    /// when a discovery under way finishes.
+    func folderBecameCurrent() async {
+        guard currentFolder() != nil else { return }
+        folderPickOwed = true
+        guard discoveredAt != nil else { return }
+        await selectFolderTarget(settles: discovery == nil)
+    }
+
+    /// Switches to the agent `preferredTarget` picks for the folder in front when a pick is owed; otherwise keeps the
+    /// current one. `settles` false leaves the pick owed for the discovery under way.
+    private func selectFolderTarget(settles: Bool = true) async {
+        guard folderPickOwed else { return }
+        guard let folder = currentFolder() else {
+            folderPickOwed = false
+            return
+        }
+        if settles { folderPickOwed = false }
+        let generation = targetGeneration
+        guard let preferred = await preferredTarget(hostID: folder.hostID, path: folder.path),
+              preferred.id != lastTarget?.id,
+              // A target set, or another folder brought forward, while the memory loaded wins.
+              generation == targetGeneration, let now = currentFolder(), now == folder else { return }
+        setTarget(preferred)
+    }
+
+    /// The agent sends from the folder `path` should go to, among the live targets:
+    /// 1. the one last chosen in the folder, else a live agent of the same transport working there, so a tmux pane
+    ///    that changed directory or command, or a restarted Herdr pane, still matches;
+    /// 2. an agent working in the folder or inside it, the folder itself first, then in delivery priority order.
+    /// Nil when none is; the clipboard and OpenCode's "New session" rows are never picked unless chosen.
+    func preferredTarget(hostID: HostID, path: String) async -> AgentTarget? {
+        // Resolving symlinks touches the disk, so not on the main actor.
+        let key = await Task.detached { Self.folderKey(hostID: hostID, path: path) }.value
+        let folder = String(key.dropFirst(hostID.rawValue.count + 1))
+        let working = targets.filter { $0.runs(inHost: hostID, path: path) }
+        func best(_ candidates: [AgentTarget]) -> AgentTarget? {
+            let standardized = URL(fileURLWithPath: path).standardized.path
+            return candidates.first { $0.detail.map { URL(fileURLWithPath: $0).standardized.path } == standardized }
+                ?? candidates.first { $0.detail.map { Self.normalizedFolder(hostID: hostID, path: $0) } == folder }
+                ?? candidates.first
+        }
+        if let remembered = await loadFolderTargets()[key] {
+            if let live = targets.first(where: { $0.id == remembered.id }) { return live }
+            if let same = best(working.filter { $0.transport == remembered.transport }) { return same }
+        }
+        return best(working)
     }
 
     private static func priority(_ kind: TransportKind) -> Int {
@@ -127,12 +214,25 @@ final class SendCoordinator {
     /// The agent last chosen in each folder, keyed by `folderKey`, so returning to a folder returns to its agent.
     /// Loaded from the database on first use and saved whenever it changes.
     private var folderTargets: [String: AgentTarget]?
+    /// The first load, which every caller waiting on it shares.
+    @ObservationIgnored private var folderTargetsLoad: Task<[String: AgentTarget], Never>?
 
-    nonisolated static func folderKey(hostID: HostID, path: String) -> String { "\(hostID.rawValue):\(path)" }
+    nonisolated static func folderKey(hostID: HostID, path: String) -> String {
+        "\(hostID.rawValue):\(normalizedFolder(hostID: hostID, path: path))"
+    }
+
+    /// `path` without `.` or `..` parts or a trailing slash, and on this Mac with symlinks resolved, so every spelling
+    /// of a folder finds the same memory.
+    nonisolated static func normalizedFolder(hostID: HostID, path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        return hostID == .local ? url.resolvingSymlinksInPath().path : url.standardized.path
+    }
 
     /// Records `target` as the one chosen in the folder `key`.
     func remember(_ target: AgentTarget, forFolder key: String) async {
+        // Read after the load, with no wait before the write, so another remember isn't lost.
         var map = await loadFolderTargets()
+        if let folderTargets { map = folderTargets }
         guard map[key]?.id != target.id else { return }
         map[key] = target
         folderTargets = map
@@ -141,21 +241,41 @@ final class SendCoordinator {
         }
     }
 
-    /// The agent last chosen in the folder `key`, when its session is among the live targets; nil otherwise.
-    func liveTarget(forFolder key: String) async -> AgentTarget? {
-        guard let stored = await loadFolderTargets()[key] else { return nil }
-        return targets.first { $0.id == stored.id }
-    }
-
     private func loadFolderTargets() async -> [String: AgentTarget] {
         if let folderTargets { return folderTargets }
+        let load = folderTargetsLoad ?? Task { await readFolderTargets() }
+        folderTargetsLoad = load
+        let map = await load.value
+        if folderTargets == nil { folderTargets = map }
+        return folderTargets ?? map
+    }
+
+    private func readFolderTargets() async -> [String: AgentTarget] {
         let stored = (try? await noteStore.setting("send.folderTargets"))?.data(using: .utf8)
-        let map = stored.flatMap { try? JSONDecoder().decode([String: AgentTarget].self, from: $0) } ?? [:]
-        folderTargets = map
+        let decoded = stored.flatMap { try? JSONDecoder().decode([String: AgentTarget].self, from: $0) } ?? [:]
+        // Keys saved before folders were normalized are rewritten once; a normalized key already there wins.
+        var map: [String: AgentTarget] = [:]
+        for (key, target) in decoded {
+            let normalized = key.range(of: ":/").map { range in
+                Self.folderKey(hostID: HostID(rawValue: String(key[..<range.lowerBound])), path: String(key[key.index(after: range.lowerBound)...]))
+            } ?? key
+            if normalized == key || map[normalized] == nil { map[normalized] = target }
+        }
+        if map.count != decoded.count || map.keys.contains(where: { decoded[$0] == nil }),
+           let data = try? JSONEncoder().encode(map), let json = String(data: data, encoding: .utf8) {
+            try? await noteStore.setSetting("send.folderTargets", json)
+        }
         return map
     }
 
+    /// The user (or Herdr's focus, in follow mode) set the target: no pending folder pick overrides it.
     func rememberTarget(_ target: AgentTarget) {
+        folderPickOwed = false
+        setTarget(target)
+    }
+
+    private func setTarget(_ target: AgentTarget) {
+        targetGeneration += 1
         lastTarget = target
         Task {
             if let data = try? JSONEncoder().encode(target), let json = String(data: data, encoding: .utf8) {

@@ -207,6 +207,7 @@ final class AppModel {
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
         send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
+        send.currentFolder = { [weak self] in self?.agentFolder }
         send.packetResourceProvider = { [weak self] hostID, path, line in
             switch hostID {
             case .github: await self?.pullRequests?.resource(for: path, line: line)
@@ -501,13 +502,16 @@ final class AppModel {
         await send.remember(target, forFolder: SendCoordinator.folderKey(hostID: tab.hostID, path: tab.path))
     }
 
-    /// A folder came to the front: switch to the agent last chosen there, when its session is still live. Follow
-    /// mode pairs folders and panes itself, and a choice in progress has just picked the agent for this folder.
+    /// The folder whose agent sends go to: the one in front, except while following Herdr (which pairs folders and
+    /// panes itself) or while `choose(target:)` opens the folder of the agent just picked.
+    private var agentFolder: (hostID: HostID, path: String)? {
+        guard !followHerdr, choosingTargetID == nil, let tab = explorer.selectedTab else { return nil }
+        return (tab.hostID, tab.path)
+    }
+
+    /// A folder came to the front: switch to the agent last chosen there, or the one working in it.
     func folderBecameCurrent() async {
-        guard !followHerdr, choosingTargetID == nil, let tab = explorer.selectedTab,
-              let target = await send.liveTarget(forFolder: SendCoordinator.folderKey(hostID: tab.hostID, path: tab.path)),
-              target.id != send.lastTarget?.id, explorer.selectedTab === tab else { return }
-        send.rememberTarget(target)
+        await send.folderBecameCurrent()
     }
 
     func openDocument(hostID: HostID, path: String) {
@@ -1241,6 +1245,8 @@ final class AppModel {
         explorer.showDotfiles = settings.showDotfilesByDefault
         // Before folders open: a restore can wait on a host or a document, and agents shouldn't wait with it.
         await startMCPServer()
+        // Agents are found while folders open; the folder in front picks its agent once they are.
+        Task { [weak self] in await self?.send.refreshTargets() }
         // An agent whose set-up an update changed (#10) is found at launch, not only when Settings opens; after the
         // MCP server is up, so the address it is checked against is the real one.
         Task { [weak self] in await self?.hooks.refresh(hosts: [.local], agents: HooksModel.launchCheckedAgents) }
@@ -1263,6 +1269,7 @@ final class AppModel {
             openDocument(hostID: .local, path: open)
         }
         if launchOptions.follow { followHerdr = true }
+        await folderBecameCurrent()
     }
 
     /// The root opened most recently on any host; a remote one connects the host first (the agent prompt may show).

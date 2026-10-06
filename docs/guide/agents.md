@@ -35,8 +35,10 @@ Gloss's ssh connection, so no server runs there.
 
 ## Sending
 
-Pick the target from the send menu in the notes panel. It lists every live agent Gloss can see. Each folder
-remembers the agent you last chose for it.
+Pick the target from the send menu in the notes panel. It lists every live agent Gloss can see, and looks again
+when you point at it. Each folder remembers the agent you last chose for it, or picks the agent running in it:
+at launch and whenever you switch folders, Gloss selects that agent without your opening the menu. The clipboard
+is never picked for you.
 
 - **Send** beside the agent sends this document's drafts the panel is showing. Its ⋯ menu sends every draft in
   every document, or copies this document's drafts as a packet.

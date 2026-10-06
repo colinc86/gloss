@@ -366,6 +366,11 @@ struct TargetPicker: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
+        // Pointing at the chip looks for agents started since the last look, so the menu it opens lists them.
+        .onHover { inside in
+            guard inside, model.send.discoveredAt.map({ Date().timeIntervalSince($0) > 10 }) ?? false else { return }
+            Task { await model.send.refreshTargets() }
+        }
     }
 
     /// Menus drop a `Label`'s icon, so the folder mark is an inline image in the text.
