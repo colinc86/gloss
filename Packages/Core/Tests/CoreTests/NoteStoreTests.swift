@@ -116,6 +116,18 @@ struct NoteStoreTests {
         }
     }
 
+    /// Issue #13: a sent note goes back to a draft, keeping its send history.
+    @Test func aSentNoteCanBeUnsent() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "b", color: .blue)
+        _ = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+        try await store.unsend(note.id)
+        #expect(try await store.note(note.id)?.state == .draft)
+        #expect(try await store.sends(for: note.id).count == 1, "it was sent: the history stays")
+        await #expect(throws: NoteStoreError.illegalTransition(from: .draft, to: .draft)) { try await store.unsend(note.id) }
+    }
+
     @Test func failedSendLeavesDrafts() async throws {
         let store = try makeStore()
         let document = try await makeDocument(store)

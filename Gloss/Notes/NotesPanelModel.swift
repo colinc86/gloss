@@ -269,7 +269,8 @@ final class NotesPanelModel {
     /// What each bulk action would touch among `notes`: only notes the action makes sense for.
     nonisolated static func sendable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent } }
     nonisolated static func resolvable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent } }
-    nonisolated static func reopenable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .resolved } }
+    /// Notes that can go back to drafts: resolved ones, and sent ones (#13).
+    nonisolated static func reopenable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .resolved || $0.state == .sent } }
 
     func resolve(_ id: NoteID) async {
         do { try await noteStore.resolve(id) } catch { Log.notes.error("resolve failed: \(error, privacy: .public)") }
@@ -281,10 +282,17 @@ final class NotesPanelModel {
         for note in notes { await resolve(note.id) }
     }
 
-    /// Reopens the resolved notes among `ids` as drafts.
+    /// Puts the resolved and sent notes among `ids` back to drafts.
     func reopen(_ ids: [NoteID]) async {
         let notes = Self.reopenable(groups.flatMap(\.notes).filter { ids.contains($0.id) })
-        for note in notes { await reopen(note.id) }
+        for note in notes {
+            if note.state == .sent { await unsend(note.id) } else { await reopen(note.id) }
+        }
+    }
+
+    /// A sent note back to a draft (#13).
+    func unsend(_ id: NoteID) async {
+        do { try await noteStore.unsend(id) } catch { Log.notes.error("unsend failed: \(error, privacy: .public)") }
     }
 
     /// Why an inline edit couldn't be saved; nil when it was.

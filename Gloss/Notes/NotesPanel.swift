@@ -541,6 +541,10 @@ struct NoteCard: View {
             model.flashCopied("Path copied")
         }
         if dividers { Divider() }
+        if note.state == .sent {
+            Button("Back to Draft") { Task { await model.notesPanel.unsend(note.id) } }
+                .help("Change it and send it again. The agent may already have read it.")
+        }
         if note.state != .resolved {
             Button("Resolve") { Task { await model.notesPanel.resolve(note.id) } }
         } else {
@@ -763,6 +767,11 @@ struct NoteCard: View {
                 InlineIconButton(title: "Restore as draft", symbol: "arrow.uturn.backward", emphasized: lit) { Task { await model.notesPanel.restoreDraft(note) } }
             }
             InlineIconButton(title: "Edit", symbol: "pencil", emphasized: lit, action: startEdit)
+            if note.state == .sent {
+                InlineIconButton(title: "Back to draft (the agent may already have read it)", symbol: "arrow.uturn.backward", emphasized: lit) {
+                    Task { await model.notesPanel.unsend(note.id) }
+                }
+            }
             if note.state == .resolved {
                 InlineIconButton(title: "Reopen as draft", symbol: "arrow.counterclockwise", emphasized: lit) { Task { await model.notesPanel.reopen(note.id) } }
             } else {
@@ -1315,7 +1324,7 @@ struct BulkNoteCommands: View {
             Button("Resolve \(Self.noun(resolvable.count))") { Task { await model.notesPanel.resolve(resolvable.map(\.id)) } }
         }
         if !reopenable.isEmpty {
-            Button("Reopen \(Self.noun(reopenable.count)) as Drafts") { Task { await model.notesPanel.reopen(reopenable.map(\.id)) } }
+            Button("Back to Draft (\(Self.noun(reopenable.count)))") { Task { await model.notesPanel.reopen(reopenable.map(\.id)) } }
         }
         Menu("Colour") {
             ForEach(NoteColor.allCases, id: \.self) { color in
@@ -1364,7 +1373,7 @@ private struct BulkActionBar: View {
                 }
             }
             if !reopenable.isEmpty {
-                InlineIconButton(title: "Reopen \(reopenable.count) as Drafts", symbol: "arrow.uturn.backward", emphasized: true) {
+                InlineIconButton(title: "Back to draft (\(reopenable.count))", symbol: "arrow.uturn.backward", emphasized: true) {
                     Task { await model.notesPanel.reopen(reopenable.map(\.id)) }
                 }
             }

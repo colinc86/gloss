@@ -476,6 +476,12 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// A sent note back to a draft (#13), to change and send again. Its send history stays: it was sent. The agent may
+    /// already have read it, but `resolve_note` refuses drafts, so it can't be resolved until it is sent again.
+    public func unsend(_ id: NoteID, at date: Date = Date()) async throws {
+        try await transition(id, to: .draft, at: date)
+    }
+
     /// The labels an answered question is written with, so the app can show the exchange as a conversation.
     public static let askedLabel = "Agent asked:"
     public static let answerLabel = "Answer:"
@@ -522,11 +528,12 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// The lifecycle: draft → sent → resolved; any → orphaned; orphaned → draft; draft → resolved by hand.
+    /// The lifecycle: draft → sent → resolved; any → orphaned; orphaned → draft; draft → resolved by hand; sent → draft
+    /// when unsent.
     static func checkTransition(from: NoteState, to: NoteState) throws {
         let allowed: Bool
         switch (from, to) {
-        case (.draft, .sent), (.sent, .resolved), (.draft, .resolved), (.orphaned, .draft):
+        case (.draft, .sent), (.sent, .resolved), (.draft, .resolved), (.orphaned, .draft), (.sent, .draft):
             allowed = true
         case (_, .orphaned):
             allowed = from != .orphaned

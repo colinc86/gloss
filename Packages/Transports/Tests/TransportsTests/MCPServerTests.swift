@@ -135,6 +135,10 @@ struct MCPServerTests {
         #expect(try await store.note(draft.id)?.state == .draft)
         let documents = try await call("list_documents")
         #expect(!documents.text.contains("DRAFTS.md") && !documents.text.contains("draft="), "\(documents.text)")
+        // A note sent and then put back to a draft (#13) is still readable (the agent had it) but can't be resolved.
+        try await store.unsend(ids[1])
+        #expect(try await call("get_note", ["id": .string(ids[1].rawValue)]).isError == false)
+        #expect(try await call("resolve_note", ["id": .string(ids[1].rawValue)]).isError)
         // An orphaned draft, or one resolved by hand, was never given to an agent either.
         try await store.markOrphaned(draft.id)
         #expect(try await call("get_note", ["id": .string(draft.id.rawValue)]).isError)

@@ -179,7 +179,7 @@ Architecture: the Mac runs one app process (Explorer, Viewers, Notes + anchors, 
 
 **Anchor JSON.** Text `{start:{line,col}, end:{line,col}, text, before, after, hash?}`. Image `{x, y, w, h, imageW, imageH, hash?}`. PDF `{page, bounds:{x,y,w,h}, text, pageCount}`. Whole file `{}`. Element (milestone 2) `{selector, tag, text, html, rect:{x,y,w,h}, line?, hash?}` with `anchor_type = element`. `hash` is the SHA-256 of the file at anchor time (optional for backward compatibility; `col` counts UTF-16 units, `page` is 0-based in storage and printed 1-based).
 
-**Note states.** `draft`, `sent`, `resolved`, `orphaned`. draft→sent on delivery; sent→resolved by MCP or by hand; draft or sent→orphaned when re-anchoring fails (a resolved note stays resolved: the agent rewriting its text is the expected outcome); orphaned→the state it had before when the anchor is found again or placed by hand (decided 2026-10-05, issue #6).
+**Note states.** `draft`, `sent`, `resolved`, `orphaned`. draft→sent on delivery; sent→resolved by MCP or by hand; draft or sent→orphaned when re-anchoring fails (a resolved note stays resolved: the agent rewriting its text is the expected outcome); orphaned→the state it had before when the anchor is found again or placed by hand (decided 2026-10-05, issue #6); sent→draft by hand (Back to Draft, issue #13), keeping the send history; the agent may have read it but can't resolve a draft.
 
 ## Milestone 1
 

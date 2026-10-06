@@ -293,7 +293,7 @@ struct NoteBulkActionTests {
                                                              state: note.id == draft.id ? .draft : note.id == sent.id ? .sent : .resolved,
                                                              color: .yellow, createdAt: note.createdAt, updatedAt: note.updatedAt) }
         #expect(NotesPanelModel.sendable(notes).map(\.id) == [draft.id, sent.id], "resolved notes are not sent again")
-        #expect(NotesPanelModel.reopenable(notes).map(\.id) == [done.id])
+        #expect(NotesPanelModel.reopenable(notes).map(\.id) == [sent.id, done.id], "sent notes go back to drafts too (#13)")
 
         let panel = NotesPanelModel(noteStore: store)
         panel.start()

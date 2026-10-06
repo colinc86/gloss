@@ -46,7 +46,7 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
 | State | Means |
 | --- | --- |
 | Draft | Written, not sent yet. Edit it as much as you like. |
-| Sent | Delivered to an agent. The card says where and when. |
+| Sent | Delivered to an agent. The card says where and when. **Back to Draft** takes it back to change and send again (the agent may already have read it). |
 | Resolved | The agent (or you, with ⇧⌘D) marked it done or skipped. Its reply shows on the card. |
 | Needs your answer | The agent resolved it with a question, or asked you something about a file on its own. Click **Reply**, answer, and send it. |
 | Orphaned | The text it pointed at is gone. Look at it, then fix or delete it. If the text comes back, the note returns to the state it had. |
