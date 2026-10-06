@@ -401,6 +401,11 @@ struct NoteCard: View {
     /// The anchored line in the editor's colours, worked out once per note.
     @State private var colouredExcerpt: AttributedString?
     @State private var hovering = false
+    /// The whole thread open: every turn, the full comment, and the agent's message uncut.
+    @State private var expanded = false
+    /// The collapsed card cuts the comment or the agent's message short, so it offers to open.
+    @State private var commentCut = false
+    @State private var messageCut = false
     /// Answering an agent's question in place.
     @State private var replying = false
     @State private var answer = ""
@@ -422,15 +427,20 @@ struct NoteCard: View {
     private var isSelected: Bool { model.notesPanel.selectedNoteID == note.id }
     /// Resolved notes step back so open work leads the eye; a question back from the agent is still open work.
     private var isSettled: Bool { note.state == .resolved && note.resolveOutcome != .needsInput }
-    /// A settled note at rest is one line; under the pointer or selected it opens to its reply and actions.
-    private var isCompact: Bool { isSettled && !hovering && !isSelected }
+    /// A settled note at rest is one line, plus its latest turn if it has one; selected or opened it shows its actions.
+    /// The pointer never changes its size: a card that grows under the pointer moves the one below it.
+    private var isCompact: Bool { isSettled && !isSelected && !expanded }
+
+    /// The comment and its exchanges with the agent; the agent's message counts only while the note is resolved.
+    private var thread: NoteThread { NoteThread(body: note.body, resolveMessage: note.state == .resolved ? note.resolveMessage : nil) }
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.Space.m) {
-            // The note's colour, as a soft rail that warms up on hover.
+            // The note's colour, as a soft rail that glows on hover; only selection, which the pointer doesn't change,
+            // widens it.
             Capsule()
                 .fill(tint.gradient)
-                .frame(width: hovering || isSelected ? 4 : 3)
+                .frame(width: isSelected ? 4 : 3)
                 .opacity(isSettled ? 0.45 : 1)
                 .shadow(color: tint.opacity(hovering ? 0.45 : 0), radius: 4)
             VStack(alignment: .leading, spacing: DS.Space.s) {
@@ -468,24 +478,11 @@ struct NoteCard: View {
                 if editing {
                     editField
                         .transition((AnyTransition.opacity.combined(with: .move(edge: .top))).calmed)
-                } else if !note.body.isEmpty || thumbnail != nil {
-                    HStack(alignment: .top, spacing: DS.Space.m) {
-                        Text(bodyText)
-                            .font(.callout)
-                            .foregroundStyle(isSettled ? .secondary : .primary)
-                            .lineLimit(isCompact ? 1 : 6)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let thumbnail {
-                            Spacer(minLength: 0)
-                            thumbnailView(thumbnail)
-                        }
+                    if let pending = thread.latest, note.state == .resolved, pending.speaker == .agent {
+                        turnView(pending, pending: true)
                     }
-                }
-                if !isCompact, note.state == .resolved, let message = note.resolveMessage, !message.isEmpty {
-                    AgentMessageBubble(message: message, needsInput: needsInput, agent: note.author ?? lastSend.flatMap(NotesPanelModel.agentName))
-                        // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
-                        .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
-                                                             removal: .opacity).calmed)
+                } else {
+                    threadView
                 }
                 if !isCompact, lastSend != nil {
                     TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -518,6 +515,7 @@ struct NoteCard: View {
         .animation(DS.Motion.snappy, value: hovering)
         .animation(DS.Motion.bouncy, value: note.state)
         .animation(DS.Motion.smooth, value: isCompact)
+        .animation(DS.Motion.smooth, value: expanded)
         .animation(DS.Motion.smooth, value: replying)
         .animation(DS.Motion.smooth, value: editing)
         .onChange(of: needsInput) { _, waiting in
@@ -545,7 +543,11 @@ struct NoteCard: View {
         .accessibilityElement(children: replying ? .contain : .ignore)
         .accessibilityLabel(Self.spokenSummary(note))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityActions { commands(dividers: false) }
+        .accessibilityActions {
+            commands(dividers: false)
+            let thread = thread
+            if showsThreadToggle(thread) { Button(threadToggleTitle(thread)) { expanded.toggle() } }
+        }
         // Refetched when the note changes and after every send, so a failure shows without a state change.
         .task(id: "\(note.updatedAt.timeIntervalSince1970)-\(model.send.completedSends)") {
             lastSend = try? await model.noteStore.lastSend(for: note.id)
@@ -636,7 +638,80 @@ struct NoteCard: View {
         return note.state == .draft && !line.failed ? nil : line
     }
 
-    private var bodyText: AttributedString { Self.styledBody(note.body) }
+    /// The comment, then the latest turn (an agent's message cut at four lines); the earlier turns and the rest of
+    /// long text wait behind "Show conversation", so a reply is always in sight and hovering never resizes the card.
+    @ViewBuilder
+    private var threadView: some View {
+        let thread = thread
+        if !thread.comment.isEmpty || thumbnail != nil {
+            HStack(alignment: .top, spacing: DS.Space.m) {
+                TruncatingText(text: Text(Self.styledBody(thread.comment)).font(.callout).foregroundStyle(isSettled ? .secondary : .primary),
+                               lineLimit: isCompact ? 1 : 2, expanded: expanded, isCut: $commentCut)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let thumbnail {
+                    thumbnailView(thumbnail)
+                }
+            }
+        }
+        if expanded {
+            ForEach(Array(thread.earlier.enumerated()), id: \.offset) { _, turn in
+                turnView(turn, pending: false)
+            }
+            .transition(.opacity)
+        }
+        if let latest = thread.latest {
+            turnView(latest, pending: note.state == .resolved && latest.speaker == .agent)
+        }
+        if showsThreadToggle(thread) {
+            Button {
+                withAnimation(DS.Motion.smooth) { expanded.toggle() }
+            } label: {
+                HStack(spacing: DS.Space.xs) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text(threadToggleTitle(thread))
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Show only the latest turn" : "Show the whole comment and every turn with the agent")
+        }
+    }
+
+    /// One turn of the exchange: the agent's message still waiting is its bubble; an answered question and the
+    /// user's answers read as the labeled lines they are stored as.
+    @ViewBuilder
+    private func turnView(_ turn: NoteThread.Turn, pending: Bool) -> some View {
+        if pending {
+            AgentMessageBubble(message: turn.text, needsInput: needsInput, agent: note.author ?? lastSend.flatMap(NotesPanelModel.agentName),
+                               expanded: expanded || editing, isCut: $messageCut)
+                // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
+                .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
+                                                     removal: .opacity).calmed)
+        } else {
+            Text(Self.styledBody("\(turn.speaker == .agent ? NoteStore.askedLabel : NoteStore.answerLabel) \(turn.text)"))
+                .font(.callout)
+                .foregroundStyle(isSettled ? .secondary : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Offered when there's more than the collapsed card shows: earlier turns, or a comment or message cut short.
+    /// Whether text is cut is measured on its collapsed form, so the button stays put while the card is open.
+    private func showsThreadToggle(_ thread: NoteThread) -> Bool {
+        !thread.earlier.isEmpty || commentCut || (messageCut && thread.latest?.speaker == .agent)
+    }
+
+    private func threadToggleTitle(_ thread: NoteThread) -> String {
+        let count = thread.turns.count
+        if count > 1 { return expanded ? "Hide conversation" : "Show conversation (\(count))" }
+        return expanded ? "Show less" : "Show more"
+    }
 
     /// The first line with something on it of a text note's anchored text, trimmed; nil for regions, cells, and
     /// whole-file notes.

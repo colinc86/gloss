@@ -3,11 +3,15 @@ import SwiftUI
 /// What the agent said when it resolved a note, drawn as its turn in a conversation: a tinted bubble whose tail points
 /// up at the comment it answers, with who spoke and how. A question is orange and asks for you; a finished note's
 /// reply is quiet. Messages app and Linear's agent replies read this way: the voice is clear before the words are.
+/// A collapsed card cuts a long message at four lines and offers the rest with Show conversation.
 struct AgentMessageBubble: View {
     let message: String
     let needsInput: Bool
     /// The agent the note was last sent to, when there was a send; otherwise "Agent".
     let agent: String?
+    var expanded = true
+    /// Set when the collapsed bubble cuts the message short.
+    var isCut: Binding<Bool> = .constant(false)
 
     private var tint: Color { needsInput ? .orange : .secondary }
 
@@ -20,11 +24,8 @@ struct AgentMessageBubble: View {
             }
             .font(.caption2.weight(.semibold))
             .foregroundStyle(tint)
-            Text(message)
-                .font(.callout)
-                .foregroundStyle(needsInput ? .primary : .secondary)
-                .lineLimit(4)
-                .fixedSize(horizontal: false, vertical: true)
+            TruncatingText(text: Text(message).font(.callout).foregroundStyle(needsInput ? .primary : .secondary),
+                           lineLimit: 4, expanded: expanded, isCut: isCut)
                 .textSelection(.enabled)
         }
         .padding(.horizontal, DS.Space.m)

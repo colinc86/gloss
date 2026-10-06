@@ -296,16 +296,26 @@ path. Dropping on the Dock icon is not supported yet.
 
 ### Notes
 
-- **Note card**: colour rail (3 pt, 4 pt when hovered or selected, faded when settled), anchor label with the anchor
-  kind's symbol, the comment, the agent's reply, the delivery line, then the action row with Send first and Delete
-  apart at the trailing edge.
+- **Note card**: colour rail (3 pt, 4 pt when selected, faded when settled; hover only lights its glow), anchor label
+  with the anchor kind's symbol, the comment, the latest turn of its thread, the delivery line, then the action row
+  with Send first and Delete apart at the trailing edge.
   Under the anchor label, a text note quotes what it is about, as GitHub review comments show their line: the first
   non-blank line of the anchored text, trimmed, in `.caption` monospaced on a faint rounded well, one line with a
   tail ellipsis (the whole line in its tooltip), in the editor's syntax colours when the file has a grammar. Hidden
   on compact settled cards; regions, cells, and whole-file notes have none.
+  The pointer never changes a card's size: a card that grows under it pushes the one below and flickers in and out
+  of hover. Hover lights the rail's glow, the action icons and the note's path on the page, nothing more.
+  The thread (`NoteThread`) is the comment, then each "Agent asked:" / "Answer:" exchange, then the agent's message
+  if it resolved the note with one. Turns start only where answering writes them (after a blank line, or an answer
+  right under its question), so a comment line that begins "Answer:" stays text. A card shows the comment (two
+  lines) and the latest turn: the agent's bubble (four lines), or your "Answer:" line. A quiet "› Show conversation
+  (N)" link, the chevron that turns as the search results' file headers do, opens every turn and all the text in one
+  smooth animation; it's there when there are earlier turns or text was cut short ("Show more" when only text was).
+  Whether text is cut is measured on unseen collapsed and uncut copies (`TruncatingText`), so the link stays put
+  while the card is open. Editing works on the whole body.
   Resolved notes (not ones where the agent asked a question) rest as one line: anchor, pill, the first line of the
-  comment. Under the pointer or selected they open smoothly to the reply, delivery line, and actions, so finished
-  work stays in reach without crowding the open work above it. In the default sort (Position in File), documents
+  comment, and their latest turn if they have one. Selected or opened, they show the excerpt, delivery line and
+  actions, so finished work stays in reach without crowding the open work above it. In the default sort (Position in File), documents
   with open work come first and documents whose notes are all settled follow, each part in path order.
 - **A note arrives**: a card for a note that just appeared (made anywhere, or brought back by Undo) glows in its
   own colour at 20% for 1.6 s, then fades over 0.9 s, so the panel answers "where did it go?" the way Things and

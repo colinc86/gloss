@@ -32,6 +32,8 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
   from agents. When the panel is narrow the bar shows symbols; hover one for its name and count.
 - **Colors and search** narrow the list further. Search covers comments, file names and agents' replies.
 - **Sort** by position in the file, newest, oldest, color or state.
+- A card shows the comment and the latest turn of the conversation with the agent: its reply or question, or your
+  answer. **Show conversation** opens the earlier questions and answers and the rest of a long comment.
 - Click a card to show its note in the viewer. Return does the same for the selected card; Delete removes it, with
   Undo.
 - Right-click a card to edit, send, copy it as a packet, resolve it, reopen it, or delete it. Editing happens right
