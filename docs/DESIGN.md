@@ -313,6 +313,11 @@ path. Dropping on the Dock icon is not supported yet.
   the Dock badge like any question. When it arrives the document opens to it and the window comes forward without
   taking the keyboard from the terminal (`orderFrontRegardless`), unless the user is writing a note, when it only
   waits under Attention.
+- **Editing in the card** (#14): the pencil and Edit… turn the card's comment into the composer's own field, in
+  place, with the colour swatches, Cancel and Save under it; Return saves, Shift-Return adds a line, Escape cancels,
+  and the field's border takes the note's colour. It doesn't depend on the note being on screen in the viewer (the
+  composer popover is for new notes and re-anchoring). If the comment changed while it was open (an agent's answer was
+  added), Save refuses with an orange line and keeps the typing; a second Save then means it.
 - **Answering a question**: when an agent resolves a note with a question, the card leads its action row with an
   accent Reply (↩), also first in the context menu and the card's accessibility actions. It opens a one-line field
   under the question, already focused, with a Reply button beside it; Return answers, Escape puts it away. Answering

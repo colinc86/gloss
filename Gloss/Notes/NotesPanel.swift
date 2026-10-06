@@ -359,6 +359,13 @@ struct NoteCard: View {
     @State private var replying = false
     @State private var answer = ""
     @State private var replyFailed = false
+    /// Editing the comment in place (#14): what is typed, the colour picked, and the comment as it was when editing
+    /// began, so a change made meanwhile isn't overwritten.
+    @State private var editing = false
+    @State private var editBody = ""
+    @State private var editColor = NoteColor.yellow
+    @State private var editOriginal = ""
+    @State private var editRefusal: NotesPanelModel.EditRefusal?
     @FocusState private var answerFocused: Bool
 
     private var arrived: Bool { model.notesPanel.arrivedIDs.contains(note.id) }
@@ -412,7 +419,10 @@ struct NoteCard: View {
                     }
                 }
                 // An agent's own question (ask_user) has no comment of the user's above it: the bubble is the note.
-                if !note.body.isEmpty || thumbnail != nil {
+                if editing {
+                    editField
+                        .transition((AnyTransition.opacity.combined(with: .move(edge: .top))).calmed)
+                } else if !note.body.isEmpty || thumbnail != nil {
                     HStack(alignment: .top, spacing: DS.Space.m) {
                         Text(bodyText)
                             .font(.callout)
@@ -463,6 +473,7 @@ struct NoteCard: View {
         .animation(DS.Motion.bouncy, value: note.state)
         .animation(DS.Motion.smooth, value: isCompact)
         .animation(DS.Motion.smooth, value: replying)
+        .animation(DS.Motion.smooth, value: editing)
         .onChange(of: needsInput) { _, waiting in
             if !waiting, answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { replying = false }
         }
@@ -510,7 +521,7 @@ struct NoteCard: View {
             if dividers { Divider() }
         }
         Button("Reveal in Viewer") { model.reveal(note: note, in: document) }
-        Button("Edit…") { model.edit(note: note, in: document) }
+        Button("Edit…", action: startEdit)
         if note.state == .orphaned {
             Button("Re-anchor to a New Selection") { model.reanchor(note: note, in: document) }
         }
@@ -656,6 +667,65 @@ struct NoteCard: View {
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.orange.opacity(0.5)))
     }
 
+    /// The comment, editable where it is: Return saves, Shift-Return adds a line, Escape cancels. Works whether or
+    /// not the note is on screen in the viewer.
+    private var editField: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            NoteBodyEditor(text: $editBody, onSubmit: commitEdit, onCancel: cancelEdit)
+                .frame(minHeight: 44, maxHeight: 160)
+                .padding(DS.Space.xs)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color(nsColor: Theme.color(for: editColor)).opacity(0.6)))
+            HStack(spacing: DS.Space.s) {
+                ColorSwatches(selection: $editColor)
+                Spacer(minLength: DS.Space.xs)
+                Button("Cancel", action: cancelEdit)
+                    .controlSize(.small)
+                Button("Save", action: commitEdit)
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.small)
+                    .disabled(editBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            // Said in place, with the typing kept: the note changed meanwhile, or the write failed.
+            if let editRefusal {
+                Label(editRefusal == .changedMeanwhile ? "This note changed while you were editing. Your text is still here." : "The edit couldn't be saved. It's still here.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private func startEdit() {
+        editBody = note.body
+        editOriginal = note.body
+        editColor = note.color
+        editRefusal = nil
+        editing = true
+    }
+
+    private func cancelEdit() {
+        editing = false
+        editRefusal = nil
+    }
+
+    private func commitEdit() {
+        let body = editBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        Task {
+            if let refusal = await model.notesPanel.update(note.id, body: body, color: editColor, editedFrom: editOriginal) {
+                editRefusal = refusal
+                // Changed meanwhile: what's there now becomes the base, so a second Save is a decision made seeing it.
+                if refusal == .changedMeanwhile, let current = model.notesPanel.groups.flatMap(\.notes).first(where: { $0.id == note.id }) {
+                    editOriginal = current.body
+                }
+            } else {
+                editing = false
+            }
+        }
+    }
+
     private func startReply() {
         replyFailed = false
         replying = true
@@ -692,7 +762,7 @@ struct NoteCard: View {
                 InlineIconButton(title: "Re-anchor to a new selection", symbol: "link", emphasized: lit) { model.reanchor(note: note, in: document) }
                 InlineIconButton(title: "Restore as draft", symbol: "arrow.uturn.backward", emphasized: lit) { Task { await model.notesPanel.restoreDraft(note) } }
             }
-            InlineIconButton(title: "Edit", symbol: "pencil", emphasized: lit) { model.edit(note: note, in: document) }
+            InlineIconButton(title: "Edit", symbol: "pencil", emphasized: lit, action: startEdit)
             if note.state == .resolved {
                 InlineIconButton(title: "Reopen as draft", symbol: "arrow.counterclockwise", emphasized: lit) { Task { await model.notesPanel.reopen(note.id) } }
             } else {

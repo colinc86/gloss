@@ -325,3 +325,24 @@ struct OpenWorkLeadsTests {
         #expect(panel.visibleGroups.map(\.document.fileName) == ["open.md", "done.md"])
     }
 }
+
+/// Issue #14: a note edited in its card, whether or not it is on screen in the viewer.
+@MainActor
+struct NoteInlineEditTests {
+    @Test func anEditSavesBodyAndColourUnlessTheNoteChangedMeanwhile() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/edit.md", kind: .markdown, fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "first words", color: .yellow)
+        let panel = NotesPanelModel(noteStore: store)
+
+        #expect(await panel.update(note.id, body: "better words", color: .green, editedFrom: "first words") == nil)
+        let saved = try #require(try await store.note(note.id))
+        #expect(saved.body == "better words" && saved.color == .green)
+
+        // An agent's answer lands while the card is being edited: the edit is refused, nothing is overwritten.
+        try await store.updateBody(note.id, body: "better words\nAgent asked: why?")
+        #expect(await panel.update(note.id, body: "mine", color: .blue, editedFrom: "better words") == .changedMeanwhile)
+        #expect(try await store.note(note.id)?.body == "better words\nAgent asked: why?")
+    }
+}
+

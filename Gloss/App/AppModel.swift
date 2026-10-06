@@ -1191,6 +1191,8 @@ final class AppModel {
     func handleEscape(in window: NSWindow?) -> Bool {
         guard let window, window === mainWindow, window.attachedSheet == nil else { return false }
         if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor { return false }
+        // A note being written or edited in a card cancels itself.
+        if window.firstResponder is NoteBodyEditor.SubmitTextView { return false }
         return activeSession?.dismissNoteAffordance() ?? false
     }
 

@@ -33,7 +33,8 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
 - **Sort** by position in the file, newest, oldest, colour or state.
 - Click a card to show its note in the viewer. Return does the same for the selected card; Delete removes it, with
   Undo.
-- Right-click a card to edit, send, copy it as a packet, resolve it, reopen it, or delete it.
+- Right-click a card to edit, send, copy it as a packet, resolve it, reopen it, or delete it. Editing happens right
+  in the card: change the comment or colour, Return to save, Escape to cancel.
 - **Select several** with ⌘-click, ⇧-click or ⌘A, and a bar appears above the list to send, resolve, reopen,
   recolour, copy or delete them all at once. Each action only touches the notes it applies to (Send skips resolved
   notes), and deleting several is undone in one step.

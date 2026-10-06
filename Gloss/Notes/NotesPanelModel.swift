@@ -287,6 +287,24 @@ final class NotesPanelModel {
         for note in notes { await reopen(note.id) }
     }
 
+    /// Why an inline edit couldn't be saved; nil when it was.
+    enum EditRefusal: Error, Equatable { case changedMeanwhile, failed }
+
+    /// Saves an edit made in the card (#14). Refused when the comment changed since editing began (an agent's answer
+    /// was added), so the person's typing is never laid over text they didn't see; the card keeps what they typed.
+    func update(_ id: NoteID, body: String, color: NoteColor, editedFrom original: String) async -> EditRefusal? {
+        do {
+            guard let current = try await noteStore.note(id) else { return .failed }
+            guard current.body == original else { return .changedMeanwhile }
+            if body != current.body { try await noteStore.updateBody(id, body: body) }
+            if color != current.color { try await noteStore.updateColor(id, color: color) }
+            return nil
+        } catch {
+            Log.notes.error("edit failed: \(error, privacy: .public)")
+            return .failed
+        }
+    }
+
     func setColor(_ ids: [NoteID], _ color: NoteColor) async {
         for id in ids {
             do { try await noteStore.updateColor(id, color: color) } catch { Log.notes.error("colour change failed: \(error, privacy: .public)") }
