@@ -140,7 +140,7 @@ final class NotesPanelModel {
         switch filter {
         case .all:
             return EmptyCopy(symbol: "circle.lefthalf.filled", title: "No \(colorWords) notes",
-                             message: "Notes of other colours are hidden by the colour filter.", action: "Show All Notes")
+                             message: "Notes of other colors are hidden by the color filter.", action: "Show All Notes")
         case .drafts:
             return EmptyCopy(symbol: "note.text.badge.plus", title: colors.isEmpty ? "No drafts" : "No \(colorWords) drafts",
                              message: "Select text in any file and click Add Note. Drafts wait here until you send them.", action: "Show All Notes")

@@ -1375,7 +1375,7 @@ struct BulkNoteCommands: View {
         if !reopenable.isEmpty {
             Button("Back to Draft (\(Self.noun(reopenable.count)))") { Task { await model.notesPanel.reopen(reopenable.map(\.id)) } }
         }
-        Menu("Colour") {
+        Menu("Color") {
             ForEach(NoteColor.allCases, id: \.self) { color in
                 Button(color.rawValue.capitalized) { Task { await model.notesPanel.setColor(ids, color) } }
             }

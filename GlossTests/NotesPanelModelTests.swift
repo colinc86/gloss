@@ -166,8 +166,10 @@ struct NotesPanelModelTests {
     }
 
     @Test func theAgentsTurnIsHeadedByWhoSpokeAndHow() {
-        #expect(AgentMessageBubble.heading(agent: "claude", needsInput: true) == "claude asks")
-        #expect(AgentMessageBubble.heading(agent: "codex", needsInput: false) == "codex replied")
+        #expect(AgentMessageBubble.heading(agent: "claude", needsInput: true) == "Claude Code asks")
+        #expect(AgentMessageBubble.heading(agent: "codex", needsInput: false) == "Codex replied")
+        #expect(AgentMessageBubble.heading(agent: "opencode", needsInput: true) == "OpenCode asks")
+        #expect(AgentMessageBubble.heading(agent: "zed", needsInput: true) == "zed asks", "another client keeps its own name")
         #expect(AgentMessageBubble.heading(agent: nil, needsInput: true) == "Agent asks")
         #expect(AgentMessageBubble.heading(agent: "  ", needsInput: false) == "Agent replied")
     }

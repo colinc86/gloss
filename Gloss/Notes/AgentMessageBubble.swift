@@ -38,8 +38,19 @@ struct AgentMessageBubble: View {
     }
 
     nonisolated static func heading(agent: String?, needsInput: Bool) -> String {
-        let name = agent?.trimmingCharacters(in: .whitespaces).nilIfEmpty ?? "Agent"
+        let name = displayName(agent?.trimmingCharacters(in: .whitespaces).nilIfEmpty ?? "Agent")
         return needsInput ? "\(name) asks" : "\(name) replied"
+    }
+
+    /// The agents by their own names; MCP records them as `claude`, `codex` and `opencode`. Any other client keeps
+    /// the name it gave.
+    nonisolated static func displayName(_ agent: String) -> String {
+        switch agent.lowercased() {
+        case "claude": "Claude Code"
+        case "codex": "Codex"
+        case "opencode": "OpenCode"
+        default: agent
+        }
     }
 }
 

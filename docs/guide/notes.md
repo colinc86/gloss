@@ -20,7 +20,7 @@ What you can select depends on the viewer:
 | Web page | Text, or an element: turn on **Element Notes** in the browser's toolbar and click it |
 | Anything else | The whole file: Notes › New Note from Selection (⇧⌘N) with nothing selected |
 
-The note composer quotes what you selected, so you write against it. Pick one of six colours to group notes however
+The note composer quotes what you selected, so you write against it. Pick one of six colors to group notes however
 you like. Starter phrases (Explain, Fix, Add a test, Why) fill in the beginning of a comment.
 
 ## The notes panel
@@ -29,14 +29,14 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
 
 - **Filters**: All, Drafts, Sent, Resolved and **Attention**, which holds notes that lost their place and questions
   from agents. When the panel is narrow the bar shows symbols; hover one for its name and count.
-- **Colours and search** narrow the list further. Search covers comments, file names and agents' replies.
-- **Sort** by position in the file, newest, oldest, colour or state.
+- **Colors and search** narrow the list further. Search covers comments, file names and agents' replies.
+- **Sort** by position in the file, newest, oldest, color or state.
 - Click a card to show its note in the viewer. Return does the same for the selected card; Delete removes it, with
   Undo.
 - Right-click a card to edit, send, copy it as a packet, resolve it, reopen it, or delete it. Editing happens right
-  in the card: change the comment or colour, Return to save, Escape to cancel.
+  in the card: change the comment or color, Return to save, Escape to cancel.
 - **Select several** with ⌘-click, ⇧-click or ⌘A, and a bar appears above the list to send, resolve, reopen,
-  recolour, copy or delete them all at once. Each action only touches the notes it applies to (Send skips resolved
+  recolor, copy or delete them all at once. Each action only touches the notes it applies to (Send skips resolved
   notes), and deleting several is undone in one step.
 
 ⌘' and ⇧⌘' step through the notes in the open document.
@@ -66,7 +66,7 @@ Page in Notes Panel and Show Paths to Notes.
 
 - **Link** makes the notes panel follow the page. As you scroll, the card for the note nearest the middle of the
   page stays in the middle of the list. While the pointer is over the list, it holds still.
-- **Paths** (with link on) outlines every visible note in its colour and draws a curve from it to its card's colour
+- **Paths** (with link on) outlines every visible note in its color and draws a curve from it to its card's color
   bar. Hover a card or a highlight and its path stands out.
 
 They work in every viewer where a note has a place: text, Markdown, PDF, images, spreadsheets and web pages.
