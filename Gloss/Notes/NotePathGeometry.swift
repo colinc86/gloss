@@ -134,97 +134,68 @@ nonisolated enum NoteOutline {
         return path
     }
 
-    /// Where the path leaves the outline, heading right: on the outline itself, in the gap between the first two
-    /// lines of the top shape (below its line when it has one), at the right end of the outline's straight edge
-    /// there, so the path continues that edge and never runs through words or the note.
+    /// Where the path leaves the outline, heading right: the middle of the outline's rightmost edge (on the line that
+    /// reaches furthest right, the one nearest the note's middle when several do), so the path starts level and
+    /// nothing of the note lies beyond it. With several shapes (cells in columns), the rightmost shape's.
     static func departure(_ shapes: [Shape]) -> CGPoint? {
-        guard let shape = shapes.first, let first = shape.lines.first else { return nil }
-        let points = polygon(shape)
-        if shape.lines.count >= 2 {
-            let second = shape.lines[1]
-            let y = first.bottom
-            let wide = max(first.maxX, second.maxX)
-            guard abs(first.maxX - second.maxX) > 0.5, let corner = points.firstIndex(where: { abs($0.x - wide) < 0.01 && abs($0.y - y) < 0.01 }) else {
-                return CGPoint(x: wide, y: y)   // no step: straight out of the right side
-            }
-            return CGPoint(x: wide - cornerRadius(at: corner, in: points), y: y)
-        }
-        guard let corner = points.firstIndex(where: { abs($0.x - first.maxX) < 0.01 && abs($0.y - first.bottom) < 0.01 }) else { return nil }
-        return CGPoint(x: first.maxX - cornerRadius(at: corner, in: points), y: first.bottom)
+        guard let shape = shapes.max(by: { ($0.lines.map(\.maxX).max() ?? 0) < ($1.lines.map(\.maxX).max() ?? 0) }),
+              let right = shape.lines.map(\.maxX).max(),
+              let top = shape.lines.first?.top, let bottom = shape.lines.last?.bottom else { return nil }
+        let middle = (top + bottom) / 2
+        let widest = shape.lines.filter { abs($0.maxX - right) < 0.5 }
+        guard let line = widest.min(by: { abs(($0.top + $0.bottom) / 2 - middle) < abs(($1.top + $1.bottom) / 2 - middle) }) else { return nil }
+        return CGPoint(x: right, y: (line.top + line.bottom) / 2)
     }
 }
 
-/// The curve from a note's outline to its card: along the gap it left by, an S-curve across that leaves and lands
-/// level, then a quarter turn down into the top of the card's colour rail, so it carries on as the rail, like a pipe
-/// bending into it, whether the card is above the note or below.
+/// The curve from a note's outline to its card, as the user drew it (#11): level out of the outline's right edge,
+/// one S across, and level again into the middle of the card's colour rail, meeting the rail at a right angle.
 nonisolated struct NoteConnector: Equatable {
     var start: CGPoint
-    /// Where the straight run ends and the S-curve begins.
+    /// Where the level run ends and the S begins.
     var bend: CGPoint
     var control1: CGPoint
     var control2: CGPoint
-    /// Where the S-curve lands, level, just above and before the rail; the quarter turn starts here.
-    var approach: CGPoint
+    /// The rail's side at its vertical middle.
     var end: CGPoint
-    var turnRadius: CGFloat
 
-    /// The curve starts this far before the viewer's edge, so the bend reads as one motion across it; further back
-    /// the more it has to climb or drop, so a tall sweep leans out instead of standing up straight.
-    static func lead(rise: CGFloat) -> CGFloat {
-        min(max(abs(rise) * 0.25, 24), 72)
+    /// The short level stub out of the outline before the S begins: a few points, so the path visibly leaves the
+    /// note's edge square, then the S takes the whole rest of the way, gentle however far it has to climb or drop.
+    static func stub(room: CGFloat) -> CGFloat {
+        min(max(room * 0.08, 8), 40)
     }
-    static let turn: CGFloat = 10
 
+    /// `viewerEdge` is kept for the callers; the S no longer waits for it (#11: it spreads across the whole way).
     init(from start: CGPoint, viewerEdge: CGFloat, to end: CGPoint) {
         self.start = start
         self.end = end
-        // A highlight reaching the viewer's edge leaves little room before the rail: the turn tightens so the curve
-        // still only ever moves forward (the start stays on the outline; further back would be inside the note).
         let room = max(end.x - start.x, 0)
-        turnRadius = min(max(room / 3, 2), Self.turn)
-        approach = CGPoint(x: end.x - turnRadius, y: end.y - turnRadius)
-        let bendX = min(max(start.x, viewerEdge - Self.lead(rise: approach.y - start.y)), approach.x - 20)
-        bend = CGPoint(x: min(max(start.x, bendX), approach.x), y: start.y)
-        // Long, level handles: generous curvature, the steepest part in the middle of the span.
-        let reach = max(approach.x - bend.x, 1) * 0.55
+        bend = CGPoint(x: start.x + min(Self.stub(room: room), room / 2), y: start.y)
+        // Level handles at both ends, half the span long: it leaves level and arrives level, steepest in the middle.
+        let reach = max(end.x - bend.x, 1) * 0.5
         control1 = CGPoint(x: bend.x + reach, y: start.y)
-        control2 = CGPoint(x: approach.x - reach, y: approach.y)
+        control2 = CGPoint(x: end.x - reach, y: end.y)
     }
 
-    /// A point on the S-curve, `t` from the bend (0) to the approach (1).
+    /// A point on the S, `t` from the bend (0) to the rail (1).
     func point(at t: CGFloat) -> CGPoint {
         let u = 1 - t
         let a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t
-        return CGPoint(x: a * bend.x + b * control1.x + c * control2.x + d * approach.x,
-                       y: a * bend.y + b * control1.y + c * control2.y + d * approach.y)
+        return CGPoint(x: a * bend.x + b * control1.x + c * control2.x + d * end.x,
+                       y: a * bend.y + b * control1.y + c * control2.y + d * end.y)
     }
 
-    /// The centre line as points: the straight run, the S-curve, then the quarter turn into the rail.
-    func samples(_ count: Int = 32) -> [CGPoint] {
+    /// The centre line as points: the level run, then the S.
+    func samples(_ count: Int = 40) -> [CGPoint] {
         var points = [start]
         if bend.x - start.x > 0.5 { points.append(bend) }
         for step in 1...count { points.append(point(at: CGFloat(step) / CGFloat(count))) }
-        // Centred below the approach: heading right there, heading down at the rail's top.
-        let centre = CGPoint(x: approach.x, y: end.y)
-        for step in 1...8 {
-            let angle = -CGFloat.pi / 2 + CGFloat.pi / 2 * CGFloat(step) / 8
-            points.append(CGPoint(x: centre.x + cos(angle) * turnRadius, y: centre.y + sin(angle) * turnRadius))
-        }
-        points[points.count - 1] = end
         return points
     }
 
-    /// The path as a filled ribbon: `width` wide for most of its length, then easing out to `endWidth` (the rail's
-    /// width) over the last 30 %, with a round start and a square end tucked into the rail's rounded top.
-    func ribbon(width: CGFloat, endWidth: CGFloat) -> CGPath {
-        var points = samples()
-        // Into the rail by half its width, so the ribbon covers the capsule's rounded top.
-        points.append(CGPoint(x: end.x, y: end.y + endWidth / 2))
-        var lengths: [CGFloat] = [0]
-        for index in 1..<points.count {
-            lengths.append(lengths[index - 1] + hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y))
-        }
-        let total = max(lengths.last ?? 1, 1)
+    /// The path as a filled ribbon `width` wide, with a round start and a square end flush against the rail.
+    func ribbon(width: CGFloat) -> CGPath {
+        let points = samples()
         var left: [CGPoint] = [], right: [CGPoint] = []
         for index in points.indices {
             let previous = points[max(index - 1, 0)], next = points[min(index + 1, points.count - 1)]
@@ -232,7 +203,9 @@ nonisolated struct NoteConnector: Equatable {
             let length = max(hypot(dx, dy), 0.0001)
             dx /= length
             dy /= length
-            let half = Self.width(at: lengths[index] / total, from: width, to: endWidth) / 2
+            // Both ends are level by construction: square them exactly, so the end sits flush against the rail.
+            if index == 0 || index == points.count - 1 { (dx, dy) = (1, 0) }
+            let half = width / 2
             left.append(CGPoint(x: points[index].x - dy * half, y: points[index].y + dx * half))
             right.append(CGPoint(x: points[index].x + dy * half, y: points[index].y - dx * half))
         }
@@ -249,12 +222,5 @@ nonisolated struct NoteConnector: Equatable {
         }
         path.closeSubpath()
         return path
-    }
-
-    /// The ribbon's width a fraction `u` of the way along: steady, then a smoothstep to the rail's width.
-    static func width(at u: CGFloat, from width: CGFloat, to endWidth: CGFloat) -> CGFloat {
-        guard u > 0.7 else { return width }
-        let t = min((u - 0.7) / 0.3, 1)
-        return width + (endWidth - width) * t * t * (3 - 2 * t)
     }
 }

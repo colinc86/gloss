@@ -507,15 +507,15 @@ path. Dropping on the Dock icon is not supported yet.
     inline code, styled runs) are one span, wrapped lines and a paragraph gap join into one staircase, and every
     corner, convex or concave, is rounded (3 pt, less where an edge is short), as macOS draws a multi-line
     selection. Nothing inside the note is ever stroked.
-  - *Path*: it leaves from the outline itself, at the right end of its straight edge in the gap below the first line
-    (between the first two lines of a longer note), so it continues the outline and never crosses words or the note.
-    It runs level along that gap, then an S-curve with long level handles carries it across, starting 24 pt before the
-    viewer's edge (up to 72 pt for a tall rise, so the sweep leans out), and a 10 pt quarter turn bends it down into
-    the top of the card's colour rail, like a pipe into the bar.
-  - *Ribbon*: filled, not stroked: 1.5 pt (2.5 strong) for most of its length, easing over the last 30 % to the rail's
-    width (3, or 4) and tucked into the rail's rounded top, coloured from 75 % to the rail's full colour, so the line
-    becomes the bar. Settled notes at 45 %, as the rail. The hovered card's, the selected card's, and the note under
-    the pointer on the page draw strong (2.5 pt, the rail's glow) and over the others.
+  - *Path* (#11, drawn to the user's wireframe): it leaves the middle of the outline's rightmost edge, level (on
+    the line that reaches furthest right, so nothing of the note lies beyond it), runs a short level stub (8 % of the
+    way, 8–40 pt), then one S with level handles half the span long carries it the whole rest of the way, gentle
+    however far it climbs or drops, and arrives level at the middle of the card's colour rail, meeting the bar at a
+    right angle.
+  - *Ribbon*: filled, not stroked: 1.5 pt (2.5 strong), a round start and a square end flush against the rail's
+    side, coloured from 75 % to the note's full colour. Settled notes at 45 %, as the rail. The hovered card's, the
+    selected card's, and the note under the pointer on the page draw strong (2.5 pt, the rail's glow) and over the
+    others.
   - *Motion*: drawn by AppKit layers in the window's frame view above the content, updated from the viewer's own
     scroll notification, so outlines move in the same frame as the text; ribbons follow the cards as the list
     scrolls and fade out over the last 12 pt as a card leaves the list. Showing and hiding fades in 0.2 s.

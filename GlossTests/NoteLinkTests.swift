@@ -86,7 +86,7 @@ struct NoteLinkTests {
 
     // MARK: Departure
 
-    @Test func thePathLeavesFromTheOutlineIntoTheGapNeverThroughTheNote() throws {
+    @Test func thePathLeavesTheOutlinesRightEdgeLevelNeverThroughTheNote() throws {
         let cases: [[CGRect]] = [
             [CGRect(x: 100, y: 200, width: 120, height: 16)],                                                   // one line, mid-line
             [CGRect(x: 100, y: 200, width: 120, height: 16), CGRect(x: 20, y: 216, width: 300, height: 16)],    // second line wider
@@ -97,38 +97,35 @@ struct NoteLinkTests {
             let shapes = NoteOutline.shapes(rects)
             let outline = NoteOutline.path(shapes)
             let start = try #require(NoteOutline.departure(shapes))
-            // On the outline itself.
+            // On the outline's rightmost edge.
             #expect(outline.copy(strokingWithWidth: 1, lineCap: .butt, lineJoin: .miter, miterLimit: 4).contains(start), "\(rects)")
-            // Heading right from there, never inside the note.
-            for step in stride(from: CGFloat(2), through: 300, by: 2) {
-                #expect(!outline.contains(CGPoint(x: start.x + step, y: start.y)) || outline.copy(strokingWithWidth: 1, lineCap: .butt, lineJoin: .miter, miterLimit: 4).contains(CGPoint(x: start.x + step, y: start.y)), "\(rects) at +\(step)")
-            }
-            // In a gap between lines of text: at a line's lower edge, not through its middle.
-            let edges = rects.map(\.maxY) + rects.map(\.minY)
-            #expect(edges.contains { abs($0 - start.y) <= NoteOutline.padding + 0.01 })
+            #expect(abs(start.x - (rects.map(\.maxX).max()! + NoteOutline.padding)) < 0.01, "\(rects)")
+            // Heading right from there it is never inside the note.
+            for step in stride(from: CGFloat(1), through: 300, by: 2) { #expect(!outline.contains(CGPoint(x: start.x + step, y: start.y)), "\(rects) at +\(step)") }
+            // At the middle of the line that reaches furthest right (the one nearest the note's middle when tied).
+            let widest = rects.filter { $0.maxX == rects.map(\.maxX).max()! }
+            #expect(widest.contains { abs($0.midY - start.y) <= 2 }, "\(rects): \(start)")
         }
     }
 
     // MARK: Connector
 
-    @Test func theCurveRunsOnLevelAndTurnsDownIntoTheRail() {
+    /// The wireframe in #11: level out of the note, one S, level into the middle of the rail, meeting it square.
+    @Test func meetsTheRailsMiddleAtARightAngle() {
         let start = CGPoint(x: 220, y: 216)
-        for end in [CGPoint(x: 905, y: 506), CGPoint(x: 905, y: 80), CGPoint(x: 905, y: 220)] {
+        for end in [CGPoint(x: 905, y: 506), CGPoint(x: 905, y: 80), CGPoint(x: 905, y: 220), CGPoint(x: 905, y: 900)] {
             let connector = NoteConnector(from: start, viewerEdge: 700, to: end)
-            let lead = NoteConnector.lead(rise: connector.approach.y - start.y)
-            #expect(lead >= 24 && lead <= 72)
-            #expect(connector.bend == CGPoint(x: 700 - lead, y: start.y))
-            // Smooth where the run meets the curve, and where the curve meets the turn: level at both ends.
-            #expect(connector.control1.y == start.y && connector.control1.x > connector.bend.x)
-            #expect(connector.control2.y == connector.approach.y && connector.control2.x < connector.approach.x)
-            #expect(connector.point(at: 1) == connector.approach)
-            // The turn: from heading right just above the rail to heading down at its top, never past it.
+            #expect(connector.bend == CGPoint(x: start.x + NoteConnector.stub(room: end.x - start.x), y: start.y), "a short level stub, then the S")
+            #expect(connector.control1.y == start.y && connector.control1.x > connector.bend.x, "leaves level")
+            #expect(connector.control2.y == end.y && connector.control2.x < end.x, "arrives level")
             let samples = connector.samples()
-            #expect(samples.last == end)
-            let last = samples[samples.count - 1], before = samples[samples.count - 2]
-            #expect(abs(last.x - before.x) < 0.5 && last.y > before.y)
-            #expect(samples.allSatisfy { $0.x <= end.x + 0.01 })
-            #expect(samples.suffix(9).allSatisfy { $0.y >= end.y - NoteConnector.turn - 0.01 })
+            #expect(samples.first == start && samples.last == end)
+            // Square to the vertical rail: the curve's own direction at its end is level.
+            let near = connector.point(at: 0.999)
+            #expect(abs(end.y - near.y) < abs(end.x - near.x) * 0.01, "square to the vertical rail")
+            for (a, b) in zip(samples, samples.dropFirst()) { #expect(b.x >= a.x - 0.01, "only ever forward") }
+            let ys = samples.map(\.y)
+            #expect(ys.min()! >= min(start.y, end.y) - 0.01 && ys.max()! <= max(start.y, end.y) + 0.01, "no overshoot")
         }
     }
 
@@ -138,21 +135,15 @@ struct NoteLinkTests {
             let start = CGPoint(x: 700, y: 216)
             let connector = NoteConnector(from: start, viewerEdge: 700, to: CGPoint(x: 700 + room, y: 400))
             let samples = connector.samples()
-            #expect(samples.first == start)
+            #expect(samples.first == start && samples.last == CGPoint(x: 700 + room, y: 400))
             for (a, b) in zip(samples, samples.dropFirst()) { #expect(b.x >= a.x - 0.01, "room \(room)") }
         }
     }
 
-    @Test func theRibbonBecomesTheRail() {
-        #expect(NoteConnector.width(at: 0, from: 1.5, to: 3) == 1.5)
-        #expect(NoteConnector.width(at: 0.69, from: 1.5, to: 3) == 1.5)
-        #expect(NoteConnector.width(at: 1, from: 1.5, to: 3) == 3)
-        let mid = NoteConnector.width(at: 0.85, from: 1.5, to: 3)
-        #expect(mid > 1.5 && mid < 3)
+    @Test func theRibbonCoversItsLineAndStopsAtTheRail() {
         let connector = NoteConnector(from: CGPoint(x: 220, y: 216), viewerEdge: 700, to: CGPoint(x: 905, y: 506))
-        let ribbon = connector.ribbon(width: 1.5, endWidth: 3)
-        // It covers its own centre line and reaches into the rail.
-        for point in connector.samples() { #expect(ribbon.contains(point)) }
-        #expect(ribbon.boundingBoxOfPath.maxY >= 506 + 1.4)
+        let ribbon = connector.ribbon(width: 1.5)
+        for point in connector.samples().dropFirst().dropLast() { #expect(ribbon.contains(point)) }
+        #expect(abs(ribbon.boundingBoxOfPath.maxX - 905) < 0.01, "flush against the rail, never into it")
     }
 }

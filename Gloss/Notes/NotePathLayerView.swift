@@ -22,9 +22,9 @@ final class NotePathLayerView: NSView {
         var strong: Bool
     }
 
-    /// The rail as `NoteCard` draws it: inset by the card's leading padding, below its top padding.
+    /// The rail as `NoteCard` draws it: inset by the card's leading padding (`DS.Space.xs`), running the card's
+    /// height inside its vertical padding, so its middle is the card's.
     static let railInset: CGFloat = 4
-    static let railTopInset: CGFloat = 6
     /// Ribbons fade out over this distance as their card slides out of the list.
     static let edgeFade: CGFloat = 12
 
@@ -119,12 +119,12 @@ final class NotePathLayerView: NSView {
     private func applyRibbon(_ item: Item, parts: (outline: CAShapeLayer, ribbon: CALayer, gradient: CAGradientLayer, mask: CAShapeLayer),
                              viewerViewport: CGRect, panelViewport: CGRect) {
         let width: CGFloat = item.strong ? 2.5 : 1.5
-        let railWidth: CGFloat = item.strong ? 4 : 3
         guard let card = item.card, let start = NoteOutline.departure(item.shapes) else {
             parts.ribbon.isHidden = true
             return
         }
-        let end = CGPoint(x: card.minX + Self.railInset + railWidth / 2, y: card.minY + Self.railTopInset)
+        // The rail's side at its middle: the path meets it square, as a line meets a bar.
+        let end = CGPoint(x: card.minX + Self.railInset, y: card.midY)
         // A card scrolling out of the list takes its ribbon with it, fading over the last few points.
         let inside = min(end.y - panelViewport.minY, panelViewport.maxY - end.y)
         guard inside > 0 else {
@@ -132,7 +132,7 @@ final class NotePathLayerView: NSView {
             return
         }
         let connector = NoteConnector(from: start, viewerEdge: viewerViewport.maxX, to: end)
-        let ribbon = connector.ribbon(width: width, endWidth: railWidth)
+        let ribbon = connector.ribbon(width: width)
         let box = ribbon.boundingBoxOfPath.insetBy(dx: -1, dy: -1)
         parts.ribbon.isHidden = false
         parts.ribbon.frame = box
@@ -143,7 +143,7 @@ final class NotePathLayerView: NSView {
         parts.mask.frame = parts.gradient.bounds
         var shift = CGAffineTransform(translationX: -box.minX, y: -box.minY)
         parts.mask.path = ribbon.copy(using: &shift)
-        // Settles into the rail's full colour as it arrives.
+        // Deepens to the rail's full colour as it arrives.
         parts.gradient.colors = [item.color.withAlphaComponent(0.75).cgColor, item.color.cgColor]
         parts.gradient.startPoint = CGPoint(x: (connector.start.x - box.minX) / box.width, y: (connector.start.y - box.minY) / box.height)
         parts.gradient.endPoint = CGPoint(x: (end.x - box.minX) / box.width, y: (end.y - box.minY) / box.height)
