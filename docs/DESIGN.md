@@ -449,6 +449,10 @@ path. Dropping on the Dock icon is not supported yet.
 - **Rendered images** are set into the page as Bear and Craft set theirs: continuous rounded corners (8 pt, or an eighth
   of the short side for small pictures, so icons stay crisp) and a 0.5 pt hairline in 14% of the label colour, so a
   pale image keeps its edge on a white page. Drawn at display time, so the hairline follows light and dark.
+- **Notes on rendered images**: a drag that starts on a picture draws a region over it in the image viewer's selection
+  style, and a click selects the whole picture; either shows the Add Note button. The note is drawn on the picture as
+  the image viewer draws regions (`RegionStyle`), not as tinted text, and its path starts from that box. Regions are
+  kept in the picture's own pixels, so they stay put at any pane width.
 - **Rendered tables** never start a row with a tab: TextKit draws a faint sliver for a tab at the very start of a
   line, which showed as grey marks down the table's left edge. A left-aligned first column is placed by the row's
   first-line indent; only a right- or centre-aligned first column keeps the leading tab its stop needs.

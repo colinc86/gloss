@@ -56,11 +56,91 @@ public final class MarkdownViewerController {
     @ObservationIgnored public var onOpenDocument: (String) -> Void = { _ in }
     /// Fetches a relative picture from the document's own host (a remote file system, a ticket's attachments);
     /// nil where images are local or not served. Set it before the first render that needs it.
-    @ObservationIgnored public var loadImage: ((String) async -> NSImage?)? {
+    @ObservationIgnored public var loadImage: ((String) async -> Data?)? {
         didSet { if loadImage != nil { rebuildNow() } }
     }
     @ObservationIgnored private var fetchedImages: [String: NSImage] = [:]
+    /// The fetched pictures' bytes, for a region note's crop.
+    @ObservationIgnored private var fetchedImageData: [String: Data] = [:]
     @ObservationIgnored private var fetchingImages: Set<String> = []
+
+    // MARK: Notes on embedded pictures
+
+    /// One embed of a picture in the document: its source as written and which embed of it (0 for the first).
+    public struct EmbeddedImageRef: Hashable, Sendable {
+        public var source: String
+        public var occurrence: Int
+        public init(source: String, occurrence: Int) {
+            self.source = source
+            self.occurrence = occurrence
+        }
+    }
+
+    /// A region of a picture chosen in the rendered view (the whole picture after a click), in its own pixels.
+    public struct ImageRegionSelection: Equatable, Sendable {
+        public var image: EmbeddedImageRef
+        public var region: CGRect
+        public var pixelSize: CGSize
+        /// The `![alt](src)` that embeds the picture, in source coordinates.
+        public var embedSource: NSRange
+    }
+
+    /// A note's region on a picture, drawn over the picture in the rendered view.
+    public struct EmbeddedImageHighlight: Equatable, Sendable {
+        public var id: NoteID
+        public var image: EmbeddedImageRef
+        public var region: CGRect
+        public var pixelSize: CGSize
+        public var color: NoteColor
+        public var state: NoteState
+        public init(id: NoteID, image: EmbeddedImageRef, region: CGRect, pixelSize: CGSize, color: NoteColor, state: NoteState) {
+            self.id = id
+            self.image = image
+            self.region = region
+            self.pixelSize = pixelSize
+            self.color = color
+            self.state = state
+        }
+    }
+
+    /// The picture region being chosen; nil when none. Clearing a text selection doesn't clear it, nor the reverse.
+    public var imageSelection: ImageRegionSelection?
+    public var imageHighlights: [EmbeddedImageHighlight] = []
+    /// Notes drawn as regions on pictures, which the rendered text then doesn't also tint.
+    public var imageNoteIDs: Set<NoteID> { Set(imageHighlights.map(\.id)) }
+    /// Set by the rendered view: a picture's frame in top-left window coordinates, when it is laid out.
+    @ObservationIgnored public var imageFrameProvider: (EmbeddedImageRef) -> CGRect? = { _ in nil }
+
+    /// Where a region of a picture is on screen (top-left window coordinates).
+    public func rect(for image: EmbeddedImageRef, region: CGRect, pixelSize: CGSize) -> CGRect? {
+        guard let frame = imageFrameProvider(image), pixelSize.width > 0, pixelSize.height > 0 else { return nil }
+        return Self.viewRect(forPixels: region, pixelSize: pixelSize, in: frame)
+    }
+
+    /// Pixels in a picture to the rect they occupy in its frame on screen, and back.
+    nonisolated public static func viewRect(forPixels region: CGRect, pixelSize: CGSize, in frame: CGRect) -> CGRect {
+        let sx = frame.width / pixelSize.width, sy = frame.height / pixelSize.height
+        return CGRect(x: frame.minX + region.minX * sx, y: frame.minY + region.minY * sy, width: region.width * sx, height: region.height * sy)
+    }
+
+    nonisolated public static func pixels(forViewRect rect: CGRect, pixelSize: CGSize, in frame: CGRect) -> CGRect {
+        guard frame.width > 0, frame.height > 0 else { return .zero }
+        let sx = pixelSize.width / frame.width, sy = pixelSize.height / frame.height
+        let clipped = rect.intersection(frame)
+        guard !clipped.isNull else { return .zero }
+        return CGRect(x: ((clipped.minX - frame.minX) * sx).rounded(.down), y: ((clipped.minY - frame.minY) * sy).rounded(.down),
+                      width: (clipped.width * sx).rounded(), height: (clipped.height * sy).rounded())
+    }
+
+    /// The picture's bytes, for cropping a region note: fetched from the document's host, or read beside a local
+    /// document.
+    public func imageData(for source: String) -> Data? {
+        if let data = fetchedImageData[source] { return data }
+        guard let baseURL else { return nil }
+        let decoded = source.removingPercentEncoding ?? source
+        let url = decoded.hasPrefix("/") ? URL(fileURLWithPath: decoded) : baseURL.appending(path: decoded)
+        return try? Data(contentsOf: url.standardizedFileURL)
+    }
 
     public init(source: TextEditorController, baseURL: URL? = nil) {
         self.source = source
@@ -111,8 +191,9 @@ public final class MarkdownViewerController {
         Task { [weak self] in
             var arrived = false
             for source in wanted {
-                if let image = await loadImage(source) {
+                if let data = await loadImage(source), let image = NSImage(data: data), image.size.width > 0 {
                     self?.fetchedImages[source] = image
+                    self?.fetchedImageData[source] = data
                     arrived = true
                 }
             }
@@ -136,9 +217,11 @@ public final class MarkdownViewerController {
         map.sourceRange(forRendered: renderedSelection)
     }
 
-    /// Source-coordinate highlights projected onto the rendered text.
+    /// Source-coordinate highlights projected onto the rendered text. A note on a picture is drawn on the picture
+    /// instead, so its embed isn't also tinted.
     public func renderedHighlights() -> [TextHighlight] {
-        source.highlights.flatMap { highlight -> [TextHighlight] in
+        let onPictures = imageNoteIDs
+        return source.highlights.filter { !onPictures.contains($0.id) }.flatMap { highlight -> [TextHighlight] in
             map.renderedRanges(forSource: highlight.range).map { range in
                 var copy = highlight
                 copy.range = range

@@ -16,6 +16,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
 
     public func makeNSView(context: Context) -> NSScrollView {
         let textView = RenderedTextView(usingTextLayoutManager: true)
+        textView.controller = controller
         textView.onAttachedToWindow = { [weak coordinator = context.coordinator] in coordinator?.sync() }
         textView.isEditable = false
         textView.isSelectable = true
@@ -68,6 +69,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         }
         private weak var textView: NSTextView?
         private weak var backdrop: HighlightBackdropView?
+        private weak var imageOverlay: EmbeddedImageOverlayView?
         private var appliedVersion = -1
         private var appliedScrollVersion = 0
         private var isSyncing = false
@@ -105,10 +107,28 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 }
             }
             controller.renderedRectProvider = { [weak self] range in self?.rect(for: range) }
+            let overlay = EmbeddedImageOverlayView(frame: textView.bounds)
+            overlay.autoresizingMask = [.width, .height]
+            overlay.textView = textView as? RenderedTextView
+            overlay.controller = controller
+            textView.addSubview(overlay)
+            imageOverlay = overlay
+            controller.imageFrameProvider = { [weak textView] image in
+                guard let textView = textView as? RenderedTextView, let frame = textView.frame(of: image) else { return nil }
+                return textView.topLeftWindowRect(frame)
+            }
             controller.noteGeometry.viewport = { [weak textView] in textView?.visibleWindowRect() }
             controller.noteGeometry.visibleNoteRects = { [weak textView, weak controller] in
                 guard let textView, let controller else { return [:] }
-                return textView.visibleHighlightRects(for: controller.renderedHighlights().filter { !$0.isInvalidated }.map { ($0.id, $0.range) })
+                var rects = textView.visibleHighlightRects(for: controller.renderedHighlights().filter { !$0.isInvalidated }.map { ($0.id, $0.range) })
+                // Notes on pictures are their regions on the picture.
+                let visible = textView.visibleWindowRect()
+                for highlight in controller.imageHighlights {
+                    guard let rect = controller.rect(for: highlight.image, region: highlight.region, pixelSize: highlight.pixelSize),
+                          visible.map({ $0.intersects(rect) }) ?? true else { continue }
+                    rects[highlight.id, default: []].append(rect)
+                }
+                return rects
             }
             highlightToken = controller.source.addHighlightObserver { [weak self] in self?.invalidateHighlights() }
         }
@@ -117,6 +137,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             backdrop?.entries = controller.renderedHighlights().filter { !$0.isInvalidated }.map {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.source.isFocused($0.id))
             }
+            imageOverlay?.needsDisplay = true
             controller.noteGeometry.changed()
         }
 
@@ -143,6 +164,9 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             // Read the highlight version here so SwiftUI re-runs this update when notes change;
             // the rendering validator alone runs outside SwiftUI's dependency tracking.
             _ = controller.source.highlightsVersion
+            _ = controller.imageHighlights
+            _ = controller.imageSelection
+            imageOverlay?.needsDisplay = true
             isSyncing = true
             defer { isSyncing = false }
             if appliedVersion != controller.renderedVersion {
@@ -224,9 +248,91 @@ public struct MarkdownViewerView: View {
     }
 }
 
-/// The rendered view's text view, reporting when it is in a window so a pending jump can be applied.
+/// The rendered view's text view, reporting when it is in a window so a pending jump can be applied. A drag that
+/// starts on a picture chooses a region of it for a note, and a click chooses the whole picture; anywhere else the
+/// text selects as usual.
 final class RenderedTextView: NSTextView {
     var onAttachedToWindow: (() -> Void)?
+    weak var controller: MarkdownViewerController?
+
+    /// The picture under `point` (view coordinates), with its index in the text and its frame.
+    func picture(at point: NSPoint) -> (attachment: FittedImageAttachment, frame: CGRect, index: Int)? {
+        guard let storage = textStorage, storage.length > 0 else { return nil }
+        let index = characterIndexForInsertion(at: point)
+        for candidate in [index, index - 1] where candidate >= 0 && candidate < storage.length {
+            guard let attachment = storage.attribute(.attachment, at: candidate, effectiveRange: nil) as? FittedImageAttachment,
+                  attachment.source != nil, let frame = frame(ofCharacterAt: candidate), frame.contains(point) else { continue }
+            return (attachment, frame, candidate)
+        }
+        return nil
+    }
+
+    /// The frame of one character (an attachment's picture), in view coordinates.
+    func frame(ofCharacterAt index: Int) -> CGRect? {
+        guard let layoutManager = textLayoutManager, let contentManager = layoutManager.textContentManager else { return nil }
+        let start = contentManager.documentRange.location
+        guard let from = contentManager.location(start, offsetBy: index), let to = contentManager.location(start, offsetBy: index + 1),
+              let range = NSTextRange(location: from, end: to) else { return nil }
+        var frame: CGRect?
+        layoutManager.enumerateTextSegments(in: range, type: .standard, options: [.rangeNotRequired]) { _, rect, _, _ in
+            frame = rect
+            return false
+        }
+        return frame?.offsetBy(dx: textContainerInset.width, dy: textContainerInset.height)
+    }
+
+    /// An embed's frame in view coordinates, found by its source and occurrence.
+    func frame(of image: MarkdownViewerController.EmbeddedImageRef) -> CGRect? {
+        guard let index = index(of: image) else { return nil }
+        return frame(ofCharacterAt: index)
+    }
+
+    func index(of image: MarkdownViewerController.EmbeddedImageRef) -> Int? {
+        guard let storage = textStorage else { return nil }
+        var found: Int?
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+            if let attachment = value as? FittedImageAttachment, attachment.source == image.source, attachment.occurrence == image.occurrence {
+                found = range.location
+                stop.pointee = true
+            }
+        }
+        return found
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let start = convert(event.locationInWindow, from: nil)
+        guard let controller, let hit = picture(at: start), let source = hit.attachment.source else {
+            controller?.imageSelection = nil
+            return super.mouseDown(with: event)
+        }
+        window?.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: hit.index, length: 0))
+        let ref = MarkdownViewerController.EmbeddedImageRef(source: source, occurrence: hit.attachment.occurrence)
+        let embed = controller.map.sourceRange(forRendered: NSRange(location: hit.index, length: 1))?.source ?? NSRange(location: 0, length: 0)
+        let pixelSize = hit.attachment.pixelSize
+        func select(_ rect: CGRect) {
+            controller.imageSelection = .init(image: ref, region: MarkdownViewerController.pixels(forViewRect: rect, pixelSize: pixelSize, in: hit.frame),
+                                              pixelSize: pixelSize, embedSource: embed)
+            for case let overlay as EmbeddedImageOverlayView in subviews { overlay.needsDisplay = true }
+        }
+        // Drag out a region, as in the image viewer; a click without a drag takes the whole picture.
+        var dragged = false
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let point = convert(next.locationInWindow, from: nil)
+            if next.type == .leftMouseDragged {
+                if hypot(point.x - start.x, point.y - start.y) > 3 { dragged = true }
+                if dragged {
+                    select(CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(point.x - start.x), height: abs(point.y - start.y)))
+                    autoscroll(with: next)
+                }
+            } else {
+                if !dragged || (controller.imageSelection?.region.width ?? 0) < 2 || (controller.imageSelection?.region.height ?? 0) < 2 {
+                    controller.imageSelection = .init(image: ref, region: CGRect(origin: .zero, size: pixelSize), pixelSize: pixelSize, embedSource: embed)
+                }
+                break
+            }
+        }
+    }
 
     /// Copies plain text: code lines are joined by line separators and images are attachment characters, neither
     /// of which pastes well into a terminal or an editor.
@@ -252,3 +358,26 @@ final class RenderedTextView: NSTextView {
         }
     }
 }
+
+/// Draws notes' regions on the pictures in rendered Markdown, and the region being chosen, over the text.
+final class EmbeddedImageOverlayView: NSView {
+    weak var textView: RenderedTextView?
+    weak var controller: MarkdownViewerController?
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let textView, let controller else { return }
+        for highlight in controller.imageHighlights {
+            guard let frame = textView.frame(of: highlight.image), frame.intersects(dirtyRect) else { continue }
+            let rect = MarkdownViewerController.viewRect(forPixels: highlight.region, pixelSize: highlight.pixelSize, in: frame)
+            RegionStyle.drawNote(rect, color: highlight.color, state: highlight.state, selected: controller.source.isFocused(highlight.id), unit: 1)
+        }
+        if let selection = controller.imageSelection, let frame = textView.frame(of: selection.image) {
+            let rect = MarkdownViewerController.viewRect(forPixels: selection.region, pixelSize: selection.pixelSize, in: frame)
+            RegionStyle.drawSelection(rect, in: frame, unit: 1, label: "\(Int(selection.region.width)) × \(Int(selection.region.height)) px")
+        }
+    }
+}
+

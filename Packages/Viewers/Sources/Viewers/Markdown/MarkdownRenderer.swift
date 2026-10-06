@@ -103,6 +103,8 @@ public struct MarkdownRenderer {
         let baseURL: URL?
         var images: [String: NSImage] = [:]
         var unresolvedImages: [String] = []
+        /// How many times each picture has been embedded so far, so a repeated one is told apart.
+        var imageOccurrences: [String: Int] = [:]
         var output = NSMutableAttributedString()
         var spans: [SourceSpan] = []
         var blocks: [SourceSpan] = []
@@ -566,6 +568,13 @@ public struct MarkdownRenderer {
                 let attachment = FittedImageAttachment()
                 attachment.image = picture
                 attachment.naturalSize = picture.size
+                // What a region note on the picture needs: which picture, which embed of it, and its own pixels.
+                if let source = image.source {
+                    attachment.source = source
+                    attachment.occurrence = imageOccurrences[source, default: 0]
+                    imageOccurrences[source, default: 0] += 1
+                }
+                attachment.pixelSize = FittedImageAttachment.pixelSize(of: picture)
                 append("\u{FFFC}", source: range, exact: false, extra: [.attachment: attachment])
                 return
             }
@@ -708,6 +717,18 @@ enum MarkdownImageLoader {
 /// `maximumHeight`, so a large picture does not fill the whole view.
 nonisolated final class FittedImageAttachment: NSTextAttachment {
     var naturalSize = CGSize.zero
+    /// The picture as the Markdown names it, and which embed of it this is (0 for the first).
+    var source: String?
+    var occurrence = 0
+    /// The picture's own pixels, the space region notes are kept in.
+    var pixelSize = CGSize.zero
+
+    /// The largest bitmap among the image's representations; its point size when it has none (a PDF or SVG).
+    static func pixelSize(of image: NSImage) -> CGSize {
+        let bitmap = image.representations.map { CGSize(width: $0.pixelsWide, height: $0.pixelsHigh) }.max { $0.width < $1.width }
+        if let bitmap, bitmap.width > 0, bitmap.height > 0 { return bitmap }
+        return image.size
+    }
     static let maximumHeight: CGFloat = 480
 
     static func fitted(_ size: CGSize, width: CGFloat) -> CGRect {

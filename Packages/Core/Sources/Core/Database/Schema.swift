@@ -183,6 +183,32 @@ public enum Schema {
             // Who wrote the note: NULL for the user, the agent's name for a question an agent asked (issue #4).
             try db.execute(sql: "ALTER TABLE note ADD COLUMN author TEXT")
         }
+        migrator.registerMigration("v8-embedded-image-anchors") { db in
+            // A note can anchor to a picture embedded in a document (#2 follow-up: a region of a ticket's screenshot).
+            // SQLite cannot widen a CHECK in place, so the note table is rebuilt as v4 did, every column kept.
+            try db.execute(sql: """
+                CREATE TABLE note_new (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+                    anchor_json TEXT NOT NULL,
+                    anchor_type TEXT NOT NULL CHECK (anchor_type IN ('text', 'image', 'pdf', 'file', 'element', 'embedded-image')),
+                    body TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (state IN ('draft', 'sent', 'resolved', 'orphaned')),
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    color TEXT NOT NULL,
+                    resolve_outcome TEXT,
+                    resolve_message TEXT,
+                    previous_state TEXT,
+                    author TEXT
+                );
+                INSERT INTO note_new (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message, previous_state, author)
+                    SELECT id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message, previous_state, author FROM note;
+                DROP TABLE note;
+                ALTER TABLE note_new RENAME TO note;
+                CREATE INDEX note_document_state ON note(document_id, state);
+                """)
+        }
         return migrator
     }
 

@@ -136,6 +136,36 @@ public struct ImageAnchor: Codable, Hashable, Sendable {
     }
 }
 
+/// A region of an image shown inside another document (a picture in Markdown, a ticket's pasted screenshot), or the
+/// whole of it. The image is named as the document refers to it, and found again through the text that embeds it.
+public struct EmbeddedImageAnchor: Codable, Hashable, Sendable {
+    /// The image as the document writes it (a Markdown `src`).
+    public var source: String
+    /// Which embed of that source, counting from 0, when the document shows the same picture more than once.
+    public var occurrence: Int
+    /// The region in the picture's own pixels; the whole picture for a whole-image note.
+    public var region: ImageAnchor
+    /// The text that embeds the picture (`![alt](src)`), so the note follows it through edits and the packet can name
+    /// its line.
+    public var embed: TextAnchor
+
+    public init(source: String, occurrence: Int, region: ImageAnchor, embed: TextAnchor) {
+        self.source = source
+        self.occurrence = occurrence
+        self.region = region
+        self.embed = embed
+    }
+
+    /// The note covers the whole picture.
+    public var isWholeImage: Bool { region.x == 0 && region.y == 0 && region.w == region.imageW && region.h == region.imageH }
+
+    /// The picture's file name, for cards and summaries.
+    public var fileName: String {
+        let path = (source.removingPercentEncoding ?? source).split(separator: "?").first.map(String.init) ?? source
+        return (path as NSString).lastPathComponent
+    }
+}
+
 /// Bounds in PDF page points (crop box space, origin bottom-left as PDFKit reports it).
 public struct PDFBounds: Codable, Hashable, Sendable {
     public var x: Double
@@ -236,6 +266,7 @@ public enum AnchorType: String, Codable, Sendable, CaseIterable {
     case pdf
     case file
     case element
+    case embeddedImage = "embedded-image"
 }
 
 /// A typed description of the part of a document a note refers to. Stored as `anchor_type` + `anchor_json`.
@@ -245,6 +276,7 @@ public enum Anchor: Hashable, Sendable {
     case pdf(PDFAnchor)
     case wholeFile
     case element(ElementAnchor)
+    case embeddedImage(EmbeddedImageAnchor)
 
     public var type: AnchorType {
         switch self {
@@ -253,6 +285,7 @@ public enum Anchor: Hashable, Sendable {
         case .pdf: .pdf
         case .wholeFile: .file
         case .element: .element
+        case .embeddedImage: .embeddedImage
         }
     }
 
@@ -271,6 +304,7 @@ public enum Anchor: Hashable, Sendable {
         case .pdf(let anchor): data = try Self.encoder.encode(anchor)
         case .wholeFile: data = Data("{}".utf8)
         case .element(let anchor): data = try Self.encoder.encode(anchor)
+        case .embeddedImage(let anchor): data = try Self.encoder.encode(anchor)
         }
         return String(decoding: data, as: UTF8.self)
     }
@@ -284,6 +318,7 @@ public enum Anchor: Hashable, Sendable {
         case .pdf: self = .pdf(try decoder.decode(PDFAnchor.self, from: data))
         case .file: self = .wholeFile
         case .element: self = .element(try decoder.decode(ElementAnchor.self, from: data))
+        case .embeddedImage: self = .embeddedImage(try decoder.decode(EmbeddedImageAnchor.self, from: data))
         }
     }
 
@@ -295,6 +330,7 @@ public enum Anchor: Hashable, Sendable {
         case .pdf(let anchor): SortKey(primary: anchor.page, secondary: Int(-(anchor.bounds?.y ?? 0)))
         case .wholeFile: SortKey(primary: Int.max, secondary: 0)
         case .element(let anchor): SortKey(primary: Int(anchor.rect.y.rounded()), secondary: Int(anchor.rect.x.rounded()))
+        case .embeddedImage(let anchor): SortKey(primary: anchor.embed.start.line, secondary: anchor.embed.start.col)
         }
     }
 
@@ -326,6 +362,8 @@ public enum Anchor: Hashable, Sendable {
             "Whole file"
         case .element(let anchor):
             "Element \(anchor.lastCompound)"
+        case .embeddedImage(let anchor):
+            anchor.isWholeImage ? "Image \(anchor.fileName)" : "Image \(anchor.fileName), region \(anchor.region.w)×\(anchor.region.h)"
         }
     }
 }

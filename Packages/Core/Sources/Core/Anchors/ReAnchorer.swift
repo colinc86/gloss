@@ -418,6 +418,26 @@ public enum ReAnchorer {
         return lines[(start - 1)...(end - 1)].joined(separator: "\n")
     }
 
+    // MARK: Embedded image
+
+    /// A picture embedded in a document follows the text that embeds it; the note is orphaned when that text is gone
+    /// or now embeds another picture. The region stays in the picture's own pixels.
+    public static func embeddedImage(_ anchor: EmbeddedImageAnchor, in newContent: String, newHash: String) -> ReAnchorResult {
+        let result = text(anchor.embed, in: newContent, newHash: newHash)
+        func moved(_ embed: TextAnchor) -> EmbeddedImageAnchor? {
+            guard embed.text.contains(anchor.source) else { return nil }
+            var next = anchor
+            next.embed = embed
+            return next
+        }
+        switch result {
+        case .unchanged: return .unchanged
+        case .moved(.text(let embed)): return moved(embed).map { .moved(.embeddedImage($0)) } ?? .orphaned
+        case .movedNeedsReview(.text(let embed)): return moved(embed).map { .movedNeedsReview(.embeddedImage($0)) } ?? .orphaned
+        default: return .orphaned
+        }
+    }
+
     // MARK: Image
 
     public static func image(_ anchor: ImageAnchor, newWidth: Int, newHeight: Int, newHash: String) -> ReAnchorResult {

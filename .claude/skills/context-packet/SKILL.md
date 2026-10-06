@@ -38,6 +38,7 @@ Notes: <count>. Mark each resolved with the gloss MCP tool `resolve_note` (ids: 
 | csv columns | `Column E "notes"` or `Columns B "distance_km", C "climb_m"` (replaces the line range) | one `> <line>: value` per record, several columns joined by ` \| ` |
 | markdown with a rendered-view selection | `Lines 40-52` plus `Selected: "<exact text>"` when the selection is a sub-line span | same |
 | image | `Region: x=.. y=.. w=.. h=.. (crop attached)` in original pixel coordinates, origin top-left | none |
+| image embedded in markdown (Jira, Confluence, a file) | `Line <n>` of the embed, `Image: <src as written> (<W>x<H>)`, then `Region: x=.. y=.. w=.. h=.. (crop attached)` in the picture's pixels, or `Whole image (image attached)`; `Attachment:` the PNG | none |
 | pdf | `Page 3` plus `Region: ...` in page points when a region was drawn | selected text, blockquoted, if any |
 | file (whole-file note) | `Whole file` | none |
 | element (web, or an html file viewed as a page) | `Element: <css selector>` then `Text: "<collapsed text>"` when the element has text, `Rect: x=.. y=.. w=.. h=.. (crop attached)` in CSS pixels from the page's top-left, `Line <n>` when the page is a file | `Snippet:` with the element's outerHTML blockquoted (at most 2048 characters); an `Attachment:` PNG crop of the element |

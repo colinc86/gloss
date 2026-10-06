@@ -13,7 +13,7 @@ What you can select depends on the viewer:
 | Viewer | Select |
 | --- | --- |
 | Text and code | Any range of characters |
-| Markdown | A range in the rendered view or the source; the note shows in both |
+| Markdown | A range in the rendered view or the source; the note shows in both. On a picture in the rendered view, drag a region or click for the whole picture |
 | Image | Drag a rectangle |
 | PDF | Text, or a region in Region mode |
 | CSV | Rows, a cell, a block of cells, scattered cells, or whole columns |

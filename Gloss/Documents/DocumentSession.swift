@@ -359,8 +359,8 @@ final class DocumentSession: Identifiable {
                         let decoded = source.removingPercentEncoding ?? source
                         let target = decoded.hasPrefix("/") ? decoded : (PathUtilities.join(directory, decoded) as NSString).standardizingPath
                         guard let attributes = try? await fileSystem.stat(target), attributes.kind == .file, attributes.size <= Self.mediaThreshold,
-                              let data = try? await fileSystem.read(target), let image = NSImage(data: data), image.size.width > 0 else { return nil }
-                        return image
+                              let data = try? await fileSystem.read(target) else { return nil }
+                        return data
                     }
                 }
                 markdown?.onOpenDocument = { [weak self] target in self?.openLinkedDocument(target) }
@@ -998,7 +998,18 @@ final class DocumentSession: Identifiable {
         let index = controller.lineIndex
         var highlights: [TextHighlight] = []
         var stillLive: [NoteID: NSRange] = [:]
+        var pictures: [MarkdownViewerController.EmbeddedImageHighlight] = []
         for note in notes {
+            // A note on an embedded picture: its region on the picture in the rendered view, its embed in the source.
+            if case .embeddedImage(let anchor) = note.anchor {
+                let region = anchor.region
+                pictures.append(.init(id: note.id, image: .init(source: anchor.source, occurrence: anchor.occurrence),
+                                      region: CGRect(x: region.x, y: region.y, width: region.w, height: region.h),
+                                      pixelSize: CGSize(width: region.imageW, height: region.imageH), color: note.color, state: note.displayState))
+                highlights.append(TextHighlight(id: note.id, range: index.range(for: anchor.embed), color: note.color, state: note.displayState,
+                                                needsReview: needsReview.contains(note.id)))
+                continue
+            }
             guard case .text(let anchor) = note.anchor else { continue }
             let range: NSRange
             if let live = liveRanges[note.id] {
@@ -1013,6 +1024,7 @@ final class DocumentSession: Identifiable {
             ))
         }
         liveRanges = stillLive
+        if let markdown, markdown.imageHighlights != pictures { markdown.imageHighlights = pictures }
         controller.highlights = highlights
     }
 
@@ -1072,9 +1084,15 @@ final class DocumentSession: Identifiable {
     func reanchorAll(in text: String, hash: String) async {
         for note in notes {
             if Task.isCancelled { return }
-            guard case .text(let anchor) = note.anchor else { continue }
             do {
-                try await apply(ReAnchorer.text(anchor, in: text, newHash: hash), to: note, unchanged: .text(anchor))
+                switch note.anchor {
+                case .text(let anchor):
+                    try await apply(ReAnchorer.text(anchor, in: text, newHash: hash), to: note, unchanged: .text(anchor))
+                case .embeddedImage(let anchor):
+                    try await apply(ReAnchorer.embeddedImage(anchor, in: text, newHash: hash), to: note, unchanged: .embeddedImage(anchor))
+                default:
+                    continue
+                }
             } catch {
                 Log.notes.error("re-anchoring \(note.id.rawValue, privacy: .public) failed: \(error, privacy: .public)")
             }
@@ -1099,6 +1117,9 @@ final class DocumentSession: Identifiable {
         if let image = imageController {
             guard let selection = image.selection, image.selectionAnchor != nil else { return nil }
             return image.rect(forPixelRect: selection)
+        }
+        if let markdown, markdown.mode == .rendered, let selection = markdown.imageSelection {
+            return markdown.rect(for: selection.image, region: selection.region, pixelSize: selection.pixelSize)
         }
         if let controller = textController {
             if let rendered, rendered.isShowingRendered {
@@ -1135,6 +1156,17 @@ final class DocumentSession: Identifiable {
             guard let anchor = image.selectionAnchor else { return }
             let rect = image.rect(forPixelRect: image.selection ?? .zero) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
             noteEditor = NoteEditorState(anchor: .image(anchor), body: "", color: lastUsedColor, anchorRect: rect)
+            return
+        }
+        // A region of a picture in rendered Markdown, or the whole picture.
+        if let markdown, markdown.mode == .rendered, let selection = markdown.imageSelection, let controller = textController {
+            let data = markdown.imageData(for: selection.image.source)
+            let region = ImageAnchor(x: Int(selection.region.minX), y: Int(selection.region.minY), w: Int(selection.region.width), h: Int(selection.region.height),
+                                     imageW: Int(selection.pixelSize.width), imageH: Int(selection.pixelSize.height), hash: data?.sha256Hex)
+            let embed = ReAnchorer.make(from: selection.embedSource, in: controller.text, index: controller.lineIndex, hash: Data(controller.text.utf8).sha256Hex)
+            let anchor = EmbeddedImageAnchor(source: selection.image.source, occurrence: selection.image.occurrence, region: region, embed: embed)
+            let rect = markdown.rect(for: selection.image, region: selection.region, pixelSize: selection.pixelSize) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
+            noteEditor = NoteEditorState(anchor: .embeddedImage(anchor), body: "", color: lastUsedColor, anchorRect: rect)
             return
         }
         if let controller = textController {
@@ -1240,6 +1272,9 @@ final class DocumentSession: Identifiable {
                     elementCrop = try? await snapshot(anchor.rect)
                 }
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
+                if case .embeddedImage(let anchor) = state.anchor, let data = markdown?.imageData(for: anchor.source) {
+                    try await saveEmbeddedCrop(of: anchor, from: data, for: note.id)
+                }
                 if case .image(let anchor) = state.anchor, let image = imageController {
                     try await saveCrop(of: anchor, from: image, for: note.id)
                 }
@@ -1273,6 +1308,7 @@ final class DocumentSession: Identifiable {
 
     private func clearSelection() {
         imageController?.selection = nil
+        markdown?.imageSelection = nil
         pdfController?.clearSelection()
         csvController?.deselectAll()
         if let rendered, rendered.isShowingRendered {
@@ -1294,6 +1330,21 @@ final class DocumentSession: Identifiable {
     }
 
     /// Writes the region as a PNG into the attachment cache and records it on the note.
+    /// The region of an embedded picture (all of it for a whole-image note), cut from its own bytes, so the agent
+    /// sees exactly what the note is about.
+    private func saveEmbeddedCrop(of anchor: EmbeddedImageAnchor, from data: Data, for noteID: NoteID) async throws {
+        let decoded = try await Self.decodeImage(data, fileName: anchor.fileName)
+        let region = anchor.region
+        let rect = CGRect(x: region.x, y: region.y, width: region.w, height: region.h)
+        guard let crop = ImageDecoder.crop(decoded, to: rect), let png = ImageDecoder.pngData(crop) else { return }
+        let directory = attachmentDirectory
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let base = (anchor.fileName as NSString).deletingPathExtension
+        let url = directory.appendingPathComponent("\(base)-\(anchor.isWholeImage ? "image" : "region")-\(noteID.rawValue.suffix(6)).png")
+        try png.write(to: url, options: .atomic)
+        _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
+    }
+
     private func saveCrop(of anchor: ImageAnchor, from image: ImageViewerController, for noteID: NoteID) async throws {
         let rect = CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h)
         guard let crop = ImageDecoder.crop(image.image, to: rect), let png = ImageDecoder.pngData(crop) else { return }
@@ -1373,6 +1424,9 @@ final class DocumentSession: Identifiable {
                 return (note.id, Double(index))
             case .element(let anchor):
                 return (note.id, anchor.rect.y * 10_000 + anchor.rect.x)
+            case .embeddedImage:
+                guard let range = textController?.highlights.first(where: { $0.id == note.id })?.range else { return nil }
+                return (note.id, Double(range.location))
             case .wholeFile:
                 return nil
             }

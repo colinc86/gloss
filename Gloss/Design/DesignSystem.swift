@@ -62,6 +62,7 @@ extension Core.Anchor {
         case .pdf: "doc.richtext"
         case .wholeFile: "doc"
         case .element: "rectangle.dashed"
+        case .embeddedImage: "photo"
         }
     }
 }
