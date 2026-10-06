@@ -391,9 +391,10 @@ path. Dropping on the Dock icon is not supported yet.
   send starts), Resolve, Reopen as Drafts, a ⋯ menu (Copy as Packet, Colour, everything again in words), Delete, and ✕
   to clear the selection. Each action counts only the notes it applies to (Send takes drafts and sent notes, Reopen
   resolved ones) and is absent when none apply. Right-clicking a selected card offers the same, worded for the
-  selection ("Send 3 Notes to claude"). The panel's header has no Send of its own: what goes is what you selected,
-  which is the one place to say it. Whole-document sends stay in the Notes menu (Send Drafts in Document ⌘↩, Send
-  All Drafts ⇧⌘↩, Copy Packet for Document ⇧⌘C), and they still send only what the panel shows.
+  selection ("Send 3 Notes to claude"). With nothing selected, the row beside the agent chip holds the panel's own
+  Send (this document's drafts as the panel shows them, the same as ⌘↩, with the count and any color filter's dots)
+  and a ⋯ menu (Send All Drafts, Copy Packet for Document); a selection hides them, since the bar above then says
+  what goes (2026-10-06: sending every draft had come to need ⌘A first).
 - **Delete is undoable, not confirmed**: deleting a note (trash button, context menu, or the Delete key) happens at
   once, and several selected go as one ("3 notes deleted", one Undo brings them all back); a glass toast ("Note deleted", the note's first line, Undo) rises over the bottom of the panel for 6 s
   (held while the pointer is on it), and Edit › Undo (⌘Z) does the same. Undo restores the note with its id,

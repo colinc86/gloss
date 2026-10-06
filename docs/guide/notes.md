@@ -36,8 +36,9 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
   Undo.
 - Right-click a card to edit, send, copy it as a packet, resolve it, reopen it, or delete it. Editing happens right
   in the card: change the comment or color, Return to save, Escape to cancel.
+- **Send** beside the agent at the top of the panel sends this document's drafts, as the filters show them.
 - **Select several** with ⌘-click, ⇧-click or ⌘A, and a bar appears above the list to send, resolve, put back to
-  draft or delete them all at once; its ⋯ menu also recolors and copies them. Each action only touches the notes it applies to (Send skips resolved
+  draft or delete them all at once, in place of that Send; its ⋯ menu also recolors and copies them. Each action only touches the notes it applies to (Send skips resolved
   notes), and deleting several is undone in one step.
 
 ⌘' and ⇧⌘' step through the notes in the open document.

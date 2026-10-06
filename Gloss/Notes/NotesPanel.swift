@@ -192,13 +192,50 @@ struct NotesPanel: View {
                 BulkActionBar(notes: panel.selectedNotes)
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
-            // Where notes go; what goes is chosen in the list, and the selection bar sends it (issue #8). Whole-document
-            // sends stay in the Notes menu (⌘↩, ⇧⌘↩).
-            TargetPicker()
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Where notes go, and with nothing selected, this document's drafts as ⌘↩ sends them. A selection brings the
+            // selection bar above, which sends what's selected instead (issue #8).
+            HStack(spacing: 6) {
+                TargetPicker()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
+                if panel.selectedNotes.isEmpty {
+                    SendDraftsButton(
+                        count: model.visibleDrafts.count,
+                        colors: panel.colorFilter,
+                        filtered: model.draftsAreFiltered,
+                        isSending: model.send.isSending,
+                        hasTarget: model.send.lastTarget != nil
+                    ) {
+                        Task { await model.sendVisibleDrafts() }
+                    }
+                    .transition(.opacity.calmed)
+                    sendMenu
+                        .transition(.opacity.calmed)
+                }
+            }
         }
         .padding(8)
         .animation(DS.Motion.snappy, value: panel.selectedNotes.isEmpty)
+    }
+
+    /// Sends beyond this document's drafts, titled like the Notes menu, with how many notes each touches.
+    private var sendMenu: some View {
+        let allDrafts = model.notesPanel.draftCount
+        let documentDrafts = model.visibleDrafts.count
+        return Menu {
+            Button("Send All Drafts\(allDrafts > 0 ? " (\(allDrafts))" : "")") { Task { await model.sendAllDrafts(scope: .all) } }
+                .disabled(allDrafts == 0 || model.send.lastTarget == nil)
+            Button("\(model.draftsAreFiltered ? "Copy Shown Drafts as Packet" : "Copy Packet for Document")\(documentDrafts > 0 ? " (\(documentDrafts))" : "")") {
+                Task { await model.copyVisibleDrafts() }
+            }
+            .disabled(documentDrafts == 0)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: 28)
+        .help("More send options")
+        .accessibilityLabel("More send options")
     }
 
     /// Notes per colour across every document (before search and filters, like the state counts).
@@ -1034,6 +1071,68 @@ struct StatusDot: View {
             }
             .help(style.label)
             .accessibilityLabel(style.label)
+    }
+}
+
+/// The panel's primary action: send this document's drafts. Says how many will go, and why it is unavailable.
+private struct SendDraftsButton: View {
+    let count: Int
+    /// The notes panel's colour filter; the button sends only those colours while it is set.
+    var colors: Set<NoteColor> = []
+    /// The panel's tab, colours, or search narrow what goes: the tooltip says "shown".
+    var filtered = false
+
+    /// "blue " or "blue and pink " while a colour filter is on; nothing otherwise.
+    private var colorWords: String {
+        guard !colors.isEmpty else { return "" }
+        let names = colors.map(\.rawValue).sorted()
+        return (names.count <= 2 ? names.joined(separator: " and ") : "\(names.count)-colour") + " "
+    }
+    let isSending: Bool
+    let hasTarget: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: DS.Space.xs) {
+                LaunchingPlane(isSending: isSending)
+                Text("Send")
+                // While a colour filter is on, Send sends only those colours: the button says so in their colours.
+                if !colors.isEmpty {
+                    // On a white capsule: a blue dot on the blue button would vanish (and its ring read as ○, the draft symbol).
+                    HStack(spacing: -2) {
+                        ForEach(colors.sorted { $0.rawValue < $1.rawValue }.prefix(3), id: \.self) { color in
+                            Circle()
+                                .fill(Color(nsColor: Theme.color(for: color)))
+                                .frame(width: 8, height: 8)
+                                .overlay(Circle().strokeBorder(.white, lineWidth: 1))
+                        }
+                    }
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 2)
+                    .background(.white, in: Capsule())
+                    .transition((AnyTransition.scale(scale: 0.6).combined(with: .opacity)).calmed)
+                    .accessibilityLabel(colorWords.trimmingCharacters(in: .whitespaces) + " only")
+                }
+                if count > 0 {
+                    Text("\(count)")
+                        .monospacedDigit()
+                        .contentTransition(.numericText(value: Double(count)))
+                }
+            }
+            .font(.callout.weight(.semibold))
+            .lineLimit(1)
+            .fixedSize()
+        }
+        .buttonStyle(.glassProminent)
+        .controlSize(.regular)
+        .disabled(!hasTarget || count == 0 || isSending)
+        .animation(DS.Motion.smooth, value: count)
+        .animation(DS.Motion.bouncy, value: colors)
+        .help(!hasTarget ? "Choose an agent first"
+              : count == 0 ? (filtered ? "No drafts shown for this document" : "No drafts in this document")
+              : filtered ? "Send the \(count) \(colorWords)draft\(count == 1 ? "" : "s") shown for this document (⌘↩)"
+              : "Send this document's \(count) draft\(count == 1 ? "" : "s") (⌘↩)")
     }
 }
 

@@ -38,6 +38,8 @@ Gloss's ssh connection, so nothing is installed there.
 Pick the target from the send menu in the notes panel. It lists every live agent Gloss can see. Each folder
 remembers the agent you last chose for it.
 
+- **Send** beside the agent sends this document's drafts the panel is showing. Its ⋯ menu sends every draft in
+  every document, or copies this document's drafts as a packet.
 - **Send** on a card sends that note.
 - **Select** several cards (⌘-click, ⇧-click, or ⌘A) and press **Send** in the bar above the list.
 - **Notes › Send Drafts in Document** (⌘↩) sends the drafts the panel is showing for this document, so filters and
