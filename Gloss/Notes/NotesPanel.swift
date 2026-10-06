@@ -213,6 +213,8 @@ struct NotesPanel: View {
                         .transition(.opacity.calmed)
                 }
             }
+            // As tall as the chip, which wraps to two lines when the agent has a task: Send fills that height.
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(8)
         .animation(DS.Motion.snappy, value: panel.selectedNotes.isEmpty)
@@ -1154,6 +1156,27 @@ struct StatusDot: View {
     }
 }
 
+/// A prominent button as tall as the row it sits in, in the agent chip's shape: an accent rounded rectangle with a
+/// white label, a secondary fill while disabled, and a small press. `.glassProminent` is a fixed-height capsule, half
+/// the chip's height once the chip wraps.
+private struct FillingProminentButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isEnabled ? Color.white : Color.secondary)
+            .padding(.horizontal, DS.Space.m)
+            .padding(.vertical, DS.Space.s)
+            .frame(maxHeight: .infinity)
+            .background(isEnabled ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.secondary),
+                        in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(DS.Motion.snappy, value: configuration.isPressed)
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+    }
+}
+
 /// The panel's primary action: send this document's drafts. Says how many will go, and why it is unavailable.
 private struct SendDraftsButton: View {
     let count: Int
@@ -1204,8 +1227,7 @@ private struct SendDraftsButton: View {
             .lineLimit(1)
             .fixedSize()
         }
-        .buttonStyle(.glassProminent)
-        .controlSize(.regular)
+        .buttonStyle(FillingProminentButtonStyle())
         .disabled(!hasTarget || count == 0 || isSending)
         .animation(DS.Motion.smooth, value: count)
         .animation(DS.Motion.bouncy, value: colors)

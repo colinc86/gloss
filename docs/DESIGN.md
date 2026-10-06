@@ -404,7 +404,10 @@ path. Dropping on the Dock icon is not supported yet.
   selection ("Send 3 Notes to claude"). With nothing selected, the row beside the agent chip holds the panel's own
   Send (this document's drafts as the panel shows them, the same as ⌘↩, with the count and any color filter's dots)
   and a ⋯ menu (Send All Drafts, Copy Packet for Document); a selection hides them, since the bar above then says
-  what goes (2026-10-06: sending every draft had come to need ⌘A first).
+  what goes (2026-10-06: sending every draft had come to need ⌘A first). That Send is as tall as the agent chip,
+  one line or two, in the chip's shape: an accent rounded rectangle (`DS.Radius.m`) with a white label, a secondary
+  fill while it can't send, and a small press. `.glassProminent` is a fixed-height capsule, half the chip's height
+  once the chip wraps.
 - **Delete is undoable, not confirmed**: deleting a note (trash button, context menu, or the Delete key) happens at
   once, and several selected go as one ("3 notes deleted", one Undo brings them all back); a glass toast ("Note deleted", the note's first line, Undo) rises over the bottom of the panel for 6 s
   (held while the pointer is on it), and Edit › Undo (⌘Z) does the same. Undo restores the note with its id,
