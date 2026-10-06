@@ -133,6 +133,14 @@ struct ContentView: View {
         }
         .dropToOpen()
         .overlay(alignment: .bottom) { CopyHUD() }
+        // With the notes panel closed the update toast (#10) has the window's corner; open, it sits with the panel's.
+        .overlay(alignment: .bottomTrailing) {
+            if !panelShown {
+                AgentsUpdateToast()
+                    .frame(maxWidth: 380)
+                    .padding(DS.Space.m)
+            }
+        }
         // The dot in the close button whenever any open document has unsaved edits, not only the visible one.
         .background(WindowEditedMarker(isEdited: !model.unsavedSessions.isEmpty))
         .background(WindowReader(reference: window))

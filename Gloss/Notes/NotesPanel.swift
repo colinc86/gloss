@@ -2,6 +2,7 @@ import AppKit
 import Core
 import Integrations
 import SwiftUI
+import Transports
 import UniformTypeIdentifiers
 import Viewers
 
@@ -101,6 +102,7 @@ struct NotesPanel: View {
         }
         .overlay(alignment: .bottom) {
             VStack(spacing: DS.Space.s) {
+                AgentsUpdateToast()
                 UndoDeleteToast()
                 SendToast()
             }
@@ -1301,6 +1303,51 @@ private struct UndoDeleteToast: View {
             }
         }
         .animation(DS.Motion.bouncy, value: panel.lastDeleted.map(\.note.id))
+    }
+}
+
+/// An agent's set-up needs updating (#10): an update changed what Gloss installs (the old prompt hook, an MCP url).
+/// Says which agent and why, and opens Settings › Agents, where Update fixes it. Dismissing it holds until something
+/// else needs updating.
+struct AgentsUpdateToast: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        let hooks = model.hooks
+        ZStack {
+            if hooks.showsUpdateNotice, let first = hooks.needsUpdate.first {
+                let count = hooks.needsUpdate.count
+                let host = first.key.hostID == .local ? "" : " on \(model.hosts.entry(for: first.key.hostID)?.name ?? first.key.hostID.rawValue)"
+                HStack(spacing: DS.Space.m) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.orange)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(count == 1 ? "\(first.key.agent.displayName)\(host) needs an update" : "\(count) agent set-ups need an update")
+                            .font(.callout.weight(.semibold))
+                        Text(count == 1 ? first.reason : "Settings › Agents shows which, and Update fixes each.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: DS.Space.s)
+                    InlineIconButton(title: "Dismiss", symbol: "xmark", emphasized: true) { hooks.dismissUpdateNotice() }
+                    Button("Open Settings") {
+                        model.settingsTab = .agents
+                        openSettings()
+                    }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, DS.Space.m)
+                .padding(.vertical, DS.Space.s + 2)
+                .readableGlass(in: RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
+                .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Agent set-up needs an update")
+            }
+        }
+        .animation(DS.Motion.bouncy, value: hooks.showsUpdateNotice)
     }
 }
 

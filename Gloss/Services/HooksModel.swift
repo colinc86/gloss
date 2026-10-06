@@ -24,14 +24,41 @@ final class HooksModel {
     /// while it is being removed), so one operation must not run while another is half done.
     @ObservationIgnored private var queues: [HostID: Task<Void, Never>] = [:]
 
-    func refresh(hosts: [HostID]) async {
+    func refresh(hosts: [HostID], agents: [HookAgent] = HookAgent.allCases) async {
         for hostID in hosts {
             guard let installer = await installerProvider(hostID) else { continue }
-            for agent in HookAgent.allCases {
+            for agent in agents {
                 status[Key(hostID: hostID, agent: agent)] = await installer.status(agent)
             }
         }
     }
+
+    /// The agents checked at launch and when a host connects, for the update toast (#10). The Herdr plugin is left
+    /// to Settings: its check runs `herdr`, and "not reachable" only means Herdr isn't running.
+    static let launchCheckedAgents: [HookAgent] = [.claude, .codex, .opencode]
+
+    /// Installed agents whose set-up is out of date (an old prompt hook, a stale MCP url), with why, in a stable order.
+    var needsUpdate: [(key: Key, reason: String)] {
+        status.compactMap { key, status -> (key: Key, reason: String)? in
+            guard Self.launchCheckedAgents.contains(key.agent), case .outdated(let reason) = status else { return nil }
+            return (key, reason)
+        }
+        .sorted { ($0.key.hostID.rawValue, $0.key.agent.rawValue) < ($1.key.hostID.rawValue, $1.key.agent.rawValue) }
+    }
+
+    /// What the toast is about, so dismissing it holds only until something else needs updating.
+    var needsUpdateSignature: String {
+        needsUpdate.map { "\($0.key.hostID.rawValue)/\($0.key.agent.rawValue): \($0.reason)" }.joined(separator: "\n")
+    }
+
+    /// The signature the person dismissed the toast at.
+    var dismissedSignature: String? = UserDefaults.standard.string(forKey: "agents.updateNoticeDismissed") {
+        didSet { UserDefaults.standard.set(dismissedSignature, forKey: "agents.updateNoticeDismissed") }
+    }
+
+    var showsUpdateNotice: Bool { !needsUpdate.isEmpty && needsUpdateSignature != dismissedSignature }
+
+    func dismissUpdateNotice() { dismissedSignature = needsUpdateSignature }
 
     func install(_ agent: HookAgent, on hostID: HostID) async {
         await perform(agent, on: hostID) { try await $0.install(agent) }

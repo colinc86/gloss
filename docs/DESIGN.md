@@ -313,6 +313,11 @@ path. Dropping on the Dock icon is not supported yet.
   the Dock badge like any question. When it arrives the document opens to it and the window comes forward without
   taking the keyboard from the terminal (`orderFrontRegardless`), unless the user is writing a note, when it only
   waits under Attention.
+- **Agent set-up needs an update** (#10): checked at launch for this Mac and when a host connects (Claude Code,
+  Codex, OpenCode; the Herdr plugin is left to Settings). When an installed agent is out of date (an old prompt hook,
+  a stale MCP url) a glass toast sits at the bottom right, with the notes panel's toasts when it's open and in the
+  window's corner when it isn't: "Claude Code needs an update", the reason in `.caption`, ✕, and Open Settings, which
+  opens Settings on its Agents tab, where Update fixes it. ✕ holds until something else needs updating.
 - **Editing in the card** (#14): the pencil and Edit… turn the card's comment into the composer's own field, in
   place, with the colour swatches, Cancel and Save under it; Return saves, Shift-Return adds a line, Escape cancels,
   and the field's border takes the note's colour. It doesn't depend on the note being on screen in the viewer (the

@@ -5,12 +5,18 @@ import SwiftUI
 import Transports
 import Viewers
 
+/// The Settings tabs, so a part of the app can open Settings on one.
+enum SettingsTab: Hashable {
+    case general, editor, agents, hosts, integrations, attachments
+}
+
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var settings = model.settings
-        TabView {
+        @Bindable var model = model
+        TabView(selection: $model.settingsTab) {
             Form {
                 Section {
                     Toggle(isOn: $settings.openLastRootOnLaunch) {
@@ -33,6 +39,7 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .frame(height: model.updates.isAvailable ? 380 : 236)
             .tabItem { Label("General", systemImage: "gear") }
+            .tag(SettingsTab.general)
 
             Form {
                 Section {
@@ -64,22 +71,27 @@ struct SettingsView: View {
             .animation(DS.Motion.snappy, value: settings.editorFontSize)
             .animation(DS.Motion.smooth, value: settings.showIndentGuides)
             .tabItem { Label("Editor", systemImage: "text.alignleft") }
+            .tag(SettingsTab.editor)
 
             AgentsSettings(settings: settings)
                 .frame(height: 640)
                 .tabItem { Label("Agents", systemImage: "paperplane") }
+            .tag(SettingsTab.agents)
 
             HostsSettings()
                 .frame(height: 440)
                 .tabItem { Label("Hosts", systemImage: "network") }
+            .tag(SettingsTab.hosts)
 
             IntegrationsSettings()
                 .frame(height: 660)
                 .tabItem { Label("Integrations", systemImage: "key") }
+            .tag(SettingsTab.integrations)
 
             AttachmentsSettings(settings: settings)
                 .frame(height: 380)
                 .tabItem { Label("Attachments", systemImage: "photo.on.rectangle") }
+            .tag(SettingsTab.attachments)
         }
         // Each tab sets its own height and the window resizes to it, as System Settings does.
         .frame(width: 600)

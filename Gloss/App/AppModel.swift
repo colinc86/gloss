@@ -216,6 +216,10 @@ final class AppModel {
         send.register(TmuxTransport(registry: connectionRegistry))
         send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
+        // An agent whose set-up an update changed (#10) is found at launch, not only when Settings opens.
+        if !launchOptions.isTestHost {
+            Task { [weak self] in await self?.hooks.refresh(hosts: [.local], agents: HooksModel.launchCheckedAgents) }
+        }
         notesPanel.start()
         noteLink.start()
         noteLink.noteStyles = { [weak self] in
@@ -234,6 +238,7 @@ final class AppModel {
                 }
             }
             let firstRegistration = self.fileSystems[hostID] == nil
+            if firstRegistration { Task { await self.hooks.refresh(hosts: [hostID], agents: HooksModel.launchCheckedAgents) } }
             self.fileSystems[hostID] = fileSystem
             self.connections[hostID] = connection
             let alias = self.hosts.entry(for: hostID)?.alias ?? hostID.rawValue
@@ -1173,6 +1178,9 @@ final class AppModel {
     @ObservationIgnored private var started = false
 
     /// Applies `--root` and `--open`, or reopens the most recent root. Runs once even if several windows appear.
+    /// The tab Settings opens on; the update toast sends it to Agents.
+    var settingsTab = SettingsTab.general
+
     @ObservationIgnored private var escapeMonitor: Any?
 
     /// Escape dismisses the Add Note button (and an open composer) from wherever the keyboard is in the main window.
