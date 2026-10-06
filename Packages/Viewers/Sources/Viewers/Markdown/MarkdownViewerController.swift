@@ -293,7 +293,7 @@ public final class MarkdownViewerController {
     /// instead, so its embed isn't also tinted.
     public func renderedHighlights() -> [TextHighlight] {
         let onPictures = imageNoteIDs
-        return source.highlights.filter { !onPictures.contains($0.id) }.flatMap { highlight -> [TextHighlight] in
+        return source.drawnHighlights.filter { !onPictures.contains($0.id) }.flatMap { highlight -> [TextHighlight] in
             map.renderedRanges(forSource: highlight.range).map { range in
                 var copy = highlight
                 copy.range = range

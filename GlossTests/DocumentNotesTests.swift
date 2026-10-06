@@ -73,6 +73,31 @@ struct DocumentNotesTests {
         session.close()
     }
 
+    @Test func aHiddenNoteIsNotDrawnButStillMovesWithEdits() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        let document = try #require(session.document)
+        let shown = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 1, col: 1), end: .init(line: 1, col: 4), text: "one", before: "", after: "two", hash: nil)), body: "a", color: .yellow)
+        let hidden = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 4), text: "two", before: "one", after: "three", hash: nil)), body: "b", color: .blue)
+        await waitUntil { controller.highlights.count == 2 }
+        #expect(session.steppableNotes.map(\.id) == [shown.id, hidden.id])
+        session.hiddenNoteIDs = [hidden.id]
+        #expect(controller.drawnHighlights.map(\.id) == [shown.id])
+        #expect(controller.highlights.first { $0.id == hidden.id }?.isHidden == true)
+        #expect(session.steppableNotes.map(\.id) == [shown.id], "Next Note skips a note the panel isn't listing")
+        // Typing a new first line moves the hidden note too.
+        let newText = "zero\none\ntwo\nthree\n"
+        controller.viewDidProcessEdit(edit: NSRange(location: 0, length: 0), replacementLength: 5, newText: newText)
+        controller.viewDidChangeText(newText)
+        #expect(controller.highlights.first { $0.id == hidden.id }?.range == NSRange(location: 9, length: 3))
+        session.hiddenNoteIDs = []
+        #expect(controller.drawnHighlights.first { $0.id == hidden.id }?.range == NSRange(location: 9, length: 3), "shown again where it moved to")
+        session.close()
+    }
+
     @Test func reloadReanchorsAndOrphans() async throws {
         let (directory, path) = try makeFile("alpha\nbeta\ngamma\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }

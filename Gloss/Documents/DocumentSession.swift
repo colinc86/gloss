@@ -84,6 +84,14 @@ final class DocumentSession: Identifiable {
     private(set) var notes: [Note] = []
     /// Notes whose last re-anchor was a guess; shown with a review badge until edited or resolved.
     private(set) var needsReview: Set<NoteID> = []
+    /// Notes left off the page because the notes panel doesn't list them (`NotesPanelModel.hiddenIDs`). Text notes
+    /// stay in the editor's highlights, marked hidden, so their ranges keep moving with edits.
+    var hiddenNoteIDs: Set<NoteID> = [] {
+        didSet { if hiddenNoteIDs != oldValue { syncHighlights() } }
+    }
+    /// A note made or changed here, so the notes panel can bring it into its list: the page draws what the list
+    /// shows, and a note just written must not vanish under a tab, colour or search.
+    @ObservationIgnored var onNoteCommitted: (Note) -> Void = { _ in }
     /// Whether the notes observation has delivered once; a page change before that waits for it.
     @ObservationIgnored private var notesDelivered = false
     @ObservationIgnored private var pendingPageReanchor = false
@@ -960,26 +968,28 @@ final class DocumentSession: Identifiable {
 
     /// Pushes note ranges into the editor, preferring live (edited) ranges over stored anchors.
     private func syncHighlights() {
+        let hidden = hiddenNoteIDs
+        let drawn = notes.filter { !hidden.contains($0.id) }
         if let csv = csvController {
-            csv.cellSelections = Dictionary(notes.compactMap { note -> (NoteID, CellSelection)? in
+            csv.cellSelections = Dictionary(drawn.compactMap { note -> (NoteID, CellSelection)? in
                 guard case .text(let anchor) = note.anchor, let cells = anchor.cells else { return nil }
                 return (note.id, cells)
             }, uniquingKeysWith: { first, _ in first })
-            csv.highlights = notes.compactMap { note in
+            csv.highlights = drawn.compactMap { note in
                 guard case .text(let anchor) = note.anchor else { return nil }
                 return TextHighlight(id: note.id, range: csv.lineIndex.range(for: anchor), color: note.color, state: note.displayState)
             }
             return
         }
         if let pdf = pdfController {
-            pdf.highlights = notes.compactMap { note in
+            pdf.highlights = drawn.compactMap { note in
                 guard case .pdf(let anchor) = note.anchor else { return nil }
                 return PDFHighlight(id: note.id, page: anchor.page, bounds: anchor.bounds?.cgRect, text: anchor.text, color: note.color, state: note.displayState)
             }
             return
         }
         if let image = imageController {
-            image.highlights = notes.compactMap { note in
+            image.highlights = drawn.compactMap { note in
                 guard case .image(let anchor) = note.anchor else { return nil }
                 return ImageHighlight(id: note.id, rect: CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h), color: note.color, state: note.displayState, needsReview: needsReview.contains(note.id))
             }
@@ -987,7 +997,7 @@ final class DocumentSession: Identifiable {
         }
         guard let controller = textController else { return }
         if let html {
-            html.elementHighlights = notes.compactMap { note in
+            html.elementHighlights = drawn.compactMap { note in
                 guard case .element(let anchor) = note.anchor else { return nil }
                 // An orphan is drawn dashed where its element last was.
                 return ElementHighlight(id: note.id, selector: anchor.selector, tag: anchor.tag, text: anchor.text,
@@ -1003,12 +1013,14 @@ final class DocumentSession: Identifiable {
             // A note on an embedded picture: its region on the picture in the rendered view, its embed in the source.
             if case .embeddedImage(let anchor) = note.anchor {
                 let region = anchor.region
-                pictures.append(.init(id: note.id, image: .init(source: anchor.source, occurrence: anchor.occurrence),
-                                      region: CGRect(x: region.x, y: region.y, width: region.w, height: region.h),
-                                      pixelSize: CGSize(width: region.imageW, height: region.imageH), color: note.color, state: note.displayState))
+                if !hidden.contains(note.id) {
+                    pictures.append(.init(id: note.id, image: .init(source: anchor.source, occurrence: anchor.occurrence),
+                                          region: CGRect(x: region.x, y: region.y, width: region.w, height: region.h),
+                                          pixelSize: CGSize(width: region.imageW, height: region.imageH), color: note.color, state: note.displayState))
+                }
                 if let live = liveRanges[note.id] { stillLive[note.id] = live }
                 highlights.append(TextHighlight(id: note.id, range: liveRanges[note.id] ?? index.range(for: anchor.embed), color: note.color, state: note.displayState,
-                                                needsReview: needsReview.contains(note.id)))
+                                                needsReview: needsReview.contains(note.id), isHidden: hidden.contains(note.id)))
                 continue
             }
             guard case .text(let anchor) = note.anchor else { continue }
@@ -1021,7 +1033,8 @@ final class DocumentSession: Identifiable {
             }
             highlights.append(TextHighlight(
                 id: note.id, range: range, color: note.color, state: note.displayState,
-                needsReview: needsReview.contains(note.id), isInvalidated: invalidatedNotes.contains(note.id)
+                needsReview: needsReview.contains(note.id), isInvalidated: invalidatedNotes.contains(note.id),
+                isHidden: hidden.contains(note.id)
             ))
         }
         liveRanges = stillLive
@@ -1290,6 +1303,7 @@ final class DocumentSession: Identifiable {
             if let existing = state.existingID {
                 try await noteStore.updateBody(existing, body: state.body)
                 try await noteStore.updateColor(existing, color: state.color)
+                if let note = try await noteStore.note(existing) { onNoteCommitted(note) }
             } else {
                 // The element's picture is taken before the note exists, so its own outline is not in the crop.
                 var elementCrop: (png: Data, width: Int, height: Int)?
@@ -1298,6 +1312,7 @@ final class DocumentSession: Identifiable {
                     elementCrop = try? await snapshot(anchor.rect)
                 }
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
+                onNoteCommitted(note)
                 if case .embeddedImage(let anchor) = state.anchor, let data = markdown?.imageData(for: anchor.source) {
                     // A bonus too: a picture that can't be decoded (an SVG, a huge one) still leaves the note.
                     do {
@@ -1448,9 +1463,12 @@ final class DocumentSession: Identifiable {
     private var selectionAtStep: NSRange?
 
     /// This document's open notes in reading order, each with a key for its place: text by offset, PDF by page then
-    /// top to bottom, images in the order they were made. Orphans and whole-file notes have no place and are left out.
+    /// top to bottom, images in the order they were made. Orphans and whole-file notes have no place and are left out,
+    /// and so are notes the panel isn't listing, so a step never selects a card that isn't there.
     var steppableNotes: [(id: NoteID, key: Double)] {
-        let open = notes.filter { ($0.state != .resolved || $0.resolveOutcome == .needsInput) && $0.state != .orphaned }
+        let open = notes.filter {
+            ($0.state != .resolved || $0.resolveOutcome == .needsInput) && $0.state != .orphaned && !hiddenNoteIDs.contains($0.id)
+        }
         let keyed: [(id: NoteID, key: Double)] = open.enumerated().compactMap { index, note in
             switch note.anchor {
             case .text:

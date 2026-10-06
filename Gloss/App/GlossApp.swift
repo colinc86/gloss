@@ -183,6 +183,9 @@ struct AppCommands: Commands {
                 set: { model.explorer.showDotfiles = $0 }
             )) { Label("Show Hidden Files", systemImage: "eye") }
             .keyboardShortcut(".", modifiers: [.command, .shift])
+            Toggle(isOn: Binding(get: { model.notesPanel.showResolved }, set: { model.notesPanel.showResolved = $0 })) {
+                Label("Show Resolved Notes", systemImage: "checkmark.circle")
+            }
             Button { model.explorer.refreshAll() } label: { Label("Refresh Explorer", systemImage: "arrow.clockwise") }
                 .keyboardShortcut("r", modifiers: [.command])
             Button {

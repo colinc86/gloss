@@ -17,9 +17,14 @@ public final class TextEditorController {
         didSet {
             highlightsVersion += 1
             for observer in highlightObservers.values { observer() }
+            // A peek on a note that's no longer drawn (the notes panel stopped listing it) has nothing under it.
+            if let peek, !highlights.contains(where: { $0.id == peek.id && !$0.isHidden }) { dismissPeek() }
         }
     }
     public private(set) var highlightsVersion = 0
+    /// The highlights drawn and hit: every one but those the notes panel isn't listing. Hidden ones stay in
+    /// `highlights` so their ranges keep moving with edits.
+    public var drawnHighlights: [TextHighlight] { highlights.filter { !$0.isHidden } }
     /// The note drawn at full strength whatever its state (#12): its card is selected in the notes panel.
     public var focusedNoteID: NoteID? {
         didSet {
@@ -100,7 +105,7 @@ public final class TextEditorController {
     /// The pointer is over `index` (nil: over nothing). Shows the note there after a rest, hides when it leaves.
     public func hover(at index: Int?) {
         let highlight = index.flatMap { index in
-            highlights.last { !$0.isInvalidated && $0.state != .orphaned && NSLocationInRange(index, $0.range) }
+            drawnHighlights.last { !$0.isInvalidated && $0.state != .orphaned && NSLocationInRange(index, $0.range) }
         }
         guard highlight?.id != hoveredNoteID else { return }
         hoveredNoteID = highlight?.id
@@ -235,14 +240,19 @@ public struct TextHighlight: Identifiable, Equatable, Sendable {
     public var needsReview: Bool
     /// The text under the anchor was replaced; drawn as a marker only until re-anchored.
     public var isInvalidated = false
+    /// Not listed in the notes panel (another tab, colour or search, or a resolved note while those are hidden): not
+    /// drawn, but still carried through edits.
+    public var isHidden = false
 
-    public init(id: NoteID, range: NSRange, color: NoteColor, state: NoteState, needsReview: Bool = false, isInvalidated: Bool = false) {
+    public init(id: NoteID, range: NSRange, color: NoteColor, state: NoteState, needsReview: Bool = false, isInvalidated: Bool = false,
+                isHidden: Bool = false) {
         self.id = id
         self.range = range
         self.color = color
         self.state = state
         self.needsReview = needsReview
         self.isInvalidated = isInvalidated
+        self.isHidden = isHidden
     }
 
     public var highlight: NoteHighlight {

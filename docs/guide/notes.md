@@ -31,7 +31,11 @@ The panel on the right (⌥⌘N) lists the notes for open documents as cards, gr
 - **Filters**: All, Drafts, Sent, Resolved and **Attention**, which holds notes that lost their place and questions
   from agents. When the panel is narrow the bar shows symbols; hover one for its name and count.
 - **Colors and search** narrow the list further. Search covers comments, file names and agents' replies.
-- **Sort** by position in the file, newest, oldest, color or state.
+- **Sort** by position in the file, newest, oldest, color or state. The same menu has **Show Resolved Notes** (also in
+  the View menu): turn it off to hide resolved notes everywhere but the Resolved tab. Questions from agents stay.
+- **The page shows what the list shows.** On the Drafts tab only drafts are highlighted; a color or a search narrows
+  the page too. With the panel closed, every note is highlighted (except resolved ones, while they're hidden).
+  Selecting a note from elsewhere that the filters hide switches the panel so its card shows.
 - A card shows the comment and the latest turn of the conversation with the agent: its reply or question, or your
   answer. **Show conversation** opens the earlier questions and answers and the rest of a long comment.
 - Click a card to show its note in the viewer. Return does the same for the selected card; Delete removes it, with

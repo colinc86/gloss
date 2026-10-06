@@ -679,7 +679,7 @@ public final class WebBrowserController {
         guard isLoaded, let current, current.alignment != nil else { return }
         var list: [[String: Any]] = []
         var css = ""
-        for (index, highlight) in current.source.highlights.enumerated() where !highlight.isInvalidated {
+        for (index, highlight) in current.source.drawnHighlights.enumerated() where !highlight.isInvalidated {
             guard let dom = current.domRange(forSource: highlight.range) else { continue }
             // A page brings its own (usually light) background, so its tints are the light ones whatever the app's
             // appearance; resolved explicitly, since this runs outside any drawing context.

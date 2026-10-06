@@ -20,12 +20,14 @@ struct NotesPanel: View {
             header
             Divider()
             if visible.isEmpty, panel.isFiltering {
-                let copy = NotesPanelModel.emptyCopy(filter: panel.filter, colors: panel.colorFilter, search: panel.searchText)
+                let copy = NotesPanelModel.emptyCopy(filter: panel.filter, colors: panel.colorFilter, search: panel.searchText,
+                                                     hidingResolved: panel.isHidingResolved)
                 EmptyState(symbol: copy.symbol, title: copy.title, message: copy.message,
                            tint: copy.goodNews ? .green : .secondary) {
                     // Clear Search clears only the search; the tab and colours were chosen on purpose.
                     Button(copy.action) {
-                        if panel.searchText.trimmingCharacters(in: .whitespaces).isEmpty { panel.clearFilters() } else { panel.searchText = "" }
+                        if copy.showsResolved { panel.showResolved = true }
+                        else if panel.searchText.trimmingCharacters(in: .whitespaces).isEmpty { panel.clearFilters() } else { panel.searchText = "" }
                     }
                         .buttonStyle(.glass)
                 }
@@ -247,7 +249,7 @@ struct NotesPanel: View {
         return NoteColor.allCases.compactMap { color in tally[color].map { (color, $0) } }
     }
 
-    /// Sort order; the symbol names the current order.
+    /// Sort order, and whether resolved notes show; the symbol names the current order.
     private var sortMenu: some View {
         @Bindable var panel = model.notesPanel
         return Menu {
@@ -255,6 +257,8 @@ struct NotesPanel: View {
                 ForEach(NotesPanelModel.Sort.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.inline)
+            Divider()
+            Toggle("Show Resolved Notes", isOn: $panel.showResolved)
         } label: {
             Image(systemName: panel.sort.symbol)
         }

@@ -317,6 +317,11 @@ path. Dropping on the Dock icon is not supported yet.
   comment, and their latest turn if they have one. Selected or opened, they show the excerpt, delivery line and
   actions, so finished work stays in reach without crowding the open work above it. In the default sort (Position in File), documents
   with open work come first and documents whose notes are all settled follow, each part in path order.
+- **The page draws what the panel lists**: the panel's tab, colours and search choose the highlights on the page
+  too, so the Drafts tab leaves only drafts on the page. With the panel closed, nothing is filtered on screen and
+  every note is drawn. Show Resolved Notes (the sort menu, and View) off takes resolved notes out of every tab but
+  Resolved, open or closed; a question back from an agent stays. A note revealed from elsewhere that the filters
+  hide brings itself into the list (All, resolved shown), so a selected note is never invisible.
 - **A note arrives**: a card for a note that just appeared (made anywhere, or brought back by Undo) glows in its
   own colour at 20% for 1.6 s, then fades over 0.9 s, so the panel answers "where did it go?" the way Things and
   Linear light a new item. Nothing glows on the first load, when everything is new and nothing arrived

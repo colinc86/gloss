@@ -79,7 +79,7 @@ public struct TextEditorView: NSViewRepresentable {
             controller.noteGeometry.viewport = { [weak textView] in textView?.visibleWindowRect() }
             controller.noteGeometry.visibleNoteRects = { [weak textView, weak controller] in
                 guard let textView, let controller else { return [:] }
-                return textView.visibleHighlightRects(for: controller.highlights.filter { !$0.isInvalidated }.map { ($0.id, $0.range) })
+                return textView.visibleHighlightRects(for: controller.drawnHighlights.filter { !$0.isInvalidated }.map { ($0.id, $0.range) })
             }
             textView.textLayoutManager?.renderingAttributesValidator = { [weak self] layoutManager, fragment in
                 MainActor.assumeIsolated { self?.validateRenderingAttributes(layoutManager, fragment) }
@@ -288,7 +288,7 @@ public struct TextEditorView: NSViewRepresentable {
 
         private func invalidateHighlights() {
             appliedHighlightsVersion = controller.highlightsVersion
-            backdrop?.entries = controller.highlights.filter { !$0.isInvalidated }.map {
+            backdrop?.entries = controller.drawnHighlights.filter { !$0.isInvalidated }.map {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.isFocused($0.id))
             }
             backdrop?.lineChanges = controller.lineChanges

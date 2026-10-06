@@ -149,7 +149,7 @@ final class LineNumberGutterView: NSView {
         guard firstVisible <= lastVisible else { return }
 
         // Note bars: one per note, spanning its lines, in lanes when notes overlap.
-        let spans = controller.highlights.filter { !$0.isInvalidated }.map { highlight -> (id: NoteID, start: Int, end: Int) in
+        let spans = controller.drawnHighlights.filter { !$0.isInvalidated }.map { highlight -> (id: NoteID, start: Int, end: Int) in
             let (start, end) = controller.lineIndex.positions(for: highlight.range)
             // A range ending at column 1 of the next line does not cover that line.
             let last = end.line > start.line && end.col <= 1 ? end.line - 1 : end.line

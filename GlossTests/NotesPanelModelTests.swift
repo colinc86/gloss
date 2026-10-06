@@ -42,6 +42,105 @@ struct NotesPanelModelTests {
         model.visibleGroups.flatMap(\.notes).map(\.body)
     }
 
+    @Test func thePageListsWhatThePanelListsPerTabColorAndSearch() async throws {
+        let (model, _) = try await makeModel()
+        defer { model.stop() }
+        let alpha = try #require(model.groups.first { $0.document.fileName == "alpha.swift" })
+        let ids = Dictionary(uniqueKeysWithValues: alpha.notes.map { ($0.body, $0.id) })
+        let helper = try #require(ids["Rename the helper"]), cafe = try #require(ids["Check the café import"])
+        #expect(model.listedIDs(for: alpha.document.id) == [helper, cafe])
+        model.filter = .drafts
+        #expect(model.listedIDs(for: alpha.document.id) == [helper])
+        #expect(model.hiddenIDs(for: alpha.document.id, panelShown: true) == [cafe])
+        // With the panel closed nothing is filtered on screen, so the page draws everything.
+        #expect(model.hiddenIDs(for: alpha.document.id, panelShown: false).isEmpty)
+        model.filter = .all
+        model.colorFilter = [.yellow]
+        #expect(model.listedIDs(for: alpha.document.id) == [cafe])
+        model.colorFilter = []
+        model.searchText = "helper"
+        #expect(model.listedIDs(for: alpha.document.id) == [helper])
+    }
+
+    @Test func hidingResolvedNotesLeavesThemOutOfEveryTabButResolved() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        let alpha = try #require(model.groups.first { $0.document.fileName == "alpha.swift" })
+        let cafe = try #require(alpha.notes.first { $0.body == "Check the café import" }?.id)
+        #expect(model.count(for: .all) == 3)
+        model.showResolved = false
+        #expect(bodies(model) == ["Rename the helper", "Expand this section"])
+        #expect(model.count(for: .all) == 2, "the tab counts follow")
+        #expect(model.hiddenIDs(for: alpha.document.id, panelShown: true) == [cafe])
+        #expect(model.hiddenIDs(for: alpha.document.id, panelShown: false) == [cafe], "closed, the panel still hides resolved notes")
+        model.filter = .resolved
+        #expect(bodies(model) == ["Check the café import"])
+        #expect(model.count(for: .resolved) == 1)
+        // A question back from an agent is open work: it stays.
+        model.filter = .all
+        let helper = try #require(alpha.notes.first { $0.body == "Rename the helper" }?.id)
+        try await store.resolve(helper, outcome: .needsInput, message: "Which helper?")
+        await waitUntil { model.groups.flatMap(\.notes).contains { $0.resolveOutcome == .needsInput } }
+        #expect(bodies(model) == ["Rename the helper", "Expand this section"])
+        // Saved like the sort.
+        for _ in 0..<100 where (try? await store.setting("notes.showResolved")) != "0" { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(try await store.setting("notes.showResolved") == "0")
+    }
+
+    @Test func aNoteRevealedFromElsewhereIsBroughtIntoTheList() async throws {
+        let (model, _) = try await makeModel()
+        defer { model.stop() }
+        let cafe = try #require(model.groups.flatMap(\.notes).first { $0.body == "Check the café import" })
+        model.filter = .drafts
+        model.showResolved = false
+        model.colorFilter = [.blue]
+        model.searchText = "helper"
+        model.selectedNoteID = cafe.id
+        #expect(model.filter == .all)
+        #expect(model.showResolved)
+        #expect(model.colorFilter.isEmpty)
+        #expect(model.searchText.isEmpty)
+        #expect(bodies(model).contains("Check the café import"))
+        // A note already listed changes nothing.
+        model.filter = .resolved
+        model.makeListed(cafe)
+        #expect(model.filter == .resolved)
+    }
+
+    @Test func hidingResolvedFiltersOnlyWhenThereAreResolvedNotes() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        model.showResolved = false
+        #expect(model.isHidingResolved)
+        let cafe = try #require(model.groups.flatMap(\.notes).first { $0.state == .resolved })
+        try await store.reopen(cafe.id)
+        await waitUntil { !model.groups.flatMap(\.notes).contains { $0.state == .resolved } }
+        #expect(!model.isHidingResolved, "nothing to hide: an empty list is just empty")
+        #expect(!model.isFiltering)
+    }
+
+    @Test func aNoteJustMadeUnderAFilterIsBroughtIntoTheList() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        let alpha = try #require(model.groups.first { $0.document.fileName == "alpha.swift" })
+        model.filter = .sent
+        model.colorFilter = [.blue]
+        model.searchText = "helper"
+        // Not yet in the panel's groups: what the page's commit hands over.
+        let made = try await store.createNote(documentID: alpha.document.id, anchor: anchor(line: 4), body: "New one", color: .pink)
+        model.makeListed(made)
+        #expect(model.filter == .all)
+        #expect(model.colorFilter.isEmpty)
+        #expect(model.searchText.isEmpty)
+    }
+
+    @Test func anEmptyListBecauseResolvedNotesAreHiddenSaysSo() {
+        let copy = NotesPanelModel.emptyCopy(filter: .all, colors: [], search: "", hidingResolved: true)
+        #expect(copy.showsResolved)
+        #expect(copy.action == "Show Resolved Notes")
+        #expect(!NotesPanelModel.emptyCopy(filter: .drafts, colors: [], search: "", hidingResolved: true).showsResolved)
+    }
+
     @Test func positionSortsByLineWithinEachDocument() async throws {
         let (model, _) = try await makeModel()
         defer { model.stop() }

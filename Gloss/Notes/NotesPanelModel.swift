@@ -57,6 +57,15 @@ final class NotesPanelModel {
         }
     }
     @ObservationIgnored private var isRestoringSort = false
+    /// Off, resolved notes leave every tab but Resolved, in the list and on the page. A question back from an agent
+    /// stays: it's open work.
+    var showResolved = true {
+        didSet {
+            guard !isRestoringShowResolved, showResolved != oldValue else { return }
+            Task { try? await noteStore.setSetting("notes.showResolved", showResolved ? "1" : "0") }
+        }
+    }
+    @ObservationIgnored private var isRestoringShowResolved = false
     /// Matched against note text, file name, and resolve message, case-insensitively.
     var searchText = ""
     /// Bumped by Notes › Search Notes to put the caret in the search field.
@@ -66,7 +75,14 @@ final class NotesPanelModel {
     /// Empty means every color.
     var colorFilter: Set<NoteColor> = []
     /// The selected cards: one by a click, several by ⌘-click, ⇧-click or ⌘A (issue #8).
-    var selection: Set<NoteID> = []
+    var selection: Set<NoteID> = [] {
+        didSet {
+            // A note selected from elsewhere (the page's note popover, Next Note) is never a card nobody can see.
+            guard selection != oldValue, selection.count == 1, let id = selection.first,
+                  let note = groups.lazy.flatMap(\.notes).first(where: { $0.id == id }) else { return }
+            makeListed(note)
+        }
+    }
     /// The one selected note; nil when none or several are selected. Setting it selects just that note.
     var selectedNoteID: NoteID? {
         get { selection.count == 1 ? selection.first : nil }
@@ -81,6 +97,7 @@ final class NotesPanelModel {
     func start() {
         observation?.cancel()
         let initial = sort
+        let initialShowResolved = showResolved
         Task { [weak self] in
             guard let self, let stored = try? await noteStore.setting("notes.sort"), let restored = Sort(rawValue: stored) else { return }
             // A pick made while the read was in flight wins over the stored value.
@@ -88,6 +105,13 @@ final class NotesPanelModel {
             isRestoringSort = true
             sort = restored
             isRestoringSort = false
+        }
+        Task { [weak self] in
+            guard let self, let stored = try? await noteStore.setting("notes.showResolved") else { return }
+            guard showResolved == initialShowResolved else { return }
+            isRestoringShowResolved = true
+            showResolved = stored != "0"
+            isRestoringShowResolved = false
         }
         let stream = noteStore.observeDocumentsWithNotes()
         observation = Task { [weak self] in
@@ -118,7 +142,10 @@ final class NotesPanelModel {
         observation?.cancel()
     }
 
-    var isFiltering: Bool { filter != .all || !colorFilter.isEmpty || !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
+    var isFiltering: Bool { filter != .all || !colorFilter.isEmpty || !searchText.trimmingCharacters(in: .whitespaces).isEmpty || isHidingResolved }
+
+    /// Show Resolved is off and there are resolved notes for it to hide.
+    var isHidingResolved: Bool { !showResolved && groups.contains { $0.notes.contains { !Self.isOpen($0) } } }
 
     /// What an empty list says, by what made it empty: a search names the words, a colour names the colour, and each tab
     /// says what belongs there and how notes arrive. An empty Attention list is good news and says so.
@@ -128,13 +155,19 @@ final class NotesPanelModel {
         var message: String
         var action: String
         var goodNews = false
+        /// The action turns Show Resolved Notes back on, instead of clearing filters.
+        var showsResolved = false
     }
 
-    nonisolated static func emptyCopy(filter: Filter, colors: Set<NoteColor>, search: String) -> EmptyCopy {
+    nonisolated static func emptyCopy(filter: Filter, colors: Set<NoteColor>, search: String, hidingResolved: Bool = false) -> EmptyCopy {
         let query = search.trimmingCharacters(in: .whitespaces)
         if !query.isEmpty {
             return EmptyCopy(symbol: "magnifyingglass", title: "No notes match “\(query)”",
                              message: "Search looks through comments, file names, and agents' replies.", action: "Clear Search")
+        }
+        if hidingResolved, filter == .all, colors.isEmpty {
+            return EmptyCopy(symbol: "checkmark.circle", title: "Every note is resolved",
+                             message: "Resolved notes are hidden from the list and the page.", action: "Show Resolved Notes", showsResolved: true)
         }
         let colorWords = colors.map(\.rawValue).sorted().joined(separator: " or ")
         switch filter {
@@ -170,7 +203,7 @@ final class NotesPanelModel {
         let filtered = groups.compactMap { group -> DocumentNotes? in
             let fileMatches = !needle.isEmpty && contains(group.document.fileName)
             let notes = group.notes.filter { note in
-                matches(filter, note)
+                listed(in: filter, note)
                     && (colorFilter.isEmpty || colorFilter.contains(note.color))
                     && (needle.isEmpty || fileMatches || contains(note.body) || contains(note.resolveMessage))
             }
@@ -194,9 +227,46 @@ final class NotesPanelModel {
     }
 
     /// Notes in each state across every document, for the filter bar's counts (before search and color filters,
-    /// so a count says how much work exists, not how much is on screen).
+    /// so a count says how much work exists, not how much is on screen; hidden resolved notes aren't counted).
     func count(for filter: Filter) -> Int {
-        groups.reduce(0) { total, group in total + group.notes.filter { matches(filter, $0) }.count }
+        groups.reduce(0) { total, group in total + group.notes.filter { listed(in: filter, $0) }.count }
+    }
+
+    /// The tab's rule, with resolved notes left out of every tab but Resolved while they're hidden.
+    private func listed(in filter: Filter, _ note: Note) -> Bool {
+        matches(filter, note) && (showResolved || filter == .resolved || Self.isOpen(note))
+    }
+
+    /// The notes the list shows for a document, for drawing only those on its page.
+    func listedIDs(for documentID: DocumentID) -> Set<NoteID> {
+        Set(visibleGroups.first { $0.document.id == documentID }?.notes.map(\.id) ?? [])
+    }
+
+    /// A document's notes left off its page: with the panel shown, every note the list doesn't show; with it
+    /// closed, nothing is filtered on screen, so only resolved notes while they're hidden (as `AppModel.visibleDrafts`
+    /// filters only while the panel shows). A note the panel hasn't heard of yet is drawn, so a new one never blinks.
+    func hiddenIDs(for documentID: DocumentID, panelShown: Bool) -> Set<NoteID> {
+        guard let notes = groups.first(where: { $0.document.id == documentID })?.notes else { return [] }
+        if panelShown {
+            let listed = listedIDs(for: documentID)
+            return Set(notes.lazy.map(\.id).filter { !listed.contains($0) })
+        }
+        return showResolved ? [] : Set(notes.lazy.filter { !Self.isOpen($0) }.map(\.id))
+    }
+
+    /// Brings a note into the list when it's selected or revealed from elsewhere (Attention, the explorer, an
+    /// agent's `open_in_viewer`) while the panel's filters hide it: the tab goes to All, resolved notes show if it's
+    /// one, and a colour filter or search that still hides it is cleared.
+    func makeListed(_ note: Note) {
+        let needle = searchText.trimmingCharacters(in: .whitespaces)
+        func contains(_ text: String?) -> Bool { text?.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        if !listed(in: filter, note) {
+            filter = .all
+            if !showResolved, !Self.isOpen(note) { showResolved = true }
+        }
+        if !colorFilter.isEmpty, !colorFilter.contains(note.color) { colorFilter = [] }
+        let fileName = groups.first { group in group.notes.contains { $0.id == note.id } }?.document.fileName
+        if !needle.isEmpty, !contains(fileName), !contains(note.body), !contains(note.resolveMessage) { searchText = "" }
     }
 
     private func matches(_ filter: Filter, _ note: Note) -> Bool {

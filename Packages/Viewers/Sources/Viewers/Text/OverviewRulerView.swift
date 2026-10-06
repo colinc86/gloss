@@ -60,7 +60,7 @@ final class OverviewRulerView: NSView {
 
     override var isFlipped: Bool { true }
 
-    var hasMarks: Bool { !(controller?.highlights.isEmpty ?? true) || !(controller?.lineChanges?.isEmpty ?? true) }
+    var hasMarks: Bool { !(controller?.drawnHighlights.isEmpty ?? true) || !(controller?.lineChanges?.isEmpty ?? true) }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -100,7 +100,7 @@ final class OverviewRulerView: NSView {
             }
         }
         hits = []
-        for mark in Self.marks(for: controller.highlights, lineIndex: controller.lineIndex) {
+        for mark in Self.marks(for: controller.drawnHighlights, lineIndex: controller.lineIndex) {
             let isHovered = mark.noteID == hovered
             let x: CGFloat = isHovered ? 2 : 3.5
             let y = (track.minY + track.height * mark.start).rounded()

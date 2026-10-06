@@ -220,6 +220,7 @@ final class AppModel {
         send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
+        trackHiddenNotes()
         noteLink.start()
         noteLink.noteStyles = { [weak self] in
             Dictionary((self?.activeSession?.notes ?? []).map { note in
@@ -555,6 +556,7 @@ final class AppModel {
             return
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
+        session.onNoteCommitted = { [weak self] note in self?.notesPanel.makeListed(note) }
         session.openLinkedDocument = { [weak self] target in self?.openDocument(hostID: hostID, path: target) }
         // The deepest open root holding the file bounds what a rendered HTML page may read; looked up per request,
         // since the root can open after the document (launch with --open, a jump from a note).
@@ -827,6 +829,7 @@ final class AppModel {
             return
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
+        session.onNoteCommitted = { [weak self] note in self?.notesPanel.makeListed(note) }
         if let via { session.proxy = proxy(for: via) }
         sessions[key] = session
         activeSession = session
@@ -1553,6 +1556,22 @@ final class AppModel {
         return drafts.filter { shown.contains($0.id) }
     }
 
+    /// The page draws what the panel lists: each open document is told which of its notes to leave off, now and
+    /// whenever the panel's tab, colours, search, Show Resolved, its notes, or its visibility change.
+    private func trackHiddenNotes() {
+        var updates: [(session: DocumentSession, hidden: Set<NoteID>)] = []
+        withObservationTracking {
+            for session in sessions.values {
+                guard let documentID = session.document?.id else { continue }
+                updates.append((session, notesPanel.hiddenIDs(for: documentID, panelShown: showNotesPanel)))
+            }
+        } onChange: {
+            Task { @MainActor [weak self] in self?.trackHiddenNotes() }
+        }
+        // Applied outside the tracking, so what redrawing reads doesn't become something to track.
+        for update in updates where update.session.hiddenNoteIDs != update.hidden { update.session.hiddenNoteIDs = update.hidden }
+    }
+
     /// Whether the panel is narrowing what Send takes (for wording: "the 2 shown drafts").
     var draftsAreFiltered: Bool {
         showNotesPanel && (notesPanel.filter != .all || !notesPanel.colorFilter.isEmpty || !notesPanel.searchText.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -1583,8 +1602,10 @@ final class AppModel {
         await send.copy(noteIDs: noteIDs)
     }
 
-    /// Opens the note's document and scrolls to it.
+    /// Opens the note's document and scrolls to it. A note the panel's filters hide is brought into the list first,
+    /// so what's shown on the page always has its card.
     func reveal(note: Note, in document: Core.Document, select: Bool = true) {
+        notesPanel.makeListed(note)
         withSession(for: document) { session in
             // The session may still be opening.
             for _ in 0..<50 where !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
