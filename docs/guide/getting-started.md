@@ -46,6 +46,9 @@ Click a file to open it. Gloss picks the viewer by file type:
 | HTML | The review browser, rendered or source | Yes, in source |
 | Anything else | Quick Look | No |
 
+Rendered Markdown draws the HTML READMEs use most (pictures, centered text, headings, bold, links, and
+`<details>` sections, always open) and shows any other HTML as source.
+
 **Back** and **Forward** (⌃⌘← and ⌃⌘→, or the chevrons at the top left) step through the documents you've shown,
 across folders and hosts. Hold a chevron to jump several steps.
 

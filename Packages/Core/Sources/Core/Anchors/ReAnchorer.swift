@@ -440,13 +440,11 @@ public enum ReAnchorer {
         }
     }
 
-    /// How many Markdown embeds of `source` (`![alt](source…)`) start before `location`: the embed at `location` is
-    /// that occurrence of the picture, as the renderer counts them.
+    /// How many embeds of `source` start before `location`, Markdown (`![alt](source…)`) and HTML (`<img src="source">`)
+    /// alike: the embed at `location` is that occurrence of the picture, as the renderer counts them (both read
+    /// `EmbedScanner`).
     public static func embedOccurrence(of source: String, before location: Int, in content: String) -> Int {
-        let pattern = "!\\[[^\\]]*\\]\\(\\s*<?" + NSRegularExpression.escapedPattern(for: source) + "(?=[\\s>)\"'])"
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return 0 }
-        let ns = content as NSString
-        return expression.numberOfMatches(in: content, range: NSRange(location: 0, length: min(max(location, 0), ns.length)))
+        EmbedScanner.occurrence(of: source, before: location, in: EmbedScanner.embeds(in: content))
     }
 
     // MARK: Image

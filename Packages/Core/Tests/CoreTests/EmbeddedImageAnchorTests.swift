@@ -57,4 +57,46 @@ struct EmbeddedImageAnchorTests {
         #expect(more.occurrence == 2)
         #expect(ReAnchorer.embedOccurrence(of: "shot.png", before: 1000, in: "[link](shot.png) ![x](shot.png.bak)") == 0, "links and other files don't count")
     }
+
+    /// HTML pictures count with Markdown ones, however their `src` is quoted.
+    @Test func occurrencesCountHTMLAndMarkdownEmbedsTogether() {
+        let doc = "<img src=\"shot.png\" width=\"80\">\n\n![a](shot.png)\n\n<IMG alt='x' SRC='shot.png'>\n\n<img src=shot.png>\n\n![b](shot.png)\n"
+        let last = (doc as NSString).range(of: "![b](shot.png)")
+        #expect(ReAnchorer.embedOccurrence(of: "shot.png", before: last.location, in: doc) == 4)
+        let third = (doc as NSString).range(of: "<IMG")
+        #expect(ReAnchorer.embedOccurrence(of: "shot.png", before: third.location, in: doc) == 2)
+        let others = "<img data-src=\"shot.png\"> <img src=\"shot.png.bak\"> <a href=\"shot.png\">x</a> <img src=shot.pngx>"
+        #expect(ReAnchorer.embedOccurrence(of: "shot.png", before: 1000, in: others) == 0, "other attributes and files don't count")
+    }
+
+    /// What is never drawn as a picture is never an embed: code, comments, Markdown syntax inside HTML.
+    @Test func theScannerSkipsWhatIsNeverDrawn() {
+        let doc = """
+        <!-- <img src="a.png"> -->
+        ```html
+        <img src="a.png">
+        ```
+
+            ![indented](a.png)
+
+        Use `<img src="a.png">` and \\![escaped](a.png).
+
+        <div>
+        ![literal](a.png) <img alt="a > b" src="a.png">
+        </div>
+
+        <p><img
+          src="b.png"></p>
+
+        ![one](a.png "title") ![ref][pic] ![<x>](<c d.png>)
+
+        [pic]: d.png
+        """
+        let embeds = EmbedScanner.embeds(in: doc)
+        let ns = doc as NSString
+        #expect(embeds.map(\.source) == ["a.png", "b.png", "a.png", "d.png", "c d.png"], "\(embeds)")
+        #expect(embeds.map { ns.substring(with: $0.range) } == [
+            "<img alt=\"a > b\" src=\"a.png\">", "<img\n  src=\"b.png\">", "![one](a.png \"title\")", "![ref][pic]", "![<x>](<c d.png>)",
+        ])
+    }
 }

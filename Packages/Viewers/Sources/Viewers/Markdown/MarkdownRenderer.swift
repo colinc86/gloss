@@ -103,7 +103,10 @@ public struct MarkdownRenderer {
         let baseURL: URL?
         var images: [String: NSImage] = [:]
         var unresolvedImages: [String] = []
-        /// How many times each picture has been embedded so far, so a repeated one is told apart.
+        /// Where each picture is embedded, by `EmbedScanner` (read on the first picture), so a repeated one is told
+        /// apart exactly as the re-anchorer tells it apart.
+        private var embedLocations: [String: [Int]]?
+        /// Pictures with no source range, counted as they come.
         var imageOccurrences: [String: Int] = [:]
         var output = NSMutableAttributedString()
         var spans: [SourceSpan] = []
@@ -112,6 +115,14 @@ public struct MarkdownRenderer {
         private var needsBlockSeparator = false
         private var listNumbers: [Int?] = []   // nil for bullet lists
         private var listMarkerWidths: [CGFloat] = []
+        /// Inline HTML elements open in the current paragraph: the source of the end tag that closes each, and the
+        /// style to restore there.
+        private var inlineElements: [(name: String, close: NSRange, style: Style)] = []
+        /// End tags of inline elements that ended early, with an element they were nested in.
+        private var endedInlineTags: Set<NSRange> = []
+        /// Each inline start tag's end tag (by the start's index), worked out once per parent, keyed by the parent's
+        /// path from the document.
+        private var inlineClosings: [[Int]: [Int: NSRange]] = [:]
 
         // Paragraph state, read by `paragraphStyle()` on every append.
         /// Left edge of the current block's text, in container coordinates.
@@ -119,6 +130,8 @@ public struct MarkdownRenderer {
         /// First-line indent of a list item's first paragraph (the marker hangs to the left of `indent`).
         private var firstLineIndent: CGFloat?
         private var tabStops: [NSTextTab] = []
+        /// Set by HTML `align` (`<p align="center">`); natural everywhere else.
+        private var alignment = NSTextAlignment.natural
         /// A list item's marker, emitted by the next `openBlock` so it joins whatever block the item starts with
         /// (paragraph, code block, quote, nested list) and takes that block's chrome.
         private var pendingMarker: (text: String, attributes: [NSAttributedString.Key: Any])?
@@ -170,6 +183,7 @@ public struct MarkdownRenderer {
             // A hanging list marker tabs to the text.
             paragraph.tabStops = firstLineIndent != nil ? [NSTextTab(textAlignment: .left, location: textIndent, options: [:])] : tabStops
             paragraph.defaultTabInterval = 28
+            paragraph.alignment = alignment
             paragraph.paragraphSpacingBefore = gap
             switch kind {
             case .codeBlock:
@@ -195,10 +209,14 @@ public struct MarkdownRenderer {
         }
 
         private mutating func endBlock(_ markup: any Markup) {
-            if let range = markup.range {
-                let sourceRange = table.nsRange(range)
+            endBlock(source: markup.range.map { table.nsRange($0) })
+        }
+
+        /// Ends a block that is part of a node (a paragraph inside one HTML block) by its own source range.
+        private mutating func endBlock(source: NSRange?) {
+            if let source {
                 let renderedStart = blockRenderedStarts.popLast() ?? output.length
-                blocks.append(SourceSpan(rendered: NSRange(location: renderedStart, length: output.length - renderedStart), source: sourceRange, exact: false))
+                blocks.append(SourceSpan(rendered: NSRange(location: renderedStart, length: output.length - renderedStart), source: source, exact: false))
             } else {
                 _ = blockRenderedStarts.popLast()
             }
@@ -340,6 +358,16 @@ public struct MarkdownRenderer {
         }
 
         mutating func visitHTMLBlock(_ html: HTMLBlock) {
+            let tokens = MarkdownHTML.tokens(html.rawHTML)
+            guard MarkdownHTML.isDrawable(tokens) else {
+                showHTMLSource(html)
+                return
+            }
+            drawHTML(html, tokens: tokens)
+        }
+
+        /// HTML the renderer does not draw, as its source lines.
+        private mutating func showHTMLSource(_ html: HTMLBlock) {
             openBlock(.codeBlock)
             let saved = style
             style.monospaced = true
@@ -352,6 +380,231 @@ public struct MarkdownRenderer {
             }
             style = saved
             endBlock(html)
+        }
+
+        /// Where each line of an HTML block's `rawHTML` sits in the source. Inside a quote or list item the raw
+        /// lines lose their container prefix, so a line maps exactly only when its source line ends with it.
+        private struct HTMLLines {
+            /// Offset in `rawHTML` where each line starts, and its length.
+            var raw: [NSRange] = []
+            /// Source offset of each raw line's first unit, when the source line ends with it.
+            var exactStart: [Int?] = []
+            var source: [NSRange] = []
+
+            /// The source of a range of `rawHTML`, exact when it lies on one line that maps exactly. A range over
+            /// several lines runs from its first unit to its last where those lines map exactly (a tag broken over
+            /// lines), and covers the whole lines otherwise.
+            func source(of range: NSRange) -> (NSRange, Bool)? {
+                let end = range.location + max(range.length, 1) - 1
+                guard let first = line(containing: range.location), let last = line(containing: end) else { return nil }
+                if first == last, let start = exactStart[first], range.location + range.length <= raw[first].location + raw[first].length {
+                    return (NSRange(location: start + range.location - raw[first].location, length: range.length), true)
+                }
+                if let start = exactStart[first], let lastStart = exactStart[last], end < raw[last].location + raw[last].length {
+                    let from = start + range.location - raw[first].location
+                    return (NSRange(location: from, length: lastStart + end - raw[last].location + 1 - from), false)
+                }
+                return (NSUnionRange(source[first], source[last]), false)
+            }
+
+            /// The last line starting at or before `offset`.
+            private func line(containing offset: Int) -> Int? {
+                var low = 0, high = raw.count
+                while low < high {
+                    let mid = (low + high) / 2
+                    if raw[mid].location <= offset { low = mid + 1 } else { high = mid }
+                }
+                return low > 0 ? low - 1 : nil
+            }
+        }
+
+        private func htmlLines(_ html: HTMLBlock) -> HTMLLines {
+            var lines = HTMLLines()
+            guard let range = html.range else { return lines }
+            let raw = html.rawHTML as NSString
+            var location = 0
+            for (offset, line) in html.rawHTML.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                let length = (String(line) as NSString).length
+                defer { location += length + 1 }
+                let number = range.lowerBound.line + offset
+                guard number <= range.upperBound.line, location <= raw.length else { break }
+                let lineRange = table.index.contentRange(ofLine: number)
+                let text = String(line)
+                lines.raw.append(NSRange(location: location, length: length))
+                lines.source.append(lineRange)
+                let exact = length <= lineRange.length && sourceNS.substring(with: lineRange).hasSuffix(text)
+                lines.exactStart.append(exact ? lineRange.location + lineRange.length - length : nil)
+            }
+            return lines
+        }
+
+        /// What drawing one HTML block keeps track of: its open elements, the paragraph being drawn and the
+        /// whitespace waiting to be collapsed.
+        private struct HTMLState {
+            var elements: [(name: String, align: NSTextAlignment?, style: Style)] = []
+            var paragraphOpen = false
+            var paragraphSource: NSRange?
+            var lineHasText = false
+            var pendingSpace = false
+        }
+
+        /// Draws an HTML block whose every tag is one rendered Markdown knows: block elements become paragraphs,
+        /// inline ones style their text, whitespace collapses as a browser collapses it, and text maps back to
+        /// its source (exactly where the drawn text is the source text).
+        private mutating func drawHTML(_ html: HTMLBlock, tokens: [MarkdownHTML.Token]) {
+            let raw = html.rawHTML as NSString
+            let units = Array(html.rawHTML.utf16)
+            let lines = htmlLines(html)
+            let saved = style
+            var state = HTMLState()
+            for token in tokens {
+                switch token {
+                case .start(let name, let attributes, let range):
+                    if MarkdownHTML.blockTags.contains(name) {
+                        closeHTMLParagraph(&state)
+                        state.elements.append((name, Self.alignment(attributes["align"]), style))
+                        applyHTMLStyle(name, attributes: attributes)
+                    } else if name == "br" {
+                        guard state.paragraphOpen else { continue }
+                        appendGenerated(MarkdownRenderer.lineSeparator)
+                        state.lineHasText = false
+                        state.pendingSpace = false
+                    } else if name == "img" {
+                        beginHTMLContent(&state)
+                        let source = lines.source(of: range)
+                        state.paragraphSource = Self.union(state.paragraphSource, source?.0)
+                        appendHTMLPicture(attributes, source: source?.0)
+                        state.lineHasText = true
+                    } else if !MarkdownHTML.voidTags.contains(name) {
+                        state.elements.append((name, nil, style))
+                        applyHTMLStyle(name, attributes: attributes)
+                    }
+                case .end(let name, _):
+                    guard let index = state.elements.lastIndex(where: { $0.name == name }) else { continue }
+                    if MarkdownHTML.blockTags.contains(name) { closeHTMLParagraph(&state) }
+                    style = state.elements[index].style
+                    state.elements.removeSubrange(index...)
+                case .text(let range):
+                    appendHTMLText(range, raw: raw, units: units, lines: lines, state: &state)
+                case .comment, .other:
+                    continue
+                }
+            }
+            closeHTMLParagraph(&state)
+            style = saved
+        }
+
+        private static func alignment(_ value: String?) -> NSTextAlignment? {
+            switch value?.lowercased() {
+            case "center"?: .center
+            case "right"?: .right
+            case "left"?: .left
+            default: nil
+            }
+        }
+
+        private static func union(_ a: NSRange?, _ b: NSRange?) -> NSRange? {
+            guard let a else { return b }
+            guard let b else { return a }
+            return NSUnionRange(a, b)
+        }
+
+        /// Starts a paragraph for the next drawn content of an HTML block, styled by the elements it sits in.
+        private mutating func openHTMLParagraph(_ state: inout HTMLState) {
+            guard !state.paragraphOpen else { return }
+            let level = state.elements.last { $0.name.count == 2 && $0.name.hasPrefix("h") }.flatMap { Int($0.name.dropFirst()) }
+            alignment = state.elements.last { $0.align != nil }?.align ?? .natural
+            openBlock(level.map { .heading(level: $0) } ?? .plain)
+            state.paragraphOpen = true
+            state.paragraphSource = nil
+            state.lineHasText = false
+            state.pendingSpace = false
+            // A details summary is always drawn open.
+            if state.elements.contains(where: { $0.name == "summary" }) { appendGenerated("▾ ") }
+        }
+
+        /// Before drawn content: its paragraph, and the space collapsed whitespace left (never at a line's start).
+        private mutating func beginHTMLContent(_ state: inout HTMLState) {
+            openHTMLParagraph(&state)
+            if state.pendingSpace, state.lineHasText { appendGenerated(" ") }
+            state.pendingSpace = false
+        }
+
+        private mutating func closeHTMLParagraph(_ state: inout HTMLState) {
+            guard state.paragraphOpen else { return }
+            endBlock(source: state.paragraphSource)
+            alignment = .natural
+            state.paragraphOpen = false
+        }
+
+        /// A text run of an HTML block: whitespace runs collapse to one space (none at a line's start), entities
+        /// decode, and each stretch of text that is its own source maps exactly.
+        private mutating func appendHTMLText(_ range: NSRange, raw: NSString, units: [UInt16], lines: HTMLLines, state: inout HTMLState) {
+            var runStart: Int?
+            func emit(_ text: String, _ rawRange: NSRange, exact: Bool, state: inout HTMLState) {
+                beginHTMLContent(&state)
+                let source = lines.source(of: rawRange)
+                append(text, source: source?.0, exact: exact && source?.1 == true)
+                state.paragraphSource = Self.union(state.paragraphSource, source?.0)
+                state.lineHasText = true
+            }
+            func flush(to end: Int, state: inout HTMLState) {
+                guard let start = runStart, end > start else { return }
+                let rawRange = NSRange(location: start, length: end - start)
+                emit(raw.substring(with: rawRange), rawRange, exact: true, state: &state)
+                runStart = nil
+            }
+            let end = range.location + range.length
+            var i = range.location
+            while i < end {
+                if HTMLTextProjection.isSpace(units[i]) {
+                    var j = i
+                    while j < end, HTMLTextProjection.isSpace(units[j]) { j += 1 }
+                    // A single space between words stays in the run, so a sentence maps as one stretch.
+                    if units[i] == 32, j == i + 1, runStart != nil, j < end {
+                        i = j
+                        continue
+                    }
+                    flush(to: i, state: &state)
+                    state.pendingSpace = true
+                    i = j
+                } else if units[i] == 38, let entity = HTMLTextProjection.entity(in: units, at: i) {
+                    flush(to: i, state: &state)
+                    emit(entity.text, NSRange(location: i, length: entity.length), exact: false, state: &state)
+                    i += entity.length
+                } else {
+                    if runStart == nil { runStart = i }
+                    i += 1
+                }
+            }
+            flush(to: end, state: &state)
+        }
+
+        /// The style an HTML element gives what it contains.
+        private mutating func applyHTMLStyle(_ name: String, attributes: [String: String]) {
+            switch name {
+            case "b", "strong", "summary":
+                style.bold = true
+            case "i", "em":
+                style.italic = true
+            case "code":
+                style.monospaced = true
+                style.codeBackground = true
+            case "a":
+                if let href = attributes["href"] { style.link = MarkdownHTML.decoded(href) }
+            case "h1", "h2", "h3", "h4", "h5", "h6":
+                let level = Int(name.dropFirst()) ?? 1
+                style.font = MarkdownRenderer.headingFont(level: level)
+                if level >= 6 { style.color = .secondaryLabelColor }
+            default:
+                break
+            }
+        }
+
+        /// An `<img>`, sized by its `width` and `height` when it gives them.
+        private mutating func appendHTMLPicture(_ attributes: [String: String], source range: NSRange?) {
+            appendPicture(source: attributes["src"], alt: MarkdownHTML.decoded(attributes["alt"] ?? ""), range: range,
+                          width: MarkdownHTML.pixels(attributes["width"]), height: MarkdownHTML.pixels(attributes["height"]))
         }
 
         mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) {
@@ -563,23 +816,33 @@ public struct MarkdownRenderer {
 
         mutating func visitImage(_ image: Image) {
             let alt = image.plainText
-            let (range, _) = exactness(image, rendered: alt)
-            if let picture = image.source.flatMap({ images[$0] }) ?? MarkdownImageLoader.image(source: image.source, baseURL: baseURL) {
+            appendPicture(source: image.source, alt: alt, range: exactness(image, rendered: alt).0)
+        }
+
+        /// A picture embed (`![]()`, `<img>`), mapped to the whole embed. The picture itself when this Mac or the
+        /// document's host has it, at `width` × `height` when the embed gives them; otherwise its alt text.
+        private mutating func appendPicture(source: String?, alt: String, range: NSRange?, width: CGFloat? = nil, height: CGFloat? = nil) {
+            if let picture = source.flatMap({ images[$0] }) ?? MarkdownImageLoader.image(source: source, baseURL: baseURL) {
                 let attachment = FittedImageAttachment()
                 attachment.image = picture
-                attachment.naturalSize = picture.size
+                let size = picture.size
+                switch size.width > 0 && size.height > 0 ? (width, height) : (nil, nil) {
+                case let (width?, height?): attachment.naturalSize = CGSize(width: width, height: height)
+                case let (width?, nil): attachment.naturalSize = CGSize(width: width, height: width * size.height / size.width)
+                case let (nil, height?): attachment.naturalSize = CGSize(width: height * size.width / size.height, height: height)
+                case (nil, nil): attachment.naturalSize = size
+                }
                 // What a region note on the picture needs: which picture, which embed of it, and its own pixels.
-                if let source = image.source {
+                if let source {
                     attachment.source = source
-                    attachment.occurrence = imageOccurrences[source, default: 0]
-                    imageOccurrences[source, default: 0] += 1
+                    attachment.occurrence = occurrence(of: source, at: range)
                 }
                 attachment.pixelSize = FittedImageAttachment.pixelSize(of: picture)
                 append("\u{FFFC}", source: range, exact: false, extra: [.attachment: attachment])
                 return
             }
             // A relative picture this Mac doesn't have: its document's host may (an attachment, a remote file).
-            if baseURL == nil, let source = image.source, !source.isEmpty, URL(string: source)?.scheme == nil, !unresolvedImages.contains(source) {
+            if baseURL == nil, let source, !source.isEmpty, URL(string: source)?.scheme == nil, !unresolvedImages.contains(source) {
                 unresolvedImages.append(source)
             }
             let saved = style
@@ -591,17 +854,102 @@ public struct MarkdownRenderer {
                 attachment.image = symbol
                 appendGenerated("\u{FFFC}\u{00A0}", extra: [.attachment: attachment])
             }
-            append(alt.isEmpty ? (image.source ?? "image") : alt, source: range, exact: false)
+            append(alt.isEmpty ? (source ?? "image") : alt, source: range, exact: false)
             style = saved
         }
 
+        /// Which embed of `source` the one at `range` is, as `EmbedScanner` numbers them.
+        private mutating func occurrence(of source: String, at range: NSRange?) -> Int {
+            guard let range else {
+                defer { imageOccurrences[source, default: 0] += 1 }
+                return imageOccurrences[source, default: 0]
+            }
+            if embedLocations == nil {
+                embedLocations = Dictionary(grouping: EmbedScanner.embeds(in: self.source), by: \.source).mapValues { $0.map(\.range.location) }
+            }
+            let locations = embedLocations?[source] ?? []
+            // Sorted, as the scanner reads in document order: count those before this embed.
+            var low = 0, high = locations.count
+            while low < high {
+                let mid = (low + high) / 2
+                if locations[mid] < range.location { low = mid + 1 } else { high = mid }
+            }
+            return low
+        }
+
+        /// Inline HTML arrives one tag per node, so an element's start and end tags are siblings. A known element
+        /// whose end tag follows among them styles what lies between; anything else stays grey source.
         mutating func visitInlineHTML(_ inlineHTML: InlineHTML) {
+            let (range, exact) = exactness(inlineHTML, rendered: inlineHTML.rawHTML)
+            let tokens = MarkdownHTML.tokens(inlineHTML.rawHTML)
+            switch tokens.count == 1 ? tokens[0] : nil {
+            case .comment?:
+                return
+            case .start(let name, let attributes, _)? where MarkdownHTML.inlineTags.contains(name):
+                switch name {
+                case "br":
+                    appendGenerated(MarkdownRenderer.lineSeparator)
+                    return
+                case "img":
+                    appendHTMLPicture(attributes, source: range)
+                    return
+                case "source" where inlineElements.contains(where: { $0.name == "picture" }):
+                    return
+                default:
+                    if !MarkdownHTML.voidTags.contains(name), let close = closingTag(of: inlineHTML, name: name) {
+                        inlineElements.append((name, close, style))
+                        applyHTMLStyle(name, attributes: attributes)
+                        return
+                    }
+                }
+            case .end(let name, _)?:
+                if let range, let index = inlineElements.lastIndex(where: { $0.name == name && $0.close == range }) {
+                    style = inlineElements[index].style
+                    // Elements still open inside it end here too (`<i><b>x</i></b>`); their own end tags draw nothing.
+                    endedInlineTags.formUnion(inlineElements[(index + 1)...].map(\.close))
+                    inlineElements.removeSubrange(index...)
+                    return
+                }
+                if let range, endedInlineTags.remove(range) != nil { return }
+            default:
+                break
+            }
             let saved = style
             style.monospaced = true
             style.color = .secondaryLabelColor
-            let (range, exact) = exactness(inlineHTML, rendered: inlineHTML.rawHTML)
             append(inlineHTML.rawHTML, source: range, exact: exact)
             style = saved
+        }
+
+        /// The source range of the sibling that ends the element `node` starts, if one does. Start and end tags are
+        /// paired in one pass over the parent's children, the first time any of them asks.
+        private mutating func closingTag(of node: InlineHTML, name: String) -> NSRange? {
+            guard let parent = node.parent else { return nil }
+            var path: [Int] = []
+            var ancestor: (any Markup)? = parent
+            while let current = ancestor {
+                path.append(current.indexInParent)
+                ancestor = current.parent
+            }
+            if inlineClosings[path] == nil {
+                var closings: [Int: NSRange] = [:]
+                var open: [String: [Int]] = [:]
+                for (index, child) in parent.children.enumerated() {
+                    guard let html = child as? InlineHTML else { continue }
+                    let tokens = MarkdownHTML.tokens(html.rawHTML)
+                    guard tokens.count == 1 else { continue }
+                    switch tokens[0] {
+                    case .start(let name, _, _) where !MarkdownHTML.voidTags.contains(name):
+                        open[name, default: []].append(index)
+                    case .end(let name, _):
+                        if let start = open[name]?.popLast(), let range = html.range { closings[start] = table.nsRange(range) }
+                    default:
+                        continue
+                    }
+                }
+                inlineClosings[path] = closings
+            }
+            return inlineClosings[path]?[node.indexInParent]
         }
 
         mutating func visitSoftBreak(_ softBreak: SoftBreak) {

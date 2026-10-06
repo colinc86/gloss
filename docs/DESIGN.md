@@ -450,6 +450,11 @@ path. Dropping on the Dock icon is not supported yet.
   medium in the tertiary label colour, spelled the way each community spells it, the fence's word as written when
   unknown, nothing on a bare fence. Quote bars are an opaque grey, so where two paragraphs' pieces of one bar meet
   the bar stays even instead of darkening at the seam.
+- **HTML in rendered Markdown** is drawn when every tag in it is one READMEs lean on (`p` and `div` with `align`,
+  `h1`–`h6`, `details` and `summary`, `picture`, `img`, `b`, `i`, `a`, `code`, `br`); a block with any other tag
+  stays grey source, so a table or script is never half drawn. Whitespace collapses as a browser collapses it, a
+  summary reads bold behind a ▾ with its details always open, and an `<img>` is a picture like `![]()`, sized by its
+  `width` and `height`, notes and all. Text keeps its source mapping, exact wherever it is its own source.
 - **PDF page thumbnails** (`PDFThumbnailColumn`): for documents with more than one page, a sidebar toggle at the start
   of the PDF toolbar slides in a 120 pt column that maps the document and its notes, as Preview's sidebar maps pages.
   Each page is a small sheet with a soft shadow, lifting a little under the pointer; the current page is ringed in the
