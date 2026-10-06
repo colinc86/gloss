@@ -9,6 +9,20 @@ public enum NoteStoreError: Error, Equatable, Sendable {
     case tooManyQuestions(Int)
 }
 
+extension NoteStoreError: LocalizedError {
+    /// Plain words, since an agent reads these through MCP.
+    public var errorDescription: String? {
+        switch self {
+        case .noteNotFound(let id): "No note with id \(id.rawValue)."
+        case .documentNotFound(let id): "No document with id \(id.rawValue)."
+        case .illegalTransition(from: .draft, to: _): "The note is a draft: the user hasn't sent it."
+        case .illegalTransition(from: .resolved, to: .resolved): "The note is already resolved."
+        case .illegalTransition(let from, let to): "A \(from.rawValue) note can't become \(to.rawValue)."
+        case .tooManyQuestions(let limit): "This file already has \(limit) open questions; wait for the user to answer some."
+        }
+    }
+}
+
 /// All reads and writes of hosts, roots, documents, notes, sends, attachments, staged files,
 /// targets, and settings. Every write runs in one transaction.
 public struct NoteStore: Sendable {
@@ -325,6 +339,15 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// Orphans that were sent when their text went missing: still the agent's to resolve, since deleting the text
+    /// is often what the note asked for.
+    public func sentOrphanIDs() async throws -> Set<NoteID> {
+        try await queue.read { db in
+            Set(try String.fetchAll(db, sql: "SELECT id FROM note WHERE state = 'orphaned' AND previous_state = 'sent'")
+                .map(NoteID.init(rawValue:)))
+        }
+    }
+
     /// Open questions one document may hold from agents, so a looping agent can't bury the user's own notes.
     public static let agentQuestionLimit = 20
 
@@ -420,18 +443,45 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// `sent` → `resolved`, or `draft` → `resolved` when the user resolves by hand.
+    /// `sent` → `resolved`, `draft` → `resolved` when the user resolves by hand, or `orphaned` → `resolved` when the
+    /// text is gone because acting on the note removed it.
     public func resolve(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, at date: Date = Date()) async throws {
+        try await resolve(id, outcome: outcome, message: message, at: date, onlySent: false)
+    }
+
+    /// An agent resolves a note it was given: a sent one, or one sent before its text went. Checked in the same write,
+    /// so a note the user takes back meanwhile is never resolved behind their back.
+    public func resolveSent(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, at date: Date = Date()) async throws {
+        try await resolve(id, outcome: outcome, message: message, at: date, onlySent: true)
+    }
+
+    private func resolve(_ id: NoteID, outcome: ResolveOutcome, message: String?, at date: Date, onlySent: Bool) async throws {
         let date = Self.rounded(date)
         try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
             let current = NoteState(rawValue: record.state) ?? .draft
+            if onlySent, current == .draft || (current == .orphaned && record.previousState != NoteState.sent.rawValue) {
+                throw NoteStoreError.illegalTransition(from: .draft, to: .resolved)
+            }
             try Self.checkTransition(from: current, to: .resolved)
             record.state = NoteState.resolved.rawValue
             record.resolveOutcome = outcome.rawValue
             record.resolveMessage = message
+            // A resolved orphan remembers its text is gone, so taking it back makes an orphan, not a draft drawn on
+            // whatever text sits where its anchor points.
+            record.previousState = current == .orphaned ? NoteState.orphaned.rawValue : nil
             record.updatedAt = date
             try record.update(db)
+        }
+    }
+
+    /// Where a resolved note goes when it is taken back: a draft, or an orphan (that was a draft) if its text had gone.
+    private static func reopened(_ record: inout NoteRecord) {
+        if record.previousState == NoteState.orphaned.rawValue {
+            record.state = NoteState.orphaned.rawValue
+            record.previousState = NoteState.draft.rawValue
+        } else {
+            record.state = NoteState.draft.rawValue
         }
     }
 
@@ -479,7 +529,7 @@ public struct NoteStore: Sendable {
             guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
             let current = NoteState(rawValue: record.state) ?? .draft
             guard current == .resolved else { throw NoteStoreError.illegalTransition(from: current, to: .draft) }
-            record.state = NoteState.draft.rawValue
+            Self.reopened(&record)
             record.resolveOutcome = nil
             record.resolveMessage = nil
             record.updatedAt = date
@@ -515,7 +565,7 @@ public struct NoteStore: Sendable {
                 throw NoteStoreError.illegalTransition(from: current, to: .draft)
             }
             record.body = Self.body(record.body, answering: record.resolveMessage, with: answer)
-            record.state = NoteState.draft.rawValue
+            Self.reopened(&record)
             record.resolveOutcome = nil
             record.resolveMessage = nil
             record.updatedAt = date
@@ -539,12 +589,12 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// The lifecycle: draft → sent → resolved; any → orphaned; orphaned → draft; draft → resolved by hand; sent → draft
-    /// when unsent.
+    /// The lifecycle: draft → sent → resolved; any → orphaned; orphaned → draft or resolved; draft → resolved by hand;
+    /// sent → draft when unsent.
     static func checkTransition(from: NoteState, to: NoteState) throws {
         let allowed: Bool
         switch (from, to) {
-        case (.draft, .sent), (.sent, .resolved), (.draft, .resolved), (.orphaned, .draft), (.sent, .draft):
+        case (.draft, .sent), (.sent, .resolved), (.draft, .resolved), (.orphaned, .draft), (.orphaned, .resolved), (.sent, .draft):
             allowed = true
         case (_, .orphaned):
             allowed = from != .orphaned

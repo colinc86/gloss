@@ -268,7 +268,7 @@ final class NotesPanelModel {
 
     /// What each bulk action would touch among `notes`: only notes the action makes sense for.
     nonisolated static func sendable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent } }
-    nonisolated static func resolvable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent } }
+    nonisolated static func resolvable(_ notes: [Note]) -> [Note] { notes.filter { $0.state != .resolved } }
     /// Notes that can go back to drafts: resolved ones, and sent ones (#13).
     nonisolated static func reopenable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .resolved || $0.state == .sent } }
 
@@ -276,7 +276,7 @@ final class NotesPanelModel {
         do { try await noteStore.resolve(id) } catch { Log.notes.error("resolve failed: \(error, privacy: .public)") }
     }
 
-    /// Resolves the drafts and sent notes among `ids`, by hand; others are left as they are.
+    /// Resolves the unresolved notes among `ids` (drafts, sent and orphaned), by hand.
     func resolve(_ ids: [NoteID]) async {
         let notes = Self.resolvable(groups.flatMap(\.notes).filter { ids.contains($0.id) })
         for note in notes { await resolve(note.id) }

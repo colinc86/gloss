@@ -92,6 +92,34 @@ struct NoteStoreTests {
         #expect(after?.state == .sent && after?.anchor == .wholeFile)
     }
 
+    /// A sent note whose text went (often because the agent did what it asked: "remove this") can still be
+    /// resolved, and doesn't come back when the text does.
+    @Test func aSentOrphanCanBeResolved() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let sent = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "remove this", color: .blue)
+        let draft = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "draft", color: .blue)
+        _ = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "p", noteIDs: [sent.id], outcome: .delivered)
+        for id in [sent.id, draft.id] { try await store.markOrphaned(id) }
+        #expect(try await store.sentOrphanIDs() == [sent.id])
+        try await store.resolve(sent.id, outcome: .done, message: "Removed.")
+        #expect(try await store.note(sent.id)?.state == .resolved)
+        #expect(try await store.sentOrphanIDs().isEmpty)
+        // Taken back, it is an orphan again (its text is still gone), never a draft drawn on other text.
+        try await store.reopen(sent.id)
+        #expect(try await store.note(sent.id)?.state == .orphaned)
+        // Only a note sent when its text went is the agent's to resolve.
+        await #expect(throws: NoteStoreError.illegalTransition(from: .draft, to: .resolved)) { try await store.resolveSent(sent.id) }
+        try await store.resolve(sent.id)
+        try await store.recoverOrphan(sent.id, anchor: .wholeFile)
+        #expect(try await store.note(sent.id)?.state == .resolved)
+        // The user may resolve an orphaned draft by hand too.
+        try await store.resolve(draft.id)
+        #expect(try await store.note(draft.id)?.state == .resolved)
+        // Errors read as words, since agents see them.
+        #expect(NoteStoreError.illegalTransition(from: .resolved, to: .resolved).localizedDescription == "The note is already resolved.")
+    }
+
     /// Issue #4: an agent's question arrives as a note asking for the user, answered with Reply into a draft that
     /// goes back only on Send; a document takes a bounded number of them.
     @Test func anAgentQuestionIsAnsweredIntoADraft() async throws {

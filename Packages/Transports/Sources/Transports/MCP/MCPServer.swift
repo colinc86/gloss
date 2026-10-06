@@ -399,14 +399,20 @@ public actor MCPServer {
             if let name = arguments["host"]?.stringValue, !name.isEmpty, hostID == nil {
                 return CallTool.Result(content: [text("unknown host \(name)")], isError: true)
             }
-            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue, states: Self.sharedStates)
+            // Sent notes, and sent notes whose text has since gone (often because the agent removed it, as asked).
+            let sentOrphans = try await store.sentOrphanIDs()
+            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue, states: Self.sharedStates.union([.orphaned]))
+                .filter { $0.note.state != .orphaned || sentOrphans.contains($0.note.id) }
+            func anchor(_ note: Note) -> String {
+                note.state == .orphaned ? "\(note.anchor.summary) (text no longer found)" : note.anchor.summary
+            }
             let hosts = Dictionary(uniqueKeysWithValues: try await store.hosts().map { ($0.id, $0.name) })
             let lines = pending.map { entry in
                 let preview = entry.note.body.replacingOccurrences(of: "\n", with: " ").prefix(80)
-                return "\(entry.note.id.rawValue)\t\(hosts[entry.document.hostID] ?? entry.document.hostID.rawValue):\(entry.document.path)\t\(entry.note.anchor.summary)\t\(entry.note.state.rawValue)\t\(preview)"
+                return "\(entry.note.id.rawValue)\t\(hosts[entry.document.hostID] ?? entry.document.hostID.rawValue):\(entry.document.path)\t\(anchor(entry.note))\t\(entry.note.state.rawValue)\t\(preview)"
             }
             let json: [[String: Any]] = pending.map { entry in
-                ["id": entry.note.id.rawValue, "host": hosts[entry.document.hostID] ?? entry.document.hostID.rawValue, "path": entry.document.path, "anchor": entry.note.anchor.summary, "state": entry.note.state.rawValue, "body": entry.note.body]
+                ["id": entry.note.id.rawValue, "host": hosts[entry.document.hostID] ?? entry.document.hostID.rawValue, "path": entry.document.path, "anchor": anchor(entry.note), "state": entry.note.state.rawValue, "body": entry.note.body]
             }
             let jsonText = String(data: (try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])) ?? Data(), encoding: .utf8) ?? "[]"
             return CallTool.Result(content: [text(lines.isEmpty ? "No pending notes." : lines.joined(separator: "\n")), text(jsonText)])
@@ -422,10 +428,14 @@ public actor MCPServer {
             }
             return CallTool.Result(content: [text(body)])
         case PacketBuilder.toolName:
-            guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), note.state != .draft, try await store.sharedNoteIDs().contains(id) else {
+            guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), try await store.sharedNoteIDs().contains(id) else {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
-            if note.state == .resolved { return CallTool.Result(content: [text("note \(raw) is already resolved")], isError: true) }
+            switch note.state {
+            case .draft: return CallTool.Result(content: [text("note \(raw) is a draft: the user took it back and hasn't sent it again")], isError: true)
+            case .resolved: return CallTool.Result(content: [text("note \(raw) is already resolved")], isError: true)
+            case .sent, .orphaned: break
+            }
             var outcome = ResolveOutcome.done
             if let rawOutcome = arguments["outcome"]?.stringValue {
                 guard let parsed = ResolveOutcome(rawValue: rawOutcome) else {
@@ -433,7 +443,13 @@ public actor MCPServer {
                 }
                 outcome = parsed
             }
-            try await store.resolve(id, outcome: outcome, message: arguments["message"]?.stringValue)
+            do {
+                try await store.resolveSent(id, outcome: outcome, message: arguments["message"]?.stringValue)
+            } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
+                return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
+            } catch {
+                return CallTool.Result(content: [text(error.localizedDescription)], isError: true)
+            }
             return CallTool.Result(content: [text("resolved \(raw)")])
         case "open_in_viewer":
             var host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
@@ -509,8 +525,10 @@ public actor MCPServer {
             // Notes never sent are the user's own: only notes an agent was given count, and a document with none of
             // them is not listed.
             let shared = try await store.sharedNoteIDs()
+            let sentOrphans = try await store.sentOrphanIDs()
+            // An orphan counts only if it was sent when its text went, as list_pending_notes and resolve_note see it.
             let documents = try await store.documentsWithNotes()
-                .map { (document: $0.document, notes: $0.notes.filter { shared.contains($0.id) }) }
+                .map { (document: $0.document, notes: $0.notes.filter { shared.contains($0.id) && ($0.state != .orphaned || sentOrphans.contains($0.id)) }) }
                 .filter { !$0.notes.isEmpty }
             let hosts = Dictionary(uniqueKeysWithValues: try await store.hosts().map { ($0.id, $0.name) })
             let lines = documents.map { entry in

@@ -159,6 +159,37 @@ struct MCPServerTests {
         }
     }
 
+    /// A sent note whose text the agent removed (as the note asked) is still listed, marked as gone, and can be
+    /// resolved; one taken back to a draft before its text went can't.
+    @Test func agentsResolveNotesWhoseTextIsGone() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-orphans-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, ids) = try await Self.makeStore(count: 2, attachmentDirectory: directory)
+        let dependencies = Self.dependencies(store: store)
+        func call(_ name: String, _ arguments: [String: Value] = [:]) async throws -> (text: String, isError: Bool) {
+            let result = try await MCPServer.callTool(.init(name: name, arguments: arguments), dependencies: dependencies)
+            let text = result.content.compactMap { if case .text(let text, _, _) = $0 { text } else { nil } }.joined(separator: "\n")
+            return (text, result.isError ?? false)
+        }
+        try await store.markOrphaned(ids[0])
+        try await store.unsend(ids[1])
+        try await store.markOrphaned(ids[1])
+        let listing = try await call("list_pending_notes")
+        #expect(listing.text.contains(ids[0].rawValue) && listing.text.contains("(text no longer found)"), "\(listing.text)")
+        #expect(!listing.text.contains(ids[1].rawValue))
+        let resolved = try await call("resolve_note", ["id": .string(ids[0].rawValue), "message": .string("Removed.")])
+        #expect(!resolved.isError, "\(resolved.text)")
+        #expect(try await store.note(ids[0])?.state == .resolved)
+        let again = try await call("resolve_note", ["id": .string(ids[0].rawValue)])
+        #expect(again.isError && again.text.contains("already resolved"))
+        let unsent = try await call("resolve_note", ["id": .string(ids[1].rawValue)])
+        #expect(unsent.isError && unsent.text.contains("hasn't sent it again"), "\(unsent.text)")
+        #expect(try await store.note(ids[1])?.state == .orphaned)
+        let documents = try await call("list_documents")
+        #expect(documents.text.contains("orphaned=0"), "\(documents.text)")
+    }
+
     /// Issue #4: an agent asks the user about lines it wrote, keeps a folder at hand, and reads the favorites back.
     /// The question carries the agent's name from its client, and the session's host as the default.
     @Test func agentsAskAndKeepFavorites() async throws {
