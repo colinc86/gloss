@@ -1,8 +1,9 @@
 # Remote hosts
 
 Gloss opens files on other machines with your own `ssh`, your ssh config and your keys. It keeps its own connection
-to each host, so it works no matter how your terminal reaches it: mosh, tmux, or a jump host. Nothing is installed
-on the remote machine.
+to each host, so it works no matter how your terminal reaches it: mosh, tmux, or a jump host. No daemon or binary is
+installed on the remote machine. Installing an agent for a host in Settings › Agents adds Gloss to that agent's
+config there, and pictures you send are copied to `~/.cache/gloss/attachments` on the host for the agent to open.
 
 ## Hosts
 

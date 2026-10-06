@@ -15,8 +15,8 @@ yourself.
 
 Any other agent that speaks MCP over HTTP can use the endpoint and snippets at the bottom of the page.
 
-When an update to Gloss changes what an agent's set-up needs, a notification at the bottom right says which agent
-needs an update. **Open Settings** goes straight to Settings › Agents, where **Update** fixes it.
+When an update to Gloss changes what an agent's set-up needs, a notice at the bottom right of the window says
+which agent needs an update and why. **Open Settings** goes straight to Settings › Agents, where **Update** fixes it.
 
 ## Ways a note reaches an agent
 
@@ -31,7 +31,7 @@ A note reaches an agent only when you press Send. Drafts stay in Gloss until the
 | Clipboard | Anything, including a bare ssh or mosh session | None |
 
 The MCP server listens on `127.0.0.1` (the port is in Settings › Agents). Agents on a remote host reach it through
-Gloss's ssh connection, so nothing is installed there.
+Gloss's ssh connection, so no server runs there.
 
 ## Sending
 
