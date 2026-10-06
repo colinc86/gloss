@@ -1,23 +1,30 @@
 import Foundation
 
-/// Finds the pictures a Markdown document embeds, `![alt](src)` (or `![alt][ref]`) and `<img src="src">` alike, in
-/// document order. It is the one definition of "which embed of a picture is this": the renderer numbers the pictures
+/// Finds the pictures a Markdown document embeds, `![alt](src)` (or `![alt][ref]`), `<img src="src">` and a
+/// `<picture>`'s `<source srcset="src">` alike, in document order. A source counts whether or not it is the one drawn
+/// (it is under Reduce Motion when its `media` asks for that), so the numbering never depends on the setting. It is the one definition of "which embed of a picture is this": the renderer numbers the pictures
 /// it draws by it and the re-anchorer follows notes by it, so the two agree by construction.
 ///
 /// It reads the document as CommonMark blocks do, closely enough to skip what is never drawn as a picture: fenced
 /// and indented code, code spans, HTML comments, and Markdown image syntax inside HTML blocks (which stays literal).
 public enum EmbedScanner {
     public struct Embed: Equatable, Sendable {
-        /// The picture as the document names it: a Markdown destination with escapes and entities decoded, or an
-        /// `<img>`'s `src` as written.
+        /// The picture as the document names it: a Markdown destination with escapes and entities decoded, an
+        /// `<img>`'s `src` as written, or the first address in a `<source>`'s `srcset`.
         public var source: String
-        /// The whole embed: `![alt](src)` from `!`, or the `<img …>` tag.
+        /// The whole embed: `![alt](src)` from `!`, or the `<img …>` or `<source …>` tag.
         public var range: NSRange
     }
 
     public static func embeds(in content: String) -> [Embed] {
         var scanner = Scanner(content)
         return scanner.scan()
+    }
+
+    /// The first address in a `srcset` (`hero.png 1x, hero@2x.png 2x` names `hero.png`).
+    public static func firstCandidate(inSrcset srcset: String) -> String {
+        let trimmed = srcset.drop { $0.isWhitespace }
+        return String(trimmed.prefix { !$0.isWhitespace && $0 != "," })
     }
 
     /// How many embeds of `source` start before `location`.
@@ -229,10 +236,12 @@ public enum EmbedScanner {
             }
         }
 
-        /// An `<img …>` tag at `i`: records it and returns the offset after it.
+        /// An `<img …>` or `<source …>` tag at `i`: records it and returns the offset after it.
         mutating func image(_ i: Int, _ end: Int) -> Int? {
-            guard matches("<img", at: i, caseInsensitive: true), i + 4 < end, isSpace(units[i + 4]) || units[i + 4] == 47 || units[i + 4] == 62 else { return nil }
-            var j = i + 4
+            let tag = matches("<img", at: i, caseInsensitive: true) ? 4 : matches("<source", at: i, caseInsensitive: true) ? 7 : 0
+            guard tag > 0, i + tag < end, isSpace(units[i + tag]) || units[i + tag] == 47 || units[i + tag] == 62 else { return nil }
+            let attributeName = tag == 4 ? "src" : "srcset"
+            var j = i + tag
             var source: String?
             while j < end, units[j] != 62 {
                 if isSpace(units[j]) || units[j] == 47 { j += 1; continue }
@@ -256,7 +265,7 @@ public enum EmbedScanner {
                     while j < end, !isSpace(units[j]), units[j] != 62 { j += 1 }
                     value = string(valueStart, j)
                 }
-                if name == "src", source == nil { source = value }
+                if name == attributeName, source == nil { source = attributeName == "src" ? value : EmbedScanner.firstCandidate(inSrcset: value) }
             }
             guard j < end else { return nil }
             if let source { embeds.append(Embed(source: source, range: NSRange(location: i, length: j + 1 - i))) }

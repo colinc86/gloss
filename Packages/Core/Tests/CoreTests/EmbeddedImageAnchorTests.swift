@@ -99,4 +99,17 @@ struct EmbeddedImageAnchorTests {
             "<img alt=\"a > b\" src=\"a.png\">", "<img\n  src=\"b.png\">", "![one](a.png \"title\")", "![ref][pic]", "![<x>](<c d.png>)",
         ])
     }
+
+    /// A `<picture>`'s sources count as embeds, drawn or not, so the numbering never depends on Reduce Motion.
+    @Test func pictureSourcesCountAsEmbeds() {
+        let doc = """
+        <picture>
+          <source media="(prefers-reduced-motion: reduce)" srcset=" hero.png 1x, hero@2x.png 2x">
+          <img src="hero.gif">
+        </picture>
+        """
+        #expect(EmbedScanner.embeds(in: doc).map(\.source) == ["hero.png", "hero.gif"])
+        #expect(EmbedScanner.firstCandidate(inSrcset: "a.png, b.png 2x") == "a.png")
+        #expect(EmbedScanner.embeds(in: "<source src=\"clip.mp4\">\n").isEmpty, "a source without srcset names no picture")
+    }
 }

@@ -257,10 +257,10 @@ struct MarkdownRendererTests {
     }
 
     @Test func multiLineHTMLStaysLinePrecise() {
-        let source = "<table>\n<tr><td>hi</td></tr>\n</table>\n"
+        let source = "<section>\n<article>hi</article>\n</section>\n"
         let output = MarkdownRenderer.render(source)
-        let mapping = output.map.sourceRange(forRendered: (output.text.string as NSString).range(of: "<tr><td>hi</td></tr>"))!
-        #expect(mapping.exact && (source as NSString).substring(with: mapping.source) == "<tr><td>hi</td></tr>")
+        let mapping = output.map.sourceRange(forRendered: (output.text.string as NSString).range(of: "<article>hi</article>"))!
+        #expect(mapping.exact && (source as NSString).substring(with: mapping.source) == "<article>hi</article>")
     }
 
     private func font(_ output: MarkdownRenderer.Output, at needle: String) -> NSFont? {
@@ -327,9 +327,9 @@ struct MarkdownRendererTests {
     }
 
     @Test func htmlWithOtherTagsStaysSource() {
-        let output = MarkdownRenderer.render("<table>\n<tr><td><b>x</b></td></tr>\n</table>\n")
-        #expect(output.text.string.contains("<tr><td><b>x</b></td></tr>"))
-        #expect(decoration(output, at: "<tr>")?.kind == .codeBlock)
+        let output = MarkdownRenderer.render("<section>\n<article><b>x</b></article>\n</section>\n")
+        #expect(output.text.string.contains("<article><b>x</b></article>"))
+        #expect(decoration(output, at: "<article>")?.kind == .codeBlock)
     }
 
     @Test func textInsideHTMLMapsToItsSource() {
@@ -387,11 +387,144 @@ struct MarkdownRendererTests {
         }
     }
 
+    private func isHeaderRow(_ output: MarkdownRenderer.Output, at needle: String) -> Bool? {
+        guard case .tableRow(let header, _)? = decoration(output, at: needle)?.kind else { return nil }
+        return header
+    }
+
+    @Test func htmlTablesDrawAsMarkdownTables() {
+        let source = """
+        <table>
+          <thead><tr><th>Name</th><th align="right">Size</th></tr></thead>
+          <tbody>
+            <tr><td>alpha <b>one</b></td><td align="right">12</td></tr>
+            <tr><td>beta<td>3
+          </tbody>
+        </table>
+
+        After.
+        """
+        let output = MarkdownRenderer.render(source)
+        let text = output.text.string as NSString
+        #expect(text.contains("Name\tSize\nalpha one\t12\nbeta\t3"), "\(text)")
+        #expect(isHeaderRow(output, at: "Name") == true && isHeaderRow(output, at: "alpha") == false && isHeaderRow(output, at: "beta") == false)
+        #expect(isBold(font(output, at: "Name")) && isBold(font(output, at: "one")) && !isBold(font(output, at: "alpha")))
+        let stops = paragraph(output, at: "alpha")?.tabStops ?? []
+        #expect(stops.count == 2 && stops.last?.alignment == .right, "the align attribute aligns its column")
+        let mapping = output.map.sourceRange(forRendered: text.range(of: "alpha"))!
+        #expect(mapping.exact && (source as NSString).substring(with: mapping.source) == "alpha")
+        for span in output.map.spans {
+            let rendered = text.substring(with: span.rendered)
+            #expect(!rendered.contains("\t") && !rendered.contains("\n"), "span \(span) covers generated text")
+        }
+        #expect(decoration(output, at: "After")?.kind == .plain)
+    }
+
+    @Test func htmlListsQuotesRulesAndDefinitions() {
+        let source = """
+        <ul>
+          <li>first</li>
+          <li>second
+            <ol start="3"><li>three</li><li>four</li></ol>
+          </li>
+          <li></li>
+        </ul>
+        <blockquote>quoted <i>words</i></blockquote>
+        <hr>
+        <dl><dt>Term</dt><dd>Meaning</dd></dl>
+        """
+        let output = MarkdownRenderer.render(source)
+        let text = output.text.string
+        for needle in ["•\tfirst", "•\tsecond", "3.\tthree", "4.\tfour", "\n•\t"] { #expect(text.contains(needle), "\(needle) in \(text)") }
+        #expect((paragraph(output, at: "three")?.headIndent ?? 0) > (paragraph(output, at: "first")?.headIndent ?? 0))
+        #expect(decoration(output, at: "quoted")?.quoteBars.count == 1 && decoration(output, at: "first")?.quoteBars.isEmpty == true)
+        #expect(output.text.attribute(.foregroundColor, at: (text as NSString).range(of: "quoted").location, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
+        #expect(text.contains("\u{00A0}") && !text.contains("<hr"))
+        #expect(isBold(font(output, at: "Term")) && paragraph(output, at: "Meaning")?.headIndent == 28)
+        #expect(decoration(output, at: "Term")?.quoteBars.isEmpty == true, "the quote ends with its element")
+        let mapping = output.map.sourceRange(forRendered: (text as NSString).range(of: "four"))!
+        #expect(mapping.exact && (source as NSString).substring(with: mapping.source) == "four")
+    }
+
+    @Test func htmlPreKeepsItsLines() {
+        let source = "<pre><code>let a = 1\n  indented &lt;x&gt;\n</code></pre>\n\nAfter.\n"
+        let output = MarkdownRenderer.render(source)
+        let text = output.text.string as NSString
+        #expect(text.contains("let a = 1\u{2028}  indented <x>\n"), "\(text)")
+        #expect(decoration(output, at: "let a")?.kind == .codeBlock && font(output, at: "let a")?.isFixedPitch == true)
+        #expect(output.text.attribute(.backgroundColor, at: text.range(of: "let a").location, effectiveRange: nil) == nil, "no inline fill on the block's fill")
+        let mapping = output.map.sourceRange(forRendered: text.range(of: "  indented"))!
+        #expect(mapping.exact && (source as NSString).substring(with: mapping.source) == "  indented")
+    }
+
+    @Test func htmlInlineFormatting() {
+        let source = "<p><kbd>K</kbd> x<sup>2</sup> H<sub>2</sub>O <s>old</s> <del>gone</del> <ins>new</ins> <u>under</u> <span>plain</span></p>\n\nPress <kbd>Q</kbd> and y<sup>3</sup> <del>no</del>.\n"
+        let output = MarkdownRenderer.render(source)
+        let text = output.text.string as NSString
+        #expect(!text.contains("<"), "\(text)")
+        func attribute(_ key: NSAttributedString.Key, at needle: String) -> Any? {
+            output.text.attribute(key, at: text.range(of: needle).location, effectiveRange: nil)
+        }
+        for key in ["K", "Q"] {
+            #expect(font(output, at: key)?.isFixedPitch == true && attribute(.backgroundColor, at: key) != nil)
+        }
+        #expect(((attribute(.baselineOffset, at: "2") as? CGFloat) ?? 0) > 0 && ((attribute(.baselineOffset, at: "3") as? CGFloat) ?? 0) > 0)
+        let sub = text.range(of: "H2O").location
+        #expect(((output.text.attribute(.baselineOffset, at: sub + 1, effectiveRange: nil) as? CGFloat) ?? 0) < 0)
+        #expect(((output.text.attribute(.baselineOffset, at: sub + 2, effectiveRange: nil) as? CGFloat) ?? 0) == 0, "the offset ends with its element")
+        #expect((font(output, at: "2")?.pointSize ?? 99) < MarkdownRenderer.bodyFont.pointSize)
+        for needle in ["old", "gone", "no"] { #expect(attribute(.strikethroughStyle, at: needle) != nil, "\(needle)") }
+        for needle in ["new", "under"] { #expect(attribute(.underlineStyle, at: needle) != nil, "\(needle)") }
+        #expect(attribute(.underlineStyle, at: "plain") == nil && attribute(.strikethroughStyle, at: "plain") == nil)
+    }
+
+    @Test func htmlOutsideGitHubsListStaysSource() {
+        for source in ["<table><tr><td><p>block</p></td></tr></table>\n", "<li>stray</li>\n", "<table>\nloose text\n</table>\n",
+                       "<ul><li><script>x()</script></li></ul>\n", "<div><iframe src=\"x\"></iframe></div>\n",
+                       "<div><form><input name=\"q\"></form></div>\n", "<pre><div>x</div></pre>\n", "<table><tr><td><table></table></td></tr></table>\n"] {
+            let output = MarkdownRenderer.render(source)
+            #expect(output.text.string.hasPrefix(String(source.prefix(4))), "\(source) stays source")
+            #expect(decoration(output, at: "<")?.kind == .codeBlock, "\(source)")
+        }
+    }
+
+    @Test func hugeListStartsAreCapped() {
+        let output = MarkdownRenderer.render("<ol start=\"9223372036854775807\"><li>a</li><li>b</li></ol>\n")
+        #expect(output.text.string.contains("999999999.\ta") && output.text.string.contains("1000000000.\tb"))
+    }
+
+    @Test func definitionsLooseInATableStaySource() {
+        let output = MarkdownRenderer.render("<table><tr><dd>hello</dd></tr></table>\n")
+        #expect(output.text.string.contains("<dd>hello</dd>"))
+    }
+
+    @Test func blocksInsidePreStaySource() {
+        for source in ["<pre>a\n<dd>b</dd></pre>\n", "<ul><li><pre>a\n<li>b</li></pre></li></ul>\n"] {
+            #expect(MarkdownRenderer.render(source).text.string.contains("<pre>"), "\(source)")
+        }
+    }
+
+    @Test func aPictureInPreKeepsItsOwnLine() {
+        let output = MarkdownRenderer.render("<pre>a\n<img src=\"x.png\">\nb</pre>\n")
+        let text = output.text.string
+        #expect(text.contains("a\u{2028}\u{FFFC}") && text.contains("x.png\u{2028}b") && !text.contains("\u{2028}\u{2028}"), "\(text.debugDescription)")
+    }
+
+    @Test func bigHTMLTablesAndListsRenderQuickly() {
+        let clock = ContinuousClock()
+        let rows = (0..<2000).map { "<tr><td>cell \($0)</td><td><b>bold</b> \($0)</td></tr>" }.joined(separator: "\n")
+        let lists = String(repeating: "<ul><li>a", count: 200) + String(repeating: "</li></ul>", count: 200)
+        for source in ["<table>\n\(rows)\n</table>\n", lists + "\n"] {
+            let elapsed = clock.measure { _ = MarkdownRenderer.render(source) }
+            #expect(elapsed < .seconds(1), "\(source.prefix(12))… took \(elapsed)")
+        }
+    }
+
     @Test func inlineHTMLStylesMatchedTagsAndShowsTheRest() {
-        let output = MarkdownRenderer.render("Some <b>bold</b>, <kbd>K</kbd>, <em>open and <code>x()</code>\n")
+        let output = MarkdownRenderer.render("Some <b>bold</b>, <blink>K</blink>, <em>open and <code>x()</code>\n")
         let text = output.text.string
         #expect(isBold(font(output, at: "bold")) && !text.contains("<b>"))
-        #expect(text.contains("<kbd>") && text.contains("</kbd>"), "unknown tags stay source")
+        #expect(text.contains("<blink>") && text.contains("</blink>"), "unknown tags stay source")
         #expect(text.contains("<em>"), "a tag without its end stays source")
         #expect(!text.contains("<code>") && font(output, at: "x()")?.isFixedPitch == true)
         #expect(!isBold(font(output, at: ", ")), "bold ends at its end tag")

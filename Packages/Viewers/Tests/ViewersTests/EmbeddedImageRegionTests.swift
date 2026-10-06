@@ -72,6 +72,9 @@ struct EmbeddedImageRegionTests {
             "![r][pic] and ![pic]\n\n![x](a.png)\n\n[pic]: a.png\n",
             "Text.\n\n    ![code](a.png)\n\n![x](a.png)\n",
             "- item\n\n    ![in list](a.png)\n\n![x](a.png)\n",
+            "<table><tr><td><img src=\"a.png\"></td><td><img src=\"a.png\" width=\"8\"></td></tr></table>\n\n![x](a.png)\n",
+            "<ul>\n<li><img src=\"a.png\"></li>\n<li>![lit](a.png) <img src=\"a.png\"></li>\n</ul>\n\n![x](a.png)\n",
+            "<blockquote><pre><img src=\"a.png\"></pre></blockquote>\n\n![x](a.png)\n",
         ]
         for source in documents {
             let output = MarkdownRenderer.render(source, baseURL: folder)

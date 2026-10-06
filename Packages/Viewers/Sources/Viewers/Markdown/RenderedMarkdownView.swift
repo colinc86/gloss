@@ -70,6 +70,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         private weak var textView: NSTextView?
         private weak var backdrop: HighlightBackdropView?
         private weak var imageOverlay: EmbeddedImageOverlayView?
+        private weak var animatedPictures: AnimatedPicturesView?
         private var appliedVersion = -1
         private var appliedScrollVersion = 0
         private var isSyncing = false
@@ -91,10 +92,11 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             backdrop = HighlightBackdropView.install(in: textView)
             if let clip = textView.enclosingScrollView?.contentView {
                 clip.postsBoundsChangedNotifications = true
-                scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak backdrop = self.backdrop, weak controller] _ in
+                scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self, weak backdrop = self.backdrop, weak controller] _ in
                     MainActor.assumeIsolated {
                         backdrop?.needsDisplay = true
                         controller?.noteGeometry.changed()
+                        self?.animatedPictures?.layOut()
                     }
                 }
             }
@@ -103,6 +105,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                     MainActor.assumeIsolated {
                         self?.updateReadableWidth()
                         self?.controller.noteGeometry.changed()
+                        self?.animatedPictures?.layOut()
                     }
                 }
             }
@@ -112,7 +115,13 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             overlay.autoresizingMask = [.width, .height]
             overlay.textView = textView as? RenderedTextView
             overlay.controller = controller
-            textView.addSubview(overlay)
+            // Playing pictures lie under the overlay, so a note's region is drawn over the moving frame.
+            let pictures = AnimatedPicturesView(frame: textView.bounds)
+            pictures.autoresizingMask = [.width, .height]
+            pictures.textView = textView as? RenderedTextView
+            textView.addSubview(pictures)
+            animatedPictures = pictures
+            textView.addSubview(overlay, positioned: .above, relativeTo: pictures)
             imageOverlay = overlay
             controller.imageFrameProvider = { [weak textView] image in
                 guard let textView = textView as? RenderedTextView, let frame = textView.frame(of: image) else { return nil }
@@ -176,6 +185,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 textView.textStorage?.setAttributedString(controller.rendered)
                 let length = textView.string.utf16.count
                 textView.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
+                animatedPictures?.textChanged()
             }
             // Waits for a window like the source editor does (see `SourceTextView.onAttachedToWindow`).
             if appliedScrollVersion != controller.pendingRenderedScrollVersion, let range = controller.pendingRenderedScroll,
@@ -188,6 +198,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 }
             }
             invalidateHighlights()
+            animatedPictures?.layOut()
         }
 
         func rect(for range: NSRange) -> CGRect? {
@@ -263,7 +274,7 @@ final class RenderedTextView: NSTextView {
         for candidate in [index, index - 1] where candidate >= 0 && candidate < storage.length {
             guard let attachment = storage.attribute(.attachment, at: candidate, effectiveRange: nil) as? FittedImageAttachment,
                   attachment.source != nil, let segment = frame(ofCharacterAt: candidate) else { continue }
-            let frame = Self.pictureFrame(segment, pixelSize: attachment.pixelSize)
+            let frame = Self.pictureFrame(segment, attachment: attachment)
             guard frame.contains(point) else { continue }
             return (attachment, frame, candidate)
         }
@@ -288,14 +299,17 @@ final class RenderedTextView: NSTextView {
     func frame(of image: MarkdownViewerController.EmbeddedImageRef) -> CGRect? {
         guard let index = index(of: image), let segment = frame(ofCharacterAt: index) else { return nil }
         let attachment = textStorage?.attribute(.attachment, at: index, effectiveRange: nil) as? FittedImageAttachment
-        return Self.pictureFrame(segment, pixelSize: attachment?.pixelSize ?? .zero)
+        guard let attachment else { return segment }
+        return Self.pictureFrame(segment, attachment: attachment)
     }
 
-    /// The picture itself within its character's frame: the text segment runs on into the line's descent, so its
-    /// height comes from the picture's own proportions.
-    static func pictureFrame(_ segment: CGRect, pixelSize: CGSize) -> CGRect {
-        guard pixelSize.width > 0, pixelSize.height > 0 else { return segment }
-        return CGRect(x: segment.minX, y: segment.minY, width: segment.width, height: min(segment.height, segment.width * pixelSize.height / pixelSize.width))
+    /// The picture itself within its character's frame: the text segment runs on into the line's descent, so the size
+    /// is the attachment's own, fitted to the segment's width as it was laid out (an embed's `width` and `height`
+    /// included, whatever the picture's own proportions).
+    static func pictureFrame(_ segment: CGRect, attachment: FittedImageAttachment) -> CGRect {
+        let fitted = FittedImageAttachment.fitted(attachment.naturalSize, width: segment.width).size
+        guard fitted.width > 0, fitted.height > 0 else { return segment }
+        return CGRect(x: segment.minX, y: segment.minY, width: fitted.width, height: min(segment.height, fitted.height))
     }
 
     func index(of image: MarkdownViewerController.EmbeddedImageRef) -> Int? {
@@ -398,3 +412,114 @@ final class EmbeddedImageOverlayView: NSView {
     }
 }
 
+/// Plays the animated pictures in rendered Markdown. TextKit draws an attachment as one still image, so each
+/// playing picture on screen gets an image view laid over its attachment's frame (the attachment draws nothing
+/// beneath it). Views exist only for pictures in view, and stop while the window is hidden. Clicks pass through to
+/// the text view, which keeps choosing regions and whole pictures as it does for still ones.
+///
+/// `NSTextAttachmentViewProvider` is the framework's way to put a view in text; on macOS 26 a text view inside a scroll
+/// view in an on-screen window asks for one, but a bare text view never loads its view. Laying views over the frames
+/// works the same in both, keeps the notes overlay on top and the clicks with the text view.
+final class AnimatedPicturesView: NSView {
+    weak var textView: RenderedTextView?
+    /// Where the playing pictures are in the text, found once per render.
+    private var indices: [Int] = []
+    private var views: [Int: PlayingPictureView] = [:]
+    private var occlusionObserver: (any NSObjectProtocol)?
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// Grows with the text view as its text is laid out, which moves the pictures.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layOut()
+    }
+
+    func textChanged() {
+        views.values.forEach { $0.removeFromSuperview() }
+        views = [:]
+        indices = []
+        guard let storage = textView?.textStorage else { return }
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if let attachment = value as? FittedImageAttachment, attachment.plays { indices.append(range.location) }
+        }
+        layOut()
+    }
+
+    /// Places a view over each playing picture in view (with a margin), and drops the rest.
+    func layOut() {
+        guard let textView, !indices.isEmpty else { return }
+        let visible = textView.visibleRect.insetBy(dx: 0, dy: -textView.visibleRect.height / 2)
+        let playing = window?.occlusionState.contains(.visible) ?? false
+        for index in indices {
+            guard let attachment = textView.textStorage?.attribute(.attachment, at: index, effectiveRange: nil) as? FittedImageAttachment,
+                  let segment = textView.frame(ofCharacterAt: index) else { continue }
+            let frame = RenderedTextView.pictureFrame(segment, attachment: attachment)
+            guard frame.intersects(visible), frame.width > 0, frame.height > 0 else {
+                views.removeValue(forKey: index)?.removeFromSuperview()
+                continue
+            }
+            let view = views[index] ?? {
+                let view = PlayingPictureView(image: attachment.image)
+                addSubview(view)
+                views[index] = view
+                return view
+            }()
+            if view.frame != frame { view.frame = frame }
+            view.cornerRadius = FittedImageAttachment.cornerRadius(for: frame.size)
+            if view.animates != playing { view.animates = playing }
+        }
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        occlusionObserver = nil
+        guard let newWindow else { return }
+        occlusionObserver = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: newWindow, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.layOut() }
+        }
+    }
+
+    isolated deinit {
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+    }
+}
+
+/// One playing picture, set into the page as still ones are: rounded corners and a hairline edge.
+final class PlayingPictureView: NSImageView {
+    var cornerRadius: CGFloat = 0 {
+        didSet { if cornerRadius != oldValue { layer?.cornerRadius = cornerRadius } }
+    }
+
+    init(image: NSImage?) {
+        super.init(frame: .zero)
+        self.image = image
+        imageScaling = .scaleAxesIndependently
+        imageFrameStyle = .none
+        isEditable = false
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 0.5
+        updateBorder()
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateBorder()
+    }
+
+    private func updateBorder() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.14).cgColor
+        }
+    }
+}

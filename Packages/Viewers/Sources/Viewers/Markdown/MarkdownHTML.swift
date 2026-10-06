@@ -13,22 +13,74 @@ nonisolated enum MarkdownHTML {
         case other(range: NSRange)
     }
 
-    /// Tags that start their own paragraph.
-    static let blockTags: Set<String> = ["p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "details", "summary"]
-    /// Tags drawn inside a paragraph. `picture` draws its `img`; `source` is ignored.
-    static let inlineTags: Set<String> = ["b", "strong", "i", "em", "a", "img", "source", "code", "br", "picture"]
+    /// Tags that start their own paragraph (or row, cell or list item). GitHub's allowlist, where TextKit can draw it.
+    static let blockTags: Set<String> = [
+        "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "details", "summary", "blockquote", "ul", "ol", "li", "pre", "hr",
+        "table", "thead", "tbody", "tfoot", "tr", "th", "td", "dl", "dt", "dd",
+    ]
+    /// Tags drawn inside a paragraph. `picture` draws its `img`; `source` is ignored; `span` changes nothing.
+    static let inlineTags: Set<String> = [
+        "b", "strong", "i", "em", "a", "img", "source", "code", "br", "picture", "kbd", "sup", "sub", "s", "del", "strike",
+        "ins", "u", "span",
+    ]
     /// Tags with no content and no end tag.
-    static let voidTags: Set<String> = ["img", "source", "br"]
+    static let voidTags: Set<String> = ["img", "source", "br", "hr"]
+    /// A table's own structure, below `table`.
+    static let tableParts: Set<String> = ["thead", "tbody", "tfoot", "tr", "th", "td"]
 
-    /// Whether every tag in `tokens` is one rendered Markdown draws.
-    static func isDrawable(_ tokens: [Token]) -> Bool {
-        tokens.allSatisfy { token in
+    /// Whether rendered Markdown can draw `tokens` (from `html`): every tag is one it knows, and the structure is one
+    /// it lays out. A table's cells hold inline content only (no paragraphs, lists or tables of their own), a list
+    /// item sits in a list, nothing but cells sits directly in a table, and a `<pre>` holds no blocks. End tags a
+    /// browser would imply (`<td>` after `<td>`, `<li>` after `<li>`) are implied here too.
+    static func isDrawable(_ tokens: [Token], in html: String) -> Bool {
+        let units = Array(html.utf16)
+        var open: [String] = []
+        func last(_ names: Set<String>) -> Int { open.lastIndex { names.contains($0) } ?? -1 }
+        func end(_ names: Set<String>, within containers: Set<String>) {
+            let boundary = last(containers)
+            if let index = open.indices.first(where: { $0 > boundary && names.contains(open[$0]) }) { open.removeSubrange(index...) }
+        }
+        for token in tokens {
             switch token {
-            case .start(let name, _, _), .end(let name, _): blockTags.contains(name) || inlineTags.contains(name)
-            case .comment, .text: true
-            case .other: false
+            case .other:
+                return false
+            case .comment:
+                continue
+            case .text(let range):
+                let blank = (range.location..<(range.location + range.length)).allSatisfy { HTMLTextProjection.isSpace(units[$0]) }
+                if !blank, let top = open.last, top == "table" || (tableParts.contains(top) && top != "td" && top != "th") { return false }
+            case .end(let name, _):
+                if let index = open.lastIndex(of: name) { open.removeSubrange(index...) }
+            case .start(let name, _, _):
+                guard blockTags.contains(name) || inlineTags.contains(name) else { return false }
+                let table = last(["table"])
+                let cell = last(["td", "th"])
+                let inCell = table >= 0 && cell > table
+                switch name {
+                case "td", "th":
+                    guard table >= 0 else { return false }
+                    end(["td", "th"], within: ["table", "tr"])
+                case "tr":
+                    guard table >= 0 else { return false }
+                    end(["tr", "td", "th"], within: ["table", "thead", "tbody", "tfoot"])
+                case "thead", "tbody", "tfoot":
+                    guard table >= 0 else { return false }
+                    end(tableParts, within: ["table"])
+                case "li":
+                    // In a table a list item is either in a cell (a block there) or loose in the table.
+                    guard last(["ul", "ol"]) >= 0, table < 0, !open.contains("pre") else { return false }
+                    end(["li"], within: ["ul", "ol"])
+                case "dt", "dd":
+                    guard table < 0, !open.contains("pre") else { return false }
+                    end(["dt", "dd"], within: ["dl"])
+                default:
+                    if table >= 0, !inCell { return false }
+                    if blockTags.contains(name), inCell || open.contains("pre") { return false }
+                }
+                if !voidTags.contains(name) { open.append(name) }
             }
         }
+        return true
     }
 
     /// Tags, comments and text runs, with their UTF-16 ranges in `html`.
@@ -123,6 +175,18 @@ nonisolated enum MarkdownHTML {
         }
         flushText(units.count)
         return tokens
+    }
+
+    /// Whether a `<source>`'s `media` holds here: none at all, `all` or `screen`, or the reduced-motion query that
+    /// matches the setting. Anything else (a color scheme, a width) is not followed, so the `<img>` stands.
+    static func mediaMatches(_ media: String?, reduceMotion: Bool) -> Bool {
+        let query = (media ?? "").lowercased().filter { !$0.isWhitespace }
+        switch query {
+        case "", "all", "screen": return true
+        case "(prefers-reduced-motion:reduce)": return reduceMotion
+        case "(prefers-reduced-motion:no-preference)": return !reduceMotion
+        default: return false
+        }
     }
 
     /// An attribute value with its character references decoded (`&amp;` in a link).

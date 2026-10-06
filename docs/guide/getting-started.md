@@ -46,8 +46,10 @@ Click a file to open it. Gloss picks the viewer by file type:
 | HTML | The review browser, rendered or source | Yes, in source |
 | Anything else | Quick Look | No |
 
-Rendered Markdown draws the HTML READMEs use most (pictures, centered text, headings, bold, links, and
-`<details>` sections, always open) and shows any other HTML as source.
+Rendered Markdown draws the HTML GitHub allows in a README (pictures, centered text, headings, tables, lists,
+quotes, `<pre>` blocks, `<kbd>` keys, superscripts, and `<details>` sections, always open) and shows any other HTML
+as source. Pictures from the web, such as badges, are fetched and drawn as GitHub draws them. Animated GIFs and
+PNGs play; with Reduce Motion on they hold still, and a `<picture>` shows its reduced-motion version if it has one.
 
 **Back** and **Forward** (⌃⌘← and ⌃⌘→, or the chevrons at the top left) step through the documents you've shown,
 across folders and hosts. Hold a chevron to jump several steps.

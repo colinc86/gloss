@@ -43,10 +43,12 @@ public nonisolated enum ImageDecoder {
     /// on every redraw), so call it off the main actor.
     public static func decode(_ data: Data, fileName: String, maximumPixels limit: Int = maximumPixels) throws -> DecodedImage {
         let hash = data.sha256Hex
-        if fileName.lowercased().hasSuffix(".svg") {
+        if fileName.lowercased().hasSuffix(".svg") || isSVG(data) {
             guard let image = NSImage(data: data) else { throw ImageDecodeError.unreadable }
             try checkPixels(width: Int(image.size.width.rounded(.up)), height: Int(image.size.height.rounded(.up)), limit: limit)
-            guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { throw ImageDecodeError.unreadable }
+            // At its own size, not the screen's scale, so the pixels match a region measured in its points.
+            var rect = CGRect(origin: .zero, size: image.size)
+            guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: AffineTransform.identity]) else { throw ImageDecodeError.unreadable }
             return DecodedImage(cgImage: cgImage, hash: hash)
         }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { throw ImageDecodeError.unreadable }
@@ -60,6 +62,52 @@ public nonisolated enum ImageDecoder {
         try checkPixels(width: raw.width, height: raw.height, limit: limit)
         let orientation = (properties?[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init(rawValue:)) ?? .up
         return DecodedImage(cgImage: upright(raw, orientation: orientation), hash: hash)
+    }
+
+    /// Most frames an animated picture may have, and its frames' pixels all told as a multiple of `maximumPixels`.
+    static let maximumFrames = 1000
+    static let animationPixelBudget = 4
+    /// Formats whose further images are an animation's frames rather than other pages or sizes.
+    static let animatedTypes: Set<String> = ["com.compuserve.gif", "public.png", "org.webmproject.webp", "public.heics"]
+
+    /// A picture fetched for rendered Markdown, decoded only when its size is safe: every image in a bitmap is
+    /// measured from its header before any pixels, an SVG once parsed. A file of several pages or sizes (a TIFF, an
+    /// icon) gives its first image, the one a crop is cut from; only an animation keeps every frame. Call it off the
+    /// main actor; nil when it is unreadable or too big.
+    public static func checkedImage(_ data: Data, maximumPixels limit: Int = maximumPixels) -> NSImage? {
+        if isSVG(data) {
+            guard let image = NSImage(data: data), (try? checkPixels(width: Int(image.size.width.rounded(.up)), height: Int(image.size.height.rounded(.up)), limit: limit)) != nil
+            else { return nil }
+            return image
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let count = CGImageSourceGetCount(source)
+        guard count > 0, count <= maximumFrames else { return nil }
+        var total = 0
+        for index in 0..<count {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                  (try? checkPixels(width: width, height: height, limit: limit)) != nil else { return nil }
+            total += width * height
+        }
+        guard total <= limit * animationPixelBudget else { return nil }
+        if count > 1, !animatedTypes.contains((CGImageSourceGetType(source) as String?) ?? "") {
+            guard let first = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+            // A bitmap of its own pixels, so the picture's pixel size is the page's, not the screen's.
+            let rep = NSBitmapImageRep(cgImage: first)
+            let image = NSImage(size: rep.size)
+            image.addRepresentation(rep)
+            return image
+        }
+        return NSImage(data: data)
+    }
+
+    /// An SVG named without its extension (a badge served from a web address): markup with an `<svg` element near
+    /// its start. Bitmap formats are binary and never read as this.
+    static func isSVG(_ data: Data) -> Bool {
+        let head = String(decoding: data.prefix(1024), as: UTF8.self)
+        // A byte-order mark may come first.
+        return head.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\u{FEFF}"))).hasPrefix("<") && head.contains("<svg")
     }
 
     /// Applies an EXIF orientation so the returned image's pixels are upright.

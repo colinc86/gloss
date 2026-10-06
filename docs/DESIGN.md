@@ -450,11 +450,27 @@ path. Dropping on the Dock icon is not supported yet.
   medium in the tertiary label colour, spelled the way each community spells it, the fence's word as written when
   unknown, nothing on a bare fence. Quote bars are an opaque grey, so where two paragraphs' pieces of one bar meet
   the bar stays even instead of darkening at the seam.
-- **HTML in rendered Markdown** is drawn when every tag in it is one READMEs lean on (`p` and `div` with `align`,
-  `h1`–`h6`, `details` and `summary`, `picture`, `img`, `b`, `i`, `a`, `code`, `br`); a block with any other tag
-  stays grey source, so a table or script is never half drawn. Whitespace collapses as a browser collapses it, a
-  summary reads bold behind a ▾ with its details always open, and an `<img>` is a picture like `![]()`, sized by its
-  `width` and `height`, notes and all. Text keeps its source mapping, exact wherever it is its own source.
+- **HTML in rendered Markdown** is drawn when every tag in it is on GitHub's allowlist and TextKit can draw it (`p`
+  and `div` with `align`, `h1`–`h6`, `details` and `summary`, tables, `ul`/`ol`/`li`, `blockquote`, `pre`, `hr`,
+  `dl`, `picture`, `img`, `b`, `i`, `a`, `code`, `kbd`, `sup`, `sub`, `s`, `ins`, `span`, `br`); a block with any
+  other tag, or a shape it can't lay out (a list in a table cell), stays grey source, so a script or form is never
+  half drawn. Each element is drawn as its Markdown twin is: tables with the same tab stops and header fill, lists
+  with the same markers, quotes with the same bar, `pre` as a code block. Whitespace collapses as a browser collapses
+  it, a summary reads bold behind a ▾ with its details always open, `kbd` is monospaced on the inline-code fill, and
+  an `<img>` is a picture like `![]()`, sized by its `width` and `height`, notes and all. Text keeps its source
+  mapping, exact wherever it is its own source.
+- **Web pictures in rendered Markdown** (badges, screenshots) are fetched as GitHub shows them, from this Mac even for
+  a document on an ssh host: a plain GET with no cookies or credentials, 15 s and 25 MB at most, redirected only to
+  http(s), kept in memory for every document, and a failure left alone for five minutes. Until one arrives, or if it
+  never does, its alt text stands in. Notes on them work as on any picture.
+- **Animated pictures in rendered Markdown** (GIF, APNG) play where they sit. TextKit draws an attachment as one still
+  image, so the rendered view lays an image view over each playing picture in view (`AnimatedPicturesView`, under
+  the notes overlay, taking no clicks) and the attachment draws nothing beneath it; the views exist only near the
+  visible area and stop while the window is hidden. Regions, whole-picture notes and the overlay work as on still
+  pictures; a crop is the first frame. With Reduce Motion on they hold still on their first frame, and a
+  `<picture>` draws the `<source>` whose `media` is `(prefers-reduced-motion: reduce)`, as a browser would. Every
+  `<source srcset>` counts as an embed in `EmbedScanner`, drawn or not, so a picture's number never depends on the
+  setting.
 - **PDF page thumbnails** (`PDFThumbnailColumn`): for documents with more than one page, a sidebar toggle at the start
   of the PDF toolbar slides in a 120 pt column that maps the document and its notes, as Preview's sidebar maps pages.
   Each page is a small sheet with a soft shadow, lifting a little under the pointer; the current page is ringed in the

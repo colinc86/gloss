@@ -133,7 +133,8 @@ Gloss finds the text again nearby and moves the note. If it can't, the note is m
 before sending it again.
 
 **Does Gloss collect anything about me?**
-No. It talks only to what you connect it to, plus GitHub to check for updates.
+No. It talks only to what you connect it to, plus GitHub to check for updates. Rendered Markdown also fetches the
+pictures a document links to on the web (badges, screenshots), as GitHub does.
 
 **Can the agent show me things in Gloss?**
 Yes. Over MCP it can open a file at the lines it means, ask you a question beside them (it shows under Attention in

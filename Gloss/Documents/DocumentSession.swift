@@ -354,11 +354,11 @@ final class DocumentSession: Identifiable {
                 if folder == nil {
                     // Pictures that live on the document's host (a remote file's, a ticket's attachments) are read
                     // from it, within the size the image viewer takes.
-                    let fileSystem = fileSystem, directory = PathUtilities.parent(of: path)
+                    let fileSystem = fileSystem, directory = PathUtilities.parent(of: path), threshold = Self.mediaThreshold
                     markdown?.loadImage = { source in
                         let decoded = source.removingPercentEncoding ?? source
                         let target = decoded.hasPrefix("/") ? decoded : (PathUtilities.join(directory, decoded) as NSString).standardizingPath
-                        guard let attributes = try? await fileSystem.stat(target), attributes.kind == .file, attributes.size <= Self.mediaThreshold,
+                        guard let attributes = try? await fileSystem.stat(target), attributes.kind == .file, attributes.size <= threshold,
                               let data = try? await fileSystem.read(target) else { return nil }
                         return data
                     }

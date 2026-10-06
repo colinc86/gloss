@@ -22,11 +22,13 @@ public struct MarkdownRenderer {
 
     /// `baseURL` is the document's folder on this Mac; relative images resolve against it. `images` are pictures
     /// already fetched from a document's own host (an ssh host, a ticket's attachments), by source as written.
-    /// Anything else shows as a placeholder.
-    public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:]) -> Output {
+    /// Anything else shows as a placeholder. Under `reduceMotion` animated pictures hold still, and a `<picture>`
+    /// draws a source meant for reduced motion.
+    public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], reduceMotion: Bool = false) -> Output {
         let document = Document(parsing: source, options: [.disableSmartOpts])
         var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
         walker.images = images
+        walker.reduceMotion = reduceMotion
         walker.visit(document)
         walker.finish()
         var output = Output(text: walker.output, map: RenderedSourceMap(spans: walker.spans, blocks: walker.blocks))
@@ -64,6 +66,9 @@ public struct MarkdownRenderer {
         var monospaced = false
         var codeBackground = false
         var strikethrough = false
+        var underline = false
+        /// Superscript (1) or subscript (-1): smaller, off the baseline.
+        var baseline = 0
         var link: String?
 
         var attributes: [NSAttributedString.Key: Any] {
@@ -72,8 +77,12 @@ public struct MarkdownRenderer {
             if bold { traits.insert(.boldFontMask) }
             if italic { traits.insert(.italicFontMask) }
             if !traits.isEmpty { font = NSFontManager.shared.convert(font, toHaveTrait: traits) }
+            let size = font.pointSize
+            if baseline != 0 { font = font.withSize((size * 0.75).rounded()) }
             var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+            if baseline != 0 { attributes[.baselineOffset] = baseline > 0 ? (size * 0.35).rounded() : -(size * 0.15).rounded() }
             if strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+            if underline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
             if let link {
                 attributes[.link] = link
                 attributes[.foregroundColor] = NSColor.linkColor
@@ -102,12 +111,15 @@ public struct MarkdownRenderer {
         let sourceNS: NSString
         let baseURL: URL?
         var images: [String: NSImage] = [:]
+        var reduceMotion = false
         var unresolvedImages: [String] = []
         /// Where each picture is embedded, by `EmbedScanner` (read on the first picture), so a repeated one is told
         /// apart exactly as the re-anchorer tells it apart.
         private var embedLocations: [String: [Int]]?
         /// Pictures with no source range, counted as they come.
         var imageOccurrences: [String: Int] = [:]
+        /// The `<source>` an open `<picture>` draws instead of its `<img>`, and that tag's source range.
+        private var pictureChoice: (source: String, range: NSRange?)?
         var output = NSMutableAttributedString()
         var spans: [SourceSpan] = []
         var blocks: [SourceSpan] = []
@@ -359,7 +371,7 @@ public struct MarkdownRenderer {
 
         mutating func visitHTMLBlock(_ html: HTMLBlock) {
             let tokens = MarkdownHTML.tokens(html.rawHTML)
-            guard MarkdownHTML.isDrawable(tokens) else {
+            guard MarkdownHTML.isDrawable(tokens, in: html.rawHTML) else {
                 showHTMLSource(html)
                 return
             }
@@ -438,60 +450,296 @@ public struct MarkdownRenderer {
             return lines
         }
 
-        /// What drawing one HTML block keeps track of: its open elements, the paragraph being drawn and the
+        /// An open element of an HTML block, and the layout to restore when it ends.
+        private struct HTMLElement {
+            var name: String
+            var align: NSTextAlignment?
+            var style: Style
+            var indent: CGFloat
+            var quotes: Int
+            var lists: Int
+        }
+
+        /// A table drawn from HTML: its rows and cells so far, laid out as a Markdown table is when it ends.
+        private struct HTMLTable {
+            var rowRanges: [NSRange] = []
+            var cellRanges: [[NSRange]] = []
+            var headers: [Bool] = []
+            var alignments: [Table.ColumnAlignment?] = []
+            var leadingTab = false
+            var source: NSRange?
+            /// The open row: where it starts in the output, its cells, and whether it is a header row (in a
+            /// `thead`, or `th` cells only).
+            var rowStart: Int?
+            var rowCells: [NSRange] = []
+            var rowInHead = false
+            var rowAllHeaders = true
+            /// The open cell.
+            var cellStart: Int?
+            var cellSource: NSRange?
+            var inHead = false
+        }
+
+        /// What drawing one HTML block keeps track of: its open elements, the paragraph or table being drawn and the
         /// whitespace waiting to be collapsed.
         private struct HTMLState {
-            var elements: [(name: String, align: NSTextAlignment?, style: Style)] = []
+            var elements: [HTMLElement] = []
             var paragraphOpen = false
             var paragraphSource: NSRange?
             var lineHasText = false
             var pendingSpace = false
+            var table: HTMLTable?
+            /// Inside `<pre>` whitespace is kept; line breaks wait until text follows them, so the one after `<pre>`
+            /// and the one before `</pre>` draw nothing, as in a browser.
+            var preformatted = false
+            var pendingLines = 0
+            var preStart = false
         }
 
         /// Draws an HTML block whose every tag is one rendered Markdown knows: block elements become paragraphs,
-        /// inline ones style their text, whitespace collapses as a browser collapses it, and text maps back to
-        /// its source (exactly where the drawn text is the source text).
+        /// lists, quotes, code blocks, rules and tables drawn as their Markdown forms are, inline ones style their
+        /// text, whitespace collapses as a browser collapses it, and text maps back to its source (exactly where the
+        /// drawn text is the source text).
         private mutating func drawHTML(_ html: HTMLBlock, tokens: [MarkdownHTML.Token]) {
             let raw = html.rawHTML as NSString
             let units = Array(html.rawHTML.utf16)
             let lines = htmlLines(html)
             let saved = style
             var state = HTMLState()
-            for token in tokens {
+            for (offset, token) in tokens.enumerated() {
                 switch token {
                 case .start(let name, let attributes, let range):
-                    if MarkdownHTML.blockTags.contains(name) {
-                        closeHTMLParagraph(&state)
-                        state.elements.append((name, Self.alignment(attributes["align"]), style))
-                        applyHTMLStyle(name, attributes: attributes)
-                    } else if name == "br" {
-                        guard state.paragraphOpen else { continue }
-                        appendGenerated(MarkdownRenderer.lineSeparator)
-                        state.lineHasText = false
-                        state.pendingSpace = false
-                    } else if name == "img" {
-                        beginHTMLContent(&state)
-                        let source = lines.source(of: range)
-                        state.paragraphSource = Self.union(state.paragraphSource, source?.0)
-                        appendHTMLPicture(attributes, source: source?.0)
-                        state.lineHasText = true
-                    } else if !MarkdownHTML.voidTags.contains(name) {
-                        state.elements.append((name, nil, style))
-                        applyHTMLStyle(name, attributes: attributes)
-                    }
+                    startHTMLElement(name, attributes: attributes, range: range, tokens: tokens, at: offset, lines: lines, state: &state)
                 case .end(let name, _):
                     guard let index = state.elements.lastIndex(where: { $0.name == name }) else { continue }
-                    if MarkdownHTML.blockTags.contains(name) { closeHTMLParagraph(&state) }
-                    style = state.elements[index].style
-                    state.elements.removeSubrange(index...)
+                    endHTMLElements(from: index, state: &state)
                 case .text(let range):
-                    appendHTMLText(range, raw: raw, units: units, lines: lines, state: &state)
+                    if state.preformatted {
+                        appendPreText(range, raw: raw, units: units, lines: lines, state: &state)
+                    } else if state.table == nil || state.table?.cellStart != nil {
+                        appendHTMLText(range, raw: raw, units: units, lines: lines, state: &state)
+                    }
                 case .comment, .other:
                     continue
                 }
             }
+            endHTMLElements(from: 0, state: &state)
             closeHTMLParagraph(&state)
             style = saved
+        }
+
+        private mutating func startHTMLElement(_ name: String, attributes: [String: String], range: NSRange, tokens: [MarkdownHTML.Token], at offset: Int,
+                                               lines: HTMLLines, state: inout HTMLState) {
+            // End tags a browser implies.
+            switch name {
+            case "td", "th": endHTMLElements(["td", "th"], within: ["table", "tr"], state: &state)
+            case "tr": endHTMLElements(["tr", "td", "th"], within: ["table", "thead", "tbody", "tfoot"], state: &state)
+            case "thead", "tbody", "tfoot": endHTMLElements(MarkdownHTML.tableParts, within: ["table"], state: &state)
+            case "li": endHTMLElements(["li"], within: ["ul", "ol"], state: &state)
+            case "dt", "dd": endHTMLElements(["dt", "dd"], within: ["dl"], state: &state)
+            default: break
+            }
+            switch name {
+            case "br":
+                if state.table != nil {
+                    state.pendingSpace = true
+                } else if state.preformatted {
+                    state.pendingLines += 1
+                } else if state.paragraphOpen {
+                    appendGenerated(MarkdownRenderer.lineSeparator)
+                    state.lineHasText = false
+                    state.pendingSpace = false
+                }
+                return
+            case "img":
+                beginHTMLContent(&state)
+                if state.preformatted {
+                    // Line breaks in a `<pre>` wait for what follows them, a picture included.
+                    for _ in 0..<state.pendingLines { appendGenerated(MarkdownRenderer.lineSeparator) }
+                    state.pendingLines = 0
+                    state.preStart = false
+                }
+                let source = lines.source(of: range)
+                let inPicture = state.elements.contains { $0.name == "picture" }
+                noteHTMLSource(source?.0, state: &state)
+                appendHTMLPicture(attributes, source: source?.0, inPicture: inPicture)
+                state.lineHasText = true
+                return
+            case "hr":
+                closeHTMLParagraph(&state)
+                openBlock(.rule)
+                appendGenerated("\u{00A0}", extra: [.font: NSFont.systemFont(ofSize: 6)])
+                endBlock(source: lines.source(of: range)?.0)
+                return
+            case "source":
+                if state.elements.contains(where: { $0.name == "picture" }) { choosePictureSource(attributes, range: lines.source(of: range)?.0) }
+                return
+            default:
+                break
+            }
+            if name == "picture" { pictureChoice = nil }
+            if MarkdownHTML.blockTags.contains(name) { closeHTMLParagraph(&state) }
+            state.elements.append(HTMLElement(name: name, align: Self.alignment(attributes["align"]), style: style, indent: indent,
+                                              quotes: quotes.count, lists: listNumbers.count))
+            switch name {
+            case "blockquote":
+                style.color = .secondaryLabelColor
+                quotes.append((x: indent, openedAt: blockCount))
+                indent += 18
+            case "ul":
+                listNumbers.append(nil)
+                listMarkerWidths.append(20)
+            case "ol":
+                // CommonMark's own bound on a list's start, so counting on never overflows.
+                let start = min(max(attributes["start"].flatMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? 1, 0), 999_999_999)
+                let widest = "\(start + max(0, Self.listItemCount(tokens, after: offset) - 1))." as NSString
+                listNumbers.append(start)
+                listMarkerWidths.append(max(22, ceil(widest.size(withAttributes: [.font: MarkdownRenderer.bodyFont]).width) + 8))
+            case "li":
+                startListItem(checkbox: nil)
+            case "dd":
+                indent += 28
+            case "pre":
+                state.preformatted = true
+                state.preStart = true
+                state.pendingLines = 0
+                style.monospaced = true
+                style.font = MarkdownRenderer.bodyFont
+            case "table":
+                state.table = HTMLTable()
+            case "thead":
+                state.table?.inHead = true
+            case "tr":
+                beginHTMLRow(&state)
+            case "td", "th":
+                beginHTMLCell(header: name == "th", align: attributes["align"], state: &state)
+            default:
+                break
+            }
+            applyHTMLStyle(name, attributes: attributes, preformatted: state.preformatted)
+        }
+
+        /// Ends the open element named `names` nearest the top, if one is open inside the innermost `containers`.
+        private mutating func endHTMLElements(_ names: Set<String>, within containers: Set<String>, state: inout HTMLState) {
+            let boundary = state.elements.lastIndex { containers.contains($0.name) } ?? -1
+            if let index = state.elements.indices.first(where: { $0 > boundary && names.contains(state.elements[$0].name) }) {
+                endHTMLElements(from: index, state: &state)
+            }
+        }
+
+        /// Ends the elements from `index` up, innermost first, restoring the layout each one changed.
+        private mutating func endHTMLElements(from index: Int, state: inout HTMLState) {
+            while state.elements.count > index {
+                let element = state.elements.removeLast()
+                if MarkdownHTML.blockTags.contains(element.name) { closeHTMLParagraph(&state) }
+                switch element.name {
+                case "li":
+                    if finishListItem() { needsBlockSeparator = true }
+                    lastBlock = .listItem
+                case "pre":
+                    state.preformatted = false
+                    state.pendingLines = 0
+                case "td", "th":
+                    finishHTMLCell(&state)
+                case "tr":
+                    finishHTMLRow(&state)
+                case "thead":
+                    state.table?.inHead = false
+                case "table":
+                    finishHTMLTable(&state)
+                default:
+                    break
+                }
+                style = element.style
+                indent = element.indent
+                quotes.removeLast(quotes.count - min(quotes.count, element.quotes))
+                listNumbers.removeLast(listNumbers.count - min(listNumbers.count, element.lists))
+                listMarkerWidths.removeLast(listMarkerWidths.count - min(listMarkerWidths.count, element.lists))
+            }
+        }
+
+        /// How many items the list whose start tag is at `offset` holds (not counting nested lists').
+        private static func listItemCount(_ tokens: [MarkdownHTML.Token], after offset: Int) -> Int {
+            var depth = 0
+            var count = 0
+            for token in tokens[(offset + 1)...] {
+                switch token {
+                case .start("ul", _, _), .start("ol", _, _): depth += 1
+                case .end("ul", _), .end("ol", _):
+                    if depth == 0 { return count }
+                    depth -= 1
+                case .start("li", _, _) where depth == 0: count += 1
+                default: break
+                }
+            }
+            return count
+        }
+
+        // MARK: HTML tables
+
+        private mutating func beginHTMLRow(_ state: inout HTMLState) {
+            guard state.table != nil else { return }
+            finishHTMLRow(&state)
+            if state.table?.rowRanges.isEmpty == true {
+                openBlock(.tableRow(header: true, width: 0))
+            } else {
+                appendGenerated("\n")
+            }
+            let inHead = state.table?.inHead ?? false
+            state.table?.rowStart = output.length
+            state.table?.rowCells = []
+            state.table?.rowInHead = inHead
+            state.table?.rowAllHeaders = true
+        }
+
+        private mutating func beginHTMLCell(header: Bool, align: String?, state: inout HTMLState) {
+            guard state.table != nil else { return }
+            if state.table?.rowStart == nil { beginHTMLRow(&state) }
+            guard var table = state.table else { return }
+            let column = table.rowCells.count
+            let alignment: Table.ColumnAlignment? = switch align?.lowercased() {
+            case "center"?: .center
+            case "right"?: .right
+            case "left"?: .left
+            default: nil
+            }
+            // As in a Markdown table, a right- or center-aligned first column starts its rows with a tab.
+            if table.rowRanges.isEmpty, column == 0 { table.leadingTab = alignment == .right || alignment == .center }
+            if table.rowRanges.isEmpty { table.alignments.append(alignment) }
+            if !header { table.rowAllHeaders = false }
+            state.table = table
+            if column > 0 || table.leadingTab { appendGenerated("\t") }
+            state.table?.cellStart = output.length
+            state.table?.cellSource = nil
+            state.lineHasText = false
+            state.pendingSpace = false
+        }
+
+        private mutating func finishHTMLCell(_ state: inout HTMLState) {
+            guard let table = state.table, let start = table.cellStart else { return }
+            let range = NSRange(location: start, length: output.length - start)
+            state.table?.rowCells.append(range)
+            if let source = table.cellSource { blocks.append(SourceSpan(rendered: range, source: source, exact: false)) }
+            state.table?.cellStart = nil
+        }
+
+        private mutating func finishHTMLRow(_ state: inout HTMLState) {
+            finishHTMLCell(&state)
+            guard let table = state.table, let start = table.rowStart else { return }
+            state.table?.rowRanges.append(NSRange(location: start, length: output.length - start))
+            state.table?.cellRanges.append(table.rowCells)
+            state.table?.headers.append(table.rowInHead || (table.rowAllHeaders && !table.rowCells.isEmpty))
+            state.table?.rowStart = nil
+        }
+
+        private mutating func finishHTMLTable(_ state: inout HTMLState) {
+            finishHTMLRow(&state)
+            guard let table = state.table else { return }
+            state.table = nil
+            guard !table.rowRanges.isEmpty else { return }
+            layOutTable(rowRanges: table.rowRanges, cellRanges: table.cellRanges, alignments: table.alignments, leadingTab: table.leadingTab,
+                        headers: table.headers)
+            endBlock(source: table.source)
         }
 
         private static func alignment(_ value: String?) -> NSTextAlignment? {
@@ -514,7 +762,7 @@ public struct MarkdownRenderer {
             guard !state.paragraphOpen else { return }
             let level = state.elements.last { $0.name.count == 2 && $0.name.hasPrefix("h") }.flatMap { Int($0.name.dropFirst()) }
             alignment = state.elements.last { $0.align != nil }?.align ?? .natural
-            openBlock(level.map { .heading(level: $0) } ?? .plain)
+            openBlock(state.preformatted ? .codeBlock : level.map { .heading(level: $0) } ?? .plain)
             state.paragraphOpen = true
             state.paragraphSource = nil
             state.lineHasText = false
@@ -523,11 +771,23 @@ public struct MarkdownRenderer {
             if state.elements.contains(where: { $0.name == "summary" }) { appendGenerated("▾ ") }
         }
 
-        /// Before drawn content: its paragraph, and the space collapsed whitespace left (never at a line's start).
+        /// Before drawn content: its paragraph (a table's cell needs none), and the space collapsed whitespace left
+        /// (never at a line's start).
         private mutating func beginHTMLContent(_ state: inout HTMLState) {
-            openHTMLParagraph(&state)
+            if state.table == nil { openHTMLParagraph(&state) }
             if state.pendingSpace, state.lineHasText { appendGenerated(" ") }
             state.pendingSpace = false
+        }
+
+        /// Where drawn content came from, for the paragraph's (or the cell's and table's) block span.
+        private func noteHTMLSource(_ source: NSRange?, state: inout HTMLState) {
+            if var table = state.table {
+                table.cellSource = Self.union(table.cellSource, source)
+                table.source = Self.union(table.source, source)
+                state.table = table
+            } else {
+                state.paragraphSource = Self.union(state.paragraphSource, source)
+            }
         }
 
         private mutating func closeHTMLParagraph(_ state: inout HTMLState) {
@@ -545,7 +805,7 @@ public struct MarkdownRenderer {
                 beginHTMLContent(&state)
                 let source = lines.source(of: rawRange)
                 append(text, source: source?.0, exact: exact && source?.1 == true)
-                state.paragraphSource = Self.union(state.paragraphSource, source?.0)
+                noteHTMLSource(source?.0, state: &state)
                 state.lineHasText = true
             }
             func flush(to end: Int, state: inout HTMLState) {
@@ -580,31 +840,87 @@ public struct MarkdownRenderer {
             flush(to: end, state: &state)
         }
 
+        /// A text run inside `<pre>`: spaces kept, each line its own exact stretch, line breaks generated.
+        private mutating func appendPreText(_ range: NSRange, raw: NSString, units: [UInt16], lines: HTMLLines, state: inout HTMLState) {
+            var runStart: Int?
+            func emit(_ text: String, _ rawRange: NSRange, exact: Bool, state: inout HTMLState) {
+                openHTMLParagraph(&state)
+                for _ in 0..<state.pendingLines { appendGenerated(MarkdownRenderer.lineSeparator) }
+                state.pendingLines = 0
+                state.preStart = false
+                let source = lines.source(of: rawRange)
+                append(text, source: source?.0, exact: exact && source?.1 == true)
+                noteHTMLSource(source?.0, state: &state)
+            }
+            func flush(to end: Int, state: inout HTMLState) {
+                guard let start = runStart, end > start else { return }
+                let rawRange = NSRange(location: start, length: end - start)
+                emit(raw.substring(with: rawRange), rawRange, exact: true, state: &state)
+                runStart = nil
+            }
+            let end = range.location + range.length
+            var i = range.location
+            while i < end {
+                if units[i] == 10 || units[i] == 13 {
+                    flush(to: i, state: &state)
+                    if state.preStart { state.preStart = false } else { state.pendingLines += 1 }
+                    i += units[i] == 13 && i + 1 < end && units[i + 1] == 10 ? 2 : 1
+                } else if units[i] == 38, let entity = HTMLTextProjection.entity(in: units, at: i) {
+                    flush(to: i, state: &state)
+                    emit(entity.text, NSRange(location: i, length: entity.length), exact: false, state: &state)
+                    i += entity.length
+                } else {
+                    if runStart == nil { runStart = i }
+                    i += 1
+                }
+            }
+            flush(to: end, state: &state)
+        }
+
         /// The style an HTML element gives what it contains.
-        private mutating func applyHTMLStyle(_ name: String, attributes: [String: String]) {
+        private mutating func applyHTMLStyle(_ name: String, attributes: [String: String], preformatted: Bool = false) {
             switch name {
-            case "b", "strong", "summary":
+            case "b", "strong", "summary", "th", "dt":
                 style.bold = true
             case "i", "em":
                 style.italic = true
-            case "code":
+            case "code", "kbd":
                 style.monospaced = true
-                style.codeBackground = true
+                // Code inside `<pre>` sits on the block's fill already.
+                if !preformatted { style.codeBackground = true }
             case "a":
                 if let href = attributes["href"] { style.link = MarkdownHTML.decoded(href) }
             case "h1", "h2", "h3", "h4", "h5", "h6":
                 let level = Int(name.dropFirst()) ?? 1
                 style.font = MarkdownRenderer.headingFont(level: level)
                 if level >= 6 { style.color = .secondaryLabelColor }
+            case "s", "del", "strike":
+                style.strikethrough = true
+                style.color = .secondaryLabelColor
+            case "ins", "u":
+                style.underline = true
+            case "sup":
+                style.baseline = 1
+            case "sub":
+                style.baseline = -1
             default:
                 break
             }
         }
 
-        /// An `<img>`, sized by its `width` and `height` when it gives them.
-        private mutating func appendHTMLPicture(_ attributes: [String: String], source range: NSRange?) {
-            appendPicture(source: attributes["src"], alt: MarkdownHTML.decoded(attributes["alt"] ?? ""), range: range,
+        /// An `<img>`, sized by its `width` and `height` when it gives them. In a `<picture>` that chose a `<source>`,
+        /// that source's picture is drawn in its place (mapped to the `<source>` tag, which `EmbedScanner` counts).
+        private mutating func appendHTMLPicture(_ attributes: [String: String], source range: NSRange?, inPicture: Bool = false) {
+            let chosen = inPicture ? pictureChoice : nil
+            appendPicture(source: chosen?.source ?? attributes["src"], alt: MarkdownHTML.decoded(attributes["alt"] ?? ""), range: chosen.map(\.range) ?? range,
                           width: MarkdownHTML.pixels(attributes["width"]), height: MarkdownHTML.pixels(attributes["height"]))
+        }
+
+        /// A `<picture>`'s `<source>`: the first whose `media` holds is drawn instead of the `<img>`.
+        private mutating func choosePictureSource(_ attributes: [String: String], range: NSRange?) {
+            guard pictureChoice == nil, let srcset = attributes["srcset"], MarkdownHTML.mediaMatches(attributes["media"], reduceMotion: reduceMotion) else { return }
+            let source = EmbedScanner.firstCandidate(inSrcset: srcset)
+            if !source.isEmpty { pictureChoice = (source, range) }
         }
 
         mutating func visitThematicBreak(_ thematicBreak: ThematicBreak) {
@@ -633,25 +949,36 @@ public struct MarkdownRenderer {
         }
 
         mutating func visitListItem(_ listItem: ListItem) {
+            let savedIndent = indent
+            let savedStyle = style
+            openContainer()
+            startListItem(checkbox: listItem.checkbox)
+            for child in listItem.children { visit(child) }
+            finishListItem()
+            indent = savedIndent
+            style = savedStyle
+            endBlock(listItem)
+            lastBlock = .listItem
+        }
+
+        /// Indents a list item and readies its marker, which joins whatever block the item starts with.
+        private mutating func startListItem(checkbox: Checkbox?) {
             let marker: String
             if let number = listNumbers.last ?? nil {
                 marker = "\(number)."
                 listNumbers[listNumbers.count - 1] = number + 1
             } else {
                 let bullets = ["•", "◦", "▪"]
-                marker = bullets[(listNumbers.count - 1) % bullets.count]
+                marker = bullets[max(0, listNumbers.count - 1) % bullets.count]
             }
-            let savedIndent = indent
-            let savedStyle = style
             let markerIndent = indent
-            openContainer()
             indent += listMarkerWidths.last ?? 20
             firstLineIndent = markerIndent
             pendingGap = lastBlock == .listItem ? 4 : nil
             // An item that opens with a nested list (`- - a`) shows both markers on its first line.
             let outerMarker = pendingMarker?.text ?? ""
             if pendingMarker != nil { firstLineIndent = firstLineIndent.map { min($0, markerIndent) } }
-            switch listItem.checkbox {
+            switch checkbox {
             case .checked?:
                 pendingMarker = (outerMarker + "☑\t", [.foregroundColor: NSColor.controlAccentColor])
                 style.color = .secondaryLabelColor
@@ -660,18 +987,19 @@ public struct MarkdownRenderer {
             case nil:
                 pendingMarker = (outerMarker + marker + "\t", [.foregroundColor: NSColor.secondaryLabelColor])
             }
-            for child in listItem.children { visit(child) }
-            // An empty item still shows its marker.
-            if pendingMarker != nil {
+        }
+
+        /// Ends a list item; an empty one still shows its marker. True when that marker was drawn here.
+        @discardableResult
+        private mutating func finishListItem() -> Bool {
+            let empty = pendingMarker != nil
+            if empty {
                 openBlock()
                 _ = blockRenderedStarts.popLast()
             }
             firstLineIndent = nil
             pendingGap = nil
-            indent = savedIndent
-            style = savedStyle
-            endBlock(listItem)
-            lastBlock = .listItem
+            return empty
         }
 
         mutating func visitTable(_ table: Table) {
@@ -710,7 +1038,8 @@ public struct MarkdownRenderer {
 
         /// Column widths from the widest cell, then one tab stop per column (aligned as the table asks) and a row
         /// decoration that knows the table's width.
-        private mutating func layOutTable(rowRanges: [NSRange], cellRanges: [[NSRange]], alignments: [Table.ColumnAlignment?], leadingTab: Bool) {
+        private mutating func layOutTable(rowRanges: [NSRange], cellRanges: [[NSRange]], alignments: [Table.ColumnAlignment?], leadingTab: Bool,
+                                          headers: [Bool]? = nil) {
             let columns = cellRanges.map(\.count).max() ?? 0
             guard columns > 0 else { return }
             var widths = [CGFloat](repeating: 24, count: columns)
@@ -749,7 +1078,8 @@ public struct MarkdownRenderer {
                 paragraph.lineHeightMultiple = 1.2
                 paragraph.paragraphSpacingBefore = (row == 0 ? gap : 0) + MarkdownRenderer.tableRowPadding
                 paragraph.paragraphSpacing = MarkdownRenderer.tableRowPadding
-                let rowDecoration = MarkdownBlockDecoration(kind: .tableRow(header: row == 0, width: tableWidth), leading: indent, quoteBars: bars)
+                let header = headers.map { row < $0.count && $0[row] } ?? (row == 0)
+                let rowDecoration = MarkdownBlockDecoration(kind: .tableRow(header: header, width: tableWidth), leading: indent, quoteBars: bars)
                 // Include the newline that ends the row so the paragraph's attributes are uniform.
                 let full = NSRange(location: range.location, length: min(range.length + 1, output.length - range.location))
                 output.addAttribute(.paragraphStyle, value: paragraph, range: full)
@@ -838,11 +1168,15 @@ public struct MarkdownRenderer {
                     attachment.occurrence = occurrence(of: source, at: range)
                 }
                 attachment.pixelSize = FittedImageAttachment.pixelSize(of: picture)
+                attachment.isAnimated = FittedImageAttachment.isAnimated(picture)
+                attachment.plays = attachment.isAnimated && !reduceMotion
                 append("\u{FFFC}", source: range, exact: false, extra: [.attachment: attachment])
                 return
             }
-            // A relative picture this Mac doesn't have: its document's host may (an attachment, a remote file).
-            if baseURL == nil, let source, !source.isEmpty, URL(string: source)?.scheme == nil, !unresolvedImages.contains(source) {
+            // A web picture, or a relative one this Mac doesn't have: the controller fetches it from the web or from
+            // the document's host (an attachment, a remote file).
+            if let source, !source.isEmpty, !unresolvedImages.contains(source),
+               WebImageLoader.handles(source) || (baseURL == nil && URL(string: source)?.scheme == nil) {
                 unresolvedImages.append(source)
             }
             let saved = style
@@ -891,12 +1225,14 @@ public struct MarkdownRenderer {
                     appendGenerated(MarkdownRenderer.lineSeparator)
                     return
                 case "img":
-                    appendHTMLPicture(attributes, source: range)
+                    appendHTMLPicture(attributes, source: range, inPicture: inlineElements.contains { $0.name == "picture" })
                     return
                 case "source" where inlineElements.contains(where: { $0.name == "picture" }):
+                    choosePictureSource(attributes, range: range)
                     return
                 default:
                     if !MarkdownHTML.voidTags.contains(name), let close = closingTag(of: inlineHTML, name: name) {
+                        if name == "picture" { pictureChoice = nil }
                         inlineElements.append((name, close, style))
                         applyHTMLStyle(name, attributes: attributes)
                         return
@@ -1070,6 +1406,15 @@ nonisolated final class FittedImageAttachment: NSTextAttachment {
     var occurrence = 0
     /// The picture's own pixels, the space region notes are kept in.
     var pixelSize = CGSize.zero
+    /// An animated picture (GIF, APNG), and whether it plays: then the rendered view lays a playing image view over
+    /// the attachment's frame, and the attachment itself draws nothing beneath it.
+    var isAnimated = false
+    var plays = false
+
+    /// More than one frame in any of its bitmaps.
+    static func isAnimated(_ image: NSImage) -> Bool {
+        image.representations.contains { (($0 as? NSBitmapImageRep)?.value(forProperty: .frameCount) as? Int ?? 0) > 1 }
+    }
 
     /// The largest bitmap among the image's representations; its point size when it has none (a PDF or SVG).
     static func pixelSize(of image: NSImage) -> CGSize {
@@ -1101,6 +1446,7 @@ nonisolated final class FittedImageAttachment: NSTextAttachment {
     override func image(for imageBounds: CGRect, attributes: [NSAttributedString.Key: Any], location: any NSTextLocation,
                         textContainer: NSTextContainer?) -> NSImage? {
         guard let picture = image, imageBounds.width > 0, imageBounds.height > 0 else { return image }
+        if plays { return NSImage(size: imageBounds.size) }
         let radius = Self.cornerRadius(for: imageBounds.size)
         return NSImage(size: imageBounds.size, flipped: false) { rect in
             let shape = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)

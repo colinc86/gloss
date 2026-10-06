@@ -74,13 +74,23 @@ public final class MarkdownViewerController {
     @ObservationIgnored public var onOpenDocument: (String) -> Void = { _ in }
     /// Fetches a relative picture from the document's own host (a remote file system, a ticket's attachments);
     /// nil where images are local or not served. Set it before the first render that needs it.
-    @ObservationIgnored public var loadImage: ((String) async -> Data?)? {
+    @ObservationIgnored public var loadImage: (@Sendable (String) async -> Data?)? {
         didSet { if loadImage != nil { rebuildNow() } }
     }
+    /// Fetches the web pictures (http and https) a document links to, from this Mac whatever host the document is on.
+    @ObservationIgnored public let webImageLoader: WebImageLoader
     @ObservationIgnored private var fetchedImages: [String: NSImage] = [:]
     /// The fetched pictures' bytes, for a region note's crop.
     @ObservationIgnored private var fetchedImageData: [String: Data] = [:]
     @ObservationIgnored private var fetchingImages: Set<String> = []
+    /// Fetches under way, cancelled when the document closes so a gone document stops asking its host.
+    @ObservationIgnored private var fetchTasks: [UUID: Task<Void, Never>] = [:]
+    /// Pictures fetched at once.
+    static let fetchWidth = 4
+    /// Reduce Motion as of the last render: animated pictures hold still and a `<picture>` draws its reduced-motion
+    /// source while it is on.
+    @ObservationIgnored private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    @ObservationIgnored private var displayOptionsObserver: (any NSObjectProtocol)?
 
     // MARK: Notes on embedded pictures
 
@@ -160,15 +170,29 @@ public final class MarkdownViewerController {
         return try? Data(contentsOf: url.standardizedFileURL)
     }
 
-    public init(source: TextEditorController, baseURL: URL? = nil) {
+    public init(source: TextEditorController, baseURL: URL? = nil, webImageLoader: WebImageLoader = .shared) {
         self.source = source
         self.baseURL = baseURL
+        self.webImageLoader = webImageLoader
         rebuildNow()
+        displayOptionsObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.reduceMotion != NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+                self.reduceMotion.toggle()
+                self.rebuildNow()
+            }
+        }
         let previous = source.onTextChange
         source.onTextChange = { [weak self] in
             previous()
             self?.scheduleRebuild()
         }
+    }
+
+    isolated deinit {
+        fetchTasks.values.forEach { $0.cancel() }
+        if let displayOptionsObserver { NSWorkspace.shared.notificationCenter.removeObserver(displayOptionsObserver) }
     }
 
     /// Re-renders immediately when the source was replaced wholesale (reload, merge).
@@ -192,31 +216,60 @@ public final class MarkdownViewerController {
 
     public func rebuildNow() {
         renderedContentVersion = source.contentVersion
-        let output = MarkdownRenderer.render(source.text, baseURL: baseURL, images: fetchedImages)
+        let output = MarkdownRenderer.render(source.text, baseURL: baseURL, images: fetchedImages, reduceMotion: reduceMotion)
         rendered = output.text
         map = output.map
         renderedVersion += 1
         fetch(output.unresolvedImages)
     }
 
-    /// Fetches pictures the render couldn't show, then renders once more with whatever arrived. A picture that
-    /// can't be had is asked for once per document, not on every keystroke.
+    /// Fetches pictures the render couldn't show, then renders once more with whatever arrived: web pictures from
+    /// the web, relative ones from the document's host. A picture that can't be had is asked for once per document,
+    /// not on every keystroke.
     private func fetch(_ sources: [String]) {
-        guard let loadImage else { return }
-        let wanted = sources.filter { fetchedImages[$0] == nil && !fetchingImages.contains($0) }
+        let loadImage = loadImage, web = webImageLoader
+        let wanted = sources.filter { fetchedImages[$0] == nil && !fetchingImages.contains($0) && (loadImage != nil || WebImageLoader.handles($0)) }
         guard !wanted.isEmpty else { return }
         fetchingImages.formUnion(wanted)
-        Task { [weak self] in
-            var arrived = false
-            for source in wanted {
-                if let data = await loadImage(source), let image = NSImage(data: data), image.size.width > 0 {
-                    self?.fetchedImages[source] = image
-                    self?.fetchedImageData[source] = data
-                    arrived = true
+        let id = UUID()
+        fetchTasks[id] = Task { [weak self] in
+            // A few at a time, each shown as it arrives (renders are coalesced), so one dead host doesn't hold up the rest.
+            await withTaskGroup(of: FetchedPicture?.self) { group in
+                var pending = wanted[...]
+                for _ in 0..<Self.fetchWidth {
+                    guard let source = pending.popFirst() else { break }
+                    group.addTask { await Self.load(source, web: web, host: loadImage) }
+                }
+                for await picture in group {
+                    guard !Task.isCancelled, let self else {
+                        group.cancelAll()
+                        return
+                    }
+                    if let picture {
+                        self.fetchedImages[picture.source] = picture.image
+                        self.fetchedImageData[picture.source] = picture.data
+                        self.scheduleRebuild()
+                    }
+                    if let source = pending.popFirst() { group.addTask { await Self.load(source, web: web, host: loadImage) } }
                 }
             }
-            if arrived { self?.rebuildNow() }
+            self?.fetchTasks[id] = nil
         }
+    }
+
+    /// A picture fetched and decoded away from the main actor.
+    nonisolated struct FetchedPicture: @unchecked Sendable {
+        // The image is made in the fetching task and handed over once; that task never touches it again.
+        let source: String
+        let data: Data
+        let image: NSImage
+    }
+
+    /// Fetches one picture from the web or the document's host and decodes it, refusing one too big to draw.
+    @concurrent nonisolated static func load(_ source: String, web: WebImageLoader, host: (@Sendable (String) async -> Data?)?) async -> FetchedPicture? {
+        let data = WebImageLoader.handles(source) ? await web.data(for: source) : await host?(source)
+        guard let data, !Task.isCancelled, let image = ImageDecoder.checkedImage(data), image.size.width > 0, image.size.height > 0 else { return nil }
+        return FetchedPicture(source: source, data: data, image: image)
     }
 
     /// Collapses the rendered view's selection to its end. The view ignores its own delegate while applying a
