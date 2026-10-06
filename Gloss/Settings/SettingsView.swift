@@ -36,12 +36,13 @@ struct SettingsView: View {
                         Text("Dotfiles appear in the file tree from the start; the eye under the tree switches them until you quit.")
                     }
                 }
+                AppIconSection(selection: $settings.appIcon)
                 if model.updates.isAvailable {
                     UpdatesSection()
                 }
             }
             .formStyle(.grouped)
-            .frame(height: model.updates.isAvailable ? 380 : 236)
+            .frame(height: model.updates.isAvailable ? 684 : 540)
             .tabItem { Label("General", systemImage: "gear") }
             .tag(SettingsTab.general)
 
@@ -970,6 +971,49 @@ private struct UpdatesSection: View {
             if model.integrations.github == nil {
                 Text("While Gloss's repository is private, updates need GitHub connected in Integrations.")
             }
+        }
+    }
+}
+
+/// Settings › General › App Icon: every style, by family, as small icons to click.
+private struct AppIconSection: View {
+    @Binding var selection: AppIconStyle
+
+    var body: some View {
+        Section {
+            ForEach(AppIconStyle.Family.allCases, id: \.self) { family in
+                LabeledContent(family.title) {
+                    HStack(spacing: DS.Space.s) {
+                        ForEach(AppIconStyle.allCases.filter { $0.family == family }) { style in
+                            Button { selection = style } label: {
+                                Group {
+                                    if let image = style.thumbnail {
+                                        Image(nsImage: image).resizable().interpolation(.high)
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 8).fill(.quaternary)
+                                    }
+                                }
+                                .frame(width: 40, height: 40)
+                                .padding(3)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(selection == style ? Color.accentColor : .clear, lineWidth: 2.5)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .help(style == .bundled ? "\(style.title) (the app's own icon)" : style.title)
+                            .accessibilityLabel(style.title)
+                            .accessibilityAddTraits(selection == style ? .isSelected : [])
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("App Icon")
+        } footer: {
+            Text("The Dock and the app switcher show it while Gloss is open. Finder, Launchpad and the Dock while Gloss is closed keep Graphite Yellow, which also follows your Mac's icon style (dark, tinted or clear); the others always look as shown.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

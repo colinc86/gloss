@@ -1,0 +1,30 @@
+{
+  "fill" : {
+    "solid" : "srgb:0.93000,0.93000,0.94000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "notes.svg",
+          "name" : "notes"
+        }
+      ]
+    },
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "text.svg",
+          "name" : "text"
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

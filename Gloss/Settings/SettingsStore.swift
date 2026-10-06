@@ -11,6 +11,13 @@ final class SettingsStore {
     private let noteStore: NoteStore
 
     var launchRestore = LaunchRestore.system { didSet { persist("general.restore", launchRestore.rawValue) } }
+    /// The Dock icon while Gloss runs (`AppIconStyle`).
+    var appIcon = AppIconStyle.bundled {
+        didSet {
+            persist("general.appIcon", appIcon.rawValue)
+            if appIcon != oldValue { appIcon.apply() }
+        }
+    }
     var showDotfilesByDefault = false { didSet { persist("general.showDotfiles", showDotfilesByDefault ? "1" : "0") } }
     var showsQuestionsOnDock = true {
         didSet {
@@ -60,6 +67,7 @@ final class SettingsStore {
             // Before #9 a toggle turned reopening off; keep it off.
             launchRestore = .nothing
         }
+        if let value = await read("general.appIcon"), let style = AppIconStyle(rawValue: value) { appIcon = style }
         if let value = await read("general.showDotfiles") { showDotfilesByDefault = value == "1" }
         if let value = await read("general.dockQuestions") { showsQuestionsOnDock = value == "1" }
         if let value = await read("editor.fontSize"), let size = Double(value) { editorFontSize = size }

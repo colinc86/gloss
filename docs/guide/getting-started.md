@@ -17,6 +17,10 @@ panel. Settings › General › When Gloss opens, reopen chooses: as your Mac do
 quitting an application” is off in Desktop & Dock, else just the last folder), everything, the last folder, or
 nothing.
 
+Settings › General › App Icon picks the icon Gloss shows in the Dock and the app switcher while it's open: graphite or
+frost in any of the six note colors, or a fun one. Finder, Launchpad and the Dock while Gloss is closed keep the
+standard Graphite Yellow, the only one that follows your Mac's icon style (dark, tinted or clear).
+
 The explorer on the left shows the folder as a tree. Each open folder is a tab at the top of the sidebar.
 
 - **Open Quickly** (⌘P) finds any file under the folder by name.

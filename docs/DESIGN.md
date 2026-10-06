@@ -103,12 +103,26 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
 
 ## App icon
 
-The app at a glance: a white page of lines, tilted a little, with one line marked by a yellow draft highlight and
-its rail, on an indigo-to-blue squircle; a white badge in the corner carries the accent paper plane flying up
-and right (sending, not landing). Standard macOS grid (824 pt squircle in 1024, soft drop shadows). It is drawn by
-`docs/icon/draw-icon.swift`; to change it, edit the script, run `swift docs/icon/draw-icon.swift out.png`, scale
-to 1024 px, and write the ten sizes into `Assets.xcassets/AppIcon.appiconset`. After a rebuild the Dock may keep
-the old icon until the bundle is touched and re-registered with `lsregister -f`.
+The whole icon is the page: a sheet of glass with four lines of text, one of them a draft note, drawn the way the app
+draws one (a filled band behind the line, nothing beside it). The bundled icon is **graphite yellow**, a dark smoked
+sheet with a yellow note. `Gloss/AppIcon.icon` is an Icon Composer document whose layers are glass, so macOS 26 draws
+its default, dark, clear and tinted looks itself.
+
+Every style comes from one generator, `docs/icon/make-variants.swift`, which writes an Icon Composer document per
+style into `docs/icon/variants/`: frost (light glass) and graphite in each of the six note colors, and four fun ones
+(starburst, blueprint, rainbow, pixel). To change a style, edit the generator, run
+`swift docs/icon/make-variants.swift docs/icon/variants`, and copy the chosen document's contents into
+`Gloss/AppIcon.icon` for the bundled icon. The README's `docs/media/icon.png` is the bundled icon's 256 px render
+(`actool` the `.icon`, then `iconutil -c iconset` the `.icns`). After a rebuild the Dock may keep the old icon until
+the bundle is touched and re-registered with `lsregister -f`.
+
+**Settings › General › App Icon** offers every style. macOS has no alternate app icons, so a pick other than Graphite
+Yellow is `NSApplication.applicationIconImage`: the Dock and the app switcher while Gloss runs, a flat picture that
+doesn't follow the Mac's dark, tinted or clear icon style. Graphite Yellow sets it back to nil, so the system draws the
+bundled `.icon`. Finder, Launchpad and the Dock while Gloss is closed always show the bundled icon; changing those
+would mean writing into the signed bundle. The pictures are 512 px renders of each style in
+`Gloss/Assets.xcassets/AppIconStyles`, made by `docs/icon/render-styles.sh` (Icon Composer's `ictool`); the Dock image
+sets one into the standard grid (824 of 1024, with a shadow).
 
 The About panel is the standard one with credits (`AboutPanel`): one line on what the app does, in label colour,
 then what it is built on, smaller and secondary.
