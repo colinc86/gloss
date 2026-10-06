@@ -283,7 +283,7 @@ public struct TextEditorView: NSViewRepresentable {
         private func invalidateHighlights() {
             appliedHighlightsVersion = controller.highlightsVersion
             backdrop?.entries = controller.highlights.filter { !$0.isInvalidated }.map {
-                HighlightBackdropView.Entry(range: $0.range, color: $0.state == .orphaned ? Theme.color(for: $0.color) : Theme.highlightBackground(for: $0.highlight), orphaned: $0.state == .orphaned)
+                HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.isFocused($0.id))
             }
             backdrop?.lineChanges = controller.lineChanges
             gutter?.needsDisplay = true

@@ -30,6 +30,38 @@ public enum Theme {
         }
     }
 
+    /// How a note marks content in its state (#12). Drafts are the open work and fill their text; once sent a note
+    /// steps back to an underline, resolved to a faint dotted one, and an orphan keeps its dashed one. A note in focus
+    /// (its card selected, or under the pointer) fills again whatever its state, so it can always be found.
+    public enum NoteMark: Equatable, Sendable {
+        case fill, underline, dottedUnderline, dashedUnderline
+    }
+
+    public static func mark(for state: NoteState, focused: Bool) -> NoteMark {
+        if state == .orphaned { return .dashedUnderline }
+        if focused || state == .draft { return .fill }
+        return state == .sent ? .underline : .dottedUnderline
+    }
+
+    /// One ladder for every surface that shows a note's state (gutter bars, the ruler, regions, rows, page boxes):
+    /// open work at full strength, then each step back quieter.
+    public static func strength(for state: NoteState) -> CGFloat {
+        switch state {
+        case .draft: 1
+        case .sent: 0.55
+        case .resolved: 0.3
+        case .orphaned: 0.8
+        }
+    }
+
+    /// The fill a note's text gets when it fills: a draft's tint, whatever the state of a note in focus.
+    public static func highlightFill(for noteColor: NoteColor) -> NSColor {
+        let base = color(for: noteColor)
+        return NSColor(name: nil) { appearance in
+            base.withAlphaComponent(0.28 * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkBoost : 1))
+        }
+    }
+
     /// How much stronger note tints are in dark appearance.
     public static let darkBoost: CGFloat = 1.3
 

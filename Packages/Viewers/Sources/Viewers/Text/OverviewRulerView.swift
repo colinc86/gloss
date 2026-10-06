@@ -113,7 +113,7 @@ final class OverviewRulerView: NSView {
                 path.lineWidth = 1
                 path.stroke()
             } else {
-                let alpha: CGFloat = switch mark.state { case .draft: 1; case .sent: 0.7; default: 0.35 }
+                let alpha = Theme.strength(for: mark.state)
                 color.withAlphaComponent(isHovered ? 1 : alpha).setFill()
                 path.fill()
             }

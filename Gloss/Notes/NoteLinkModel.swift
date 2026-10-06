@@ -68,8 +68,8 @@ final class NoteLinkModel {
     @ObservationIgnored var listedIDs: Set<NoteID> = [] {
         didSet { if isLinked, listedIDs != oldValue { refresh() } }
     }
-    /// Each note's colour and whether it is settled, for the active document.
-    @ObservationIgnored var noteStyles: () -> [NoteID: (color: NoteColor, settled: Bool)] = { [:] }
+    /// Each note's colour and how strongly its state shows (`Theme.strength`), for the active document.
+    @ObservationIgnored var noteStyles: () -> [NoteID: (color: NoteColor, strength: CGFloat)] = { [:] }
 
     /// The note the list should centre; `focusRequest` bumps each time it should scroll there.
     private(set) var focusNoteID: NoteID?
@@ -195,7 +195,7 @@ final class NoteLinkModel {
                 outlines[id] = outline
             }
             items.append(NotePathLayerView.Item(id: id, shapes: outline.shapes, outline: outline.path, card: cardRects[id],
-                                                color: Theme.color(for: style.color), settled: style.settled, strong: strong.contains(id)))
+                                                color: Theme.color(for: style.color), strength: style.strength, strong: strong.contains(id)))
         }
         outlines = outlines.filter { viewerRects[$0.key] != nil }
         drawn = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

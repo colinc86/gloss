@@ -10,12 +10,13 @@ enum RegionStyle {
         let color = Theme.color(for: noteColor)
         let radius = min(6 * unit, min(rect.width, rect.height) / 4)
         let region = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
-        let settled = state == .resolved
-        color.withAlphaComponent(settled ? 0.06 : 0.16).setFill()
+        // The state ladder (#12); the selected note shows at full strength.
+        let strength = selected ? 1 : Theme.strength(for: state)
+        color.withAlphaComponent(0.16 * strength).setFill()
         region.fill()
         region.lineWidth = (selected ? 2.5 : 1.5) * unit
         if state == .orphaned { region.setLineDash([4 * unit, 3 * unit], count: 2, phase: 0) }
-        color.withAlphaComponent(settled ? 0.45 : 1).setStroke()
+        color.withAlphaComponent(strength).setStroke()
         region.stroke()
         if selected {
             // A halo outside the border marks the note chosen in the panel.
@@ -27,7 +28,7 @@ enum RegionStyle {
         // The tab: a small filled pill hanging off the top-left corner.
         let tab = NSRect(x: rect.minX, y: rect.minY - 7 * unit, width: 18 * unit, height: 7 * unit)
         if tab.minY >= 0 {
-            color.withAlphaComponent(settled ? 0.45 : 1).setFill()
+            color.withAlphaComponent(strength).setFill()
             NSBezierPath(roundedRect: tab, xRadius: 3.5 * unit, yRadius: 3.5 * unit).fill()
         }
     }

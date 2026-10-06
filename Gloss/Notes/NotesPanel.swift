@@ -118,6 +118,8 @@ struct NotesPanel: View {
         // key prompt); its Reveal button connects on purpose.
         .onChange(of: panel.selection) { _, _ in
             model.noteLink.selectedNoteID = panel.selectedNoteID
+            // The selected card's note shows at full strength on the page whatever its state (#12).
+            model.activeSession?.textController?.focusedNoteID = panel.selectedNoteID
             if !panel.selection.isEmpty { listFocused = true }
             guard let entry = panel.selectedEntry, model.fileSystem(for: entry.document.hostID) != nil else { return }
             model.reveal(note: entry.note, in: entry.document, select: false)

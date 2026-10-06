@@ -242,7 +242,7 @@ enum WebBridge {
           if (el && inOverlay(el)) el = null;
           if (!el && !(item.state === 'orphaned' && item.rect)) continue;
           const box = makeBox(item.color, item.needsReview ? '?' : null, item.state === 'orphaned');
-          box.style.opacity = item.state === 'resolved' ? '0.35' : item.state === 'sent' ? '0.7' : '1';
+          box.style.opacity = item.state === 'resolved' ? '0.3' : item.state === 'sent' ? '0.55' : '1';
           box.style.background = item.fill;
           overlay.appendChild(box);
           if (el) {

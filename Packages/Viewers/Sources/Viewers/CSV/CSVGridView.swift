@@ -133,7 +133,7 @@ public struct CSVGridView: NSViewRepresentable {
         func rowColor(_ row: Int) -> NSColor? {
             guard let highlight = controller.rowHighlight(row) else { return nil }
             // Softer than a text highlight: a whole row of colour drowns the values; the rail carries the colour.
-            return Theme.color(for: highlight.color).withAlphaComponent(highlight.state == .resolved ? 0.05 : 0.12)
+            return Theme.color(for: highlight.color).withAlphaComponent(0.12 * Theme.strength(for: highlight.state))
         }
 
         /// Repaints row tints, cell tints, and the selection on the rows that are on screen.

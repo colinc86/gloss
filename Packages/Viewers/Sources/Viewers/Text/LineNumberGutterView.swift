@@ -173,11 +173,9 @@ final class LineNumberGutterView: NSView {
                 path.lineWidth = 1
                 path.setLineDash([2, 2], count: 2, phase: 0)
                 path.stroke()
-            case .resolved:
-                color.withAlphaComponent(hovered ? 0.6 : 0.3).setFill()
-                path.fill()
             default:
-                color.withAlphaComponent(hovered || highlight.needsReview ? 1 : 0.85).setFill()
+                // The state ladder (#12): drafts strong, sent quieter, resolved faint; hover brings any up.
+                color.withAlphaComponent(hovered || highlight.needsReview ? 1 : 0.9 * Theme.strength(for: highlight.state)).setFill()
                 path.fill()
             }
             // Generous hit area: the lane plus a little either side, over the whole span.

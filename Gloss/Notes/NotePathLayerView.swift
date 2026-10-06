@@ -18,7 +18,8 @@ final class NotePathLayerView: NSView {
         var outline: CGPath
         var card: CGRect?
         var color: NSColor
-        var settled: Bool
+        /// The state ladder's strength (#12): drafts 1, sent notes quieter, resolved ones faint.
+        var strength: CGFloat
         var strong: Bool
     }
 
@@ -113,7 +114,7 @@ final class NotePathLayerView: NSView {
     }
 
     private static func opacity(_ item: Item) -> Float {
-        item.settled && !item.strong ? 0.45 : 1
+        item.strong ? 1 : Float(item.strength)
     }
 
     private func applyRibbon(_ item: Item, parts: (outline: CAShapeLayer, ribbon: CALayer, gradient: CAGradientLayer, mask: CAShapeLayer),

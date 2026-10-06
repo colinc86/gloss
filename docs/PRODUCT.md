@@ -262,6 +262,7 @@ Scoped 2026-10-05. **Acceptance checks.**
 Six reports filed from the app's feedback sheet. **Acceptance checks.**
 
 - [x] #8 Bulk actions: selecting notes brings up a bar with Send, Resolve, Reopen as Drafts, Colour, Copy as Packet and Delete for the selection, each taking only the notes it applies to; deleting several is one Undo; the Notes menu's Selected commands act on the whole selection — `NoteBulkActionTests`, `NoteDeleteUndoTests.aBulkDeleteIsOneUndo`; live on a throwaway copy: Select All, bar with four, Resolve all, Delete, one selected bar, Delete and Undo
+- [ ] #12 Notes step back once sent: drafts fill their text, sent notes are an underline, resolved a faint dotted one, the same ladder on every surface; hovering a note or selecting its card brings it back — `NoteStateLadderTests` (user: scroll a document with notes in every state)
 - [ ] #10 An agent set-up an update made outdated (the old prompt hook) shows a toast at launch with Open Settings, which opens Settings › Agents; dismissing it holds until something else changes — `AgentsUpdateNoticeTests` (user: launch with the old hook in place)
 - [ ] #13 Back to Draft puts a sent note (or several) back to a draft, keeping its send history; the agent can't resolve it until sent again — `NoteStoreTests.aSentNoteCanBeUnsent`, `MCPServerTests.agentsNeverSeeDrafts`
 - [ ] #14 Edit… edits a note in its card whether or not it is on screen, and won't overwrite a comment that changed meanwhile — `NoteInlineEditTests`

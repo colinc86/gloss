@@ -6,8 +6,14 @@ import Core
 final class HighlightBackdropView: NSView {
     struct Entry {
         var range: NSRange
-        var color: NSColor
-        var orphaned: Bool
+        var noteColor: NoteColor
+        var mark: Theme.NoteMark
+
+        init(range: NSRange, color: NoteColor, state: NoteState, focused: Bool) {
+            self.range = range
+            noteColor = color
+            mark = Theme.mark(for: state, focused: focused)
+        }
     }
 
     weak var textView: NSTextView?
@@ -93,17 +99,30 @@ final class HighlightBackdropView: NSView {
             layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: [.rangeNotRequired]) { _, frame, _, _ in
                 let rect = frame.offsetBy(dx: inset.width, dy: inset.height)
                 guard rect.intersects(dirtyRect) else { return true }
-                if entry.orphaned {
+                let color = Theme.color(for: entry.noteColor)
+                switch entry.mark {
+                case .fill:
+                    Theme.highlightFill(for: entry.noteColor).setFill()
+                    NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+                case .underline, .dottedUnderline, .dashedUnderline:
                     let path = NSBezierPath()
                     path.move(to: NSPoint(x: rect.minX, y: rect.maxY - 1))
                     path.line(to: NSPoint(x: rect.maxX, y: rect.maxY - 1))
-                    path.setLineDash([3, 2], count: 2, phase: 0)
-                    path.lineWidth = 1
-                    entry.color.setStroke()
+                    switch entry.mark {
+                    case .underline:
+                        path.lineWidth = 1.5
+                        color.withAlphaComponent(0.85).setStroke()
+                    case .dottedUnderline:
+                        path.lineWidth = 1.25
+                        path.lineCapStyle = .round
+                        path.setLineDash([0.5, 3], count: 2, phase: 0)
+                        color.withAlphaComponent(0.6).setStroke()
+                    default:
+                        path.lineWidth = 1
+                        path.setLineDash([3, 2], count: 2, phase: 0)
+                        color.setStroke()
+                    }
                     path.stroke()
-                } else {
-                    entry.color.setFill()
-                    NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
                 }
                 return true
             }

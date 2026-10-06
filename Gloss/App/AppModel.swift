@@ -224,7 +224,7 @@ final class AppModel {
         noteLink.start()
         noteLink.noteStyles = { [weak self] in
             Dictionary((self?.activeSession?.notes ?? []).map { note in
-                (note.id, (color: note.color, settled: note.state == .resolved && note.resolveOutcome != .needsInput))
+                (note.id, (color: note.color, strength: Theme.strength(for: note.displayState)))
             }, uniquingKeysWith: { first, _ in first })
         }
         hosts.onFileSystemReady = { [weak self] hostID, fileSystem, connection in

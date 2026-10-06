@@ -20,6 +20,17 @@ public final class TextEditorController {
         }
     }
     public private(set) var highlightsVersion = 0
+    /// The note drawn at full strength whatever its state (#12): its card is selected in the notes panel.
+    public var focusedNoteID: NoteID? {
+        didSet {
+            guard focusedNoteID != oldValue else { return }
+            highlightsVersion += 1
+            for observer in highlightObservers.values { observer() }
+        }
+    }
+
+    /// In focus: the selected card's note, or the one under the pointer.
+    public func isFocused(_ id: NoteID) -> Bool { id == focusedNoteID || id == peek?.id }
     /// Lines a change touched (a pull request's file at its head): tinted, marked and stepped through. Static: such
     /// files are never editable, so nothing shifts them.
     public var lineChanges: LineChanges? {
@@ -65,7 +76,13 @@ public final class TextEditorController {
     // MARK: Note peek
 
     /// The note under the pointer, shown as a peek card after a short rest; nil when none.
-    public private(set) var peek: TextHighlight?
+    public private(set) var peek: TextHighlight? {
+        didSet {
+            // The note under the pointer comes up to full strength while it is there (#12).
+            guard peek?.id != oldValue?.id else { return }
+            for observer in highlightObservers.values { observer() }
+        }
+    }
     /// Whether the pointer is on the peek card itself (it stays while it is).
     @ObservationIgnored public var isPeekHovered = false {
         didSet { if !isPeekHovered { schedulePeekHide() } else { peekTask?.cancel() } }

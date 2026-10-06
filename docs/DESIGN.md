@@ -10,7 +10,12 @@ the tokens and components there instead of literals.
    pointer or the selection arrives, then brighten. Nothing is hidden that has to be discovered: quiet, not absent.
 2. **One meaning, one look.** A note state always shows the same symbol and tint (`NoteState.style`) in pills,
    filters, and highlights. Symbols carry meaning for people who cannot tell the tints apart.
-3. **Open work leads.** Drafts and questions from agents stand at full contrast; resolved notes step back.
+3. **Open work leads.** Drafts and questions from agents stand at full contrast; everything else steps back (#12).
+   In text a draft fills its words; a sent note is only a solid underline in its colour, a resolved one a faint
+   dotted underline, an orphan a dashed one (`Theme.mark`). Every other surface uses one ladder (`Theme.strength`:
+   draft 1, sent 0.55, resolved 0.3): gutter bars, ruler ticks, image and PDF regions, spreadsheet rows, a web page's
+   element boxes, and the paths. The note under the pointer, or whose card is selected, fills again whatever its
+   state, so it can always be found.
 4. **The next step is obvious.** Each surface emphasises one primary action (a draft's Send) and keeps the rest
    secondary.
 5. **Motion explains change.** Animate what moved or changed state, briefly; never decorate.
