@@ -113,7 +113,9 @@ final class AppModel {
     /// Bumped whenever the machine selection changes or following stops, so work resumed after an await can
     /// tell that the world moved on.
     @ObservationIgnored private var followGeneration = 0
-    var showNotesPanel = true
+    var showNotesPanel = true {
+        didSet { if showNotesPanel != oldValue { scheduleWorkspaceSave() } }
+    }
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
     private(set) var sessions: [String: DocumentSession] = [:]
@@ -216,10 +218,6 @@ final class AppModel {
         send.register(TmuxTransport(registry: connectionRegistry))
         send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
-        // An agent whose set-up an update changed (#10) is found at launch, not only when Settings opens.
-        if !launchOptions.isTestHost {
-            Task { [weak self] in await self?.hooks.refresh(hosts: [.local], agents: HooksModel.launchCheckedAgents) }
-        }
         notesPanel.start()
         noteLink.start()
         noteLink.noteStyles = { [weak self] in
@@ -238,7 +236,6 @@ final class AppModel {
                 }
             }
             let firstRegistration = self.fileSystems[hostID] == nil
-            if firstRegistration { Task { await self.hooks.refresh(hosts: [hostID], agents: HooksModel.launchCheckedAgents) } }
             self.fileSystems[hostID] = fileSystem
             self.connections[hostID] = connection
             let alias = self.hosts.entry(for: hostID)?.alias ?? hostID.rawValue
@@ -250,6 +247,8 @@ final class AppModel {
                 }
                 await self.forwardMCPPort(to: connection, alias: alias)
                 if self.followHerdr { self.startFollowing() }
+                // The host's agents (#10), once its home and the forwarded MCP address are known.
+                if firstRegistration { await self.hooks.refresh(hosts: [hostID], agents: HooksModel.launchCheckedAgents) }
             }
             let stager = RemoteAttachmentStager(hostID: hostID, connection: connection, fileSystem: fileSystem, noteStore: self.noteStore)
             self.send.register(stager: stager, for: hostID)
@@ -322,6 +321,7 @@ final class AppModel {
             return try await tunnel(hostID: hostID, port: port)
         }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+        explorer.onTabsChange = { [weak self] in self?.scheduleWorkspaceSave() }
         notesPanel.onGroupsChange = { [weak self, weak explorer] groups in
             explorer?.updateNoteMarks(groups)
             self?.updateDockBadge(groups)
@@ -924,7 +924,14 @@ final class AppModel {
             let last = controller.lineIndex.contentRange(ofLine: max(line, endLine ?? line))
             let lines = NSRange(location: first.location, length: last.location + last.length - first.location)
             let range = select ? lines : NSRange(location: first.location, length: 0)
-            if let rendered = session.rendered { rendered.scroll(toSource: range, select: select) } else { controller.scroll(to: range) }
+            // A jump shows its lines; resuming puts the line where reading stopped back at the top.
+            if let markdown = session.markdown {
+                markdown.scroll(toSource: range, select: select, atTop: !select)
+            } else if let rendered = session.rendered {
+                rendered.scroll(toSource: range, select: select)
+            } else {
+                controller.scroll(to: range, select: select, atTop: !select)
+            }
         }
     }
 
@@ -1177,7 +1184,6 @@ final class AppModel {
 
     @ObservationIgnored private var started = false
 
-    /// Applies `--root` and `--open`, or reopens the most recent root. Runs once even if several windows appear.
     /// The tab Settings opens on; the update toast sends it to Agents.
     var settingsTab = SettingsTab.general
 
@@ -1204,6 +1210,8 @@ final class AppModel {
         return activeSession?.dismissNoteAffordance() ?? false
     }
 
+    /// Applies `--root` and `--open`, or reopens what was open (as Settings › General says). Runs once even if
+    /// several windows appear.
     func start() async {
         guard !started, !launchOptions.isTestHost else { return }
         started = true
@@ -1231,6 +1239,11 @@ final class AppModel {
         scheduleIntegrationRegistration()
         await registration?.value
         explorer.showDotfiles = settings.showDotfilesByDefault
+        // Before folders open: a restore can wait on a host or a document, and agents shouldn't wait with it.
+        await startMCPServer()
+        // An agent whose set-up an update changed (#10) is found at launch, not only when Settings opens; after the
+        // MCP server is up, so the address it is checked against is the real one.
+        Task { [weak self] in await self?.hooks.refresh(hosts: [.local], agents: HooksModel.launchCheckedAgents) }
         // `--host` takes an ssh alias; a listed name is accepted too.
         let launchHost = launchOptions.host == "local" ? HostID.local
             : (hosts.entries.first { $0.kind == .ssh && $0.alias == launchOptions.host } ?? hosts.entries.first { $0.name == launchOptions.host })?.id
@@ -1239,13 +1252,16 @@ final class AppModel {
             await openRemoteRoot(hostID: launchHost, path: launchOptions.root)
         } else if let root = launchOptions.root {
             await explorer.openRoot(hostID: .local, path: root)
-        } else if settings.openLastRootOnLaunch {
-            await reopenMostRecentRoot()
+        } else {
+            switch settings.launchRestore.resolved() {
+            case .everything: await restoreSavedWorkspace()
+            case .lastFolder: await reopenMostRecentRoot()
+            case .nothing, .system: break
+            }
         }
         if let open = launchOptions.open {
             openDocument(hostID: .local, path: open)
         }
-        await startMCPServer()
         if launchOptions.follow { followHerdr = true }
     }
 
@@ -1260,44 +1276,131 @@ final class AppModel {
         NSApp.dockTile.badgeLabel = waiting > 0 ? String(waiting) : nil
     }
 
-    /// The document in front, kept so the next launch reopens it with its folder.
-    private func rememberLastDocument(line: Int? = nil) {
-        guard let session = activeSession else {
-            // Everything closed: the next launch should start without a document, not reopen the closed one.
-            guard !isShutDown else { return }
-            let store = noteStore
-            Task { try? await store.setSetting("general.lastDocument", nil) }
-            return
-        }
-        let value = "\(session.hostID.rawValue)\n\(session.path)" + (line.map { "\n\($0)" } ?? "")
-        let store = noteStore
-        Task { try? await store.setSetting("general.lastDocument", value) }
+    /// The document in front changed: the next launch reopens it with its folder.
+    private func rememberLastDocument() {
+        guard !isShutDown else { return }
+        scheduleWorkspaceSave()
     }
 
-    /// At quit, the caret's line too, so the next launch lands where reading stopped.
-    private func rememberLastPosition() async {
-        guard let session = activeSession, let controller = session.textController else { return }
+    @ObservationIgnored private var workspaceSave: Task<Void, Never>?
+    /// Set while a launch restores the workspace, so its half-built state isn't saved over the whole one.
+    @ObservationIgnored private var isRestoringWorkspace = false
+
+    /// Saves what's open shortly after it changes (a crash still finds it); the quit saves it once more with the caret.
+    func scheduleWorkspaceSave() {
+        guard started, !isRestoringWorkspace, !isShutDown else { return }
+        workspaceSave?.cancel()
+        workspaceSave = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, let self, !isShutDown else { return }
+            await saveWorkspace()
+        }
+    }
+
+    private func saveWorkspace() async {
+        guard let value = currentWorkspace().encoded() else { return }
+        try? await noteStore.setSetting(Workspace.key, value)
+    }
+
+    /// What is open now (#9).
+    func currentWorkspace() -> Workspace {
+        var workspace = Workspace()
+        workspace.folders = explorer.tabs.map { Workspace.Place(host: $0.hostID.rawValue, path: $0.path) }
+        workspace.selectedFolder = explorer.tabs.firstIndex { $0.id == explorer.selectedTabID }
+        if let session = activeSession {
+            workspace.document = Workspace.Document(place: Workspace.Place(host: session.hostID.rawValue, path: session.path),
+                                                    line: caretLine(of: session), showsSource: session.markdown.map { $0.mode == .source })
+        }
+        workspace.back = history.back.map(Workspace.Place.init)
+        workspace.forward = history.forward.map(Workspace.Place.init)
+        workspace.showsNotesPanel = showNotesPanel
+        return workspace
+    }
+
+    /// The line at the top of the view, so the next launch lands where reading stopped; the caret's line when the
+    /// view can't say (a web page's source, a view not on screen).
+    private func caretLine(of session: DocumentSession) -> Int? {
+        guard let controller = session.textController else { return nil }
+        if let top = session.markdown.map({ $0.topVisibleSourceLocation }) ?? (session.html == nil ? controller.topVisibleLocation : nil) {
+            return controller.lineIndex.position(forUTF16Offset: top).line
+        }
         // Reading rendered markdown moves the rendered selection, not the source caret: map it back to the source.
         var location = controller.selection.location
         if let markdown = session.markdown, markdown.mode == .rendered, let mapping = markdown.renderedSelectionMapping {
             location = mapping.source.location
         }
-        let line = controller.lineIndex.position(forUTF16Offset: location).line
-        let value = "\(session.hostID.rawValue)\n\(session.path)\n\(line)"
-        try? await noteStore.setSetting("general.lastDocument", value)
+        return controller.lineIndex.position(forUTF16Offset: location).line
+    }
+
+    /// The workspace saved at the last quit, or the document setting from before #9.
+    private func savedWorkspace() async -> Workspace? {
+        if let value = try? await noteStore.setting(Workspace.key) { return Workspace.decoded(value) }
+        return (try? await noteStore.setting("general.lastDocument")).flatMap(Workspace.fromLastDocument)
+    }
+
+    /// Reopens everything that was open at the last quit; with nothing saved, the most recent folder.
+    private func restoreSavedWorkspace() async {
+        guard let workspace = await savedWorkspace(), !workspace.folders.isEmpty else { return await reopenMostRecentRoot() }
+        await restore(workspace)
+    }
+
+    /// Opens the workspace's folders in order, on hosts that are still there (a remote host that won't connect is
+    /// passed over, as is a missing local folder), then its history and the document in front, where it was.
+    func restore(_ workspace: Workspace) async {
+        isRestoringWorkspace = true
+        defer {
+            isRestoringWorkspace = false
+            // Whatever changed while restoring (the user didn't wait) is saved now.
+            scheduleWorkspaceSave()
+        }
+        showNotesPanel = workspace.showsNotesPanel
+        var opened: [Int: RootID] = [:]
+        for (index, folder) in workspace.folders.enumerated() {
+            let hostID = folder.hostID
+            if hostID == .local {
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+                await explorer.openRoot(hostID: .local, path: folder.path)
+            } else if hostID.isVirtual {
+                guard fileSystems[hostID] != nil else { continue }
+                await explorer.openRoot(hostID: hostID, path: folder.path)
+            } else {
+                guard hosts.entries.contains(where: { $0.id == hostID }) else { continue }
+                await openRemoteRoot(hostID: hostID, path: folder.path)
+            }
+            let key = ExplorerModel.markKey(hostID, folder.path)
+            if let tab = explorer.tabs.first(where: { ExplorerModel.markKey($0.hostID, $0.path) == key }) { opened[index] = tab.id }
+        }
+        if let selected = workspace.selectedFolder, let id = opened[selected] { explorer.selectedTabID = id }
+        history = DocumentHistory(back: workspace.back.map(\.entry), current: workspace.document?.place.entry, forward: workspace.forward.map(\.entry))
+        guard let document = workspace.document else { return }
+        let place = document.place
+        // Only from a host that is there now: a failed connection must not be retried for the document.
+        guard place.hostID == .local ? !Self.isGone(place.entry) : fileSystems[place.hostID] != nil else { return }
+        openDocument(hostID: place.hostID, path: place.path)
+        guard let session = sessions["\(place.hostID.rawValue):\(place.path)"] else {
+            // A page opening at today's path (Atlassian) goes the way a link to it does.
+            if let line = document.line, line > 1 { openDocument(hostID: place.hostID, path: place.path, line: line, select: false) }
+            return
+        }
+        // Source or rendered first, then the line: the rendered view keeps its own caret.
+        // Until it has loaded: a picture, PDF or spreadsheet never gets a text view, and nothing waits on one.
+        for _ in 0..<100 { if case .loading = session.state { try? await Task.sleep(for: .milliseconds(50)) } else { break } }
+        guard session.textController != nil else { return }
+        if document.showsSource == true, session.markdown?.mode == .rendered { session.toggleMarkdownMode() }
+        if let line = document.line, line > 1 { openDocument(hostID: place.hostID, path: place.path, line: line, select: false) }
     }
 
     /// Reopens the document that was in front last time, when it lives in `root` (and, on this Mac, still exists).
     private func reopenLastDocument(in root: Root) async {
-        guard let value = try? await noteStore.setting("general.lastDocument") else { return }
-        let parts = value.split(separator: "\n").map(String.init)
-        guard parts.count >= 2, HostID(rawValue: parts[0]) == root.hostID,
-              ExplorerModel.inRootSpelling(parts[1], root: root.path, hostID: root.hostID) != nil else { return }
-        if root.hostID == .local, !FileManager.default.fileExists(atPath: parts[1]) { return }
-        if parts.count >= 3, let line = Int(parts[2]), line > 1 {
-            openDocument(hostID: root.hostID, path: parts[1], line: line, select: false)
+        guard let document = await savedWorkspace()?.document else { return }
+        let place = document.place
+        guard place.hostID == root.hostID, ExplorerModel.inRootSpelling(place.path, root: root.path, hostID: root.hostID) != nil else { return }
+        if root.hostID == .local, !FileManager.default.fileExists(atPath: place.path) { return }
+        if let line = document.line, line > 1 {
+            openDocument(hostID: root.hostID, path: place.path, line: line, select: false)
         } else {
-            openDocument(hostID: root.hostID, path: parts[1])
+            openDocument(hostID: root.hostID, path: place.path)
         }
     }
 
@@ -1541,7 +1644,9 @@ final class AppModel {
         guard !isShutDown else { return }
         isShutDown = true
         // Bounded: a slow or locked database must not hold up quitting.
-        _ = await withDeadline(.seconds(1)) { await self.rememberLastPosition() }
+        workspaceSave?.cancel()
+        // Quitting while a restore still waits (a host's key agent) keeps the saved workspace whole.
+        if !isRestoringWorkspace { _ = await withDeadline(.seconds(1)) { await self.saveWorkspace() } }
         notesPanel.stop()
         explorer.stopWatching()
         for session in sessions.values { session.close() }

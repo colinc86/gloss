@@ -357,6 +357,17 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// Saves an edit only if the comment is still `expected`, in one write, so an answer added meanwhile is never
+    /// overwritten. False when the note is gone or its comment changed.
+    public func updateBody(_ id: NoteID, body: String, color: NoteColor, ifBodyIs expected: String, at date: Date = Date()) async throws -> Bool {
+        let date = Self.rounded(date)
+        return try await queue.write { db in
+            try db.execute(sql: "UPDATE note SET body = ?, color = ?, updated_at = ? WHERE id = ? AND body = ?",
+                           arguments: [body, color.rawValue, date, id.rawValue, expected])
+            return db.changesCount > 0
+        }
+    }
+
     public func updateColor(_ id: NoteID, color: NoteColor, at date: Date = Date()) async throws {
         let date = Self.rounded(date)
         return try await queue.write { db in

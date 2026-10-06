@@ -75,6 +75,7 @@ public struct TextEditorView: NSViewRepresentable {
             textView.structuralExpansion = { [controller] range in controller.structuralExpansion(of: range) }
             textView.onHoverCharacter = { [weak controller] index in controller?.hover(at: index) }
             controller.rectProvider = { [weak self] range in self?.rect(for: range) }
+            controller.topVisibleLocationProvider = { [weak self] in self?.textView?.topVisibleCharacterIndex }
             controller.noteGeometry.viewport = { [weak textView] in textView?.visibleWindowRect() }
             controller.noteGeometry.visibleNoteRects = { [weak textView, weak controller] in
                 guard let textView, let controller else { return [:] }
@@ -201,7 +202,12 @@ public struct TextEditorView: NSViewRepresentable {
                 appliedScrollVersion = controller.pendingScrollVersion
                 let clamped = NSRange(location: min(range.location, textView.string.utf16.count), length: 0)
                 let target = NSRange(location: clamped.location, length: range.length)
-                reveal(target, in: textView)
+                if controller.pendingScrollAtTop {
+                    textView.scrollToTop(clamped.location)
+                    gutter?.needsDisplay = true
+                } else {
+                    reveal(target, in: textView)
+                }
                 if controller.pendingScrollSelects {
                     textView.setSelectedRange(range.length > 0 ? range : clamped)
                     textView.window?.makeFirstResponder(textView)

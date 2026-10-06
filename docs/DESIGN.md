@@ -615,9 +615,13 @@ path. Dropping on the Dock icon is not supported yet.
 
   The wait itself times out (0.1 s) rather than relying on periodic events, which stop arriving in some states:
   the CSV drag loop hung the whole app (quit included) when a click lost its mouse-up.
-- **Resume where you left off**: with "Reopen the last folder" on, launch reopens that folder and the file that was in
-  front (`general.lastDocument`), when it still lives there, with the caret back on the line it was on at quit
-  (a caret, not a selection: resuming is not a jump); a deleted file is skipped quietly.
+- **Resume where you left off** (#9): the workspace (`general.workspace`, JSON: folders in tab order and the one in
+  front, the document in front with the line at the top of its view and rendered or source, Back and Forward, the notes
+  panel) is saved half a second after any of it changes and again at quit. Settings › General › "When Gloss opens,
+  reopen" picks Everything, The last folder (the folder and its document, as before), Nothing, or As my Mac does
+  (the default: Everything unless "Close windows when quitting an application" is on, then The last folder). Restoring
+  opens folders in order and passes over a missing folder or a host that won't connect; the document comes back with
+  its line at the top of the view (a caret, not a selection: resuming is not a jump). Launch options win.
 - **Welcome** (`WelcomeView`): with no folder open, the main pane greets instead of asking for a file: the app
   icon (springs in, 0.6 s, once), the name, one line on what the app is for, then the one first step as a
   `.glassProminent` Open Folder… with "On a Host" (a menu of ssh hosts) beside it, and up to four recent folders

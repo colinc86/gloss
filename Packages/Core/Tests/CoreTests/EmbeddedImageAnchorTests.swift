@@ -39,4 +39,22 @@ struct EmbeddedImageAnchorTests {
         let swapped = Self.doc.replacingOccurrences(of: "chart.png)", with: "other.png)")
         #expect(ReAnchorer.embeddedImage(anchor, in: swapped, newHash: "new") == .orphaned, "another picture there now")
     }
+
+    /// The rendered view finds a picture by which embed of it a note is on: embeds of the same picture added or
+    /// removed above the note's change that number.
+    @Test func theOccurrenceFollowsEmbedsAddedAndRemovedAbove() {
+        let doc = "# Before\n\nFirst look:\n\n![a](shot.png)\n\n# After\n\nSecond look, after the fix:\n\n![b](shot.png)\n\nEnd.\n"
+        let range = (doc as NSString).range(of: "![b](shot.png)")
+        let region = ImageAnchor(x: 0, y: 0, w: 10, h: 10, imageW: 100, imageH: 100)
+        let anchor = EmbeddedImageAnchor(source: "shot.png", occurrence: 1, region: region,
+                                         embed: ReAnchorer.make(from: range, in: doc, index: LineIndex(doc), hash: "old"))
+        #expect(ReAnchorer.embedOccurrence(of: "shot.png", before: range.location, in: doc) == 1)
+        let firstGone = doc.replacingOccurrences(of: "First look:\n\n![a](shot.png)\n\n", with: "")
+        guard case .moved(.embeddedImage(let fewer)) = ReAnchorer.embeddedImage(anchor, in: firstGone, newHash: "new") else { Issue.record("expected moved"); return }
+        #expect(fewer.occurrence == 0)
+        let added = "![top](shot.png)\n\n" + doc
+        guard case .moved(.embeddedImage(let more)) = ReAnchorer.embeddedImage(anchor, in: added, newHash: "new") else { Issue.record("expected moved"); return }
+        #expect(more.occurrence == 2)
+        #expect(ReAnchorer.embedOccurrence(of: "shot.png", before: 1000, in: "[link](shot.png) ![x](shot.png.bak)") == 0, "links and other files don't count")
+    }
 }

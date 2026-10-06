@@ -10,7 +10,7 @@ import Viewers
 final class SettingsStore {
     private let noteStore: NoteStore
 
-    var openLastRootOnLaunch = true { didSet { persist("general.openLastRoot", openLastRootOnLaunch ? "1" : "0") } }
+    var launchRestore = LaunchRestore.system { didSet { persist("general.restore", launchRestore.rawValue) } }
     var showDotfilesByDefault = false { didSet { persist("general.showDotfiles", showDotfilesByDefault ? "1" : "0") } }
     var showsQuestionsOnDock = true {
         didSet {
@@ -54,7 +54,12 @@ final class SettingsStore {
 
     func load() async {
         func read(_ key: String) async -> String? { try? await noteStore.setting(key) }
-        if let value = await read("general.openLastRoot") { openLastRootOnLaunch = value == "1" }
+        if let value = await read("general.restore"), let restore = LaunchRestore(rawValue: value) {
+            launchRestore = restore
+        } else if await read("general.openLastRoot") == "0" {
+            // Before #9 a toggle turned reopening off; keep it off.
+            launchRestore = .nothing
+        }
         if let value = await read("general.showDotfiles") { showDotfilesByDefault = value == "1" }
         if let value = await read("general.dockQuestions") { showsQuestionsOnDock = value == "1" }
         if let value = await read("editor.fontSize"), let size = Double(value) { editorFontSize = size }

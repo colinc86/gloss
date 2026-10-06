@@ -428,6 +428,8 @@ public enum ReAnchorer {
             guard embed.text.contains(anchor.source) else { return nil }
             var next = anchor
             next.embed = embed
+            // The rendered view finds the picture by which embed of it this is: embeds added or removed above change that.
+            next.occurrence = embedOccurrence(of: anchor.source, before: LineIndex(newContent).range(for: embed).location, in: newContent)
             return next
         }
         switch result {
@@ -436,6 +438,15 @@ public enum ReAnchorer {
         case .movedNeedsReview(.text(let embed)): return moved(embed).map { .movedNeedsReview(.embeddedImage($0)) } ?? .orphaned
         default: return .orphaned
         }
+    }
+
+    /// How many Markdown embeds of `source` (`![alt](source…)`) start before `location`: the embed at `location` is
+    /// that occurrence of the picture, as the renderer counts them.
+    public static func embedOccurrence(of source: String, before location: Int, in content: String) -> Int {
+        let pattern = "!\\[[^\\]]*\\]\\(\\s*<?" + NSRegularExpression.escapedPattern(for: source) + "(?=[\\s>)\"'])"
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return 0 }
+        let ns = content as NSString
+        return expression.numberOfMatches(in: content, range: NSRange(location: 0, length: min(max(location, 0), ns.length)))
     }
 
     // MARK: Image

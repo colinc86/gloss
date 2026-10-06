@@ -63,10 +63,17 @@ final class ExplorerModel {
     @ObservationIgnored var onCopied: (String) -> Void = { _ in }
     @ObservationIgnored weak var treeDelegate: (any ExplorerTreeDelegate)?
 
-    private(set) var tabs: [RootTab] = []
-    var selectedTabID: RootID? {
-        didSet { treeDelegate?.treeDidReplaceRoot() }
+    private(set) var tabs: [RootTab] = [] {
+        didSet { onTabsChange() }
     }
+    var selectedTabID: RootID? {
+        didSet {
+            treeDelegate?.treeDidReplaceRoot()
+            if selectedTabID != oldValue { onTabsChange() }
+        }
+    }
+    /// A folder opened or closed, or another came to the front: the app saves what's open (#9).
+    @ObservationIgnored var onTabsChange: () -> Void = {}
     /// Recently opened roots per host, pinned first; one entry per folder.
     private(set) var recentsByHost: [HostID: [Root]] = [:]
     /// The recents of the host loaded last (the reopen-on-launch path reads it right after loading).

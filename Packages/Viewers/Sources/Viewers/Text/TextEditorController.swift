@@ -59,6 +59,11 @@ public final class TextEditorController {
     /// Whether the pending scroll also selects the range and focuses the editor. Browsing notes from the panel
     /// passes false so the list keeps the keyboard and no Add Note button pops up over an existing note.
     public private(set) var pendingScrollSelects = true
+    /// The pending scroll puts its line at the top of the view (resuming where reading stopped) rather than in sight.
+    public private(set) var pendingScrollAtTop = false
+    /// Set by the view: the character at the top of what is on screen.
+    @ObservationIgnored public var topVisibleLocationProvider: () -> Int? = { nil }
+    public var topVisibleLocation: Int? { topVisibleLocationProvider() }
     /// Syntax highlighting, when a grammar exists for the document's language.
     @ObservationIgnored public private(set) var highlighter: Highlighter?
     /// Set by the view; invalidates rendering attributes for a range (nil = everything).
@@ -200,9 +205,10 @@ public final class TextEditorController {
         }
     }
 
-    public func scroll(to range: NSRange, select: Bool = true) {
+    public func scroll(to range: NSRange, select: Bool = true, atTop: Bool = false) {
         pendingScroll = range
         pendingScrollSelects = select
+        pendingScrollAtTop = atTop
         pendingScrollVersion += 1
     }
 

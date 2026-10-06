@@ -304,9 +304,9 @@ final class NotesPanelModel {
         do {
             guard let current = try await noteStore.note(id) else { return .failed }
             guard current.body == original else { return .changedMeanwhile }
-            if body != current.body { try await noteStore.updateBody(id, body: body) }
-            if color != current.color { try await noteStore.updateColor(id, color: color) }
-            return nil
+            guard body != current.body || color != current.color else { return nil }
+            // Compared and written together: an answer that lands between the read above and this write still wins.
+            return try await noteStore.updateBody(id, body: body, color: color, ifBodyIs: original) ? nil : .changedMeanwhile
         } catch {
             Log.notes.error("edit failed: \(error, privacy: .public)")
             return .failed

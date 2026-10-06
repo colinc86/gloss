@@ -19,9 +19,13 @@ struct SettingsView: View {
         TabView(selection: $model.settingsTab) {
             Form {
                 Section {
-                    Toggle(isOn: $settings.openLastRootOnLaunch) {
-                        Text("Reopen the last folder")
-                        Text("When the app starts, it opens the folder you had open last, on whichever host it lives, with the file that was in front.")
+                    Picker(selection: $settings.launchRestore) {
+                        ForEach(LaunchRestore.allCases) { Text($0.title).tag($0) }
+                    } label: {
+                        Text("When Gloss opens, reopen")
+                        Text(settings.launchRestore == .system
+                             ? "Follows “Close windows when quitting an application” in Desktop & Dock: everything you had open when it's off, the last folder when it's on."
+                             : "Everything brings back your folders, the document in front where you left it, Back and Forward, and the notes panel.")
                     }
                     Toggle(isOn: $settings.showsQuestionsOnDock) {
                         Text("Show agent questions on the Dock icon")

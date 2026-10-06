@@ -107,6 +107,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 }
             }
             controller.renderedRectProvider = { [weak self] range in self?.rect(for: range) }
+            controller.topVisibleRenderedLocationProvider = { [weak self] in self?.textView?.topVisibleCharacterIndex }
             let overlay = EmbeddedImageOverlayView(frame: textView.bounds)
             overlay.autoresizingMask = [.width, .height]
             overlay.textView = textView as? RenderedTextView
@@ -180,7 +181,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             if appliedScrollVersion != controller.pendingRenderedScrollVersion, let range = controller.pendingRenderedScroll,
                textView.window != nil, !textView.visibleRect.isEmpty {
                 appliedScrollVersion = controller.pendingRenderedScrollVersion
-                textView.scrollRangeToVisible(range)
+                if controller.pendingRenderedScrollAtTop { textView.scrollToTop(range.location) } else { textView.scrollRangeToVisible(range) }
                 if controller.pendingRenderedScrollSelects {
                     textView.setSelectedRange(range)
                     textView.window?.makeFirstResponder(textView)
@@ -261,7 +262,9 @@ final class RenderedTextView: NSTextView {
         let index = characterIndexForInsertion(at: point)
         for candidate in [index, index - 1] where candidate >= 0 && candidate < storage.length {
             guard let attachment = storage.attribute(.attachment, at: candidate, effectiveRange: nil) as? FittedImageAttachment,
-                  attachment.source != nil, let frame = frame(ofCharacterAt: candidate), frame.contains(point) else { continue }
+                  attachment.source != nil, let segment = frame(ofCharacterAt: candidate) else { continue }
+            let frame = Self.pictureFrame(segment, pixelSize: attachment.pixelSize)
+            guard frame.contains(point) else { continue }
             return (attachment, frame, candidate)
         }
         return nil
@@ -283,8 +286,16 @@ final class RenderedTextView: NSTextView {
 
     /// An embed's frame in view coordinates, found by its source and occurrence.
     func frame(of image: MarkdownViewerController.EmbeddedImageRef) -> CGRect? {
-        guard let index = index(of: image) else { return nil }
-        return frame(ofCharacterAt: index)
+        guard let index = index(of: image), let segment = frame(ofCharacterAt: index) else { return nil }
+        let attachment = textStorage?.attribute(.attachment, at: index, effectiveRange: nil) as? FittedImageAttachment
+        return Self.pictureFrame(segment, pixelSize: attachment?.pixelSize ?? .zero)
+    }
+
+    /// The picture itself within its character's frame: the text segment runs on into the line's descent, so its
+    /// height comes from the picture's own proportions.
+    static func pictureFrame(_ segment: CGRect, pixelSize: CGSize) -> CGRect {
+        guard pixelSize.width > 0, pixelSize.height > 0 else { return segment }
+        return CGRect(x: segment.minX, y: segment.minY, width: segment.width, height: min(segment.height, segment.width * pixelSize.height / pixelSize.width))
     }
 
     func index(of image: MarkdownViewerController.EmbeddedImageRef) -> Int? {
@@ -315,7 +326,8 @@ final class RenderedTextView: NSTextView {
                                               pixelSize: pixelSize, embedSource: embed)
             for case let overlay as EmbeddedImageOverlayView in subviews { overlay.needsDisplay = true }
         }
-        // Drag out a region, as in the image viewer; a click without a drag takes the whole picture.
+        // Drag out a region, as in the image viewer; a click without a drag takes the whole picture, or follows the
+        // link a linked picture (a badge, a thumbnail) carries.
         var dragged = false
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
             let point = convert(next.locationInWindow, from: nil)
@@ -326,6 +338,11 @@ final class RenderedTextView: NSTextView {
                     autoscroll(with: next)
                 }
             } else {
+                if !dragged, let link = textStorage?.attribute(.link, at: hit.index, effectiveRange: nil) {
+                    controller.imageSelection = nil
+                    _ = delegate?.textView?(self, clickedOnLink: link, at: hit.index)
+                    break
+                }
                 if !dragged || (controller.imageSelection?.region.width ?? 0) < 2 || (controller.imageSelection?.region.height ?? 0) < 2 {
                     controller.imageSelection = .init(image: ref, region: CGRect(origin: .zero, size: pixelSize), pixelSize: pixelSize, embedSource: embed)
                 }

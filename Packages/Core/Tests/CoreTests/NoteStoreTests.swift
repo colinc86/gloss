@@ -128,6 +128,19 @@ struct NoteStoreTests {
         await #expect(throws: NoteStoreError.illegalTransition(from: .draft, to: .draft)) { try await store.unsend(note.id) }
     }
 
+    /// Issue #14: an edit made in a card is saved only over the comment it started from.
+    @Test func anEditNeverOverwritesAChangedComment() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "first", color: .blue)
+        #expect(try await store.updateBody(note.id, body: "edited", color: .pink, ifBodyIs: "first"))
+        let edited = try await store.note(note.id)
+        #expect(edited?.body == "edited" && edited?.color == .pink)
+        let stale = try await store.updateBody(note.id, body: "stale", color: .green, ifBodyIs: "first")
+        #expect(!stale, "the comment changed meanwhile")
+        #expect(try await store.note(note.id)?.body == "edited")
+    }
+
     @Test func failedSendLeavesDrafts() async throws {
         let store = try makeStore()
         let document = try await makeDocument(store)

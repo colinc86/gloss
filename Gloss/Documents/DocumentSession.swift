@@ -1006,7 +1006,8 @@ final class DocumentSession: Identifiable {
                 pictures.append(.init(id: note.id, image: .init(source: anchor.source, occurrence: anchor.occurrence),
                                       region: CGRect(x: region.x, y: region.y, width: region.w, height: region.h),
                                       pixelSize: CGSize(width: region.imageW, height: region.imageH), color: note.color, state: note.displayState))
-                highlights.append(TextHighlight(id: note.id, range: index.range(for: anchor.embed), color: note.color, state: note.displayState,
+                if let live = liveRanges[note.id] { stillLive[note.id] = live }
+                highlights.append(TextHighlight(id: note.id, range: liveRanges[note.id] ?? index.range(for: anchor.embed), color: note.color, state: note.displayState,
                                                 needsReview: needsReview.contains(note.id)))
                 continue
             }
@@ -1042,8 +1043,21 @@ final class DocumentSession: Identifiable {
         guard !ranges.isEmpty else { return }
         let index = LineIndex(text)
         for note in notes {
-            guard case .text = note.anchor, let range = ranges[note.id] else { continue }
+            guard let range = ranges[note.id] else { continue }
             do {
+                if case .embeddedImage(var picture) = note.anchor {
+                    // The embed moved with the edit; gone, or now embedding another picture, the note is orphaned.
+                    let embedText = (text as NSString).substring(with: NSIntersectionRange(range, NSRange(location: 0, length: (text as NSString).length)))
+                    if invalidated.contains(note.id) || !embedText.contains(picture.source) {
+                        if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
+                    } else {
+                        picture.embed = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
+                        picture.occurrence = ReAnchorer.embedOccurrence(of: picture.source, before: range.location, in: text)
+                        try await noteStore.updateAnchor(note.id, anchor: .embeddedImage(picture))
+                    }
+                    continue
+                }
+                guard case .text = note.anchor else { continue }
                 if invalidated.contains(note.id) {
                     if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
                 } else {
@@ -1250,6 +1264,18 @@ final class DocumentSession: Identifiable {
         if let html, case .element = note.anchor, let found = html.elementRects[note.id] ?? html.pageRect {
             rect = found
         }
+        if case .embeddedImage(let anchor) = note.anchor {
+            let region = anchor.region
+            let image = MarkdownViewerController.EmbeddedImageRef(source: anchor.source, occurrence: anchor.occurrence)
+            if let markdown, markdown.mode == .rendered,
+               let found = markdown.rect(for: image, region: CGRect(x: region.x, y: region.y, width: region.w, height: region.h),
+                                         pixelSize: CGSize(width: region.imageW, height: region.imageH)) {
+                rect = found
+            } else if let controller = textController, let range = controller.highlights.first(where: { $0.id == note.id })?.range,
+                      let found = rendered?.rect(forSource: range) ?? controller.rect(for: range) {
+                rect = found
+            }
+        }
         var columns: ClosedRange<Int>?
         if let controller = textController, case .text(let anchor) = note.anchor {
             columns = anchor.partialColumns(lineLength: controller.lineIndex.contentRange(ofLine: anchor.start.line).length)
@@ -1273,7 +1299,12 @@ final class DocumentSession: Identifiable {
                 }
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
                 if case .embeddedImage(let anchor) = state.anchor, let data = markdown?.imageData(for: anchor.source) {
-                    try await saveEmbeddedCrop(of: anchor, from: data, for: note.id)
+                    // A bonus too: a picture that can't be decoded (an SVG, a huge one) still leaves the note.
+                    do {
+                        try await saveEmbeddedCrop(of: anchor, from: data, for: note.id)
+                    } catch {
+                        Log.notes.error("crop of \(anchor.fileName, privacy: .public) failed: \(error, privacy: .public)")
+                    }
                 }
                 if case .image(let anchor) = state.anchor, let image = imageController {
                     try await saveCrop(of: anchor, from: image, for: note.id)
@@ -1396,9 +1427,16 @@ final class DocumentSession: Identifiable {
             }
             return
         }
-        guard let controller = textController, case .text = note.anchor,
-              let range = controller.highlights.first(where: { $0.id == note.id })?.range else { return }
-        if let rendered { rendered.scroll(toSource: range, select: select) } else { controller.scroll(to: range, select: select) }
+        guard let controller = textController, let range = controller.highlights.first(where: { $0.id == note.id })?.range else { return }
+        switch note.anchor {
+        case .text:
+            if let rendered { rendered.scroll(toSource: range, select: select) } else { controller.scroll(to: range, select: select) }
+        case .embeddedImage:
+            // Into view only: selecting the embed would select the picture's text, not its region.
+            if let rendered { rendered.scroll(toSource: range, select: false) } else { controller.scroll(to: range, select: false) }
+        default:
+            break
+        }
     }
 
     // MARK: Stepping through notes (⌘' and ⇧⌘')

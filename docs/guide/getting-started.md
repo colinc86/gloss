@@ -11,8 +11,11 @@ Gloss needs macOS 26 or later.
 ## Open a folder
 
 The first window offers **Open Folder…** (⇧⌘O) and, when your ssh config lists hosts, **On a Host** to open a
-folder on another machine. Folders you've opened before are listed underneath, and Gloss reopens the last one when it
-starts (Settings › General).
+folder on another machine. Folders you've opened before are listed underneath. When Gloss starts again it brings back
+what you had open: your folders, the document in front at the place you were reading, Back and Forward, and the notes
+panel. Settings › General › When Gloss opens, reopen chooses: as your Mac does (everything when “Close windows when
+quitting an application” is off in Desktop & Dock, else just the last folder), everything, the last folder, or
+nothing.
 
 The explorer on the left shows the folder as a tree. Each open folder is a tab at the top of the sidebar.
 

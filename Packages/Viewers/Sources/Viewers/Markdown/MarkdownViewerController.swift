@@ -43,6 +43,24 @@ public final class MarkdownViewerController {
     public var pendingRenderedScrollVersion = 0
     /// See `TextEditorController.pendingScrollSelects`.
     public private(set) var pendingRenderedScrollSelects = true
+    public private(set) var pendingRenderedScrollAtTop = false
+    /// Set by the rendered view: the rendered character at the top of what is on screen.
+    @ObservationIgnored public var topVisibleRenderedLocationProvider: () -> Int? = { nil }
+
+    /// The source location at the top of whichever view is showing (#9): where reading stopped.
+    public var topVisibleSourceLocation: Int? {
+        switch mode {
+        case .source:
+            return source.topVisibleLocation
+        case .rendered:
+            guard let top = topVisibleRenderedLocationProvider(), top < rendered.length else { return nil }
+            // Generated text (a list marker, a rule) maps to no source: the next character that does.
+            for location in top..<min(top + 400, rendered.length) {
+                if let mapping = map.sourceRange(forRendered: NSRange(location: location, length: 1)) { return mapping.source.location }
+            }
+            return nil
+        }
+    }
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
 
     @ObservationIgnored private var renderedContentVersion = -1
@@ -209,6 +227,7 @@ public final class MarkdownViewerController {
         renderedSelection = end
         pendingRenderedScroll = end
         pendingRenderedScrollSelects = true
+        pendingRenderedScrollAtTop = false
         pendingRenderedScrollVersion += 1
     }
 
@@ -232,13 +251,18 @@ public final class MarkdownViewerController {
 
     /// Scrolls whichever view is showing to a source range.
     public func scroll(toSource range: NSRange, select: Bool = true) {
+        scroll(toSource: range, select: select, atTop: false)
+    }
+
+    public func scroll(toSource range: NSRange, select: Bool, atTop: Bool) {
         switch mode {
         case .source:
-            source.scroll(to: range, select: select)
+            source.scroll(to: range, select: select, atTop: atTop)
         case .rendered:
             if let first = map.renderedRanges(forSource: range).first {
                 pendingRenderedScroll = first
                 pendingRenderedScrollSelects = select
+                pendingRenderedScrollAtTop = atTop
                 pendingRenderedScrollVersion += 1
             }
         }

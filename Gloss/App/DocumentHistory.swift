@@ -15,6 +15,15 @@ nonisolated struct DocumentHistory: Equatable {
     private(set) var forward: [Entry] = []
     private(set) var current: Entry?
 
+    init() {}
+
+    /// History as it was saved at the last quit (#9).
+    init(back: [Entry], current: Entry?, forward: [Entry]) {
+        self.back = Array(back.suffix(Self.limit))
+        self.current = current
+        self.forward = Array(forward.suffix(Self.limit))
+    }
+
     var canGoBack: Bool { !back.isEmpty }
     var canGoForward: Bool { !forward.isEmpty }
 

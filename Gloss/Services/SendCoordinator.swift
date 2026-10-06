@@ -314,6 +314,18 @@ final class SendCoordinator {
                 } else {
                     excerpt = excerptOverride ?? ExcerptExtractor.lines(for: anchor, in: contents[key] ?? "")
                 }
+            } else if case .embeddedImage(let anchor) = note.anchor, let made = anchor.embed.hash,
+                      openTextProvider(document.hostID, document.path) == nil,
+                      let read = (try? await readText(hostID: document.hostID, path: document.path)) ?? nil, read.hash != made {
+                // Changed while it wasn't open: the packet names the embed's line as it is now (an open document
+                // keeps its own notes in step).
+                switch ReAnchorer.embeddedImage(anchor, in: read.text, newHash: read.hash) {
+                case .moved(let moved), .movedNeedsReview(let moved):
+                    note.anchor = moved
+                    try? await noteStore.updateAnchor(note.id, anchor: moved)
+                case .orphaned, .unchanged:
+                    break
+                }
             } else if case .pdf(let anchor) = note.anchor, let text = anchor.text {
                 excerpt = text.components(separatedBy: "\n")
             }
