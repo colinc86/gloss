@@ -17,33 +17,13 @@
   </picture>
 </p>
 
-Gloss is a native Mac app that sits beside your terminal. Open any file, on this Mac or over ssh, highlight what
-needs to change, and write a note. Gloss sends your notes to Claude Code, Codex or OpenCode as precise, anchored
-context, and the agent marks each one resolved when it's done.
+Gloss is an app that sits beside your terminal. Open any file, locally or over ssh, highlight what needs to
+change, and write a note. Gloss hands your notes to Claude Code, Codex or OpenCode, and the agent checks each one
+off when it's done.
 
-- **Notes on anything.** Any stretch of code or text, Markdown rendered or source, a region of an image, a region
-  or passage of a PDF, CSV cells, rows or columns, a web page's text or elements, a whole file, or a picture inside
-  a Markdown file, Jira issue or Confluence page (part of it or all of it).
-- **Local and remote.** Browse and edit files on this Mac or on any host in your ssh config (or one you add in
-  Settings), even when your terminal reaches it over mosh or inside tmux.
-- **Find your way.** Open Quickly, Find in Files, Go to Line, favorite folders, and Back and Forward between the
-  places you've been.
-- **Every way to reach an agent.** Herdr, OpenCode's API, tmux or the clipboard out; MCP for the agent's replies.
-  Each folder picks the agent you last chose there, or the one working in it. Nothing leaves Gloss until you press
-  Send.
-- **Markdown as GitHub shows it.** Rendered Markdown draws the HTML GitHub allows, pictures from the web and GIFs
-  that play.
-- **Reviews too.** GitHub pull requests, Jira issues and Confluence pages open as documents you can annotate.
-- **Work through notes together.** Select several cards to send, resolve, recolor, copy as a packet or delete them
-  at once, or put sent and resolved notes back to drafts. Edit a note right in its card, and open its conversation
-  with the agent when you want the whole thread. The page draws the notes the panel lists, and resolved ones can be
-  hidden.
-- **Link and paths.** The notes panel follows the page, and a curve runs from each highlight to the middle of its
-  card's color bar.
-- **Picks up where you left off.** Your folders, the document you were reading and where, Back and Forward, and the
-  notes panel come back when Gloss opens, as your Mac's "Close windows when quitting" setting says.
-- **Your files stay yours.** Notes live in Gloss, never in the file.
-- **Your icon, your way.** Settings › General › App Icon picks one of 16 styles for the Dock while Gloss is open.
+- **Notes on anything.** Code, Markdown, images, PDFs, spreadsheets and web pages.
+- **Local or remote.** Files on your Mac or on any host you reach over ssh.
+- **Reviews too.** GitHub pull requests, Jira issues and Confluence pages.
 
 ## Install
 
@@ -63,24 +43,22 @@ sequenceDiagram
     participant Gloss
     actor You
     loop Every round
-        Agent->>Gloss: Changes files, on this Mac or over ssh
-        Gloss->>You: Shows the change live, notes re-anchor
+        Agent->>Gloss: Edits files
+        Gloss->>You: Shows the changes
         You->>Gloss: Highlight, write notes, press Send
-        Gloss->>Agent: Context packet via Herdr, OpenCode,<br>tmux or the clipboard
-        Agent->>Gloss: resolve_note: done, skipped, or a question
-        Gloss->>You: Card turns resolved, highlight steps back
+        Gloss->>Agent: Your notes, with file and lines
+        Agent->>Gloss: Checks each one off
     end
 ```
 
-1. **Your agent changes some files.** Gloss shows the changes as they happen, on your Mac or on a server, and your
-   notes move along with the text they're about.
-2. **You read it over and leave notes.** Select something, press **Add Note**, and say what you'd like changed.
-   Nothing goes anywhere until you press Send, so take your time. Notes you haven't sent yet are filled in on the
-   page; sent ones fade to an underline, so you can see at a glance what's still to do. Changed your mind? **Back
-   to Draft** takes a note back.
-3. **Your agent gets to work.** It receives all your notes at once, each with the file, the exact spot, the text
-   you highlighted and what you said about it. As it finishes each one it checks it off in Gloss, and if it gets
-   stuck it asks you, right beside the text, under the agent's name. Answer with **Reply** and send it back.
+<p align="center">
+  <img src="docs/media/note-text.png" width="410" alt="A sentence in a Markdown file highlighted, with the note composer open beneath it and a comment typed.">
+  <img src="docs/media/note-image.png" width="420" alt="A region dragged around a chart's legend in a picture, with the note composer open beside it and a comment typed.">
+</p>
+
+1. Your agent edits some files.
+2. You highlight what needs work and write a note.
+3. You press Send. The agent gets each note with its file, lines and your comment, and checks it off when it's done.
 
 <details>
 <summary>What the agent receives</summary>
