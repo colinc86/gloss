@@ -506,8 +506,9 @@ final class DocumentSession: Identifiable {
         return controller.lineIndex.position(forUTF16Offset: source.location).line
     }
 
-    /// Starts a note on the element the user picked in note mode: the editor opens at the element, no Add Note
-    /// pill in between. On a served file the element's first text maps to its source line.
+    /// Starts a note on the element the user picked in note mode (the editor opens at the element, no Add Note
+    /// pill in between), or on the picture chosen on the page once Add Note is pressed. On a served file the
+    /// element's first text maps to its source line.
     func beginNote(element pick: ElementPick) {
         guard let html, let controller = textController else { return }
         html.isNoteMode = false
@@ -515,10 +516,10 @@ final class DocumentSession: Identifiable {
         let line = kind == .web ? nil : pick.textOffset.flatMap(sourceLine(forDOMOffset:))
         let anchor = ElementAnchor(
             selector: pick.selector, tag: pick.tag, text: pick.text, html: pick.html, rect: pick.pageRect,
-            line: line, hash: Data(controller.text.utf8).sha256Hex
+            line: line, hash: Data(controller.text.utf8).sha256Hex, region: pick.picture?.region, imageSource: pick.picture?.source
         )
-        let rect = pick.windowRect ?? html.pageRect ?? CGRect(x: 40, y: 40, width: 1, height: 1)
-        noteEditor = NoteEditorState(anchor: .element(anchor), body: "", color: lastUsedColor, anchorRect: rect)
+        let rect = pick.picture?.windowRect ?? pick.windowRect ?? html.pageRect ?? CGRect(x: 40, y: 40, width: 1, height: 1)
+        noteEditor = NoteEditorState(anchor: .element(anchor), body: "", color: lastUsedColor, anchorRect: rect, pageCrop: pick.picture?.pageRect)
     }
 
     /// Decodes without changing the encoding the document is saved in (a conflict check's read of the other side).
@@ -1002,7 +1003,7 @@ final class DocumentSession: Identifiable {
                 // An orphan is drawn dashed where its element last was.
                 return ElementHighlight(id: note.id, selector: anchor.selector, tag: anchor.tag, text: anchor.text,
                                         color: Theme.color(for: note.color), state: note.displayState, needsReview: needsReview.contains(note.id),
-                                        lastRect: note.state == .orphaned ? anchor.rect : nil)
+                                        lastRect: note.state == .orphaned ? anchor.rect : nil, region: anchor.region)
             }
         }
         let index = controller.lineIndex
@@ -1148,6 +1149,9 @@ final class DocumentSession: Identifiable {
         if let markdown, markdown.mode == .rendered, let selection = markdown.imageSelection {
             return markdown.rect(for: selection.image, region: selection.region, pixelSize: selection.pixelSize)
         }
+        if let html, html.mode == .rendered, let picked = html.selectedPicture {
+            return picked.picture?.windowRect ?? picked.windowRect
+        }
         if let controller = textController {
             if let rendered, rendered.isShowingRendered {
                 // A caret inside a link or code span maps to the whole span's source; only a real selection counts.
@@ -1194,6 +1198,11 @@ final class DocumentSession: Identifiable {
             let anchor = EmbeddedImageAnchor(source: selection.image.source, occurrence: selection.image.occurrence, region: region, embed: embed)
             let rect = markdown.rect(for: selection.image, region: selection.region, pixelSize: selection.pixelSize) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
             noteEditor = NoteEditorState(anchor: .embeddedImage(anchor), body: "", color: lastUsedColor, anchorRect: rect)
+            return
+        }
+        // A picture chosen on a web page, or a region of one.
+        if let html, html.mode == .rendered, let picked = html.selectedPicture {
+            beginNote(element: picked)
             return
         }
         if let controller = textController {
@@ -1309,7 +1318,7 @@ final class DocumentSession: Identifiable {
                 var elementCrop: (png: Data, width: Int, height: Int)?
                 if case .element(let anchor) = state.anchor, let snapshot = html?.snapshotProvider {
                     // A crop is a bonus: a page that moved on, or a view that is gone, must not lose the note.
-                    elementCrop = try? await snapshot(anchor.rect)
+                    elementCrop = try? await snapshot(state.pageCrop ?? anchor.rect)
                 }
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
                 onNoteCommitted(note)
@@ -1355,6 +1364,7 @@ final class DocumentSession: Identifiable {
     private func clearSelection() {
         imageController?.selection = nil
         markdown?.imageSelection = nil
+        html?.selectedPicture = nil
         pdfController?.clearSelection()
         csvController?.deselectAll()
         if let rendered, rendered.isShowingRendered {

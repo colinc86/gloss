@@ -30,8 +30,12 @@ public struct ElementCandidate: Sendable, Equatable {
     public var textOffset: Int?
     /// The source line that offset maps to, on a served file; filled in by whoever can map it.
     public var line: Int?
+    /// A picture's own size in pixels; nil for any other element.
+    public var imageW: Int?
+    public var imageH: Int?
 
-    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect, textOffset: Int? = nil, line: Int? = nil) {
+    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect, textOffset: Int? = nil, line: Int? = nil,
+                imageW: Int? = nil, imageH: Int? = nil) {
         self.selector = selector
         self.tag = tag
         self.text = text
@@ -39,6 +43,8 @@ public struct ElementCandidate: Sendable, Equatable {
         self.rect = rect
         self.textOffset = textOffset
         self.line = line
+        self.imageW = imageW
+        self.imageH = imageH
     }
 }
 
@@ -491,10 +497,26 @@ public enum ReAnchorer {
 
     /// Selector first, text second: a selector hit with the same tag keeps the note (flagged when the text changed);
     /// otherwise the one element with the same text takes over, several pick the nearest, none orphans the note.
+    /// A note on part of a picture whose own size changed keeps the same part, scaled, and is flagged; on an element
+    /// that is no longer a picture it loses its region and is flagged.
     public static func element(_ anchor: ElementAnchor, resolution: ElementResolution, newHash: String, line: Int? = nil) -> ReAnchorResult {
         if let hash = anchor.hash, hash == newHash { return .unchanged }
+        func regionChanged(_ candidate: ElementCandidate) -> Bool {
+            guard let region = anchor.region else { return false }
+            return candidate.imageW != region.imageW || candidate.imageH != region.imageH
+        }
         func updated(_ candidate: ElementCandidate) -> ElementAnchor {
             var next = anchor
+            if let region = anchor.region, regionChanged(candidate) {
+                if let w = candidate.imageW, let h = candidate.imageH, region.imageW > 0, region.imageH > 0 {
+                    let sx = Double(w) / Double(region.imageW), sy = Double(h) / Double(region.imageH)
+                    next.region = ImageAnchor(x: Int((Double(region.x) * sx).rounded()), y: Int((Double(region.y) * sy).rounded()),
+                                              w: Int((Double(region.w) * sx).rounded()), h: Int((Double(region.h) * sy).rounded()),
+                                              imageW: w, imageH: h, hash: region.hash)
+                } else {
+                    next.region = nil
+                }
+            }
             next.selector = candidate.selector
             next.tag = candidate.tag
             next.text = ElementAnchor.collapse(candidate.text, limit: ElementAnchor.textLimit)
@@ -506,7 +528,7 @@ public enum ReAnchorer {
         }
         if let hit = resolution.bySelector, hit.tag.lowercased() == anchor.tag {
             let sameText = ElementAnchor.collapse(hit.text, limit: ElementAnchor.textLimit) == anchor.text
-            return sameText ? .moved(.element(updated(hit))) : .movedNeedsReview(.element(updated(hit)))
+            return sameText && !regionChanged(hit) ? .moved(.element(updated(hit))) : .movedNeedsReview(.element(updated(hit)))
         }
         let hits = resolution.byText.filter { $0.tag.lowercased() == anchor.tag }
         guard !hits.isEmpty else { return .orphaned }

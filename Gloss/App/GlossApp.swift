@@ -3,6 +3,7 @@ import Core
 import OSLog
 import Remote
 import SwiftUI
+import Viewers
 
 @main
 struct GlossApp: App {
@@ -108,6 +109,13 @@ struct AppCommands: Commands {
             Button { model.beginNoteInMainWindow() } label: { Label("New Note from Selection", systemImage: "note.text.badge.plus") }
                 .keyboardShortcut(model.selectionAwaitsNote ? KeyboardShortcut(.return, modifiers: .command) : KeyboardShortcut("n", modifiers: [.command, .shift]))
                 .disabled(model.activeSession == nil)
+            // The rendered page's pick mode, for any element; pictures need no mode.
+            let page = model.activeSession?.html
+            Toggle(isOn: Binding(get: { page?.isNoteMode ?? false }, set: { page?.isNoteMode = $0 })) {
+                Label("Pick Element on Page", systemImage: "rectangle.dashed")
+            }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(page?.mode != .rendered)
             Button { Task { await model.sendVisibleDrafts() } } label: {
                 Label(model.draftsAreFiltered ? "Send Shown Drafts" : "Send Drafts in Document", systemImage: "paperplane")
             }

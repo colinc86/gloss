@@ -11,7 +11,26 @@ public struct HTMLSelection: Equatable, Sendable {
     public var rect: CGRect?
 }
 
-/// An element the user picked in note mode, as the page's bridge described it.
+/// The part of a picture chosen on a page: all of it after a click, a region after a drag.
+public struct PicturePick: Equatable, Sendable {
+    /// In the picture's own pixels (its natural size; an svg's displayed size).
+    public var region: ImageAnchor
+    /// The picture's address as the page loaded it; nil for an inline svg or a canvas.
+    public var source: String?
+    /// Where the chosen part is on screen, in top-left window coordinates.
+    public var windowRect: CGRect?
+    /// Where it is on the page, in CSS pixels from the page's top-left: what the note's crop is taken of.
+    public var pageRect: ElementRect
+
+    public init(region: ImageAnchor, source: String?, windowRect: CGRect?, pageRect: ElementRect) {
+        self.region = region
+        self.source = source
+        self.windowRect = windowRect
+        self.pageRect = pageRect
+    }
+}
+
+/// An element the user picked in note mode, or a picture chosen on the page, as the page's bridge described it.
 public struct ElementPick: Equatable, Sendable {
     public var selector: String
     public var tag: String
@@ -23,8 +42,10 @@ public struct ElementPick: Equatable, Sendable {
     public var pageRect: ElementRect
     /// DOM text offset of the element's first non-blank text node, for mapping to a source line.
     public var textOffset: Int?
+    /// When the element is a picture: the part of it chosen.
+    public var picture: PicturePick?
 
-    public init(selector: String, tag: String, text: String, html: String, windowRect: CGRect?, pageRect: ElementRect, textOffset: Int?) {
+    public init(selector: String, tag: String, text: String, html: String, windowRect: CGRect?, pageRect: ElementRect, textOffset: Int?, picture: PicturePick? = nil) {
         self.selector = selector
         self.tag = tag
         self.text = text
@@ -32,6 +53,7 @@ public struct ElementPick: Equatable, Sendable {
         self.windowRect = windowRect
         self.pageRect = pageRect
         self.textOffset = textOffset
+        self.picture = picture
     }
 }
 
@@ -46,9 +68,12 @@ public struct ElementHighlight: Equatable {
     public var needsReview: Bool
     /// Where the element last was (page CSS pixels): an orphaned note is drawn there, dashed.
     public var lastRect: ElementRect?
+    /// On a picture, the part of it the note is about (its own pixels): the box is drawn over that part.
+    public var region: ImageAnchor?
 
-    public init(id: NoteID, selector: String, tag: String, text: String, color: NSColor, state: NoteState, needsReview: Bool, lastRect: ElementRect? = nil) {
+    public init(id: NoteID, selector: String, tag: String, text: String, color: NSColor, state: NoteState, needsReview: Bool, lastRect: ElementRect? = nil, region: ImageAnchor? = nil) {
         self.lastRect = lastRect
+        self.region = region
         self.id = id
         self.selector = selector
         self.tag = tag
@@ -80,7 +105,7 @@ public final class HTMLViewerController: RenderedDocumentController {
     public let source: TextEditorController
     public var mode: Mode = .rendered {
         // Element notes are picked on the rendered page; the source view has its own selection and Add Note.
-        didSet { if mode != oldValue { isNoteMode = false } }
+        didSet { if mode != oldValue { isNoteMode = false; selectedPicture = nil } }
     }
     /// What the view shows: a served file or a live page.
     public let page: BrowserPage
@@ -113,6 +138,10 @@ public final class HTMLViewerController: RenderedDocumentController {
     public var isNoteMode = false
     /// The element the user just clicked in note mode; the session turns it into a note and clears it.
     public var pendingPick: ElementPick?
+    /// A picture, or a region of one, chosen on the page outside note mode (a click or a drag). Like a text
+    /// selection it waits for Add Note; the session clears it once the note is made, and the browser then takes the
+    /// page's drawing of it away.
+    public var selectedPicture: ElementPick?
     /// Element notes to draw; set by the session from its notes.
     public var elementHighlights: [ElementHighlight] = [] {
         didSet { elementHighlightsVersion += 1 }

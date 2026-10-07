@@ -34,6 +34,23 @@ struct AnchorJSONTests {
         #expect(anchor.sortKey == Anchor.SortKey(primary: 480, secondary: 120))
     }
 
+    @Test func pictureRegionsRideOnElementAnchors() throws {
+        // A note made before pictures had regions still decodes, without one.
+        let old = try Anchor(type: .element, json: ##"{"hash":"h","html":"<img src=\"a.png\">","rect":{"h":32,"w":96,"x":120,"y":480},"selector":"#hero","tag":"img","text":""}"##)
+        guard case .element(let plain) = old else { Issue.record("expected an element"); return }
+        #expect(plain.region == nil && plain.imageSource == nil)
+        #expect(old.summary == "Element #hero")
+
+        let region = ImageAnchor(x: 10, y: 20, w: 300, h: 150, imageW: 1600, imageH: 900)
+        let picture = Anchor.element(ElementAnchor(selector: "#hero", tag: "img", text: "", html: "<img>", rect: .init(x: 0, y: 0, w: 800, h: 450),
+                                                   region: region, imageSource: "https://example.com/hero.jpg"))
+        #expect(try Anchor(type: .element, json: try picture.encodedJSON()) == picture)
+        #expect(picture.summary == "Image #hero, region 300×150")
+        let whole = Anchor.element(ElementAnchor(selector: "#hero", tag: "img", text: "", html: "", rect: .init(x: 0, y: 0, w: 1, h: 1),
+                                                 region: ImageAnchor(x: 0, y: 0, w: 1600, h: 900, imageW: 1600, imageH: 900)))
+        #expect(whole.summary == "Image #hero")
+    }
+
     @Test func elementAnchorCapsTextAndHTML() {
         let anchor = ElementAnchor(selector: "p", tag: "p", text: String(repeating: "a ", count: 600), html: String(repeating: "<i>", count: 2000), rect: .init(x: 0, y: 0, w: 0, h: 0))
         #expect(anchor.text.count == ElementAnchor.textLimit)

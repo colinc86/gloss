@@ -197,8 +197,16 @@ public enum PacketBuilder {
             if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(headerValue(attachment))") }
         case .element(let anchor):
             lines.append("Element: \(headerValue(anchor.selector))")
+            let attached = note.attachmentAgentPath != nil
+            // A picture names itself and the part of it the note is about, as an embedded picture does; the crop
+            // is of that part, not of the element's box.
+            if let region = anchor.region {
+                lines.append("Image: \(headerValue(anchor.imageSource ?? "<\(anchor.tag)>")) (\(region.imageW)x\(region.imageH))")
+                let suffix = attached ? (region.isWholeImage ? " (image attached)" : " (crop attached)") : ""
+                lines.append(region.isWholeImage ? "Whole image\(suffix)" : "Region: x=\(region.x) y=\(region.y) w=\(region.w) h=\(region.h)\(suffix)")
+            }
             if !anchor.text.isEmpty { lines.append("Text: \"\(escape(anchor.text))\"") }
-            let suffix = note.attachmentAgentPath == nil ? "" : " (crop attached)"
+            let suffix = attached && anchor.region == nil ? " (crop attached)" : ""
             lines.append("Rect: x=\(points(anchor.rect.x)) y=\(points(anchor.rect.y)) w=\(points(anchor.rect.w)) h=\(points(anchor.rect.h))\(suffix)")
             if let line = anchor.line { lines.append("Line \(line)") }
             if !anchor.html.isEmpty {

@@ -83,6 +83,57 @@ struct ElementNoteTests {
         #expect(session.notes.first?.anchor == .element(moved), "the element is back where the note last saw it")
         await model.shutDown()
     }
+
+    @Test func aChosenRegionOfAPictureWaitsForAddNoteAndIsCropped() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-picture-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "<html><body>\n<img id=\"hero\" src=\"hero.png\">\n</body></html>\n".write(toFile: "\(root)/page.html", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        model.openDocument(hostID: .local, path: "\(root)/page.html")
+        let session = try #require(model.activeSession)
+        await waitUntil { session.html != nil }
+        let html = try #require(session.html)
+        var snapshots: [ElementRect] = []
+        html.snapshotProvider = { rect in
+            snapshots.append(rect)
+            return (Data("png".utf8), 100, 50)
+        }
+
+        // The bridge reports a drag across the picture: a selection, with the Add Note button at the region.
+        let region = ImageAnchor(x: 60, y: 10, w: 50, h: 25, imageW: 200, imageH: 100)
+        let regionOnPage = ElementRect(x: 30, y: 45, w: 25, h: 12.5)
+        html.selectedPicture = ElementPick(
+            selector: "#hero", tag: "img", text: "", html: "<img id=\"hero\" src=\"hero.png\">",
+            windowRect: CGRect(x: 0, y: 100, width: 100, height: 50), pageRect: ElementRect(x: 0, y: 40, w: 100, h: 50), textOffset: nil,
+            picture: PicturePick(region: region, source: "gloss-html://h_local\(root)/hero.png", windowRect: CGRect(x: 30, y: 105, width: 25, height: 12.5), pageRect: regionOnPage)
+        )
+        #expect(session.selectionAffordanceRect == CGRect(x: 30, y: 105, width: 25, height: 12.5), "Add Note sits at the region")
+        #expect(session.noteEditor == nil, "a chosen picture waits for Add Note")
+
+        session.beginNote()
+        let editor = try #require(session.noteEditor)
+        guard case .element(let anchor) = editor.anchor else { Issue.record("expected an element anchor"); return }
+        #expect(anchor.selector == "#hero" && anchor.region == region && anchor.imageSource?.hasSuffix("/hero.png") == true)
+        #expect(editor.anchorRect == CGRect(x: 30, y: 105, width: 25, height: 12.5))
+
+        var state = editor
+        state.body = "Crop tighter"
+        await session.commitNote(state)
+        await waitUntil { session.notes.count == 1 }
+        let note = try #require(session.notes.first)
+        #expect(note.anchor == .element(anchor))
+        #expect(snapshots == [regionOnPage], "the crop is of the region, not the element's box")
+        let attachments = try await model.noteStore.attachments(for: note.id)
+        #expect(attachments.count == 1 && attachments.first?.width == 100)
+        #expect(html.selectedPicture == nil, "the selection is put away once the note is made")
+        await waitUntil { html.elementHighlights.count == 1 }
+        #expect(html.elementHighlights.first?.region == region, "the note is drawn over the region")
+        #expect(note.anchor.summary == "Image #hero, region 50×25")
+        for attachment in attachments { try? FileManager.default.removeItem(atPath: attachment.localPath) }
+        await model.shutDown()
+    }
 }
 
 /// A live page's changes: nothing is written for a page without notes, and only the newest change's results land.

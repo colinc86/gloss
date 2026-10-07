@@ -55,6 +55,8 @@ public final class WebBrowserController {
     @ObservationIgnored private var savedScrollY: Double?
     @ObservationIgnored private var appliedPickMode = false
     @ObservationIgnored private var appliedElementVersion = -1
+    /// The page draws a chosen picture; once the app's selection is cleared, the drawing goes too.
+    @ObservationIgnored private var pageShowsPicture = false
 
     public init() {
         let configuration = WKWebViewConfiguration()
@@ -136,6 +138,7 @@ public final class WebBrowserController {
         withObservationTracking {
             _ = controller.isNoteMode
             _ = controller.elementHighlightsVersion
+            _ = controller.selectedPicture
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.current === controller else { return }
@@ -191,7 +194,10 @@ public final class WebBrowserController {
         if appliedPickMode { run("window.__cc && window.__cc.setPickMode(false)") }
         appliedPickMode = false
         appliedElementVersion = -1
+        if pageShowsPicture { run("window.__cc && window.__cc.clearPicture()") }
+        pageShowsPicture = false
         current.isNoteMode = false
+        current.selectedPicture = nil
         current.snapshotProvider = nil
         current.resolveElements = nil
         current.scrollToElement = nil
@@ -207,6 +213,8 @@ public final class WebBrowserController {
         loadedVersion = controller.renderedVersion
         isLoaded = false
         appliedPickMode = false
+        pageShowsPicture = false
+        controller.selectedPicture = nil
         refusal = nil
         switch controller.page {
         case .file(let path):
@@ -272,6 +280,11 @@ public final class WebBrowserController {
     func sync() {
         guard let current else { return }
         _ = current.source.highlightsVersion
+        // Before anything waits for a load: a page chosen on while it was still loading draws until told.
+        if pageShowsPicture, current.selectedPicture == nil {
+            pageShowsPicture = false
+            run("window.__cc && window.__cc.clearPicture()")
+        }
         if loadedVersion != current.renderedVersion {
             // Keep the reader's place across the reload that shows an edit.
             loadedVersion = current.renderedVersion
@@ -440,6 +453,10 @@ public final class WebBrowserController {
         isLoaded = true
         // A new page's bridge starts with everything off; note mode is applied again below if it is still on.
         appliedPickMode = false
+        // A picture chosen while the page was still loading is put away with the drawing of it.
+        if pageShowsPicture { run("window.__cc && window.__cc.clearPicture()") }
+        pageShowsPicture = false
+        current?.selectedPicture = nil
         refresh { [weak self] in
             guard let self else { return }
             if let y = savedScrollY {
@@ -514,9 +531,29 @@ public final class WebBrowserController {
             return
         }
         if let pick = message["pick"] as? [String: Any] {
-            guard let picked = elementPick(from: pick) else { return }
+            guard let picked = elementPick(from: pick, region: message["region"] as? [String: Any]) else { return }
+            if message["select"] as? Bool == true {
+                // A picture chosen outside note mode waits for Add Note, as a text selection does.
+                pageShowsPicture = true
+                current.selectedPicture = picked
+                return
+            }
             current.pendingPick = picked
             current.onPick(picked)
+            return
+        }
+        if message["pictureCleared"] != nil {
+            pageShowsPicture = false
+            if current.selectedPicture != nil { current.selectedPicture = nil }
+            return
+        }
+        if let moved = rect(message["pictureRect"]) {
+            // The page scrolled under a chosen picture: the Add Note button goes with it.
+            guard var picked = current.selectedPicture, var picture = picked.picture else { return }
+            picture.windowRect = webView.topLeftWindowRect(CGRect(x: moved.x, y: moved.y, width: max(moved.w, 2), height: max(moved.h, 2)))
+            guard picture != picked.picture else { return }
+            picked.picture = picture
+            current.selectedPicture = picked
             return
         }
         if message["pickCancel"] != nil {
@@ -534,14 +571,24 @@ public final class WebBrowserController {
         current.selection = HTMLSelection(dom: NSRange(location: start, length: length), text: message["text"] as? String ?? "", rect: rect)
     }
 
-    private func elementPick(from pick: [String: Any]) -> ElementPick? {
+    private func elementPick(from pick: [String: Any], region: [String: Any]?) -> ElementPick? {
         guard let selector = pick["selector"] as? String, let tag = pick["tag"] as? String,
               let page = rect(pick["page"]) else { return nil }
         let viewport = rect(pick["rect"]).map { CGRect(x: $0.x, y: $0.y, width: max($0.w, 2), height: max($0.h, 2)) }
         return ElementPick(
             selector: selector, tag: tag, text: pick["text"] as? String ?? "", html: pick["html"] as? String ?? "",
-            windowRect: viewport.flatMap { webView.topLeftWindowRect($0) }, pageRect: page, textOffset: pick["textOffset"] as? Int
+            windowRect: viewport.flatMap { webView.topLeftWindowRect($0) }, pageRect: page, textOffset: pick["textOffset"] as? Int,
+            picture: region.flatMap { picturePick(from: $0, source: pick["src"] as? String) }
         )
+    }
+
+    private func picturePick(from region: [String: Any], source: String?) -> PicturePick? {
+        func int(_ key: String) -> Int? { (region[key] as? NSNumber)?.intValue }
+        guard let x = int("x"), let y = int("y"), let w = int("w"), let h = int("h"), let imageW = int("imageW"), let imageH = int("imageH"),
+              let page = rect(region["page"]) else { return nil }
+        let viewport = rect(region["rect"]).map { CGRect(x: $0.x, y: $0.y, width: max($0.w, 2), height: max($0.h, 2)) }
+        return PicturePick(region: ImageAnchor(x: x, y: y, w: w, h: h, imageW: imageW, imageH: imageH), source: source,
+                           windowRect: viewport.flatMap { webView.topLeftWindowRect($0) }, pageRect: page)
     }
 
     /// The page's element boxes (viewport coordinates) in top-left window coordinates.
@@ -581,8 +628,10 @@ public final class WebBrowserController {
     private func candidate(_ value: Any?) -> ElementCandidate? {
         guard let dictionary = value as? [String: Any], let selector = dictionary["selector"] as? String,
               let tag = dictionary["tag"] as? String, let rect = rect(dictionary["rect"]) else { return nil }
+        let natural = dictionary["natural"] as? [String: Any]
         return ElementCandidate(selector: selector, tag: tag, text: dictionary["text"] as? String ?? "", html: dictionary["html"] as? String ?? "", rect: rect,
-                                textOffset: dictionary["textOffset"] as? Int)
+                                textOffset: dictionary["textOffset"] as? Int,
+                                imageW: (natural?["w"] as? NSNumber)?.intValue, imageH: (natural?["h"] as? NSNumber)?.intValue)
     }
 
     // MARK: Elements
@@ -607,6 +656,15 @@ public final class WebBrowserController {
     /// so the element is scrolled into view first; a part taller than the view is cut at the view's edge.
     public func snapshot(pageRect: ElementRect) async throws -> (png: Data, width: Int, height: Int)? {
         guard isLoaded else { return nil }
+        // A chosen picture's dimming and handles are put away and the notes' boxes hidden, so none of them are in
+        // the picture; the boxes come back once it is taken.
+        pageShowsPicture = false
+        let hidden = try? await webView.callAsyncJavaScript(
+            "if (!window.__cc) return false; const cleared = window.__cc.clearPicture(); return window.__cc.setOverlayHidden(true) || cleared",
+            arguments: [:], in: nil, contentWorld: .defaultClient
+        )
+        defer { run("window.__cc && window.__cc.setOverlayHidden(false)") }
+        if hidden as? Bool == true { try? await Task.sleep(for: .milliseconds(60)) }
         let bounds = webView.bounds
         // CSS pixels are view points only at 100%; a pinch-zoomed page scales them.
         let zoom = webView.magnification
@@ -658,6 +716,9 @@ public final class WebBrowserController {
             var item: [String: Any] = ["id": highlight.id.rawValue, "selector": highlight.selector, "tag": highlight.tag, "text": highlight.text,
                                        "color": "rgb(\(rgb))", "fill": "rgba(\(rgb),0.12)", "state": highlight.state.rawValue, "needsReview": highlight.needsReview]
             if let last = highlight.lastRect { item["rect"] = ["x": last.x, "y": last.y, "w": last.w, "h": last.h] }
+            if let region = highlight.region {
+                item["region"] = ["x": region.x, "y": region.y, "w": region.w, "h": region.h, "imageW": region.imageW, "imageH": region.imageH]
+            }
             return item
         }
         let started = current

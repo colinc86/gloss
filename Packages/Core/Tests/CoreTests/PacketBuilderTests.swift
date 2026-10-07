@@ -153,6 +153,31 @@ struct PacketBuilderTests {
         #expect(PacketBuilder.build([fileBacked]).text.contains("Element: #save\nRect: x=1 y=2 w=3 h=4\nLine 42\nUser comment: \"c\""), "no text, no snippet, no crop: only the lines that exist")
     }
 
+    @Test func pictureNotesOnAPageNameTheImageAndTheRegion() {
+        func note(_ region: ImageAnchor, source: String?, crop: Bool) -> PacketNote {
+            PacketNote(
+                noteID: markdownID, agentPath: "https://example.com/gallery", source: .web,
+                anchor: .element(ElementAnchor(selector: "#hero", tag: "img", text: "", html: "<img id=\"hero\" src=\"/hero.jpg\">",
+                                               rect: ElementRect(x: 0, y: 100, w: 800, h: 450), region: region, imageSource: source)),
+                comment: "c", attachmentAgentPath: crop ? "/tmp/gloss/a1/gallery-element-1.png" : nil
+            )
+        }
+        let region = note(ImageAnchor(x: 10, y: 20, w: 300, h: 150, imageW: 1600, imageH: 900), source: "https://example.com/hero.jpg", crop: true)
+        #expect(PacketBuilder.build([region]).text.contains("""
+            Element: #hero
+            Image: https://example.com/hero.jpg (1600x900)
+            Region: x=10 y=20 w=300 h=150 (crop attached)
+            Rect: x=0 y=100 w=800 h=450
+            Snippet:
+            > <img id="hero" src="/hero.jpg">
+            Attachment: /tmp/gloss/a1/gallery-element-1.png
+            """))
+        let whole = note(ImageAnchor(x: 0, y: 0, w: 1600, h: 900, imageW: 1600, imageH: 900), source: "https://example.com/hero.jpg", crop: true)
+        #expect(PacketBuilder.build([whole]).text.contains("Image: https://example.com/hero.jpg (1600x900)\nWhole image (image attached)\nRect: x=0 y=100 w=800 h=450\n"))
+        let inline = note(ImageAnchor(x: 0, y: 0, w: 24, h: 24, imageW: 24, imageH: 24), source: nil, crop: false)
+        #expect(PacketBuilder.build([inline]).text.contains("Image: <img> (24x24)\nWhole image\nRect:"), "an inline picture is named by its tag")
+    }
+
     @Test func resourceHeaderForVirtualHosts() {
         let note = PacketNote(
             noteID: markdownID, agentPath: "/o/r/pull/123/changes/Sources/App.swift", source: .pullRequest, anchor: textAnchor(7, 7),

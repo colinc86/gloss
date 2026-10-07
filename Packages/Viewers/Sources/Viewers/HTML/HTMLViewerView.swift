@@ -53,18 +53,25 @@ public struct HTMLViewerView: View {
             } trailing: {
                 if controller.mode == .rendered {
                     if controller.isNoteMode {
-                        ToolHints([ToolHint(symbol: "escape", keys: ["esc"], "Leave", explained: "Leave element notes without picking anything")], inline: 1)
+                        ToolHints([
+                            ToolHint(keys: ["↑", "↓"], "Parent, child", explained: "Step to the hovered element's parent, or back down to its child"),
+                            ToolHint(symbol: "escape", keys: ["esc"], "Leave", explained: "Leave Pick Element without picking anything"),
+                            ToolHint(symbol: "rectangle.dashed", "Drag across a picture for a region", explained: "Drag across a picture to pick a region of it"),
+                        ], inline: 2)
                             .transition(.opacity.calmed)
                     }
                     ToolGroup {
                         Button { controller.isNoteMode.toggle() } label: {
-                            Image(systemName: "rectangle.dashed")
+                            Label("Pick Element", systemImage: "rectangle.dashed")
+                                .labelStyle(.titleAndIcon)
                                 .foregroundStyle(controller.isNoteMode ? Color.white : Color.primary)
-                                .padding(.horizontal, 3)
+                                .padding(.horizontal, 4)
                                 .background(controller.isNoteMode ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
                         }
-                        .help(controller.isNoteMode ? "Click any element on the page to attach a note to it" : "Element Notes: attach a note to a button, an image, any element")
-                        .accessibilityLabel("Element Notes")
+                        .help(controller.isNoteMode
+                              ? "Click any element on the page to attach a note to it (⇧⌘E)"
+                              : "Pick Element: attach a note to a button, a card, any element (⇧⌘E). Pictures need no mode: click one, or drag across it")
+                        .accessibilityLabel("Pick Element")
                         .accessibilityAddTraits(controller.isNoteMode ? .isSelected : [])
                         Button { browser.reload() } label: { Image(systemName: "arrow.clockwise") }
                             .help(controller.page.isLive ? "Reload the page" : "Reload the page and run its scripts again")
@@ -89,7 +96,7 @@ public struct HTMLViewerView: View {
                 TextEditorView(controller: controller.source)
             }
         }
-        // Escape leaves element notes wherever focus is (the page catches it too, but only while it has focus).
+        // Escape leaves Pick Element wherever focus is (the page catches it too, but only while it has focus).
         .onExitCommand(perform: controller.isNoteMode ? { controller.isNoteMode = false } : nil)
     }
 }

@@ -533,17 +533,34 @@ path. Dropping on the Dock icon is not supported yet.
   page (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form); a click makes it a field,
   Return opens what was typed (`localhost:3000` is enough, the scheme is filled in), Escape puts the address back. A
   page reached through an ssh host's loopback wears a teal `via asus` chip (`network`), the same mark the status bar
-  and the notes panel use. Trailing, in Rendered mode: Element Notes (`rectangle.dashed`, accent-filled while on,
-  with the inline hint `esc Leave`), Reload (`arrow.clockwise`, for a file it runs the page and its scripts again
+  and the notes panel use. Trailing, in Rendered mode: Pick Element (`rectangle.dashed` and its name, accent-filled
+  while on, also Notes › Pick Element on Page, ⇧⌘E, enabled only on a rendered page; while on, the hints `↑ ↓ Parent,
+  child` and `esc Leave`), Reload (`arrow.clockwise`, for a file it runs the page and its scripts again
   keeping the scroll place), then the Rendered/Source switch; a live page's Source is its current DOM, read-only.
   While the page loads, a 2 pt accent line (`LoadProgressLine`) grows along the toolbar's bottom edge; at the end it
   fills, then fades after 350 ms, instead of vanishing mid-way.
-- **Element notes**: in Element Notes mode the pointer outlines the element under it in the accent colour with a
-  small `tag#id` label (an overlay above the page that takes no clicks and adds no text, so text offsets never
-  move), and a click opens the note editor at that element at once, no Add Note pill in between; Escape leaves the
-  mode, a pick leaves it too. A committed element note draws as a 2 pt outline in its colour with a 12% fill
+- **Pictures on a page** (decided 2026-10-06): no mode, as in rendered Markdown. A press on an `img`, `picture` or
+  `svg` (found through transparent wrappers and links laid over it, never through text or through something that
+  paints its own background) starts a picture gesture, except on one inside a button, label or other control, or
+  one the size of an icon (under 48 pt both ways), whose click stays the page's; a `canvas` or `video` is left to
+  the page too (its controls, a map), and Pick Element reaches all of them. Past 3 pt the gesture drags out a region,
+  otherwise the release takes the whole picture. The choice is drawn like a crop tool, as `RegionStyle` draws it
+  in the other viewers: the rest of the picture dimmed, a white edge with a dark outline, L-shaped corner handles,
+  and a size pill below in the picture's own pixels (`naturalWidth/Height` after `object-fit` and
+  `object-position`; an svg's displayed size). It is a selection: the floating Add Note button and ⌘↩ sit beside
+  it and follow it as the page scrolls. The first click on a linked picture chooses it instead of following the
+  link; a second click on the chosen picture goes on to the page; a click elsewhere, or a text selection, puts it
+  away. A drag that starts on text still selects text.
+- **Element notes**: in Pick Element mode the pointer outlines the element under it in the accent colour, the
+  picture under the pointer before its wrappers, with a label naming it and its parent (`div.card › img`; an overlay
+  above the page that takes no clicks and adds no text, so text offsets never move); ↑ steps to the parent and ↓
+  back down (or to the first child). A click opens the note editor at that element at once, no Add Note pill in
+  between, and a drag across a picture picks a region of it (the way to a region on a picture the page itself makes
+  draggable); Escape leaves the mode, a pick leaves it too. A committed element note draws as a 2 pt outline in its
+  colour with a 12% fill, over just its region on a picture (the stored pixels scaled to the picture's size now)
   (drafts full, sent 70%, resolved 35%, orphaned dashed, a `?` badge while it needs a glance), and carries a 2x crop
-  of the element taken before the outline exists. The note card reads `Element [data-testid="save"]`: the last
+  of the element (of the chosen part, on a picture) taken before the outline exists and with the choice's dimming
+  put away. The note card reads `Element [data-testid="save"]`, or `Image img, region 300×150` on a picture: the last
   compound of a selector that prefers an id, then a `data-testid`, then a `tag:nth-of-type` path, never class
   names. When the page changes, the element is found again by selector, then by text (one match moves the note
   and flags it; several pick the nearest; none orphans it), and a page back exactly as it was returns an orphan to

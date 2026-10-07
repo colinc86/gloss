@@ -245,6 +245,128 @@ struct WebBridgeTests {
         #expect(harness.page.pendingPick?.pageRect.w ?? 0 > 0)
     }
 
+    /// A transparent PNG of the given size, as a data URI.
+    static func png(_ width: Int, _ height: Int) -> String {
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        return "data:image/png;base64," + bitmap.representation(using: .png, properties: [:])!.base64EncodedString()
+    }
+
+    static let pictures = """
+    <!doctype html><html><body style="margin:0">
+    <a href="/big" style="display:block;width:200px"><img id="thumb" src="\(png(200, 100))" style="display:block;width:200px;height:100px"></a>
+    <img id="cover" src="\(png(200, 100))" style="display:block;width:100px;height:100px;object-fit:cover">
+    <div class="card" style="width:220px;padding:10px"><img src="\(png(40, 40))" style="display:block;width:40px;height:40px"><p>Caption text</p></div>
+    <button id="control" style="display:block"><img src="\(png(100, 60))" style="display:block;width:100px;height:60px"></button>
+    <a id="avatar" href="/someone" style="display:block;width:32px"><img src="\(png(64, 64))" style="display:block;width:32px;height:32px"></a>
+    </body></html>
+    """
+
+    func picturesReady(_ harness: Harness) async throws {
+        try await harness.ready()
+        for _ in 0..<150 {
+            if try await harness.js("return [...document.images].every((i) => i.complete && i.naturalWidth > 0)") as? Bool == true { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        Issue.record("the pictures never loaded")
+    }
+
+    func center(_ harness: Harness, _ query: String) async throws -> (x: Double, y: Double) {
+        let point = try #require(try await harness.js("const r = document.querySelector(q).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]", ["q": query]) as? [Double])
+        return (point[0], point[1])
+    }
+
+    @Test func aClickOnALinkedPictureChoosesThePictureNotTheLink() async throws {
+        let harness = Harness(html: Self.pictures)
+        try await picturesReady(harness)
+        let point = try await center(harness, "#thumb")
+        #expect(try await harness.js("return window.__cc.dragAt(x, y, x, y)", ["x": point.x, "y": point.y]) as? Bool == true)
+        try await harness.wait("the chosen picture") { harness.page.selectedPicture != nil }
+        let chosen = try #require(harness.page.selectedPicture)
+        #expect(chosen.selector == "#thumb" && chosen.tag == "img", "the picture, not the link around it")
+        #expect(chosen.picture?.region == ImageAnchor(x: 0, y: 0, w: 200, h: 100, imageW: 200, imageH: 100), "a click takes all of it")
+        #expect(chosen.picture?.source == "data:image/png (inline)", "an inline picture is named, not copied")
+        #expect(chosen.picture?.pageRect.w == 200)
+        #expect(harness.page.pendingPick == nil, "a chosen picture waits for Add Note")
+        #expect(try await harness.js("return document.querySelector('gloss-overlay div[data-size]').getAttribute('data-size')") as? String == "200 × 100")
+
+        // A picture in a control, or one the size of an icon, is the page's: its click goes to the button or link.
+        for query in ["#control img", "#avatar img"] {
+            let at = try await center(harness, query)
+            #expect(try await harness.js("return window.__cc.dragAt(x, y, x, y)", ["x": at.x, "y": at.y]) as? Bool == false, "\(query) is left to the page")
+        }
+        try await harness.wait("the picture to be put away") { harness.page.selectedPicture == nil }
+        _ = try await harness.js("window.__cc.dragAt(x, y, x, y); return true", ["x": point.x, "y": point.y])
+        try await harness.wait("the chosen picture") { harness.page.selectedPicture != nil }
+
+        // A press on text is the page's: no picture, and the chosen one is put away.
+        let text = try await center(harness, ".card p")
+        #expect(try await harness.js("return window.__cc.dragAt(x, y, x, y)", ["x": text.x, "y": text.y]) as? Bool == false)
+        try await harness.wait("the picture to be put away") { harness.page.selectedPicture == nil }
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
+
+        // The app clearing its selection takes the page's drawing away too.
+        _ = try await harness.js("window.__cc.dragAt(x, y, x, y); return true", ["x": point.x, "y": point.y])
+        try await harness.wait("the chosen picture") { harness.page.selectedPicture != nil }
+        harness.page.selectedPicture = nil
+        harness.browser.sync()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
+    }
+
+    @Test func aDragChoosesARegionInThePicturesOwnPixels() async throws {
+        let harness = Harness(html: Self.pictures)
+        try await picturesReady(harness)
+        let box = try #require(try await harness.js("const r = document.querySelector('#cover').getBoundingClientRect(); return [r.left, r.top]") as? [Double])
+        // object-fit: cover draws the 200x100 picture at 100x100 points, its middle 100 pixels showing.
+        _ = try await harness.js("return window.__cc.dragAt(x0, y0, x1, y1)", ["x0": box[0] + 10, "y0": box[1] + 10, "x1": box[0] + 60, "y1": box[1] + 60])
+        try await harness.wait("the region") { harness.page.selectedPicture != nil }
+        let picture = try #require(harness.page.selectedPicture?.picture)
+        #expect(picture.region == ImageAnchor(x: 60, y: 10, w: 50, h: 50, imageW: 200, imageH: 100))
+        #expect(picture.pageRect.w == 50 && picture.pageRect.h == 50)
+
+        // A note on that region is drawn over that part of the picture.
+        let item: [String: Any] = ["id": "n1", "selector": "#cover", "tag": "img", "text": "", "color": "red", "fill": "rgba(0,0,0,0)", "state": "draft",
+                                   "needsReview": false, "region": ["x": 60, "y": 10, "w": 50, "h": 50, "imageW": 200, "imageH": 100]]
+        let rects = try #require(try await harness.js("return window.__cc.highlightElements(list)", ["list": [item]]) as? [String: Any])
+        let drawn = try #require(rects["n1"] as? [String: Any])
+        #expect(drawn["x"] as? Double == box[0] + 10 && drawn["w"] as? Double == 50)
+
+        // Found again, the picture says how big it is, so a resized picture's region can follow it.
+        let anchor = ElementAnchor(selector: "#cover", tag: "img", text: "", html: "", rect: .init(x: 0, y: 0, w: 1, h: 1), region: picture.region)
+        let id = NoteID.new()
+        let resolved = await harness.browser.resolve([(id, anchor)])
+        #expect(resolved[id]?.bySelector?.imageW == 200 && resolved[id]?.bySelector?.imageH == 100)
+    }
+
+    @Test func pickModeStepsToTheParentAndBack() async throws {
+        let harness = Harness(html: Self.pictures)
+        try await picturesReady(harness)
+        harness.page.isNoteMode = true
+        harness.browser.sync()
+        let point = try await center(harness, ".card img")
+        #expect(try await harness.js("return window.__cc.pickAt(x, y, [])", ["x": point.x, "y": point.y]) as? String == "div.card › img")
+        try await harness.wait("the picture's pick") { harness.page.pendingPick != nil }
+        #expect(harness.page.pendingPick?.tag == "img")
+        #expect(harness.page.pendingPick?.picture?.region == ImageAnchor(x: 0, y: 0, w: 40, h: 40, imageW: 40, imageH: 40), "a picked picture is all of it")
+        #expect(harness.page.selectedPicture == nil, "in note mode a pick goes straight to the editor")
+
+        harness.page.pendingPick = nil
+        #expect(try await harness.js("return window.__cc.pickAt(x, y, ['up'])", ["x": point.x, "y": point.y]) as? String == "div.card")
+        try await harness.wait("the card's pick") { harness.page.pendingPick != nil }
+        #expect(harness.page.pendingPick?.tag == "div" && harness.page.pendingPick?.picture == nil)
+
+        harness.page.pendingPick = nil
+        #expect(try await harness.js("return window.__cc.pickAt(x, y, ['up', 'down'])", ["x": point.x, "y": point.y]) as? String == "div.card › img", "down goes back the way it came")
+
+        // The picture inside a link is preferred to the link.
+        harness.page.pendingPick = nil
+        let thumb = try await center(harness, "#thumb")
+        _ = try await harness.js("return window.__cc.pickAt(x, y, [])", ["x": thumb.x, "y": thumb.y])
+        try await harness.wait("the thumbnail's pick") { harness.page.pendingPick != nil }
+        #expect(harness.page.pendingPick?.selector == "#thumb")
+    }
+
     @Test func schemeHandlerServesOnlyServedPages() throws {
         final class Task: NSObject, WKURLSchemeTask {
             let request: URLRequest

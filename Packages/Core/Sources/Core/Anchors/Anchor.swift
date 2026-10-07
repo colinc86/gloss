@@ -134,6 +134,9 @@ public struct ImageAnchor: Codable, Hashable, Sendable {
         self.imageH = imageH
         self.hash = hash
     }
+
+    /// The rectangle is the whole image.
+    public var isWholeImage: Bool { x == 0 && y == 0 && w == imageW && h == imageH }
 }
 
 /// A region of an image shown inside another document (a picture in Markdown, a ticket's pasted screenshot), or the
@@ -157,7 +160,7 @@ public struct EmbeddedImageAnchor: Codable, Hashable, Sendable {
     }
 
     /// The note covers the whole picture.
-    public var isWholeImage: Bool { region.x == 0 && region.y == 0 && region.w == region.imageW && region.h == region.imageH }
+    public var isWholeImage: Bool { region.isWholeImage }
 
     /// The picture's file name, for cards and summaries.
     public var fileName: String {
@@ -234,8 +237,14 @@ public struct ElementAnchor: Codable, Hashable, Sendable {
     public var line: Int?
     /// SHA-256 of the file, or of the page's serialised DOM, when the anchor was made.
     public var hash: String?
+    /// On a picture (`img`, `svg`, `canvas`, `video`), the part of it the note is about, in the picture's own pixels;
+    /// all of it for a whole-picture note. Nil on any other element, and on notes made before pictures had regions.
+    public var region: ImageAnchor?
+    /// The picture's address as the page loaded it (`currentSrc`); nil for an inline `svg` or a `canvas`.
+    public var imageSource: String?
 
-    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect, line: Int? = nil, hash: String? = nil) {
+    public init(selector: String, tag: String, text: String, html: String, rect: ElementRect, line: Int? = nil, hash: String? = nil,
+                region: ImageAnchor? = nil, imageSource: String? = nil) {
         self.selector = selector
         self.tag = tag.lowercased()
         self.text = Self.collapse(text, limit: Self.textLimit)
@@ -243,6 +252,8 @@ public struct ElementAnchor: Codable, Hashable, Sendable {
         self.rect = rect
         self.line = line
         self.hash = hash
+        self.region = region
+        self.imageSource = imageSource.map { Self.truncate($0, limit: Self.htmlLimit) }
     }
 
     /// The last compound of the selector: `button:nth-of-type(2)` of `#toolbar > button:nth-of-type(2)`.
@@ -361,7 +372,11 @@ public enum Anchor: Hashable, Sendable {
         case .wholeFile:
             "Whole file"
         case .element(let anchor):
-            "Element \(anchor.lastCompound)"
+            if let region = anchor.region {
+                region.isWholeImage ? "Image \(anchor.lastCompound)" : "Image \(anchor.lastCompound), region \(region.w)×\(region.h)"
+            } else {
+                "Element \(anchor.lastCompound)"
+            }
         case .embeddedImage(let anchor):
             anchor.isWholeImage ? "Image \(anchor.fileName)" : "Image \(anchor.fileName), region \(anchor.region.w)×\(anchor.region.h)"
         }
