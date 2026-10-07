@@ -3,17 +3,41 @@ import Foundation
 import Observation
 import Remote
 
-/// Open Quickly (⌘P): every file under the selected root, ranked by `FuzzyMatcher` as the query changes.
+/// Open Quickly (⌘P): every file under the selected root, ranked by `FuzzyMatcher` as the query changes, below
+/// the web pages visited that match and, when the query is an address, a row that opens it.
 @MainActor
 @Observable
 final class QuickOpenModel {
+    /// One row of the panel, in order: the typed address, then pages, then files.
+    enum Row: Hashable {
+        case address(URL)
+        case page(WebPage)
+        case file(String)
+
+        var id: String {
+            switch self {
+            case .address: "address"
+            case .page(let page): "page " + page.id
+            case .file(let path): "file " + path
+            }
+        }
+    }
+
     var isPresented = false
     var query = "" {
         // Return makes the field write the same text back; re-ranking then would reset the selection to the
         // top row just before it opens.
-        didSet { if query != oldValue { rerank() } }
+        didSet { if query != oldValue { matchWeb(); rerank() } }
     }
+    /// The files matching, relative to the root.
     private(set) var results: [String] = []
+    /// The query as an address to open, when it reads as one.
+    private(set) var address: URL?
+    /// Whether the address row leads (the query can only be an address, or there are no files to put first) or
+    /// trails the files unselected (`README.md` is far likelier a file than a website).
+    private(set) var addressLeads = true
+    /// The visited pages matching the query.
+    private(set) var pageResults: [WebPage] = []
     var selectedIndex = 0
     private(set) var isLoading = false
     /// The results describe an older query; a ranking for the current one is running.
@@ -22,6 +46,13 @@ final class QuickOpenModel {
     @ObservationIgnored private var submitWhenReady = false
     /// Opens a path on `hostID`; set by the app.
     @ObservationIgnored var onOpen: (HostID, String) -> Void = { _, _ in }
+    /// Opens a typed address; set by the app.
+    @ObservationIgnored var onOpenAddress: (URL) -> Void = { _ in }
+    /// Opens a visited page; set by the app.
+    @ObservationIgnored var onOpenPage: (WebPage) -> Void = { _ in }
+    /// The pages visited, read when the panel opens; set by the app.
+    @ObservationIgnored var pages: () -> [WebPage] = { [] }
+    @ObservationIgnored private var visited: [WebPage] = []
     /// Why there is nothing to show (the host is not connected, the listing failed).
     private(set) var errorMessage: String?
     private(set) var root: String?
@@ -30,9 +61,10 @@ final class QuickOpenModel {
     @ObservationIgnored private var loadTask: Task<Void, Never>?
     @ObservationIgnored private var rankTask: Task<Void, Never>?
 
-    /// Shows the panel for a root and lists its files (local tools, or over the host's exec channel).
+    /// Shows the panel for a root and lists its files (local tools, or over the host's exec channel); without a
+    /// root (no folder open, or one that is browsed rather than listed) only addresses and pages are offered.
     /// `connection` is required for a remote host: a remote root is never listed on this Mac.
-    func present(root: String, hostID: HostID, connection: SSHConnection?) {
+    func present(root: String?, hostID: HostID, connection: SSHConnection?) {
         self.root = root
         self.hostID = hostID
         query = ""
@@ -41,8 +73,15 @@ final class QuickOpenModel {
         candidates = []
         errorMessage = nil
         submitWhenReady = false
+        visited = pages()
+        matchWeb()
         isPresented = true
         loadTask?.cancel()
+        guard let root else {
+            isLoading = false
+            isRanking = false
+            return
+        }
         if hostID != .local, connection == nil {
             isLoading = false
             errorMessage = "Not connected to this folder's host"
@@ -76,17 +115,59 @@ final class QuickOpenModel {
         FuzzyMatcher.rank(query, in: candidates)
     }
 
-    /// Return: opens the selected result, or, while the list is still loading or ranking the latest query,
-    /// opens the top result once it is ready (pressing Return right after typing used to do nothing).
+    /// Every row in order.
+    var rows: [Row] {
+        let addressRow = address.map { [Row.address($0)] } ?? []
+        return (addressLeads ? addressRow : []) + pageResults.map(Row.page) + results.map(Row.file) + (addressLeads ? [] : addressRow)
+    }
+
+    /// At most this many pages above the files; more when there are no files to show.
+    private var pageLimit: Int { root == nil ? 30 : 6 }
+
+    /// The address row and the page rows follow the query at once: they need no listing.
+    private func matchWeb() {
+        if let url = AddressInput.webURL(from: query) {
+            address = url
+            addressLeads = true
+        } else {
+            address = AddressInput.possibleWebURL(from: query)
+            addressLeads = root == nil
+        }
+        pageResults = Array(WebPagesModel.matching(query, in: visited).prefix(pageLimit))
+        selectedIndex = 0
+    }
+
+    /// Return: opens the selected row. A file row waits while the list is still loading or ranking the latest
+    /// query, and then opens the top row once it is ready (pressing Return right after typing used to do nothing);
+    /// an address or a page opens at once.
     func submit() {
-        if isLoading || isRanking {
+        let rows = rows
+        let selected = rows.indices.contains(selectedIndex) ? rows[selectedIndex] : nil
+        // A trailing address waits too: while the files load it is the only row, not the one the reader chose.
+        let waitsForFiles: Bool = switch selected {
+        case nil, .file?: true
+        case .address?: !addressLeads
+        case .page?: false
+        }
+        if isLoading || isRanking, waitsForFiles {
             submitWhenReady = true
             return
         }
-        guard let path = selectedPath else { return }
-        let hostID = hostID
-        dismiss()
-        onOpen(hostID, path)
+        switch selected {
+        case .address(let url)?:
+            dismiss()
+            onOpenAddress(url)
+        case .page(let page)?:
+            dismiss()
+            onOpenPage(page)
+        case .file?:
+            guard let path = selectedPath else { return }
+            let hostID = hostID
+            dismiss()
+            onOpen(hostID, path)
+        case nil:
+            break
+        }
     }
 
     func dismiss() {
@@ -95,33 +176,45 @@ final class QuickOpenModel {
         rankTask?.cancel()
     }
 
-    /// The absolute path of the selected result.
+    /// The absolute path of the selected row, when it is a file.
     var selectedPath: String? {
-        guard let root, results.indices.contains(selectedIndex) else { return nil }
-        return PathUtilities.join(root, results[selectedIndex])
+        let rows = rows
+        guard let root, rows.indices.contains(selectedIndex), case .file(let path) = rows[selectedIndex] else { return nil }
+        return PathUtilities.join(root, path)
     }
 
     func moveSelection(by delta: Int) {
-        guard !results.isEmpty else { return }
-        selectedIndex = min(max(0, selectedIndex + delta), results.count - 1)
+        let count = rows.count
+        guard count > 0 else { return }
+        selectedIndex = min(max(0, selectedIndex + delta), count - 1)
     }
 
     /// Ranks off the main actor; a newer query cancels an older ranking.
     private func rerank() {
         rankTask?.cancel()
+        guard root != nil else { return }
         let query = query
         let candidates = candidates
         isRanking = true
         rankTask = Task { [weak self] in
             let ranked = await Self.rank(query, candidates)
             guard !Task.isCancelled, let self else { return }
+            let before = self.rows
+            let onFile = !before.indices.contains(self.selectedIndex) || { if case .file = before[self.selectedIndex] { true } else { false } }()
             self.results = ranked
-            self.selectedIndex = 0
             self.isRanking = false
             if self.submitWhenReady, !self.isLoading {
+                // Return was pressed on a file row (or before there were rows): it opens the best file, never an
+                // address or a page that happens to sit above it.
                 self.submitWhenReady = false
-                self.submit()
+                if let first = self.rows.firstIndex(where: { if case .file = $0 { true } else { false } }) {
+                    self.selectedIndex = first
+                    self.submit()
+                }
+                return
             }
+            // A selection the reader moved onto an address or a page stays where it is.
+            if onFile { self.selectedIndex = 0 }
         }
     }
 }

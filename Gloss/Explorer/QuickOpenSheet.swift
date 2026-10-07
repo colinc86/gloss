@@ -5,7 +5,8 @@ import Viewers
 import UniformTypeIdentifiers
 
 /// The Open Quickly panel: type to filter, arrows to move, Return to open, Escape to close. A large field, real file
-/// icons, the typed characters lit up in each name, and one selection highlight that glides between rows.
+/// icons, the typed characters lit up in each name, and one selection highlight that glides between rows. An
+/// address typed opens as a page from the top row; pages visited before are listed above the files.
 struct QuickOpenSheet: View {
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
@@ -22,7 +23,7 @@ struct QuickOpenSheet: View {
                 Image(systemName: "magnifyingglass")
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.secondary)
-                TextField("Open quickly", text: $quick.query)
+                TextField("Open quickly", text: $quick.query, prompt: Text(quick.root == nil ? "Open a web address or a page you visited" : "Open quickly"))
                     .textFieldStyle(.plain)
                     .font(.title2)
                     .focused($focused)
@@ -50,21 +51,32 @@ struct QuickOpenSheet: View {
         if let error = quick.errorMessage {
             EmptyState(symbol: "exclamationmark.triangle", title: "Can't list files", message: error)
                 .frame(height: Self.emptyHeight)
-        } else if !quick.isLoading, quick.results.isEmpty {
+        } else if !quick.isLoading, quick.rows.isEmpty {
             EmptyState(
-                symbol: quick.query.isEmpty ? "folder" : "questionmark.folder",
-                title: quick.query.isEmpty ? "No files" : "Nothing matches",
-                message: quick.query.isEmpty ? "This folder has no files to open." : "Try fewer letters; they only need to appear in order."
+                symbol: quick.root == nil ? "globe" : quick.query.isEmpty ? "folder" : "questionmark.folder",
+                title: quick.root == nil ? (quick.query.isEmpty ? "No folder open" : "Nothing matches") : quick.query.isEmpty ? "No files" : "Nothing matches",
+                message: quick.root == nil ? "Type a web address, like example.com or localhost:3000, or part of a page you visited."
+                    : quick.query.isEmpty ? "This folder has no files to open." : "Try fewer letters; they only need to appear in order."
             )
             .frame(height: Self.emptyHeight)
         } else {
+            let rows = quick.rows
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 1) {
-                        ForEach(Array(quick.results.enumerated()), id: \.element) { index, path in
-                            // Keyed by path: an index id would keep stale rows when the results change.
-                            row(path, query: quick.query, selected: index == quick.selectedIndex)
-                                .id(path)
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
+                            // Keyed by the row: an index id would keep stale rows when the results change.
+                            if let header = Self.header(before: index, in: rows) {
+                                Text(header)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, DS.Space.m)
+                                    .padding(.top, index == 0 ? DS.Space.xs : DS.Space.s)
+                                    .padding(.bottom, 2)
+                            }
+                            row(item, query: quick.query, selected: index == quick.selectedIndex)
+                                .id(item.id)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     quick.selectedIndex = index
@@ -82,32 +94,83 @@ struct QuickOpenSheet: View {
                 // while the first listing loads.
                 .frame(height: min(Self.maximumListHeight, max(listHeight, 60)))
                 .onChange(of: quick.selectedIndex) { _, index in
-                    guard quick.results.indices.contains(index) else { return }
-                    withAnimation(DS.Motion.smooth) { proxy.scrollTo(quick.results[index]) }
+                    let rows = quick.rows
+                    guard rows.indices.contains(index) else { return }
+                    withAnimation(DS.Motion.smooth) { proxy.scrollTo(rows[index].id) }
                 }
             }
         }
     }
 
-    private func row(_ path: String, query: String, selected: Bool) -> some View {
-        let name = (path as NSString).lastPathComponent
-        let folder = (path as NSString).deletingLastPathComponent
-        return HStack(spacing: DS.Space.m) {
-            Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (name as NSString).pathExtension) ?? .data))
-                .resizable()
-                .frame(width: 18, height: 18)
-            Text(Self.highlighted(name, query: query))
-                .lineLimit(1)
-            if !folder.isEmpty {
-                Text(folder)
-                    .foregroundStyle(.secondary)
+    /// "Web pages" over the first page and "Files" over the first file, when both kinds are listed.
+    static func header(before index: Int, in rows: [QuickOpenModel.Row]) -> String? {
+        let hasPages = rows.contains { if case .page = $0 { true } else { false } }
+        let hasFiles = rows.contains { if case .file = $0 { true } else { false } }
+        guard hasPages, hasFiles || rows.first.map({ if case .address = $0 { true } else { false } }) == true else { return nil }
+        let previous = index > 0 ? rows[index - 1] : nil
+        switch (rows[index], previous) {
+        case (.page, .page?): return nil
+        case (.page, _): return "Web Pages"
+        case (.file, .file?): return nil
+        case (.file, _): return "Files"
+        default: return nil
+        }
+    }
+
+    private func row(_ item: QuickOpenModel.Row, query: String, selected: Bool) -> some View {
+        HStack(spacing: DS.Space.m) {
+            switch item {
+            case .address(let url):
+                Image(systemName: "globe")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.tint)
+                    .frame(width: 18, height: 18)
+                Text("Open \(WebDocumentKey.normalize(url))")
                     .lineLimit(1)
-                    .truncationMode(.head)
-            }
-            Spacer(minLength: 0)
-            if let root = model.quickOpen.root,
-               let mark = model.explorer.mark(hostID: model.quickOpen.hostID, path: PathUtilities.join(root, path)) {
-                NoteMarkBadge(mark: mark)
+                    .truncationMode(.middle)
+                if let via = model.via(for: url, on: model.addressHost, chosen: false) {
+                    Text("via \(model.hosts.entry(for: via)?.name ?? "")")
+                        .foregroundStyle(.teal)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            case .page(let page):
+                Image(systemName: page.pinned ? "pin" : "clock")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                Text(Self.highlighted(page.title ?? Core.Document.displayName(of: page.url), query: query))
+                    .lineLimit(1)
+                if page.title != nil {
+                    Text(Core.Document.displayName(of: page.url))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                if page.hostID != .web {
+                    Text("via \(model.hosts.entry(for: page.hostID)?.name ?? "")")
+                        .foregroundStyle(.teal)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            case .file(let path):
+                let name = (path as NSString).lastPathComponent
+                let folder = (path as NSString).deletingLastPathComponent
+                Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (name as NSString).pathExtension) ?? .data))
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                Text(Self.highlighted(name, query: query))
+                    .lineLimit(1)
+                if !folder.isEmpty {
+                    Text(folder)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+                Spacer(minLength: 0)
+                if let root = model.quickOpen.root,
+                   let mark = model.explorer.mark(hostID: model.quickOpen.hostID, path: PathUtilities.join(root, path)) {
+                    NoteMarkBadge(mark: mark)
+                }
             }
             if selected {
                 KeyCap("↩")
@@ -149,10 +212,18 @@ struct QuickOpenSheet: View {
         return next == needle.count ? result : AttributedString(name)
     }
 
+    /// "12 files · 3 pages"; only pages without a folder, only files when no page matches.
+    static func countLine(files: Int?, pages: Int) -> String {
+        let pageText = "\(pages) \(pages == 1 ? "page" : "pages")"
+        guard let files else { return pageText }
+        let fileText = "\(files) \(files == 1 ? "file" : "files")"
+        return pages == 0 ? fileText : fileText + " · " + pageText
+    }
+
     private func footer(_ quick: QuickOpenModel) -> some View {
         HStack(spacing: DS.Space.s) {
-            Text(quick.isLoading ? "Listing files…" : "\(quick.results.count) \(quick.results.count == 1 ? "file" : "files")")
-                .contentTransition(.numericText(value: Double(quick.results.count)))
+            Text(quick.isLoading ? "Listing files…" : Self.countLine(files: quick.root == nil ? nil : quick.results.count, pages: quick.pageResults.count))
+                .contentTransition(.numericText(value: Double(quick.results.count + quick.pageResults.count)))
             Spacer()
             KeyCap("↑"); KeyCap("↓"); Text("move")
             Text("·").foregroundStyle(.quaternary)
@@ -164,7 +235,7 @@ struct QuickOpenSheet: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, DS.Space.l)
         .padding(.vertical, DS.Space.s + 1)
-        .animation(DS.Motion.smooth, value: quick.results.count)
+        .animation(DS.Motion.smooth, value: quick.results.count + quick.pageResults.count)
     }
 
     private func open() {

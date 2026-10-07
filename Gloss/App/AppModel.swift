@@ -38,6 +38,8 @@ final class AppModel {
     }
     var pendingLinkOpen: PendingLinkOpen?
     let quickOpen = QuickOpenModel()
+    /// The live pages visited, for the explorer's Web section and Open Quickly.
+    let webPages: WebPagesModel
     let pullRequestPicker = PullRequestPickerModel()
     let atlassianPicker = AtlassianPickerModel()
     /// The one web view, shared by every HTML document and live page.
@@ -197,6 +199,7 @@ final class AppModel {
         let store = NoteStore(database: database)
         noteStore = store
         explorer = ExplorerModel(noteStore: store)
+        webPages = WebPagesModel(noteStore: store)
         notesPanel = NotesPanelModel(noteStore: store)
         noteLink = NoteLinkModel(noteStore: store)
         settings = SettingsStore(noteStore: store)
@@ -333,6 +336,12 @@ final class AppModel {
             Task { await self?.createWholeFileNote(hostID: hostID, path: path, body: body, color: color) }
         }
         quickOpen.onOpen = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+        quickOpen.onOpenAddress = { [weak self] url in
+            guard let self else { return }
+            openWebPage(url, via: via(for: url, on: addressHost, chosen: false))
+        }
+        quickOpen.onOpenPage = { [weak self] page in self?.open(page) }
+        quickOpen.pages = { [weak self] in self?.webPages.pages ?? [] }
         pullRequestPicker.onOpen = { [weak self] pull in Task { await self?.openPullRequest(pull) } }
         atlassianPicker.onOpen = { [weak self] reference in Task { await self?.openAtlassian(reference) } }
         // Without a key a pasted pull request, issue or page URL is still worth reading: as a web page.
@@ -831,6 +840,8 @@ final class AppModel {
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
         session.onNoteCommitted = { [weak self] note in self?.notesPanel.makeListed(note) }
         if let via { session.proxy = proxy(for: via) }
+        // A page opened is a visit; showing one already open again (a click in the Web section, Back) is not.
+        webPages.recordVisit(url: path, hostID: hostID)
         sessions[key] = session
         activeSession = session
         Task { await session.open() }
@@ -843,7 +854,12 @@ final class AppModel {
     /// reached from it is the open web's.
     private func webDocumentDidChange(_ url: URL, via: HostID?, previous: HTMLViewerController?) {
         guard browserMayMoveViewer(from: previous) else { return }
+        let wasOpen = sessions["\((via ?? .web).rawValue):\(WebDocumentKey.normalize(url))"] != nil
         openWebPage(url, via: via)
+        // Navigating to a page still open is a visit too, unlike showing it again from the Web section.
+        if wasOpen, let session = activeSession, session.kind == .web {
+            webPages.recordVisit(url: session.path, hostID: session.hostID, title: session.html?.pageTitle)
+        }
         browserOpened = activeSession
     }
 
@@ -883,10 +899,78 @@ final class AppModel {
         return local
     }
 
-    var isOpenLocationPresented = false
+    /// Bumped to put the caret in the window title's address field (File › Open Location…, Go › Go to Address…).
+    var addressFocusRequest = 0
 
     func presentOpenLocation() {
-        isOpenLocationPresented = true
+        if let window = mainWindow, !window.isKeyWindow { window.makeKeyAndOrderFront(nil) }
+        addressFocusRequest += 1
+    }
+
+    /// The machine an address is opened on unless one is chosen: the open document's ssh host, if it has one,
+    /// so `localhost:3000` means the dev server beside the files being read; this Mac otherwise.
+    var addressHost: HostID {
+        guard let host = activeSession?.hostID, hosts.entry(for: host)?.kind == .ssh else { return .local }
+        return host
+    }
+
+    /// The home directory `~` stands for on a host, when known.
+    func home(of hostID: HostID) -> String? {
+        hostID == .local ? NSHomeDirectory() : hostHomes[hostID]
+    }
+
+    /// The ssh host a page is opened through: `hostID` when the user chose it in the field, or when the page is on
+    /// the loopback (`localhost:3000` beside the files being read); an outside page is the open web's otherwise.
+    func via(for url: URL, on hostID: HostID, chosen: Bool) -> HostID? {
+        guard hostID != .local, chosen || WebProxyMap.loopbackPort(of: url) != nil else { return nil }
+        return hostID
+    }
+
+    /// The folder of the open document on `hostID`, which a relative path typed in an address field is read
+    /// against; nil for a page or an integration's document.
+    func addressFolder(on hostID: HostID) -> String? {
+        guard let session = activeSession, session.hostID == hostID, !hostID.isVirtual, !DocumentKindDetector.isWebURL(session.path) else { return nil }
+        return PathUtilities.parent(of: session.path)
+    }
+
+    /// Opens what an address field holds on `hostID` (this Mac or an ssh host): a web page (through that host when
+    /// `chosen` says the user picked it, or the page is on its loopback), a pull request, issue or page URL as its
+    /// document when its integration is set up, a folder as a root, a file as a document (a relative path beside
+    /// the open document). False when the text is neither an address nor a path.
+    @discardableResult
+    func openAddress(_ text: String, on hostID: HostID, chosen: Bool = false) -> Bool {
+        switch AddressInput.parse(text, home: home(of: hostID), folder: addressFolder(on: hostID)) {
+        case .web(let url)?:
+            if let resolved = resolveURL(url), let integration = [HostID.github, .atlassian].first(where: { $0.rawValue == "h_" + resolved.host }),
+               fileSystems[integration] != nil {
+                Task { await URLRouter.open(hostID: integration, path: resolved.path, line: nil, model: self) }
+            } else {
+                openWebPage(url, via: via(for: url, on: hostID, chosen: chosen))
+            }
+            return true
+        case .path(let path)?:
+            Task { await openPath(path, on: hostID) }
+            return true
+        case nil:
+            return false
+        }
+    }
+
+    /// A typed path: a directory opens as a root, anything else as a document with its folder in the explorer.
+    private func openPath(_ path: String, on hostID: HostID) async {
+        guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { return }
+        if let attributes = try? await fileSystem.stat(path), attributes.kind == .directory {
+            pickedHost = hostID
+            await explorer.openRoot(hostID: hostID, path: path)
+            return
+        }
+        await URLRouter.open(hostID: hostID, path: path, line: nil, model: self)
+    }
+
+    /// Opens a page from the explorer's Web section or Open Quickly, on the host it was visited on.
+    func open(_ page: WebPage) {
+        guard let url = URL(string: page.url) else { return }
+        openWebPage(url, via: page.hostID == .web ? nil : page.hostID)
     }
 
     var isReportPresented = false
@@ -969,7 +1053,11 @@ final class AppModel {
     var selectedRootIsVirtual: Bool { explorer.selectedTab?.hostID.isVirtual ?? false }
 
     func presentQuickOpen() {
-        guard let tab = explorer.selectedTab, !tab.hostID.isVirtual else { return }
+        // With no folder, or a pull request, project or space in front, it still opens addresses and pages.
+        guard let tab = explorer.selectedTab, !tab.hostID.isVirtual else {
+            quickOpen.present(root: nil, hostID: .local, connection: nil)
+            return
+        }
         guard tab.hostID != .local else {
             quickOpen.present(root: tab.path, hostID: .local, connection: nil)
             return
@@ -1001,7 +1089,12 @@ final class AppModel {
 
     /// Shows the open document in the explorer, opening its folder as a root when no root contains it.
     func revealActiveDocumentInExplorer() {
-        guard let session = activeSession, session.kind != .web else { return }
+        guard let session = activeSession else { return }
+        // A page has no folder: it is found in the explorer's Web section.
+        guard session.kind != .web, !DocumentKindDetector.isWebURL(session.path) else {
+            pickedHost = .web
+            return
+        }
         Task {
             if await !explorer.reveal(hostID: session.hostID, path: session.path) {
                 await openRootIfNeeded(hostID: session.hostID, containing: session.path)
@@ -1230,6 +1323,7 @@ final class AppModel {
         updateDockBadge()
         sweepAttachments()
         await hosts.load()
+        await webPages.load()
         // The token note links must carry exists before the Herdr plugin first reads it.
         if !launchOptions.isTestHost { _ = URLRouter.token() }
         // Set before anything can save a key, so no save is missed; registrations are queued and only act on what

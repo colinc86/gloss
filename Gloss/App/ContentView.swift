@@ -11,10 +11,13 @@ struct ContentView: View {
     @State private var window = WindowReference()
     @Environment(\.openWindow) private var openWindow
 
-    /// The host under the title: an ssh alias, `owner/repo #12`, `Jira · PROJ`, `Confluence · SPACE`; nothing on this Mac.
+    /// The host under the title: an ssh alias, `owner/repo #12`, `Jira · PROJ`, `Confluence · SPACE`, a page's title;
+    /// nothing on this Mac.
     static func subtitle(for session: DocumentSession, hosts: HostsModel) -> String {
         switch session.hostID {
         case .local: ""
+        // A page's own title, once it has one: its name is its address.
+        case .web: session.html?.pageTitle ?? ""
         case .github: PullRequestPath(session.path).map { "\($0.repository) #\($0.number)" } ?? "GitHub"
         case .atlassian:
             switch AtlassianPath(session.path) {
@@ -46,7 +49,8 @@ struct ContentView: View {
                         title: "Open a file",
                         message: model.selectedRootIsVirtual ? "Pick one in the explorer." : "Pick one in the explorer, or jump straight to it by name."
                     ) {
-                        // A pull request, project or space is browsed in the tree; there is no file index to jump through.
+                        // A pull request, project or space is browsed in the tree; there is no file index to jump through
+                        // (Open Quickly still takes an address there, from the menu or ⌘P).
                         if !model.selectedRootIsVirtual {
                             Button {
                                 model.presentQuickOpen()
@@ -71,6 +75,12 @@ struct ContentView: View {
                     }
                 }
             }
+            .toolbar(removing: .title)
+            // A page's title, once it has loaded, names it in the explorer's Web section and in Open Quickly.
+            .onChange(of: model.activeSession?.html?.pageTitle) { _, title in
+                guard let title, let session = model.activeSession, DocumentKindDetector.isWebURL(session.path) else { return }
+                model.webPages.setTitle(title, url: session.path, hostID: session.hostID)
+            }
             .inspector(isPresented: Binding(get: { panelShown }, set: { model.showNotesPanel = $0 })) {
                 NotesPanel()
                     .inspectorColumnWidth(min: 300, ideal: 360, max: 480)
@@ -80,6 +90,12 @@ struct ContentView: View {
                     HistoryButton(direction: .back)
                     HistoryButton(direction: .forward)
                 }
+                // The title is drawn here rather than by the window, so it can turn into the address bar; the
+                // window keeps its title for Mission Control, the Window menu and VoiceOver.
+                ToolbarItem(placement: .navigation) {
+                    TitleAddressBar()
+                }
+                .sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         model.presentReport()
@@ -98,9 +114,6 @@ struct ContentView: View {
                     .help(model.notesPanel.draftCount == 0 ? "Toggle the notes panel (⌘⌥N)" : "Toggle the notes panel (⌘⌥N) · \(model.notesPanel.draftCount) unsent")
                 }
             }
-        }
-        .sheet(isPresented: Binding(get: { model.isOpenLocationPresented }, set: { model.isOpenLocationPresented = $0 })) {
-            OpenLocationSheet()
         }
         .sheet(isPresented: Binding(get: { model.isReportPresented }, set: { model.isReportPresented = $0 })) {
             ReportSheet()
@@ -288,6 +301,14 @@ private struct HistoryButton: View {
     @Environment(AppModel.self) private var model
     let direction: Direction
 
+    /// Under an entry's name: the folder it is in, after its host's name; a page's host when it was reached through
+    /// an ssh host, nothing more for one on the open web (its name already is its address).
+    static func place(of entry: DocumentHistory.Entry, hosts: HostsModel) -> String {
+        let host = hosts.entry(for: entry.hostID)?.name
+        if DocumentKindDetector.isWebURL(entry.path) { return entry.hostID == .web ? "Web" : host.map { "via \($0)" } ?? "" }
+        return host.map { "\($0) · " + PathUtilities.parent(of: entry.path) } ?? PathUtilities.parent(of: entry.path)
+    }
+
     var body: some View {
         let entries = direction == .back ? model.history.recentBack() : model.history.recentForward()
         Menu {
@@ -295,8 +316,8 @@ private struct HistoryButton: View {
                 Button {
                     if direction == .back { model.goBack(to: entry) } else { model.goForward(to: entry) }
                 } label: {
-                    Text(PathUtilities.name(of: entry.path))
-                    Text(model.hosts.entry(for: entry.hostID).map { "\($0.name) · " + PathUtilities.parent(of: entry.path) } ?? PathUtilities.parent(of: entry.path))
+                    Text(Core.Document.displayName(of: entry.path))
+                    Text(Self.place(of: entry, hosts: model.hosts))
                 }
             }
         } label: {

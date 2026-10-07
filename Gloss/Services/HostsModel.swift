@@ -38,9 +38,11 @@ final class HostsModel {
 
     private let noteStore: NoteStore
     let manager: SSHConnectionManager
-    private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local, origin: .local)]
+    private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local, origin: .local), HostsModel.web]
+    /// The open web: always listed after this Mac, for the explorer's Web section (pages, not files).
+    static let web = Entry(id: .web, name: "web", kind: .web, origin: .local)
     /// Hosts the app serves itself (a pull request tree, a Jira project) while their key is saved; they need no
-    /// connection and appear after this Mac in the host menu.
+    /// connection and appear after this Mac and the web in the host menu.
     private(set) var virtualHosts: [Entry] = []
     private(set) var status: [HostID: Status] = [:]
     /// The latest stage ssh reported while connecting, e.g. "Authenticating as colin…".
@@ -138,7 +140,7 @@ final class HostsModel {
             }
         }
         let ssh = list.dropFirst().sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        entries = [list[0]] + virtualHosts.sorted { $0.name < $1.name } + ssh
+        entries = [list[0], Self.web] + virtualHosts.sorted { $0.name < $1.name } + ssh
     }
 
     /// Mirror of the setting that `refresh` reads, so the didSet above does not loop.

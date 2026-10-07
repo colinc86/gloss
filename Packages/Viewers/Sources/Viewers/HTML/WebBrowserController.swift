@@ -120,6 +120,9 @@ public final class WebBrowserController {
         if load {
             self.load(controller)
         } else {
+            // The web view already shows this page, so its title will not change again to say so.
+            let title = webView.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let title, !title.isEmpty { controller.pageTitle = title }
             loadedVersion = controller.renderedVersion
             isLoaded = true
             controller.pageRect = topRect()

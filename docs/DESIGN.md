@@ -252,8 +252,12 @@ path. Dropping on the Dock icon is not supported yet.
 - **Open Quickly**: a 600 pt sheet whose list is exactly as tall as its results (up to 330 pt, then it scrolls), so two matches make a short sheet that shrinks and grows smoothly as you type, as Spotlight's does; empty and error states keep a steady 240 pt. A `.title2` search field; rows with the file type's system icon, the name with
   the typed letters in accent bold (only when they all occur in the name), and the folder dimmed after it; one
   rounded selection that glides between rows (`matchedGeometryEffect`) and shows a `↩` key cap; empty and error
-  states use `EmptyState`; a footer with the result count and key hints. Hover never moves the selection (a list
-  changing under a resting pointer would steal it from the keyboard).
+  states use `EmptyState`; a footer with the result count ("12 files · 3 pages") and key hints. Hover never moves the
+  selection (a list changing under a resting pointer would steal it from the keyboard). A query that can only be an
+  address gets a first row, an accent globe and "Open https://…" (with "via host" in teal for a loopback address while the open
+  document is on an ssh host; a query that may be a file name, `README.md`, gets the row after the files instead); visited pages matching it follow under a "Web Pages" caption (a clock, or a pin for a pinned one,
+  the title lit like a file name, the address dimmed), then "Files". Arrows and Return cover every row. With no folder
+  open, or an integration root in front, the panel still opens, offering addresses and up to 30 pages.
   Files with open notes carry the tree's marker in the row (`NoteMarkBadge`: their colours as overlapping dots and
   the count, orange when one needs attention), so the files worth jumping to stand out in the list.
 - **Connection notice** (sidebar, remote hosts): Not connected (info, Connect); Connecting to asus (info, ssh's
@@ -541,9 +545,23 @@ path. Dropping on the Dock icon is not supported yet.
   names. When the page changes, the element is found again by selector, then by text (one match moves the note
   and flags it; several pick the nearest; none orphans it), and a page back exactly as it was returns an orphan to
   a draft.
-- **Open Location** (File › Open Location…, ⇧⌘L): a sheet in the Open Quickly family with an address field and a Via
-  picker (This Mac, or an ssh host) that explains itself: localhost on another machine is reached through the app's
-  ssh connection, and the page is that host's document.
+- **Title as address bar** (`TitleAddressBar`): the window draws no title of its own (`.toolbar(removing: .title)`;
+  `navigationTitle` still names the window for Mission Control and VoiceOver). Beside Back and Forward, the document's
+  name (`.headline`) over its subtitle (`.caption`, secondary: the ssh host, `owner/repo #12`, a page's title) sits
+  without a glass capsule and gains a faint rounded fill on hover, so it reads as clickable without looking like a
+  button. A click, File › Open Location… (⇧⌘L) or Go › Go to Address… turns it into a 460 pt field holding the
+  page's live address or the file's path. The field (`AddressField`) has a leading globe or folder
+  that follows what the text reads as, and, when ssh hosts exist, a small menu at its end naming the machine (This
+  Mac in secondary, an ssh host in teal) that keeps the caret in the field. Return opens; text that is neither an
+  address nor a path shakes the field (not with Reduce Motion), outlines it orange and says "Not an address or a
+  path" inside it, announced to VoiceOver. Escape or a click elsewhere puts the title back; an open menu (the host
+  menu, the menu bar) does not, and the caret returns to the field when it closes. The browser's own toolbar
+  keeps only Back, Forward and the "via host" capsule.
+- **Web in the explorer**: the host menu always lists Web (`globe`) after this Mac. Picked, the root switcher, tree and
+  filter footer give way to an `AddressField` (which also narrows the lists as you type; Return opens what was typed)
+  and a sidebar list of Pinned and Recent pages: the title over the address in caption, a teal host name for a page
+  reached through an ssh host, the page in the viewer selected. Double-click or Return opens a row; arrows only move
+  the selection. Context menu: Open, Pin or Unpin, Copy Address, Remove from Recent. Reveal in Explorer (⇧⌘J) on a page picks Web.
 - **Wrapped lines keep their indentation**: when lines wrap, a line's continuation rows start at its own
   indentation plus one four-space step (as Xcode and VS Code wrap), so a wrapped comment or argument list never reads
   as a new line of code. The indent is capped at 40% of the column for deeply nested lines (re-measured when the column's width changes by
@@ -757,5 +775,5 @@ path. Dropping on the Dock icon is not supported yet.
   and keys live in the Keychain. Saving tests the key first: a key the service refuses is not saved and the sentence
   says so ("…It wasn't saved"); one that cannot be checked (offline) is saved and says it could not be checked.
   Remove asks first when it would close open pull requests, issues or pages. Integration roots offer Copy URL in the
-  tree's menu instead of Copy Path, and Open Quickly and Find in Files are off for them (they are browsed, not
-  searched).
+  tree's menu instead of Copy Path, and Find in Files is off for them, as Open Quickly's file list is (they are browsed,
+  not searched; Open Quickly still takes addresses and pages there).

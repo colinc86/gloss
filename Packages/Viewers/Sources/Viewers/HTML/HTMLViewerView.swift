@@ -34,7 +34,6 @@ public struct HTMLViewerView: View {
                     }
                     .transition(.opacity)
                 }
-                WebAddressField(controller: controller, browser: browser)
                 if let via {
                     Label("via \(via)", systemImage: "network")
                         .font(.caption2.weight(.medium))
@@ -92,62 +91,6 @@ public struct HTMLViewerView: View {
         }
         // Escape leaves element notes wherever focus is (the page catches it too, but only while it has focus).
         .onExitCommand(perform: controller.isNoteMode ? { controller.isNoteMode = false } : nil)
-    }
-}
-
-/// The page's name at rest: the file's title with a globe, or a live page's address. A click turns it into a
-/// field; Return opens what was typed, Escape puts the address back.
-struct WebAddressField: View {
-    let controller: HTMLViewerController
-    let browser: WebBrowserController
-    @State private var editing = false
-    @State private var draft = ""
-    @FocusState private var focused: Bool
-
-    private var address: String? {
-        if case .live = controller.page { return (browser.displayedURL ?? liveURL)?.absoluteString }
-        return nil
-    }
-
-    private var liveURL: URL? { if case .live(let url) = controller.page { url } else { nil } }
-
-    var body: some View {
-        if editing {
-            TextField("Address", text: $draft)
-                .textFieldStyle(.plain)
-                .font(.caption)
-                .focused($focused)
-                .onSubmit(open)
-                .onExitCommand { editing = false }
-                .onChange(of: focused) { _, isFocused in if !isFocused { editing = false } }
-                .frame(minWidth: 180, maxWidth: 520)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-                .onAppear { focused = true }
-        } else {
-            Button {
-                draft = address ?? ""
-                editing = true
-            } label: {
-                Label(address ?? controller.pageTitle ?? "Web page", systemImage: "globe")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .contentTransition(.opacity)
-            }
-            .buttonStyle(.plain)
-            .help(address == nil ? "Click to type an address" : "Open another address")
-            .accessibilityLabel(address.map { "Address: " + $0 } ?? "Address")
-            .animation(Motion.smooth, value: controller.pageTitle)
-        }
-    }
-
-    private func open() {
-        editing = false
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        guard let url = WebAddress.url(from: text) else { return }
-        browser.open(url)
     }
 }
 

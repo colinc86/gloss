@@ -25,13 +25,17 @@ struct ExplorerSidebar: View {
             if let status = statusRow {
                 status
             }
-            if !explorer.tabs.isEmpty {
+            if pickedHost == .web {
+                WebPagesSection()
+            } else if !explorer.tabs.isEmpty {
                 RootSwitcher(hostName: hostName, openFolder: openFolder)
                     .padding(.horizontal, DS.Space.s)
                     .padding(.vertical, DS.Space.s)
                 Divider()
             }
-            if explorer.contentSearch.isVisible, explorer.selectedTab != nil {
+            if pickedHost == .web {
+                EmptyView()
+            } else if explorer.contentSearch.isVisible, explorer.selectedTab != nil {
                 searchBar
                 Divider()
                 SearchResultsView()
@@ -59,11 +63,14 @@ struct ExplorerSidebar: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(DS.Motion.smooth, value: model.followHerdr && model.followedPane != nil)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                Divider()
-                footer
+            // The Web section's own field narrows its pages; the file filter has nothing to filter there.
+            if pickedHost != .web {
+                VStack(spacing: 0) {
+                    Divider()
+                    footer
+                }
+                .background(.bar)
             }
-            .background(.bar)
         }
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
@@ -108,7 +115,9 @@ struct ExplorerSidebar: View {
             ForEach(model.hosts.entries) { entry in
                 Button {
                     model.pickedHost = entry.id
-                    if entry.id == .github {
+                    if entry.id == .web {
+                        // Pages, not files: the section lists them and takes an address.
+                    } else if entry.id == .github {
                         model.presentOpenPullRequest()
                     } else if entry.id == .atlassian {
                         model.presentOpenAtlassian()
@@ -116,12 +125,14 @@ struct ExplorerSidebar: View {
                         Task { await model.openRemoteRoot(hostID: entry.id) }
                     }
                 } label: {
-                    Label(entry.id == .github ? "GitHub" : entry.id == .atlassian ? "Atlassian" : entry.name, systemImage: entry.kind == .local ? "desktopcomputer" : entry.id == .github ? "arrow.triangle.pull" : entry.id == .atlassian ? "square.stack.3d.up" : statusIcon(entry.id))
+                    Label(Self.label(entry.id, name: entry.name), systemImage: symbol(entry.id))
                 }
             }
             Divider()
             // ⇧⌘O belongs to File › Open Folder…; two bindings for one key made the menu bar's win silently.
-            if pickedHost == .github {
+            if pickedHost == .web {
+                Button("Open Location…") { model.presentOpenLocation() }
+            } else if pickedHost == .github {
                 Button("Open Pull Request…") { model.presentOpenPullRequest() }
             } else if pickedHost == .atlassian {
                 Button("Open Jira Issue or Confluence Page…") { model.presentOpenAtlassian() }
@@ -131,12 +142,32 @@ struct ExplorerSidebar: View {
             SettingsLink { Text("Manage Hosts…") }
         } label: {
             // This Mac is the default and the icon says so; a remote host names itself, since which one matters.
-            Label(pickedHost == .local ? "local" : pickedHost == .github ? "GitHub" : pickedHost == .atlassian ? "Atlassian" : hostName(pickedHost), systemImage: pickedHost == .local ? "desktopcomputer" : pickedHost == .github ? "arrow.triangle.pull" : pickedHost == .atlassian ? "square.stack.3d.up" : statusIcon(pickedHost))
+            Label(pickedHost == .local ? "local" : Self.label(pickedHost, name: hostName(pickedHost)), systemImage: symbol(pickedHost))
                 .labelStyle(.titleAndIcon)
         }
         .help(pickedHost == .local ? "Browsing this Mac. Choose another host…"
-              : "Browsing \(pickedHost == .github ? "GitHub" : pickedHost == .atlassian ? "Atlassian" : hostName(pickedHost)). Choose another host…")
+              : "Browsing \(Self.label(pickedHost, name: hostName(pickedHost))). Choose another host…")
         .accessibilityLabel("Host: \(hostName(pickedHost))")
+    }
+
+    /// How a host is named in the menu: the integrations and the web by what they are, others by their name.
+    static func label(_ hostID: HostID, name: String) -> String {
+        switch hostID {
+        case .web: "Web"
+        case .github: "GitHub"
+        case .atlassian: "Atlassian"
+        default: name
+        }
+    }
+
+    private func symbol(_ hostID: HostID) -> String {
+        switch hostID {
+        case .local: "desktopcomputer"
+        case .web: "globe"
+        case .github: "arrow.triangle.pull"
+        case .atlassian: "square.stack.3d.up"
+        default: statusIcon(hostID)
+        }
     }
 
     private func statusIcon(_ hostID: HostID) -> String {
@@ -149,7 +180,9 @@ struct ExplorerSidebar: View {
     }
 
     private func openFolder() {
-        if pickedHost == .local {
+        if pickedHost == .web {
+            model.presentOpenLocation()
+        } else if pickedHost == .local {
             model.explorer.chooseRootWithPanel(hostID: .local)
         } else if pickedHost == .github {
             model.presentOpenPullRequest()

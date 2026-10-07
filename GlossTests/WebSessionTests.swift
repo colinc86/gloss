@@ -49,11 +49,12 @@ struct WebSessionTests {
         model.revealActiveDocumentInExplorer()
         try? await Task.sleep(for: .milliseconds(100))
         #expect(model.explorer.tabs.isEmpty, "a page has no folder to open as a root")
+        #expect(model.pickedHost == .web, "it is found in the explorer's Web section instead")
         await model.shutDown()
     }
 
     @Test func addressesBecomeURLs() {
-        let url = OpenLocationSheet.url(from:)
+        let url = AddressInput.webURL(from:)
         #expect(url("localhost:3000") == URL(string: "http://localhost:3000"))
         #expect(url("127.0.0.1:5173/app") == URL(string: "http://127.0.0.1:5173/app"))
         #expect(url("example.com/docs") == URL(string: "https://example.com/docs"))
