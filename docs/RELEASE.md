@@ -53,8 +53,7 @@ The notes are what people see twice: as the release's description on GitHub and 
   The feed can't come from the contents API: Sparkle sets the feed's `Accept` itself, and that API then answers with
   JSON. (0.1.0 shipped with that URL, so 0.1.0 can't update itself.)
 - **Going public:** the feed URL stays. Write enclosures with the asset's `browser_download_url` (and rewrite the
-  existing items), remove the delegate's key handling and the "needs GitHub" wording (in the app, `README.md`'s Install section, and
-  `docs/guide/getting-started.md` and `integrations.md`), and release once.
+  existing items), remove the delegate's key handling and the "needs GitHub" wording (in the app's Settings), and release once.
 - Debug builds never start the updater. To try an update, build Release with an older version
   (`MARKETING_VERSION=0.0.9 CURRENT_PROJECT_VERSION=1`) into a scratch folder and run it from there.
 
