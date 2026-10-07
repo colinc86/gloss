@@ -120,7 +120,7 @@ struct TitleAddressBar: View {
         Group {
             if editing {
                 AddressField(text: $draft, host: $host, focus: $focused, prompt: "Web address or path", onOpen: { editing = false })
-                    .frame(width: 460)
+                    .frame(minWidth: 320, idealWidth: 640, maxWidth: 760)
                     .onExitCommand { editing = false }
                     .onAppear { focused = true }
                     .onChange(of: focused) { _, isFocused in

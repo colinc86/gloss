@@ -96,6 +96,9 @@ struct ContentView: View {
                     TitleAddressBar()
                 }
                 .sharedBackgroundVisibility(.hidden)
+                // The window's own title used to take the slack; without it the trailing buttons would close up
+                // against the title.
+                ToolbarSpacer(.flexible)
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         model.presentReport()
