@@ -30,7 +30,8 @@ When a new commit is pushed, open files reload and their notes move to follow.
 Enter your Atlassian site, email and API token. **File › Open Jira Issue or Confluence Page…** (⌥⌘I) lists your
 issues and spaces, or takes a key or URL.
 
-- An issue opens as Markdown with its fields, description and comments. Pasted screenshots show inline (drag over
+- In the explorer each issue shows its key and title. An issue opens as Markdown with its fields, description and
+  comments. Pasted screenshots show inline (drag over
   one to note part of it, or click it to note all of it), and every
   image or PDF attached is listed under **Attachments**. They're also files in the `<KEY> attachments` folder
   beside the issue: open one to note a region of it.

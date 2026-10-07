@@ -19,8 +19,10 @@ public struct DirectoryEntry: Sendable, Hashable, Identifiable {
     public var mtime: Date?
     /// POSIX permission bits.
     public var mode: UInt16?
+    /// What a virtual file is about, shown beside its name (a Jira issue's summary); never part of its path.
+    public var title: String?
 
-    public init(name: String, path: String, kind: FileKind, targetKind: FileKind? = nil, size: Int64? = nil, mtime: Date? = nil, mode: UInt16? = nil) {
+    public init(name: String, path: String, kind: FileKind, targetKind: FileKind? = nil, size: Int64? = nil, mtime: Date? = nil, mode: UInt16? = nil, title: String? = nil) {
         self.name = name
         self.path = path
         self.kind = kind
@@ -28,6 +30,7 @@ public struct DirectoryEntry: Sendable, Hashable, Identifiable {
         self.size = size
         self.mtime = mtime
         self.mode = mode
+        self.title = title
     }
 
     public var id: String { path }

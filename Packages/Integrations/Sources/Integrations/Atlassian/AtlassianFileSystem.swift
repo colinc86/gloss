@@ -240,7 +240,7 @@ public actor AtlassianFileSystem: FileSystemProvider {
             return []
         case .jiraProject(let project):
             return try await issueList(project).flatMap { issue in
-                var entries = [DirectoryEntry(name: "\(issue.key).md", path: AtlassianPath.jiraIssue(project: project, key: issue.key).path, kind: .file, mtime: issue.updated, mode: 0o444)]
+                var entries = [DirectoryEntry(name: "\(issue.key).md", path: AtlassianPath.jiraIssue(project: project, key: issue.key).path, kind: .file, mtime: issue.updated, mode: 0o444, title: issue.summary)]
                 if issue.viewableAttachments > 0 {
                     entries.append(DirectoryEntry(name: issue.key + AtlassianPath.jiraAttachmentsSuffix, path: AtlassianPath.jiraAttachments(project: project, key: issue.key).path, kind: .directory, mtime: issue.updated, mode: 0o555))
                 }

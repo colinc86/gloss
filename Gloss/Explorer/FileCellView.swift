@@ -54,12 +54,19 @@ final class FileCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// A file's name, or a Jira issue's key and summary ("CP-7 · Move the legend below the chart").
+    nonisolated static func displayName(_ entry: DirectoryEntry) -> String {
+        guard let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return entry.name }
+        return "\((entry.name as NSString).deletingPathExtension) · \(title)"
+    }
+
     func configure(with node: FileNode, mark: NoteMark? = nil, folderCount: Int = 0, holdsActive: Bool = false, animated: Bool = false) {
         // A pull request's root is its number on disk; it reads as the pull request.
         let isPullRoot = node.hostID == .github && node.parent == nil
         let isAtlassianRoot = node.hostID == .atlassian && node.parent == nil
         nameField.stringValue = isPullRoot ? (PullRequestPath(node.path).map { "\($0.repo) #\($0.number)" } ?? node.name)
-            : isAtlassianRoot ? (SwitcherEntry.atlassianLabel(node.path) ?? node.name) : node.name
+            : isAtlassianRoot ? (SwitcherEntry.atlassianLabel(node.path) ?? node.name) : Self.displayName(node.entry)
+        nameField.toolTip = node.entry.title.map { _ in Self.displayName(node.entry) }
         let symbol = isPullRoot ? "arrow.triangle.pull" : isAtlassianRoot ? (node.path.hasPrefix("/jira") ? "ticket" : "doc.text")
             : (node.hostID == .atlassian && node.isDirectory ? "doc.text" : node.isDirectory ? "folder" : "doc")
         iconView.image = node.hostID == .local
@@ -70,7 +77,7 @@ final class FileCellView: NSTableCellView {
         iconView.alphaValue = dim ? 0.5 : 1
         marker.update(mark: mark, folderCount: folderCount, animated: animated)
         setHoldsActive(holdsActive, animated: animated)
-        setAccessibilityLabel(Self.spokenLabel(name: node.name, isDirectory: node.isDirectory, mark: mark, folderCount: folderCount, holdsActive: holdsActive))
+        setAccessibilityLabel(Self.spokenLabel(name: Self.displayName(node.entry), isDirectory: node.isDirectory, mark: mark, folderCount: folderCount, holdsActive: holdsActive))
     }
 
     /// The row as VoiceOver reads it: the marker's count and colour and the open-file dot carry meaning too.

@@ -51,6 +51,8 @@ struct AtlassianFileSystemTests {
         Self.serve(stub)
         let fs = provider(stub)
         #expect(try await fs.list("/jira/CP").map(\.name) == ["CP-7.md"])
+        // The issue's summary rides along for the tree to show; the name and path stay the key.
+        #expect(try await fs.list("/jira/CP").first?.title?.isEmpty == false)
         let text = String(decoding: try await fs.read("/jira/CP/CP-7.md"), as: UTF8.self)
         #expect(text.hasPrefix("# CP-7: Name the receiver\n\n- **Task** · In Progress · High\n- Assignee: Colin Campbell · Reporter: Sam\n- Labels: infra\n- Parent: CP-1\n- Updated 2026-10-03T11:00:00Z · created 2026-10-01T08:00:00Z\n- <https://x.atlassian.net/browse/CP-7>\n\n## Description\n\nRename it.\n\n## Comments\n\n### Colin Campbell · 2026-10-01T09:00:00Z\nWhy?\n\n### Sam · 2026-10-02T09:00:00Z\nAgreed.\n"), Comment(rawValue: text))
         #expect(try await fs.stat("/jira/CP/CP-7.md").mtime == ISO8601DateFormatter().date(from: "2026-10-03T11:00:00Z"))
