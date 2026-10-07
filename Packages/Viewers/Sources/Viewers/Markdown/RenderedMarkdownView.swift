@@ -77,6 +77,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         private var highlightToken: UUID?
         private var scrollObserver: (any NSObjectProtocol)?
         private var frameObserver: (any NSObjectProtocol)?
+        private var textFrameObserver: (any NSObjectProtocol)?
         /// Held here: the layout manager keeps its delegate weakly.
         let layoutDelegate = MarkdownLayoutDelegate()
         static let minimumInset: CGFloat = 24
@@ -108,6 +109,23 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                         self?.animatedPictures?.layOut()
                     }
                 }
+            }
+            // Layout replaces estimated heights after the text is set, and pictures arriving (from the host or the web)
+            // resize theirs: either moves the text below without scrolling, so the outlines around notes must follow
+            // then too, or they keep the first layout's positions until the next scroll.
+            textView.postsFrameChangedNotifications = true
+            textFrameObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: textView, queue: .main) { [weak self, weak backdrop = self.backdrop] _ in
+                MainActor.assumeIsolated {
+                    backdrop?.needsDisplay = true
+                    self?.imageOverlay?.needsDisplay = true
+                    self?.controller.noteGeometry.changed()
+                    self?.animatedPictures?.layOut()
+                }
+            }
+            (textView as? RenderedTextView)?.onLayout = { [weak self] in
+                self?.imageOverlay?.needsDisplay = true
+                self?.controller.noteGeometry.changed()
+                self?.animatedPictures?.layOut()
             }
             controller.renderedRectProvider = { [weak self] range in self?.rect(for: range) }
             controller.topVisibleRenderedLocationProvider = { [weak self] in self?.textView?.topVisibleCharacterIndex }
@@ -155,6 +173,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             if let highlightToken { controller.source.removeHighlightObserver(highlightToken) }
             if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
             if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
+            if let textFrameObserver { NotificationCenter.default.removeObserver(textFrameObserver) }
             textView?.delegate = nil
         }
 
@@ -265,6 +284,14 @@ public struct MarkdownViewerView: View {
 /// text selects as usual.
 final class RenderedTextView: NSTextView {
     var onAttachedToWindow: (() -> Void)?
+    /// After each viewport layout: TextKit 2 settles estimated heights (and pictures that arrived) as it lays out,
+    /// moving text without scrolling or resizing, so anything drawn over the text follows here.
+    var onLayout: (() -> Void)?
+
+    override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
+        super.textViewportLayoutControllerDidLayout(controller)
+        onLayout?()
+    }
     weak var controller: MarkdownViewerController?
 
     /// The picture under `point` (view coordinates), with its index in the text and its frame.
