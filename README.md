@@ -13,7 +13,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-reduced-motion: reduce)" srcset="docs/media/hero.png">
-    <img src="docs/media/hero.gif" width="880" alt="Selecting a sentence in a Markdown file, adding a note to it, and sending it to an agent. Each highlight on the page is joined by a curve to its card in the notes panel.">
+    <img src="docs/media/hero.gif" width="880" alt="Selecting a sentence in a Markdown file, adding a note to it, and sending it to an agent, beside a note already sent and one the agent has resolved with a reply. Each highlight on the page is joined by a curve to its card in the notes panel.">
   </picture>
 </p>
 
@@ -29,10 +29,15 @@ context, and the agent marks each one resolved when it's done.
 - **Find your way.** Open Quickly, Find in Files, Go to Line, favorite folders, and Back and Forward between the
   places you've been.
 - **Every way to reach an agent.** Herdr, OpenCode's API, tmux or the clipboard out; MCP for the agent's replies.
-  Nothing leaves Gloss until you press Send.
+  Each folder picks the agent you last chose there, or the one working in it. Nothing leaves Gloss until you press
+  Send.
+- **Markdown as GitHub shows it.** Rendered Markdown draws the HTML GitHub allows, pictures from the web and GIFs
+  that play.
 - **Reviews too.** GitHub pull requests, Jira issues and Confluence pages open as documents you can annotate.
 - **Work through notes together.** Select several cards to send, resolve, recolor, copy as a packet or delete them
-  at once, or put sent and resolved notes back to drafts. Edit a note right in its card.
+  at once, or put sent and resolved notes back to drafts. Edit a note right in its card, and open its conversation
+  with the agent when you want the whole thread. The page draws the notes the panel lists, and resolved ones can be
+  hidden.
 - **Link and paths.** The notes panel follows the page, and a curve runs from each highlight to the middle of its
   card's color bar.
 - **Picks up where you left off.** Your folders, the document you were reading and where, Back and Forward, and the
