@@ -543,7 +543,8 @@ path. Dropping on the Dock icon is not supported yet.
   `svg` (found through transparent wrappers and links laid over it, never through text or through something that
   paints its own background) starts a picture gesture, except on one inside a button, label or other control, or
   one the size of an icon (under 48 pt both ways), whose click stays the page's; a `canvas` or `video` is left to
-  the page too (its controls, a map), and Pick Element reaches all of them. Past 3 pt the gesture drags out a region,
+  the page too (its controls, a map), and so is a picture marked `draggable` or one the page moves under the drag (a
+  carousel), and Pick Element reaches all of them. Past 3 pt the gesture drags out a region,
   otherwise the release takes the whole picture. The choice is drawn like a crop tool, as `RegionStyle` draws it
   in the other viewers: the rest of the picture dimmed, a white edge with a dark outline, L-shaped corner handles,
   and a size pill below in the picture's own pixels (`naturalWidth/Height` after `object-fit` and

@@ -222,6 +222,8 @@ public struct ElementRect: Codable, Hashable, Sendable {
 public struct ElementAnchor: Codable, Hashable, Sendable {
     public static let textLimit = 500
     public static let htmlLimit = 2048
+    /// The elements that are pictures, and can carry a region.
+    public static let pictureTags: Set<String> = ["img", "svg", "canvas", "video"]
 
     /// `#id`, `[data-testid="…"]`, or a `tag:nth-of-type(n)` path from the nearest uniquely identified ancestor.
     /// Never class names, which change with every stylesheet.

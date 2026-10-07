@@ -332,11 +332,28 @@ struct WebBridgeTests {
         let drawn = try #require(rects["n1"] as? [String: Any])
         #expect(drawn["x"] as? Double == box[0] + 10 && drawn["w"] as? Double == 50)
 
-        // Found again, the picture says how big it is, so a resized picture's region can follow it.
+        // Found again, the picture says how big it is, so a resized picture's region can follow it; one that hasn't
+        // loaded says nothing rather than 1x1.
         let anchor = ElementAnchor(selector: "#cover", tag: "img", text: "", html: "", rect: .init(x: 0, y: 0, w: 1, h: 1), region: picture.region)
         let id = NoteID.new()
         let resolved = await harness.browser.resolve([(id, anchor)])
         #expect(resolved[id]?.bySelector?.imageW == 200 && resolved[id]?.bySelector?.imageH == 100)
+        _ = try await harness.js("document.querySelector('#cover').removeAttribute('src'); return true")
+        let unloaded = await harness.browser.resolve([(id, anchor)])
+        #expect(unloaded[id]?.bySelector?.tag == "img" && unloaded[id]?.bySelector?.imageW == nil)
+    }
+
+    @Test func aPictureThePageMovesUnderTheDragIsNotChosen() async throws {
+        let harness = Harness(html: Self.pictures)
+        try await picturesReady(harness)
+        let box = try #require(try await harness.js("const r = document.querySelector('#thumb').getBoundingClientRect(); return [r.left, r.top]") as? [Double])
+        // A carousel slides the picture along while the button is down: the drag was the page's.
+        #expect(try await harness.js("""
+            return window.__cc.dragAt(x0, y0, x1, y1, () => { document.querySelector('#thumb').style.marginLeft = '-60px'; })
+            """, ["x0": box[0] + 100, "y0": box[1] + 20, "x1": box[0] + 40, "y1": box[1] + 60]) as? Bool == true)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(harness.page.selectedPicture == nil)
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
     }
 
     @Test func pickModeStepsToTheParentAndBack() async throws {

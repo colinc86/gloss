@@ -168,7 +168,7 @@ enum WebBridge {
                  page: { x: box.left + scrollX, y: box.top + scrollY, w: box.width, h: box.height },
                  textOffset };
         // A picture says how big it is and where it came from, so the packet can name it.
-        if (pictureOf(el) === el) { described.natural = pictureBox(el).natural; described.src = sourceOf(el); }
+        if (pictureOf(el) === el) { described.natural = naturalOf(el); described.src = sourceOf(el); }
         return described;
       }
       // A picture's address for the packet: an inline one (data:, blob:) is named, not copied.
@@ -226,9 +226,10 @@ enum WebBridge {
       // The plain click and drag leave controls alone (an icon in a button, a close ×, an avatar link) and the
       // pictures that are apps of their own (a video's controls, a canvas map); Pick Element still reaches those.
       const CONTROLS = 'button, summary, label, input, select, textarea, [role=button], [role=menuitem], [role=tab], [role=link]';
+      // A picture the page made draggable on purpose (a sortable gallery) keeps its native drag too.
       function plainPictureAt(x, y) {
         const picture = pictureAt(x, y);
-        if (!picture || !['img', 'svg'].includes(picture.tagName.toLowerCase()) || picture.closest(CONTROLS)) return null;
+        if (!picture || !['img', 'svg'].includes(picture.tagName.toLowerCase()) || picture.closest(CONTROLS + ', [draggable=true]')) return null;
         const r = picture.getBoundingClientRect();
         return r.width < 48 && r.height < 48 ? null : picture;
       }
@@ -262,6 +263,13 @@ enum WebBridge {
         const offset = (value, free) => value && value.endsWith('%') ? free * parseFloat(value) / 100 : px(value);
         const drawn = { x: inner.x + offset(ox, inner.w - drawnW), y: inner.y + offset(oy, inner.h - drawnH), w: drawnW, h: drawnH };
         return { natural, drawn, shown: intersect(drawn, inner) };
+      }
+      // A picture's own size when it has one to tell: null for an svg (its size is only its layout) and for an img
+      // or video that hasn't loaded yet (lazy, or before its metadata), so a note's region isn't rescaled to nothing.
+      function naturalOf(el) {
+        const tag = el.tagName.toLowerCase();
+        if (tag === 'svg' || (tag === 'img' && (!el.complete || !el.naturalWidth)) || (tag === 'video' && !el.videoWidth)) return null;
+        return pictureBox(el).natural;
       }
       // A viewport rect on the picture as the picture's own pixels, and back (scaled to its current size).
       function toPixels(rect, box) {
@@ -358,7 +366,7 @@ enum WebBridge {
           const found = (el) => ({ selector: selectorFor(el), tag: el.tagName.toLowerCase(), text: collapse(el.textContent || '').slice(0, 500),
                                    html: (el.outerHTML || '').slice(0, 2048), textOffset: offsets && budget-- > 0 ? textOffsetOf(el) : null,
                                    rect: (() => { const b = el.getBoundingClientRect(); return { x: b.left + scrollX, y: b.top + scrollY, w: b.width, h: b.height }; })(),
-                                   natural: pictureOf(el) === el ? pictureBox(el).natural : null });
+                                   natural: pictureOf(el) === el ? naturalOf(el) : null });
           return { id: item.id, bySelector: bySelector ? found(bySelector) : null, byText: byText.map(found) };
         });
       }
@@ -486,11 +494,22 @@ enum WebBridge {
       let swallowClick = false;
       function pressAt(x, y, picture) {
         if (!picture) { if (chosen) clearChosen(true); return false; }
-        gesture = { picture, x, y, dragged: false, again: !picking && !!chosen && chosen.element === picture };
+        const at = picture.getBoundingClientRect();
+        gesture = { picture, x, y, at: { x: at.left, y: at.top }, dragged: false, again: !picking && !!chosen && chosen.element === picture };
+        return true;
+      }
+      // The page moved the picture under the gesture (a carousel, a map that pans): the drag was the page's, and
+      // the gesture is dropped without choosing anything.
+      function pageMoved() {
+        if (!gesture) return false;
+        const now = gesture.picture.getBoundingClientRect();
+        if (Math.abs(now.left - gesture.at.x) <= 1 && Math.abs(now.top - gesture.at.y) <= 1) return false;
+        gesture = null;
+        if (chosen && !chosen.selected) clearChosen(false);
         return true;
       }
       function dragTo(x, y) {
-        if (!gesture) return;
+        if (!gesture || pageMoved()) return;
         if (!gesture.dragged && Math.hypot(x - gesture.x, y - gesture.y) <= 3) return;
         gesture.dragged = true;
         const box = pictureBox(gesture.picture);
@@ -499,6 +518,7 @@ enum WebBridge {
         drawChosen();
       }
       function release() {
+        if (pageMoved()) return;
         const done = gesture;
         gesture = null;
         if (!done) return;
@@ -520,6 +540,11 @@ enum WebBridge {
       document.addEventListener('mousedown', (event) => {
         swallowClick = false;
         if (picking || !plainPress(event)) return;
+        // The second press of a double-click on the chosen picture is still not a click on its link.
+        if (event.detail > 1) {
+          if (chosen && chosen.selected && plainPictureAt(event.clientX, event.clientY) === chosen.element) { event.preventDefault(); swallowClick = true; }
+          return;
+        }
         // No native drag of the image and no text selection starting under it; the page still sees the press.
         if (pressAt(event.clientX, event.clientY, plainPictureAt(event.clientX, event.clientY))) event.preventDefault();
       }, { capture: true });
@@ -583,8 +608,12 @@ enum WebBridge {
       function pickPressed(el, x, y) {
         if (!el) return;
         if (pictureOf(el) === el) { pressAt(x, y, el); return; }
+        // The pick ends note mode before the release; the click after it must still not follow a link.
+        swallowClick = true;
         post({ pick: describe(el) });
       }
+      // Only leaving the page clears the hover; leaving one element for another is a move.
+      function onLeave(event) { if (event.target === document || event.target === root() || !event.relatedTarget) clearHover(); }
       function onPress(event) {
         event.preventDefault();
         event.stopPropagation();
@@ -612,14 +641,14 @@ enum WebBridge {
           document.addEventListener('mouseup', swallow, opts);
           document.addEventListener('click', swallow, opts);
           document.addEventListener('keydown', onKey, opts);
-          document.addEventListener('mouseleave', clearHover, opts);
+          document.addEventListener('mouseleave', onLeave, opts);
         } else {
           document.removeEventListener('mousemove', onMove, opts);
           document.removeEventListener('mousedown', onPress, opts);
           document.removeEventListener('mouseup', swallow, opts);
           document.removeEventListener('click', swallow, opts);
           document.removeEventListener('keydown', onKey, opts);
-          document.removeEventListener('mouseleave', clearHover, opts);
+          document.removeEventListener('mouseleave', onLeave, opts);
           clearHover();
           retireOverlayIfIdle();
         }
@@ -650,9 +679,11 @@ enum WebBridge {
           if (pictureOf(picked) === picked) choose(picked, wholePicture(pictureBox(picked))); else post({ pick: describe(picked) });
           return label;
         },
-        // The picture gesture a trusted press, drag and release make, by points (the same point twice is a click).
-        dragAt(x0, y0, x1, y1) {
+        // The picture gesture a trusted press, drag and release make, by points (the same point twice is a click);
+        // `between` stands in for the page acting while the button is down.
+        dragAt(x0, y0, x1, y1, between) {
           if (!pressAt(x0, y0, picking ? pictureOf(targetAt({ clientX: x0, clientY: y0 })) : plainPictureAt(x0, y0))) return false;
+          if (between) between();
           dragTo(x1, y1);
           release();
           return true;

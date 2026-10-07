@@ -1343,6 +1343,9 @@ final class DocumentSession: Identifiable {
             }
         } catch {
             lastError = "Saving the note failed: \(error)"
+            // The crop already took the chosen picture's drawing off the page; an Add Note left beside nothing
+            // would be stale.
+            html?.selectedPicture = nil
         }
         noteEditor = nil
     }

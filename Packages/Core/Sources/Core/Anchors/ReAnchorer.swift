@@ -30,7 +30,8 @@ public struct ElementCandidate: Sendable, Equatable {
     public var textOffset: Int?
     /// The source line that offset maps to, on a served file; filled in by whoever can map it.
     public var line: Int?
-    /// A picture's own size in pixels; nil for any other element.
+    /// A picture's own size in pixels; nil for any other element, and for a picture that can't tell (an svg, an img
+    /// or video not loaded yet).
     public var imageW: Int?
     public var imageH: Int?
 
@@ -498,17 +499,21 @@ public enum ReAnchorer {
     /// Selector first, text second: a selector hit with the same tag keeps the note (flagged when the text changed);
     /// otherwise the one element with the same text takes over, several pick the nearest, none orphans the note.
     /// A note on part of a picture whose own size changed keeps the same part, scaled, and is flagged; on an element
-    /// that is no longer a picture it loses its region and is flagged.
+    /// that is no longer a picture it loses its region and is flagged. A picture that can't tell its size keeps the
+    /// region as it is.
     public static func element(_ anchor: ElementAnchor, resolution: ElementResolution, newHash: String, line: Int? = nil) -> ReAnchorResult {
         if let hash = anchor.hash, hash == newHash { return .unchanged }
         func regionChanged(_ candidate: ElementCandidate) -> Bool {
             guard let region = anchor.region else { return false }
-            return candidate.imageW != region.imageW || candidate.imageH != region.imageH
+            guard let w = candidate.imageW, let h = candidate.imageH, w > 0, h > 0 else {
+                return !ElementAnchor.pictureTags.contains(candidate.tag.lowercased())
+            }
+            return w != region.imageW || h != region.imageH
         }
         func updated(_ candidate: ElementCandidate) -> ElementAnchor {
             var next = anchor
             if let region = anchor.region, regionChanged(candidate) {
-                if let w = candidate.imageW, let h = candidate.imageH, region.imageW > 0, region.imageH > 0 {
+                if let w = candidate.imageW, let h = candidate.imageH, w > 0, h > 0, region.imageW > 0, region.imageH > 0 {
                     let sx = Double(w) / Double(region.imageW), sy = Double(h) / Double(region.imageH)
                     next.region = ImageAnchor(x: Int((Double(region.x) * sx).rounded()), y: Int((Double(region.y) * sy).rounded()),
                                               w: Int((Double(region.w) * sx).rounded()), h: Int((Double(region.h) * sy).rounded()),

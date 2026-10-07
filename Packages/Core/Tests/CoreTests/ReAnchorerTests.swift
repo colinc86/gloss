@@ -178,8 +178,19 @@ struct ReAnchorerTests {
         #expect(same.region == region, "the same picture keeps its region")
         guard case .movedNeedsReview(.element(let bigger)) = ReAnchorer.element(anchor, resolution: picture(1600, 800), newHash: "new") else { Issue.record("expected review"); return }
         #expect(bigger.region == ImageAnchor(x: 200, y: 100, w: 400, h: 200, imageW: 1600, imageH: 800), "a resized picture keeps the same part, flagged")
-        guard case .movedNeedsReview(.element(let gone)) = ReAnchorer.element(anchor, resolution: picture(nil, nil), newHash: "new") else { Issue.record("expected review"); return }
+        // An element that isn't a picture (a region stored on a div, from a page that swapped its img for one) loses it.
+        guard case .movedNeedsReview(.element(let gone)) = ReAnchorer.element(
+            ElementAnchor(selector: "#hero", tag: "div", text: "", html: "<div>", rect: .init(x: 0, y: 0, w: 400, h: 200), hash: "old", region: region),
+            resolution: .init(bySelector: ElementCandidate(selector: "#hero", tag: "div", text: "", html: "<div>", rect: .init(x: 0, y: 10, w: 400, h: 200))), newHash: "new"
+        ) else { Issue.record("expected review"); return }
         #expect(gone.region == nil, "no longer a picture: no region")
+        // A picture that can't tell its size (lazy, not loaded; an svg) keeps the region, unflagged.
+        guard case .moved(.element(let unloaded)) = ReAnchorer.element(anchor, resolution: picture(nil, nil), newHash: "new") else { Issue.record("expected moved"); return }
+        #expect(unloaded.region == region)
+        let svg = ElementAnchor(selector: "#chart", tag: "svg", text: "", html: "<svg>", rect: .init(x: 0, y: 0, w: 400, h: 200), hash: "old", region: region)
+        let relaid = ElementResolution(bySelector: ElementCandidate(selector: "#chart", tag: "svg", text: "", html: "<svg>", rect: .init(x: 0, y: 0, w: 300, h: 150)))
+        guard case .moved(.element(let chart)) = ReAnchorer.element(svg, resolution: relaid, newHash: "new") else { Issue.record("expected moved"); return }
+        #expect(chart.region == region, "an svg laid out at another size is the same picture")
     }
 
     @Test func elementRules() {
