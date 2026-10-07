@@ -81,8 +81,8 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
   tree, its filter field, Find in Files, hidden files, host picker, follow, sidebar toggle, notes toggle, the
   viewer's content, the filter chips (one stop each), notes search, sort, agent chip, Send menu, the notes list,
   then the folder switcher. Every control is reachable; a change that adds or groups stops re-checks this order.
-  Since 2026-10-06 the host picker (now the title's host chip) and follow sit in the window toolbar beside the
-  title rather than the sidebar's; the order has not been re-checked since.
+  Since 2026-10-07 the host picker is part of the folder switcher and follow sits at its left, both above the
+  tree rather than in the sidebar's toolbar; the order has not been re-checked since.
 - Check with the accessibility API (an `AXUIElement` walk), since System Events does not reach into SwiftUI lists.
 
 ## Window and layout
@@ -225,15 +225,28 @@ path. Dropping on the Dock icon is not supported yet.
 
 ### Explorer
 
-- **Root switcher** (`RootSwitcher`): one row above the tree names the open folder (accent folder, teal host for
-  remote roots, a star if it is a favorite, its open-note count) with "N open" and a chevron that turns over
-  while the switcher is up. Clicking opens a 320 pt popover with sections: **Open** (the current one tinted;
-  hover shows a star and a close button), **Favorites** (pinned roots, kept even when closed), **Recent** (six
-  more on this host), then Open Folder…. Stars bounce when toggled; rows show their parent folder with `~` for
-  home, truncated from the start. Replaces the chip strip, which scrolled roots out of sight.
-  Keyboard first: the popover opens with a "Filter folders" field focused and the current folder highlighted;
-  typing filters (names first, then paths), ↑/↓ move a highlight drawn as an accent ring (the current folder keeps
-  its fill, so the two never blur), Return switches or opens, Escape closes (`SwitcherEntry.sections`).
+- **Root switcher** (`RootSwitcher`): one row above the tree, always shown, names the open folder (accent folder,
+  teal host for remote roots, a star if it is a favorite, its open-note count) with "N open" and a chevron that
+  turns over while the switcher is up; with Web picked it reads `globe` "Web", and with no folder open the host's
+  icon and name (teal for ssh) and "No folder open". It is also the host picker (2026-10-07; the sidebar toolbar's
+  host dropdown and the title's host chip are gone). Clicking opens a 320 pt popover with sections: **Hosts**
+  (every host, `HostMenu`: This Mac, Web, GitHub, Atlassian and the ssh hosts in teal, each with its symbol, an
+  ssh host's saying how its connection is and an orange `exclamationmark.triangle` after a failure; the current
+  one tinted with a checkmark), **Open** (the current one tinted; hover shows a star and a close button),
+  **Favorites** (pinned roots, kept even when closed), **Recent** (six more on the picked host), then the Open item
+  for the picked host (Open Folder on this Mac…/on an ssh host…, Open Location…, Open Pull Request…, Open Jira
+  Issue or Confluence Page…) and Manage Hosts…. Picking This Mac or a connected ssh host brings a folder already
+  open there to the front and keeps the popover open on that host's recent folders (with none open, the row reads
+  "No folder open", or "No pull request open"/"No issue or page open", and the tree's place offers Open Folder on
+  the host; a folder never shows under another host's name); Web shows the Web section, GitHub and Atlassian open their sheets, and an ssh host
+  not connected connects (again, after a failure) and opens its home, each closing the popover. Stars bounce when
+  toggled; rows show their parent folder with `~` for home, truncated from the start. Replaces the chip strip,
+  which scrolled roots out of sight. Keyboard first: the popover opens with a "Filter hosts and folders" field
+  focused and the current folder highlighted (the picked host with none open); typing filters (hosts by name,
+  folders by name first, then paths) and puts the highlight on the first folder left, so `git` and Return opens a
+  folder rather than GitHub; ↑/↓ move a highlight through hosts and folders drawn as an accent ring (the current one
+  keeps its fill, so the two never blur), Return picks, Escape closes (`SwitcherEntry.sections`, `SwitcherItem`).
+  An ssh host row tells VoiceOver how its connection is (Connected, Connecting, Not connected, Couldn't connect).
 - **Tree note marker**: on a file row, a 14 pt capsule at the row's trailing edge with up to three overlapping
   7 pt dots in the colours of its open notes (most used first, each ringed in the window background so they
   separate) and the count; orange-tinted when something needs attention (an orphan, or an agent's question).
@@ -269,10 +282,10 @@ path. Dropping on the Dock icon is not supported yet.
   (missing ripgrep) is a quiet warning. Each stage is rendered offscreen in `ConnectionNoticeTests` for review.
 - **Follow mode**: shown only where Herdr exists (its binary on this Mac, or a connected host whose probe found
   it), since following needs Herdr's focus events; the Herdr plugin row in Settings → Agents is gated the same way.
-  The crosshair (`FollowToggle`) sits right after the address field: a plain glass button while off; while
-  following, a white `scope` on an accent-filled disc of its own (the item's shared glass hidden so it doesn't wash
-  out the fill), the same 28 pt either way, and it bounces as it turns on or off. A toolbar toggle's solid "on" disc
-  hid the symbol. While a pane is followed, a card tops the sidebar: "FOLLOWING" with the agent's `StatusDot`, host
+  The crosshair (`FollowToggle`, 2026-10-07) sits at the left of the root switcher, as tall as it, in its rounded
+  shape: the switcher's quiet fill while off (a secondary `scope`, a little stronger on hover); while following,
+  a white `scope` on an accent fill, so it reads as lit at a glance, and it bounces as it turns on or off. A
+  toolbar toggle's solid "on" disc hid the symbol. Go › Follow Herdr (no shortcut) toggles it with the sidebar closed. While a pane is followed, a card tops the sidebar: "FOLLOWING" with the agent's `StatusDot`, host
   (teal) and agent, pane id, and the pane's folder, plus a stop button; it slides in and out from the top. Follow
   problems (Herdr not running, an unknown machine) stay in the status line.
 
@@ -571,27 +584,15 @@ path. Dropping on the Dock icon is not supported yet.
   name (`.headline`) over its subtitle (`.caption`, secondary: the ssh host, `owner/repo #12`, a page's title) sits
   without a glass capsule and gains a faint rounded fill on hover, so it reads as clickable without looking like a
   button. A click, File › Open Location… (⇧⌘L) or Go › Go to Address… turns it into a 460 pt field holding the
-  page's live address or the file's path. The field (`AddressField`) leads with the host chip (below), then a globe
-  or folder that follows what the text reads as. Return opens; text that is neither an address nor a path shakes
+  page's live address or the file's path. The field (`AddressField`) has a leading globe or folder that follows
+  what the text reads as, and, when ssh hosts exist, a small menu at its end naming the machine (This Mac in
+  secondary, an ssh host in teal) that keeps the caret in the field. Return opens; text that is neither an address nor a path shakes
   the field (not with Reduce Motion), outlines it orange and says "Not an address or a path" inside it, announced
   to VoiceOver. Escape or a click elsewhere puts the title back; an open menu (the host
   menu, the menu bar) does not, and the caret returns to the field when it closes. The browser's own toolbar
   keeps only Back, Forward and the "via host" capsule.
-- **Host chip** (`HostMenu`, 2026-10-06): the one host menu, at the title's leading edge whether it is at rest or
-  editing; the sidebar no longer has a host dropdown. The chip is the host's icon and name in caption weight: This
-  Mac, Web, GitHub and Atlassian in secondary, an ssh host in teal, its icon the connection's state
-  (`network`, `network.badge.shield.half.filled` while connecting, `network.slash` idle) and an orange
-  `exclamationmark.triangle` after a failure. Its menu lists every host with that icon, a divider, the context
-  item (Open Folder on this Mac…/on an ssh host…, Open Location…, Open Pull Request…, Open Jira Issue or Confluence
-  Page…) and Manage Hosts…. At rest it names what the explorer browses and picking switches it, as the sidebar's
-  menu did: Web lists pages, GitHub and Atlassian open their sheets, an ssh host connects (again, after a failure)
-  and opens its home. While editing it names where the typed path opens: This Mac or an ssh host is chosen for
-  the field and keeps the caret there; Web, GitHub and Atlassian end editing and go there. The explorer's Web
-  section keeps a small machine menu at its field's end (This Mac in secondary, an ssh host in teal) instead of the
-  chip, which would only switch away from the section. While editing, the context item names the chip's machine
-  and Open Location… is left out, since it would start the field over.
-- **Web in the explorer**: the host chip always lists Web (`globe`) after this Mac. Picked, the root switcher, tree and
-  filter footer give way to an `AddressField` (which also narrows the lists as you type; Return opens what was typed)
+- **Web in the explorer**: the root switcher's hosts always list Web (`globe`) after this Mac. Picked, the tree and
+  filter footer give way, under the switcher, to an `AddressField` (which also narrows the lists as you type; Return opens what was typed)
   and a sidebar list of Pinned and Recent pages: the title over the address in caption, a teal host name for a page
   reached through an ssh host, the page in the viewer selected. Double-click or Return opens a row; arrows only move
   the selection. Context menu: Open, Pin or Unpin, Copy Address, Remove from Recent. Reveal in Explorer (⇧⌘J) on a page picks Web.

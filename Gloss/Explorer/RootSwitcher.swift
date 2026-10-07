@@ -3,9 +3,10 @@ import Integrations
 import SwiftUI
 import Viewers
 
-/// The folder above the tree, and the way to every other: one row naming the open root, which opens a switcher of
-/// open folders, favorites (pinned), and recent ones. Replaces a strip of chips that scrolled out of sight once a
-/// few folders were open, and gives folders you come back to a place that survives closing them.
+/// The folder above the tree, and the way to every other: one row naming the open root (or the host, when none is
+/// open or Web is picked), which opens a switcher of hosts, then open folders, favorites (pinned), and recent ones
+/// on the picked host. Replaces a strip of chips that scrolled out of sight once a few folders were open, and
+/// gives folders you come back to a place that survives closing them.
 struct RootSwitcher: View {
     @Environment(AppModel.self) private var model
     let hostName: (HostID) -> String
@@ -13,13 +14,35 @@ struct RootSwitcher: View {
     @State private var isOpen = false
     @State private var hovering = false
 
+    /// The folder in front, when it is on the picked host; a folder never shows under another host's name.
+    private var shownTab: RootTab? {
+        model.explorer.selectedTab.flatMap { $0.hostID == model.pickedHost ? $0 : nil }
+    }
+
     var body: some View {
         let explorer = model.explorer
+        let picked = model.pickedHost
         Button {
             isOpen.toggle()
         } label: {
             HStack(spacing: DS.Space.s) {
-                if let tab = explorer.selectedTab {
+                if shownTab == nil {
+                    // No folder to name: the host is what the row is about.
+                    let status = model.hosts.status(for: picked)
+                    Image(systemName: HostMenu.symbol(picked, status: status))
+                        .foregroundStyle(SwitcherHostRow.failed(status) ? Color.orange : Color.accentColor)
+                        .contentTransition(.symbolEffect(.replace))
+                    Text(HostMenu.label(picked, name: hostName(picked)))
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(model.hosts.entry(for: picked)?.kind == .ssh ? Color.teal : Color.primary)
+                        .lineLimit(1)
+                    if picked != .web {
+                        Text(HostMenu.nothingOpen(picked))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                } else if let tab = shownTab {
                     Image(systemName: SwitcherEntry.symbol(hostID: tab.hostID, path: tab.path, open: true))
                         .foregroundStyle(Color.accentColor)
                         .contentTransition(.symbolEffect(.replace))
@@ -64,15 +87,20 @@ struct RootSwitcher: View {
         .animation(DS.Motion.snappy, value: hovering)
         .animation(DS.Motion.smooth, value: isOpen)
         .animation(DS.Motion.smooth, value: explorer.selectedTabID)
-        .help(explorer.selectedTab.map { "\(hostName($0.hostID)): \($0.path). Click to switch folders." } ?? "Switch folders")
-        .accessibilityLabel(explorer.selectedTab.map { "Folder \($0.title)" } ?? "Folders")
-        .accessibilityHint("Shows open, favorite, and recent folders")
+        .help(shownTab.map { "\(hostName($0.hostID)): \($0.path). Click to switch folders or hosts." } ?? "Switch folders or hosts")
+        .accessibilityLabel(shownTab.map { "Folder \($0.title)" }
+                            ?? (picked == .web ? "Web" : "\(HostMenu.label(picked, name: hostName(picked))), \(HostMenu.nothingOpen(picked).lowercased())"))
+        .accessibilityHint("Shows hosts, and open, favorite, and recent folders")
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
             RootSwitcherList(hostName: hostName, openFolder: { isOpen = false; openFolder() }, dismiss: { isOpen = false })
                 .environment(model)
         }
         .task(id: isOpen) {
             if isOpen { await explorer.refreshRecents(hostIDs: Set(explorer.tabs.map(\.hostID) + [model.pickedHost])) }
+        }
+        // A host picked in the list shows its recent folders there.
+        .task(id: model.pickedHost) {
+            if isOpen { await explorer.refreshRecents(hostIDs: [model.pickedHost]) }
         }
     }
 }
@@ -159,8 +187,27 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
     }
 }
 
-/// The switcher's sections, keyboard first: a filter field takes typing, ↑ and ↓ move the highlight, Return opens
-/// or switches to it. Each row can be starred, and open ones closed.
+/// A row of the switcher: a host, then the folders.
+nonisolated enum SwitcherItem: Equatable {
+    case host(HostID)
+    case folder(SwitcherEntry)
+
+    /// Where the highlight starts: with a filter, on the first folder it left (so `git` and Return opens a folder,
+    /// not GitHub), or the first host when none; without one, on the folder in front (`selectedTabID`, nil when
+    /// it is not on the picked host), so ↓ and Return go to the next, or else on the picked host.
+    static func start(in items: [SwitcherItem], query: String, selectedTabID: RootID?, pickedHost: HostID) -> Int {
+        if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            return items.firstIndex { if case .folder = $0 { true } else { false } } ?? 0
+        }
+        if let selectedTabID, let index = items.firstIndex(where: { if case .folder(let entry) = $0 { entry.id == selectedTabID } else { false } }) {
+            return index
+        }
+        return items.firstIndex(of: .host(pickedHost)) ?? 0
+    }
+}
+
+/// The switcher's sections, keyboard first: a filter field takes typing, ↑ and ↓ move the highlight through the
+/// hosts and the folders, Return picks it. Each folder row can be starred, and open ones closed.
 private struct RootSwitcherList: View {
     @Environment(AppModel.self) private var model
     let hostName: (HostID) -> String
@@ -170,63 +217,106 @@ private struct RootSwitcherList: View {
     @State private var highlight = 0
     @FocusState private var fieldFocused: Bool
 
-    var body: some View {
+    /// The hosts matching the filter, the folder sections, and every row in order for the highlight.
+    private func lists() -> (hosts: [HostsModel.Entry], sections: [(section: SwitcherEntry.Section, entries: [SwitcherEntry])], flat: [SwitcherItem]) {
         let explorer = model.explorer
         let sections = SwitcherEntry.sections(
             tabs: explorer.tabs.map { (id: $0.id, hostID: $0.hostID, path: $0.path, pinned: explorer.isPinned(hostID: $0.hostID, path: $0.path)) },
             recents: explorer.recentsByHost[model.pickedHost] ?? [], query: query)
-        let flat = sections.flatMap(\.entries)
+        let hosts = HostMenu.matching(model.hosts.entries, query: query)
+        return (hosts, sections, hosts.map { SwitcherItem.host($0.id) } + sections.flatMap(\.entries).map(SwitcherItem.folder))
+    }
+
+    var body: some View {
+        let explorer = model.explorer
+        let (hosts, sections, flat) = lists()
+        let current = flat.indices.contains(highlight) ? flat[highlight] : nil
         VStack(alignment: .leading, spacing: DS.Space.xs) {
             HStack(spacing: DS.Space.s) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Filter folders", text: $query)
+                TextField("Filter hosts and folders", text: $query)
                     .textFieldStyle(.plain)
                     .focused($fieldFocused)
                     .onKeyPress(.downArrow) { move(1, count: flat.count); return .handled }
                     .onKeyPress(.upArrow) { move(-1, count: flat.count); return .handled }
-                    .onSubmit { if flat.indices.contains(highlight) { choose(flat[highlight]) } }
+                    .onSubmit {
+                        guard flat.indices.contains(highlight) else { return }
+                        switch flat[highlight] {
+                        case .host(let id): if let entry = hosts.first(where: { $0.id == id }) { choose(entry) }
+                        case .folder(let entry): choose(entry)
+                        }
+                    }
             }
             .font(.callout)
             .padding(.horizontal, DS.Space.s)
             .padding(.vertical, DS.Space.xs + 2)
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous))
             if flat.isEmpty {
-                Text("No folder matches “\(query)”")
+                Text("Nothing matches “\(query)”")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, DS.Space.m)
             }
+            if !hosts.isEmpty {
+                section("Hosts")
+                ForEach(hosts) { entry in
+                    let status = model.hosts.status(for: entry.id)
+                    SwitcherHostRow(name: HostMenu.label(entry.id, name: entry.name), symbol: HostMenu.symbol(entry.id, status: status),
+                            isSSH: entry.kind == .ssh, failed: SwitcherHostRow.failed(status), isCurrent: entry.id == model.pickedHost,
+                            isHighlighted: current == .host(entry.id), value: entry.kind == .ssh ? HostMenu.connectionValue(status) : nil,
+                            choose: { choose(entry) })
+                }
+            }
             ForEach(sections, id: \.section) { group in
                 section(group.section.rawValue)
                 ForEach(group.entries) { entry in
-                    row(entry, highlighted: flat.firstIndex(of: entry) == highlight)
+                    row(entry, highlighted: current == .folder(entry))
                 }
             }
             Divider().padding(.vertical, DS.Space.xs)
             Button(action: openFolder) {
-                Label("Open Folder…", systemImage: "folder.badge.plus")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, DS.Space.s)
-                    .padding(.vertical, DS.Space.xs)
-                    .contentShape(Rectangle())
+                footerLabel(HostMenu.openTitle(model.pickedHost, name: hostName(model.pickedHost)), systemImage: model.pickedHost == .web ? "globe" : "folder.badge.plus")
+            }
+            .buttonStyle(.plain)
+            SettingsLink {
+                footerLabel("Manage Hosts…", systemImage: "gearshape")
             }
             .buttonStyle(.plain)
         }
         .padding(DS.Space.s)
         .frame(width: 320)
         .onAppear {
-            // Start on the current folder, so ↓ and Return go to the next one.
-            highlight = flat.firstIndex { $0.id == explorer.selectedTabID } ?? 0
+            highlight = SwitcherItem.start(in: flat, query: query, selectedTabID: explorer.selectedTab?.hostID == model.pickedHost ? explorer.selectedTabID : nil,
+                                   pickedHost: model.pickedHost)
             fieldFocused = true
         }
-        .onChange(of: query) { _, _ in highlight = 0 }
+        .onChange(of: query) { _, _ in
+            highlight = SwitcherItem.start(in: lists().flat, query: query, selectedTabID: explorer.selectedTab?.hostID == model.pickedHost ? explorer.selectedTabID : nil,
+                                   pickedHost: model.pickedHost)
+        }
         // Closing or re-pinning a row can shorten the list under the highlight.
-        .onChange(of: flat.map(\.id)) { _, ids in highlight = min(highlight, max(0, ids.count - 1)) }
+        .onChange(of: flat) { _, items in highlight = min(highlight, max(0, items.count - 1)) }
         .animation(DS.Motion.smooth, value: (explorer.recentsByHost[model.pickedHost] ?? []).map(\.pinned))
         .animation(DS.Motion.smooth, value: explorer.tabs.map(\.id))
         .animation(DS.Motion.snappy, value: highlight)
-        .animation(DS.Motion.smooth, value: flat.map(\.id))
+        .animation(DS.Motion.smooth, value: flat)
+    }
+
+
+    /// This Mac or a connected ssh host keeps the list open on its folders; the rest go where they go.
+    private func choose(_ host: HostsModel.Entry) {
+        let pick = HostMenu.pick(host.id, kind: host.kind, status: model.hosts.status(for: host.id))
+        if pick.dismisses { dismiss() }
+        model.browse(pick)
+    }
+
+    private func footerLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DS.Space.s)
+            .padding(.vertical, DS.Space.xs)
+            .contentShape(Rectangle())
     }
 
     private func move(_ delta: Int, count: Int) {
@@ -237,6 +327,8 @@ private struct RootSwitcherList: View {
     private func choose(_ entry: SwitcherEntry) {
         let explorer = model.explorer
         dismiss()
+        // The folder in front may already be this one while Web or another host is picked.
+        model.pickedHost = entry.hostID
         if entry.section == .open {
             explorer.selectedTabID = entry.id
         } else {
@@ -264,6 +356,67 @@ private struct RootSwitcherList: View {
                        choose: { choose(entry) },
                        togglePin: { Task { await explorer.setPinned(entry.id, hostID: entry.hostID, path: entry.path, !entry.pinned) } },
                        close: isOpen ? { explorer.closeTab(entry.id) } : nil)
+    }
+}
+
+/// A host in the switcher: its symbol (an ssh host's says how its connection is, orange after a failure) and name
+/// (teal for an ssh host), the current one filled as the current folder is.
+private struct SwitcherHostRow: View {
+    let name: String
+    let symbol: String
+    let isSSH: Bool
+    let failed: Bool
+    let isCurrent: Bool
+    let isHighlighted: Bool
+    /// An ssh host's connection, for VoiceOver.
+    let value: String?
+    let choose: () -> Void
+    @State private var hovering = false
+
+    static func failed(_ status: HostsModel.Status) -> Bool {
+        if case .failed = status { return true }
+        return false
+    }
+
+    var body: some View {
+        HStack(spacing: DS.Space.s) {
+            Image(systemName: symbol)
+                .foregroundStyle(failed ? Color.orange : isCurrent ? Color.accentColor : .secondary)
+                .frame(width: 18)
+            Text(name)
+                .font(.callout.weight(isCurrent ? .semibold : .regular))
+                .foregroundStyle(isSSH ? Color.teal : Color.primary)
+                .lineLimit(1)
+            Spacer(minLength: DS.Space.xs)
+            if isCurrent {
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(.horizontal, DS.Space.s)
+        .padding(.vertical, DS.Space.xs + 1)
+        .background {
+            if isCurrent || isHighlighted {
+                RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous)
+                    .fill(Color.accentColor.opacity(isCurrent ? 0.14 : 0.08))
+                    .overlay {
+                        if isHighlighted {
+                            RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous).strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5)
+                        }
+                    }
+            } else if hovering {
+                RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous).fill(Color.primary.opacity(0.06))
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: choose)
+        .onHover { hovering = $0 }
+        .animation(DS.Motion.snappy, value: hovering)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue(value ?? "")
+        .accessibilityAction(named: "Choose \(name)", choose)
     }
 }
 

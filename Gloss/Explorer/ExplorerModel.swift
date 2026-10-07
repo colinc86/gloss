@@ -69,9 +69,14 @@ final class ExplorerModel {
     var selectedTabID: RootID? {
         didSet {
             treeDelegate?.treeDidReplaceRoot()
-            if selectedTabID != oldValue { onTabsChange() }
+            if selectedTabID != oldValue {
+                onTabsChange()
+                onSelect()
+            }
         }
     }
+    /// Another folder came to the front (or none): the app shows its host.
+    @ObservationIgnored var onSelect: () -> Void = {}
     /// A folder opened or closed, or another came to the front: the app saves what's open (#9).
     @ObservationIgnored var onTabsChange: () -> Void = {}
     /// Recently opened roots per host, pinned first; one entry per folder.

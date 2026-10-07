@@ -3,10 +3,9 @@ import Core
 import SwiftUI
 import Viewers
 
-/// A field that opens what is typed into it: a web address, or a path on the machine chosen in its host menu (this
-/// Mac or an ssh host; for an address, whose loopback `localhost` means). Text that is neither shakes the field and
-/// says so. Used by the window title, where the menu is the host chip, and the explorer's Web section, where it is a
-/// small machine menu at the field's end.
+/// A field that opens what is typed into it: a web address, or a path on the machine chosen in the small menu at
+/// its end (this Mac or an ssh host; for an address, whose loopback `localhost` means). Text that is neither
+/// shakes the field and says so. Used by the window title and the explorer's Web section.
 struct AddressField: View {
     @Environment(AppModel.self) private var model
     @Binding var text: String
@@ -19,9 +18,6 @@ struct AddressField: View {
     /// Tried when the text is neither an address nor a path; true when it opened something (the Web section
     /// opens the first page its filter left).
     var fallback: () -> Bool = { false }
-    /// Set by the window title: the host chip leads the field, and picking Web, GitHub or Atlassian in it calls
-    /// this to end editing before the explorer goes there.
-    var leave: (() -> Void)?
     /// The user picked the host in the menu, so even an outside page goes through it.
     @State private var chosen = false
     @State private var hint: String?
@@ -29,9 +25,6 @@ struct AddressField: View {
 
     var body: some View {
         HStack(spacing: DS.Space.s) {
-            if let leave {
-                HostMenu(shown: host, chooseForAddress: choose, leave: leave)
-            }
             Image(systemName: AddressInput.parse(text, home: model.home(of: host), folder: model.addressFolder(on: host)).map { if case .path = $0 { "folder" } else { "globe" } } ?? "globe")
                 .foregroundStyle(.secondary)
                 .contentTransition(.symbolEffect(.replace))
@@ -51,9 +44,14 @@ struct AddressField: View {
                     .transition(.opacity)
             }
             let remotes = model.hosts.entries.filter { $0.kind == .ssh }
-            if leave == nil, !remotes.isEmpty || host != .local {
+            if !remotes.isEmpty || host != .local {
                 Menu {
-                    Picker("Open On", selection: Binding(get: { host }, set: choose)) {
+                    // Choosing a host leaves the caret in the field, ready for Return.
+                    Picker("Open On", selection: Binding(get: { host }, set: { picked in
+                        host = picked
+                        chosen = true
+                        focus.wrappedValue = true
+                    })) {
                         Label("This Mac", systemImage: "desktopcomputer").tag(HostID.local)
                         ForEach(remotes) { entry in
                             Label(entry.name, systemImage: "network").tag(entry.id)
@@ -92,13 +90,6 @@ struct AddressField: View {
         .animation(DS.Motion.snappy, value: hint)
     }
 
-    /// Choosing a host leaves the caret in the field, ready for Return.
-    private func choose(_ picked: HostID) {
-        host = picked
-        chosen = true
-        focus.wrappedValue = true
-    }
-
     private func submit() {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if model.openAddress(text, on: host, chosen: chosen) || fallback() {
@@ -114,7 +105,7 @@ struct AddressField: View {
 
 /// The window's title, which is also its address bar: the document's name and where it lives at rest; a click
 /// (or File › Open Location…, ⇧⌘L) turns it into a field holding the page's address or the file's path. Return
-/// opens what was typed, Escape or a click elsewhere puts the title back. The host chip leads it either way.
+/// opens what was typed, Escape or a click elsewhere puts the title back.
 struct TitleAddressBar: View {
     @Environment(AppModel.self) private var model
     @State private var editing = false
@@ -128,7 +119,7 @@ struct TitleAddressBar: View {
     var body: some View {
         Group {
             if editing {
-                AddressField(text: $draft, host: $host, focus: $focused, prompt: "Web address or path", onOpen: { editing = false }, leave: { editing = false })
+                AddressField(text: $draft, host: $host, focus: $focused, prompt: "Web address or path", onOpen: { editing = false })
                     .frame(minWidth: 320, idealWidth: 640, maxWidth: 760)
                     .onExitCommand { editing = false }
                     .onAppear { focused = true }
@@ -143,13 +134,8 @@ struct TitleAddressBar: View {
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
             } else {
-                // The host chip leads the title: it names what the explorer browses and switches it.
-                HStack(spacing: DS.Space.xs) {
-                    HostMenu(shown: model.pickedHost)
-                        .padding(.leading, DS.Space.s)
-                    label
-                }
-                .transition(.opacity)
+                label
+                    .transition(.opacity)
             }
         }
         .animation(DS.Motion.snappy, value: editing)

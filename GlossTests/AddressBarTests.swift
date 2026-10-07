@@ -88,43 +88,6 @@ struct AddressBarTests {
         await model.shutDown()
     }
 
-    @Test func theHostMenuRoutesEachPick() async {
-        let box = HostID(rawValue: "h_box")
-        // At rest it switches what the explorer browses.
-        #expect(HostMenu.pick(.local, kind: .local, editing: false) == .thisMac)
-        #expect(HostMenu.pick(.web, kind: .web, editing: false) == .webPages)
-        #expect(HostMenu.pick(.github, kind: .github, editing: false) == .openPullRequest)
-        #expect(HostMenu.pick(.atlassian, kind: .atlassian, editing: false) == .openAtlassian)
-        #expect(HostMenu.pick(box, kind: .ssh, editing: false) == .connect(box))
-        // While the field is editing, a machine is where the typed path opens; the rest still navigate.
-        #expect(HostMenu.pick(.local, kind: .local, editing: true) == .address(.local))
-        #expect(HostMenu.pick(box, kind: .ssh, editing: true) == .address(box))
-        #expect(HostMenu.pick(.web, kind: .web, editing: true) == .webPages)
-        #expect(HostMenu.pick(.github, kind: .github, editing: true) == .openPullRequest)
-        #expect(HostMenu.label(.local, name: "local") == "This Mac")
-        #expect(HostMenu.label(box, name: "box") == "box")
-
-        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
-        model.browse(.webPages)
-        #expect(model.pickedHost == .web)
-        model.browse(.address(box))
-        #expect(model.pickedHost == .web, "a field's choice leaves the explorer alone")
-        model.browse(.thisMac)
-        #expect(model.pickedHost == .local)
-        model.presentOpenFolder(on: box)
-        #expect(model.remotePathPrompt?.hostID == box && model.remotePathPrompt?.hostName == "h_box")
-        model.browse(.openPullRequest)
-        #expect(model.pickedHost == .github && model.pullRequestPicker.isPresented)
-        model.pullRequestPicker.dismiss()
-        model.browse(.openAtlassian)
-        #expect(model.pickedHost == .atlassian && model.atlassianPicker.isPresented)
-        model.atlassianPicker.dismiss()
-        // An unknown host connects to nothing; the explorer still shows it, so its status row can say so.
-        model.browse(.connect(box))
-        #expect(model.pickedHost == box)
-        await model.shutDown()
-    }
-
     @Test func visitedPagesAreRecordedWithTheirHost() async throws {
         let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
         await model.start()

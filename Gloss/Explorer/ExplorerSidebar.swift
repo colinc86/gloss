@@ -3,8 +3,8 @@ import Core
 import SwiftUI
 import Viewers
 
-/// The explorer column: a status row, root tabs, the tree, and the filter. The host it browses is picked in the
-/// window title's host chip.
+/// The explorer column: a status row, Follow and the folder dropdown (which also picks the host), the tree, and
+/// the filter; the Web section in place of the tree when Web is the host.
 struct ExplorerSidebar: View {
     @FocusState private var searchFocused: Bool
     @FocusState private var filterFocused: Bool
@@ -25,36 +25,45 @@ struct ExplorerSidebar: View {
             if let status = statusRow {
                 status
             }
+            HStack(spacing: DS.Space.s) {
+                // Only where Herdr exists: following needs its focus events. Kept while following, so it can be stopped.
+                if !model.herdrHosts.isEmpty || model.followHerdr {
+                    FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
+                }
+                RootSwitcher(hostName: hostName, openFolder: openFolder)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, DS.Space.s)
+            .padding(.vertical, DS.Space.s)
+            Divider()
+            // A folder shows only under its own host: picking another with nothing open there says so instead.
+            let shown = explorer.selectedTab.flatMap { $0.hostID == pickedHost ? $0 : nil }
             if pickedHost == .web {
                 WebPagesSection()
-            } else if !explorer.tabs.isEmpty {
-                RootSwitcher(hostName: hostName, openFolder: openFolder)
-                    .padding(.horizontal, DS.Space.s)
-                    .padding(.vertical, DS.Space.s)
-                Divider()
-            }
-            if pickedHost == .web {
-                EmptyView()
-            } else if explorer.contentSearch.isVisible, explorer.selectedTab != nil {
+            } else if explorer.contentSearch.isVisible, shown != nil {
                 searchBar
                 Divider()
                 SearchResultsView()
-            } else if explorer.selectedTab != nil {
+            } else if shown != nil {
                 FileOutlineView(model: explorer)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
                     Label(pickedHost == .github ? "No pull request open" : pickedHost == .atlassian ? "No issue or page open" : "No folder open", systemImage: pickedHost == .github ? "arrow.triangle.pull" : pickedHost == .atlassian ? "square.stack.3d.up" : "folder.badge.plus")
                 } description: {
-                    // On this Mac the welcome screen beside it carries the button; one first step, not two.
-                    Text(pickedHost == .local ? "Its files appear here." : pickedHost == .github ? "Its description, conversation and changed files appear here." : pickedHost == .atlassian ? "A project's issues or a space's pages appear here." : "Connect to browse \(hostName(pickedHost))'s files.")
+                    // On this Mac with nothing open the welcome screen beside it carries the button; one first step, not two.
+                    Text(pickedHost == .local ? "Its files appear here." : pickedHost == .github ? "Its description, conversation and changed files appear here." : pickedHost == .atlassian ? "A project's issues or a space's pages appear here." : model.hosts.status(for: pickedHost) == .connected ? "Its files appear here." : "Connect to browse \(hostName(pickedHost))'s files.")
                 } actions: {
                     if pickedHost == .github {
                         Button("Open Pull Request…") { model.presentOpenPullRequest() }
                     } else if pickedHost == .atlassian {
                         Button("Open Issue or Page…") { model.presentOpenAtlassian() }
-                    } else if pickedHost != .local {
-                        Button("Connect") { openFolder() }
+                    } else if pickedHost == .local {
+                        if !explorer.tabs.isEmpty { Button("Open Folder on this Mac…") { openFolder() } }
+                    } else if model.hosts.status(for: pickedHost) == .connected {
+                        Button("Open Folder on \(hostName(pickedHost))…") { openFolder() }
+                    } else {
+                        Button("Connect") { Task { await model.openRemoteRoot(hostID: pickedHost) } }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -74,7 +83,6 @@ struct ExplorerSidebar: View {
         }
         .onChange(of: model.explorer.selectedTabID) { _, _ in
             Task { await model.folderBecameCurrent() }
-            if let tab = model.explorer.selectedTab { model.pickedHost = tab.hostID }
         }
         .alert("Unknown host key", isPresented: Binding(get: { model.hosts.pendingHostKey != nil }, set: { _ in })) {
             Button("Accept and Connect") {

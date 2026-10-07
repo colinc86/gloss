@@ -329,6 +329,11 @@ final class AppModel {
         }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
         explorer.onTabsChange = { [weak self] in self?.scheduleWorkspaceSave() }
+        // The host shown follows the folder in front, however it got there.
+        explorer.onSelect = { [weak self] in
+            guard let self, let tab = explorer.selectedTab else { return }
+            pickedHost = tab.hostID
+        }
         notesPanel.onGroupsChange = { [weak self, weak explorer] groups in
             explorer?.updateNoteMarks(groups)
             self?.updateDockBadge(groups)

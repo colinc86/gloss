@@ -96,14 +96,6 @@ struct ContentView: View {
                     TitleAddressBar()
                 }
                 .sharedBackgroundVisibility(.hidden)
-                // Only where Herdr exists: following needs its focus events. Kept while following, so it can be stopped.
-                if !model.herdrHosts.isEmpty || model.followHerdr {
-                    ToolbarItem(placement: .navigation) {
-                        FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
-                    }
-                    // Lit, it draws its own accent disc; the glass would wash it out.
-                    .sharedBackgroundVisibility(model.followHerdr ? .hidden : .automatic)
-                }
                 // The window's own title used to take the slack; without it the trailing buttons would close up
                 // against the title.
                 ToolbarSpacer(.flexible)

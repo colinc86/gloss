@@ -186,6 +186,10 @@ struct AppCommands: Commands {
             Divider()
             // The same field as File › Open Location… (⇧⌘L), where a browser keeps it.
             Button { model.presentOpenLocation() } label: { Label("Go to Address…", systemImage: "character.cursor.ibeam") }
+            Divider()
+            // The sidebar's crosshair, reachable with the sidebar closed. Only where Herdr exists, unless following.
+            Toggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 })) { Label("Follow Herdr", systemImage: "scope") }
+                .disabled(model.herdrHosts.isEmpty && !model.followHerdr)
         }
         CommandGroup(after: .toolbar) {
             Toggle(isOn: Binding(
