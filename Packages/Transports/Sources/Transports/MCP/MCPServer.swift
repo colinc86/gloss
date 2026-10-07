@@ -444,7 +444,7 @@ public actor MCPServer {
                 outcome = parsed
             }
             do {
-                try await store.resolveSent(id, outcome: outcome, message: arguments["message"]?.stringValue)
+                try await store.resolveSent(id, outcome: outcome, message: arguments["message"]?.stringValue, agent: agentName)
             } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
                 return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
             } catch {

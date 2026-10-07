@@ -297,9 +297,11 @@ final class NotesPanelModel {
     var draftCount: Int { groups.reduce(0) { $0 + $1.notes.filter { $0.state == .draft }.count } }
 
     /// One line about a note's latest delivery for its card: where it went and when, or that it failed.
-    /// Who a note was sent to, for naming the agent that answered it.
+    /// Who a note was sent to, for naming the agent that answered it when the reply doesn't say. The clipboard is
+    /// no agent: whoever answered a pasted packet is unknown.
     nonisolated static func agentName(_ send: SendSummary) -> String? {
-        send.targetJSON.data(using: .utf8).flatMap { try? JSONDecoder().decode(AgentTarget.self, from: $0) }?.label
+        guard send.transport != TransportKind.clipboard.rawValue else { return nil }
+        return send.targetJSON.data(using: .utf8).flatMap { try? JSONDecoder().decode(AgentTarget.self, from: $0) }?.label
     }
 
     nonisolated static func deliveryLine(_ send: SendSummary, now: Date = Date()) -> (text: String, failed: Bool) {

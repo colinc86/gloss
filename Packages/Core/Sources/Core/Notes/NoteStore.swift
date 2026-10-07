@@ -446,16 +446,17 @@ public struct NoteStore: Sendable {
     /// `sent` → `resolved`, `draft` → `resolved` when the user resolves by hand, or `orphaned` → `resolved` when the
     /// text is gone because acting on the note removed it.
     public func resolve(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, at date: Date = Date()) async throws {
-        try await resolve(id, outcome: outcome, message: message, at: date, onlySent: false)
+        try await resolve(id, outcome: outcome, message: message, agent: nil, at: date, onlySent: false)
     }
 
     /// An agent resolves a note it was given: a sent one, or one sent before its text went. Checked in the same write,
     /// so a note the user takes back meanwhile is never resolved behind their back.
-    public func resolveSent(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, at date: Date = Date()) async throws {
-        try await resolve(id, outcome: outcome, message: message, at: date, onlySent: true)
+    /// `agent` is the resolving client's name, which the card's reply is headed with.
+    public func resolveSent(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, agent: String? = nil, at date: Date = Date()) async throws {
+        try await resolve(id, outcome: outcome, message: message, agent: agent, at: date, onlySent: true)
     }
 
-    private func resolve(_ id: NoteID, outcome: ResolveOutcome, message: String?, at date: Date, onlySent: Bool) async throws {
+    private func resolve(_ id: NoteID, outcome: ResolveOutcome, message: String?, agent: String?, at date: Date, onlySent: Bool) async throws {
         let date = Self.rounded(date)
         try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
@@ -467,6 +468,7 @@ public struct NoteStore: Sendable {
             record.state = NoteState.resolved.rawValue
             record.resolveOutcome = outcome.rawValue
             record.resolveMessage = message
+            record.resolveAgent = agent
             // A resolved orphan remembers its text is gone, so taking it back makes an orphan, not a draft drawn on
             // whatever text sits where its anchor points.
             record.previousState = current == .orphaned ? NoteState.orphaned.rawValue : nil
@@ -532,6 +534,7 @@ public struct NoteStore: Sendable {
             Self.reopened(&record)
             record.resolveOutcome = nil
             record.resolveMessage = nil
+            record.resolveAgent = nil
             record.updatedAt = date
             try record.update(db)
         }
@@ -568,6 +571,7 @@ public struct NoteStore: Sendable {
             Self.reopened(&record)
             record.resolveOutcome = nil
             record.resolveMessage = nil
+            record.resolveAgent = nil
             record.updatedAt = date
             try record.update(db)
         }
@@ -870,7 +874,7 @@ extension Note {
             state: NoteState(rawValue: record.state) ?? .draft, color: NoteColor(rawValue: record.color) ?? .yellow,
             createdAt: record.createdAt, updatedAt: record.updatedAt,
             resolveOutcome: record.resolveOutcome.flatMap(ResolveOutcome.init(rawValue:)), resolveMessage: record.resolveMessage,
-            author: record.author
+            author: record.author, resolveAgent: record.resolveAgent
         )
     }
 }

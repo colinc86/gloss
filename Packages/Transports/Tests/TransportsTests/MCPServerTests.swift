@@ -181,6 +181,8 @@ struct MCPServerTests {
         let resolved = try await call("resolve_note", ["id": .string(ids[0].rawValue), "message": .string("Removed.")])
         #expect(!resolved.isError, "\(resolved.text)")
         #expect(try await store.note(ids[0])?.state == .resolved)
+        // The reply is headed with the client that resolved it, not the target the note went to.
+        #expect(try await store.note(ids[0])?.resolveAgent == "agent")
         let again = try await call("resolve_note", ["id": .string(ids[0].rawValue)])
         #expect(again.isError && again.text.contains("already resolved"))
         let unsent = try await call("resolve_note", ["id": .string(ids[1].rawValue)])
@@ -290,6 +292,9 @@ struct MCPServerTests {
         let first = try Self.openSocket(port: listener.port)
         let second = try Self.openSocket(port: listener.port)
         defer { close(first); close(second) }
+        // The server counts connections on two event loops, not in accept order: give it the first two before the
+        // third arrives, or the second may be the one turned away (inside the 300 ms deadline that would close them).
+        try await Task.sleep(for: .milliseconds(100))
         let third = try await Self.rawExchange(port: listener.port, "GET /x HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
         #expect(third.isEmpty, "a third connection is closed on accept: \(third)")
     }

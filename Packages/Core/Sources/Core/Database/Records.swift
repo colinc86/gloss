@@ -59,6 +59,8 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     public var previousState: String? = nil
     /// Nil for the user; an agent's name for a question it asked.
     public var author: String? = nil
+    /// The agent that resolved the note through MCP; nil when resolved by hand or not resolved.
+    public var resolveAgent: String? = nil
 }
 
 public struct AttachmentRecord: SnakeCaseRecord, Identifiable {

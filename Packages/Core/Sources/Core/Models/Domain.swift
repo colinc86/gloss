@@ -184,11 +184,13 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var resolveMessage: String?
     /// The agent that wrote the note to ask the user something (`ask_user`); nil for the user's own notes.
     public var author: String?
+    /// The agent that resolved the note through MCP (its client's name); nil when the user resolved it.
+    public var resolveAgent: String?
 
     public init(
         id: NoteID, documentID: DocumentID, anchor: Anchor, body: String, state: NoteState,
         color: NoteColor, createdAt: Date, updatedAt: Date, resolveOutcome: ResolveOutcome? = nil, resolveMessage: String? = nil,
-        author: String? = nil
+        author: String? = nil, resolveAgent: String? = nil
     ) {
         self.id = id
         self.documentID = documentID
@@ -201,6 +203,7 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
         self.resolveOutcome = resolveOutcome
         self.resolveMessage = resolveMessage
         self.author = author
+        self.resolveAgent = resolveAgent
     }
 
     /// Notes an agent still has to act on.

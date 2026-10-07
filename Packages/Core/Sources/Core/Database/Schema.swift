@@ -209,6 +209,11 @@ public enum Schema {
                 CREATE INDEX note_document_state ON note(document_id, state);
                 """)
         }
+        migrator.registerMigration("v9-resolve-agent") { db in
+            // The agent that resolved the note through MCP, by the name its client gave: a note sent by clipboard
+            // has no agent of its own to name the reply after.
+            try db.execute(sql: "ALTER TABLE note ADD COLUMN resolve_agent TEXT")
+        }
         return migrator
     }
 

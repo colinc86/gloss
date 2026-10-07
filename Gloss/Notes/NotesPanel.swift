@@ -693,7 +693,7 @@ struct NoteCard: View {
     @ViewBuilder
     private func turnView(_ turn: NoteThread.Turn, pending: Bool) -> some View {
         if pending {
-            AgentMessageBubble(message: turn.text, needsInput: needsInput, agent: note.author ?? lastSend.flatMap(NotesPanelModel.agentName),
+            AgentMessageBubble(message: turn.text, needsInput: needsInput, agent: note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName),
                                expanded: expanded || editing, isCut: $messageCut)
                 // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
                 .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
