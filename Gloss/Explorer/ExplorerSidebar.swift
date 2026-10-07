@@ -3,12 +3,12 @@ import Core
 import SwiftUI
 import Viewers
 
-/// The explorer column: host and folder controls in the toolbar, a status row, root tabs, the tree, and the filter.
+/// The explorer column: a status row, root tabs, the tree, and the filter. The host it browses is picked in the
+/// window title's host chip.
 struct ExplorerSidebar: View {
     @FocusState private var searchFocused: Bool
     @FocusState private var filterFocused: Bool
     @Environment(AppModel.self) private var model
-    @State private var remotePathPrompt: RemotePathPrompt?
     @State private var diagnostics: String?
 
     private var pickedHost: HostID { model.pickedHost }
@@ -72,19 +72,9 @@ struct ExplorerSidebar: View {
                 .background(.bar)
             }
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .automatic) {
-                hostMenu
-            }
-        }
         .onChange(of: model.explorer.selectedTabID) { _, _ in
             Task { await model.folderBecameCurrent() }
             if let tab = model.explorer.selectedTab { model.pickedHost = tab.hostID }
-        }
-        .sheet(item: $remotePathPrompt) { prompt in
-            RemotePathSheet(prompt: prompt) { path in
-                Task { await model.openRemoteRoot(hostID: prompt.hostID, path: path) }
-            }
         }
         .alert("Unknown host key", isPresented: Binding(get: { model.hosts.pendingHostKey != nil }, set: { _ in })) {
             Button("Accept and Connect") {
@@ -101,93 +91,11 @@ struct ExplorerSidebar: View {
     // MARK: Hosts
 
     private func hostName(_ hostID: HostID) -> String {
-        hostID == .local ? "this Mac" : (model.hosts.entry(for: hostID)?.name ?? hostID.rawValue)
-    }
-
-    /// Hosts come from `~/.ssh/config` (`Host` aliases without wildcards). Choosing one connects and opens its home;
-    /// choosing it again retries after a failure.
-    private var hostMenu: some View {
-        Menu {
-            ForEach(model.hosts.entries) { entry in
-                Button {
-                    model.pickedHost = entry.id
-                    if entry.id == .web {
-                        // Pages, not files: the section lists them and takes an address.
-                    } else if entry.id == .github {
-                        model.presentOpenPullRequest()
-                    } else if entry.id == .atlassian {
-                        model.presentOpenAtlassian()
-                    } else if entry.id != .local {
-                        Task { await model.openRemoteRoot(hostID: entry.id) }
-                    }
-                } label: {
-                    Label(Self.label(entry.id, name: entry.name), systemImage: symbol(entry.id))
-                }
-            }
-            Divider()
-            // ⇧⌘O belongs to File › Open Folder…; two bindings for one key made the menu bar's win silently.
-            if pickedHost == .web {
-                Button("Open Location…") { model.presentOpenLocation() }
-            } else if pickedHost == .github {
-                Button("Open Pull Request…") { model.presentOpenPullRequest() }
-            } else if pickedHost == .atlassian {
-                Button("Open Jira Issue or Confluence Page…") { model.presentOpenAtlassian() }
-            } else {
-                Button("Open Folder on \(hostName(pickedHost))…") { openFolder() }
-            }
-            SettingsLink { Text("Manage Hosts…") }
-        } label: {
-            // This Mac is the default and the icon says so; a remote host names itself, since which one matters.
-            Label(pickedHost == .local ? "local" : Self.label(pickedHost, name: hostName(pickedHost)), systemImage: symbol(pickedHost))
-                .labelStyle(.titleAndIcon)
-        }
-        .help(pickedHost == .local ? "Browsing this Mac. Choose another host…"
-              : "Browsing \(Self.label(pickedHost, name: hostName(pickedHost))). Choose another host…")
-        .accessibilityLabel("Host: \(hostName(pickedHost))")
-    }
-
-    /// How a host is named in the menu: the integrations and the web by what they are, others by their name.
-    static func label(_ hostID: HostID, name: String) -> String {
-        switch hostID {
-        case .web: "Web"
-        case .github: "GitHub"
-        case .atlassian: "Atlassian"
-        default: name
-        }
-    }
-
-    private func symbol(_ hostID: HostID) -> String {
-        switch hostID {
-        case .local: "desktopcomputer"
-        case .web: "globe"
-        case .github: "arrow.triangle.pull"
-        case .atlassian: "square.stack.3d.up"
-        default: statusIcon(hostID)
-        }
-    }
-
-    private func statusIcon(_ hostID: HostID) -> String {
-        switch model.hosts.status(for: hostID) {
-        case .connected: "network"
-        case .connecting, .waitingForAgent, .reconnecting: "network.badge.shield.half.filled"
-        case .failed: "exclamationmark.triangle"
-        case .idle: "network.slash"
-        }
+        model.hostName(hostID)
     }
 
     private func openFolder() {
-        if pickedHost == .web {
-            model.presentOpenLocation()
-        } else if pickedHost == .local {
-            model.explorer.chooseRootWithPanel(hostID: .local)
-        } else if pickedHost == .github {
-            model.presentOpenPullRequest()
-        } else if pickedHost == .atlassian {
-            model.presentOpenAtlassian()
-        } else {
-            let home = model.hostHomes[pickedHost] ?? ""
-            remotePathPrompt = RemotePathPrompt(hostID: pickedHost, hostName: hostName(pickedHost), initialPath: home)
-        }
+        model.presentOpenFolder(on: pickedHost)
     }
 
     /// The picked host's connection as a notice (connecting, waiting for the key agent, reconnecting, failed, or a

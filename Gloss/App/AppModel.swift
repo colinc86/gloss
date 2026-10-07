@@ -47,9 +47,11 @@ final class AppModel {
     let launchOptions: AppLaunchOptions
     /// Live ssh connections by host, for transports and search.
     private(set) var connections: [HostID: SSHConnection] = [:]
-    /// The host the sidebar's host menu shows: whichever was picked or connected last, so a connect started from
-    /// a launch flag or a URL is visible in the status row too.
+    /// The host the explorer browses and the host menu shows: whichever was picked or connected last, so a connect
+    /// started from a launch flag or a URL is visible in the status row too.
     var pickedHost: HostID = .local
+    /// The ssh host whose folder the Open Folder sheet asks for, while it shows.
+    var remotePathPrompt: RemotePathPrompt?
     /// The same connections, readable by the transports without touching the main actor.
     let connectionRegistry = ConnectionRegistry()
     let herdrTransport: HerdrTransport

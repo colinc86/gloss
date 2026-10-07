@@ -138,6 +138,11 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { model.quickOpen.isPresented }, set: { if !$0 { model.quickOpen.dismiss() } })) {
             QuickOpenSheet()
         }
+        .sheet(item: Binding(get: { model.remotePathPrompt }, set: { model.remotePathPrompt = $0 })) { prompt in
+            RemotePathSheet(prompt: prompt) { path in
+                Task { await model.openRemoteRoot(hostID: prompt.hostID, path: path) }
+            }
+        }
         .alert("Notes Are Temporary This Session", isPresented: Binding(get: { model.databaseFailure != nil }, set: { if !$0 { model.databaseFailure = nil } })) {
             Button("OK", role: .cancel) {}
             Button("Show Database in Finder") {

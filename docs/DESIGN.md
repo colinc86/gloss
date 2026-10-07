@@ -81,6 +81,8 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
   tree, its filter field, Find in Files, hidden files, host picker, follow, sidebar toggle, notes toggle, the
   viewer's content, the filter chips (one stop each), notes search, sort, agent chip, Send menu, the notes list,
   then the folder switcher. Every control is reachable; a change that adds or groups stops re-checks this order.
+  Since 2026-10-06 the host picker (now the title's host chip) and follow sit in the window toolbar beside the
+  title rather than the sidebar's; the order has not been re-checked since.
 - Check with the accessibility API (an `AXUIElement` walk), since System Events does not reach into SwiftUI lists.
 
 ## Window and layout
@@ -551,14 +553,26 @@ path. Dropping on the Dock icon is not supported yet.
   name (`.headline`) over its subtitle (`.caption`, secondary: the ssh host, `owner/repo #12`, a page's title) sits
   without a glass capsule and gains a faint rounded fill on hover, so it reads as clickable without looking like a
   button. A click, File › Open Location… (⇧⌘L) or Go › Go to Address… turns it into a 460 pt field holding the
-  page's live address or the file's path. The field (`AddressField`) has a leading globe or folder
-  that follows what the text reads as, and, when ssh hosts exist, a small menu at its end naming the machine (This
-  Mac in secondary, an ssh host in teal) that keeps the caret in the field. Return opens; text that is neither an
-  address nor a path shakes the field (not with Reduce Motion), outlines it orange and says "Not an address or a
-  path" inside it, announced to VoiceOver. Escape or a click elsewhere puts the title back; an open menu (the host
+  page's live address or the file's path. The field (`AddressField`) leads with the host chip (below), then a globe
+  or folder that follows what the text reads as. Return opens; text that is neither an address nor a path shakes
+  the field (not with Reduce Motion), outlines it orange and says "Not an address or a path" inside it, announced
+  to VoiceOver. Escape or a click elsewhere puts the title back; an open menu (the host
   menu, the menu bar) does not, and the caret returns to the field when it closes. The browser's own toolbar
   keeps only Back, Forward and the "via host" capsule.
-- **Web in the explorer**: the host menu always lists Web (`globe`) after this Mac. Picked, the root switcher, tree and
+- **Host chip** (`HostMenu`, 2026-10-06): the one host menu, at the title's leading edge whether it is at rest or
+  editing; the sidebar no longer has a host dropdown. The chip is the host's icon and name in caption weight: This
+  Mac, Web, GitHub and Atlassian in secondary, an ssh host in teal, its icon the connection's state
+  (`network`, `network.badge.shield.half.filled` while connecting, `network.slash` idle) and an orange
+  `exclamationmark.triangle` after a failure. Its menu lists every host with that icon, a divider, the context
+  item (Open Folder on this Mac…/on an ssh host…, Open Location…, Open Pull Request…, Open Jira Issue or Confluence
+  Page…) and Manage Hosts…. At rest it names what the explorer browses and picking switches it, as the sidebar's
+  menu did: Web lists pages, GitHub and Atlassian open their sheets, an ssh host connects (again, after a failure)
+  and opens its home. While editing it names where the typed path opens: This Mac or an ssh host is chosen for
+  the field and keeps the caret there; Web, GitHub and Atlassian end editing and go there. The explorer's Web
+  section keeps a small machine menu at its field's end (This Mac in secondary, an ssh host in teal) instead of the
+  chip, which would only switch away from the section. While editing, the context item names the chip's machine
+  and Open Location… is left out, since it would start the field over.
+- **Web in the explorer**: the host chip always lists Web (`globe`) after this Mac. Picked, the root switcher, tree and
   filter footer give way to an `AddressField` (which also narrows the lists as you type; Return opens what was typed)
   and a sidebar list of Pinned and Recent pages: the title over the address in caption, a teal host name for a page
   reached through an ssh host, the page in the viewer selected. Double-click or Return opens a row; arrows only move
