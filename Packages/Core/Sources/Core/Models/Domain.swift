@@ -75,6 +75,26 @@ public struct Host: Identifiable, Hashable, Codable, Sendable {
     public var isVirtual: Bool { kind.isVirtual }
 }
 
+/// A live page visited, for the explorer's Web section and Open Quickly: its document key, the host it was reached
+/// on, and the page's title once it loaded.
+public struct WebPage: Identifiable, Hashable, Codable, Sendable {
+    public var url: String
+    public var hostID: HostID
+    public var title: String?
+    public var lastVisitedAt: Date
+    public var pinned: Bool
+
+    public var id: String { hostID.rawValue + " " + url }
+
+    public init(url: String, hostID: HostID, title: String? = nil, lastVisitedAt: Date, pinned: Bool = false) {
+        self.url = url
+        self.hostID = hostID
+        self.title = title
+        self.lastVisitedAt = lastVisitedAt
+        self.pinned = pinned
+    }
+}
+
 public struct Root: Identifiable, Hashable, Codable, Sendable {
     public var id: RootID
     public var hostID: HostID

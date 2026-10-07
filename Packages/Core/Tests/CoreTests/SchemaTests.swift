@@ -16,6 +16,7 @@ struct SchemaTests {
         "staged_file": [("id", "TEXT"), ("send_id", "TEXT"), ("host_id", "TEXT"), ("remote_path", "TEXT"), ("expires_at", "DATETIME")],
         "target": [("id", "TEXT"), ("host_id", "TEXT"), ("transport", "TEXT"), ("identity_json", "TEXT"), ("label", "TEXT"), ("last_used_at", "DATETIME")],
         "setting": [("key", "TEXT"), ("value", "TEXT")],
+        "web_page": [("url", "TEXT"), ("host_id", "TEXT"), ("title", "TEXT"), ("last_visited_at", "DATETIME"), ("pinned", "BOOLEAN")],
     ]
 
     @Test func everyTableMatchesTheProductDoc() throws {
@@ -86,10 +87,12 @@ struct SchemaTests {
         func rows(_ db: Database, _ table: String) throws -> [[String: DatabaseValue]] {
             try Row.fetchAll(db, sql: "SELECT * FROM \(table) ORDER BY 1").map { row in Dictionary(uniqueKeysWithValues: row.columnNames.map { ($0, row[$0] as DatabaseValue) }) }
         }
-        let before = try queue.read { db in try Schema.tableNames.map { try rows(db, $0) } }
+        // Tables later migrations create are not part of the comparison.
+        let tables = try queue.read { db in try Schema.tableNames.filter { try db.tableExists($0) } }
+        let before = try queue.read { db in try tables.map { try rows(db, $0) } }
         try Schema.migrator.migrate(queue)
-        let after = try queue.read { db in try Schema.tableNames.map { try rows(db, $0) } }
-        for (index, table) in Schema.tableNames.enumerated() where table != "host" {
+        let after = try queue.read { db in try tables.map { try rows(db, $0) } }
+        for (index, table) in tables.enumerated() where table != "host" {
             // Columns later migrations add (empty for old rows) are not part of the comparison.
             let kept = after[index].map { row in row.filter { before[index].first?.keys.contains($0.key) ?? true } }
             #expect(before[index] == kept, "\(table) rows survive the rebuild")

@@ -4,7 +4,7 @@ import GRDB
 /// Database schema. Every change is a new migration appended to `migrator`; `v1` is never edited.
 public enum Schema {
     public static let tableNames = [
-        "host", "root", "document", "note", "attachment", "send", "send_note", "staged_file", "target", "setting",
+        "host", "root", "document", "note", "attachment", "send", "send_note", "staged_file", "target", "setting", "web_page",
     ]
 
     public static var migrator: DatabaseMigrator {
@@ -213,6 +213,21 @@ public enum Schema {
             // The agent that resolved the note through MCP, by the name its client gave: a note sent by clipboard
             // has no agent of its own to name the reply after.
             try db.execute(sql: "ALTER TABLE note ADD COLUMN resolve_agent TEXT")
+        }
+        migrator.registerMigration("v10-web-pages") { db in
+            // Pages visited, for the explorer's Web section and Open Quickly: by URL and the host it was reached
+            // on (`h_web`, or an ssh host whose loopback it is), so the same localhost on two machines is two pages.
+            try db.execute(sql: """
+                CREATE TABLE web_page (
+                    url TEXT NOT NULL,
+                    host_id TEXT NOT NULL REFERENCES host(id) ON DELETE CASCADE,
+                    title TEXT,
+                    last_visited_at DATETIME NOT NULL,
+                    pinned BOOLEAN NOT NULL DEFAULT 0,
+                    PRIMARY KEY (url, host_id)
+                );
+                CREATE INDEX web_page_recent ON web_page(pinned, last_visited_at);
+                """)
         }
         return migrator
     }

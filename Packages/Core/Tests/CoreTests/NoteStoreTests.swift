@@ -247,6 +247,53 @@ struct NoteStoreTests {
         #expect(afterInsert?.map(\.id) == [note.id])
     }
 
+    @Test func webPagesAreRecordedTitledPinnedAndRemoved() async throws {
+        let store = try makeStore()
+        let at = { (seconds: Double) in Date(timeIntervalSince1970: seconds) }
+        try await store.recordWebPageVisit(url: "https://example.com/", hostID: .web, at: at(1))
+        try await store.recordWebPageVisit(url: "http://localhost:3000/", hostID: .web, title: "Here", at: at(2))
+        let remote = try await store.upsertHost(name: "box", kind: .ssh)
+        try await store.recordWebPageVisit(url: "http://localhost:3000/", hostID: remote.id, at: at(3))
+        #expect(try await store.webPages().map(\.hostID) == [remote.id, .web, .web], "the same address on two hosts is two pages, newest first")
+
+        // A visit without a title keeps the one known; a title arriving later fills it in.
+        try await store.recordWebPageVisit(url: "http://localhost:3000/", hostID: .web, at: at(4))
+        try await store.setWebPageTitle(url: "https://example.com/", hostID: .web, title: "Example")
+        try await store.setWebPageTitle(url: "https://nowhere.example/", hostID: .web, title: "Never visited")
+        var pages = try await store.webPages()
+        #expect(pages.map(\.url) == ["http://localhost:3000/", "http://localhost:3000/", "https://example.com/"])
+        #expect(pages.map(\.title) == ["Here", nil, "Example"])
+
+        // Pinned pages come first whatever their age.
+        try await store.setWebPagePinned(url: "https://example.com/", hostID: .web, true)
+        pages = try await store.webPages()
+        #expect(pages.first?.url == "https://example.com/" && pages.first?.pinned == true)
+        try await store.recordWebPageVisit(url: "https://example.com/", hostID: .web, at: at(5))
+        #expect(try await store.webPages().first?.pinned == true, "a visit keeps the pin")
+
+        try await store.removeWebPage(url: "http://localhost:3000/", hostID: remote.id)
+        #expect(try await store.webPages().count == 2)
+        // Removing the host removes the pages reached through it.
+        try await store.recordWebPageVisit(url: "http://localhost:8080/", hostID: remote.id, at: at(6))
+        try await store.deleteHost(remote.id)
+        #expect(try await store.webPages().allSatisfy { $0.hostID == .web })
+    }
+
+    @Test func recentWebPagesAreCappedButPinnedOnesKept() async throws {
+        let store = try makeStore()
+        try await store.recordWebPageVisit(url: "https://pinned.example/", hostID: .web, at: Date(timeIntervalSince1970: 0))
+        try await store.setWebPagePinned(url: "https://pinned.example/", hostID: .web, true)
+        let total = NoteStore.maximumRecentWebPages + 5
+        for index in 1...total {
+            try await store.recordWebPageVisit(url: "https://example.com/\(index)", hostID: .web, at: Date(timeIntervalSince1970: Double(index)))
+        }
+        let pages = try await store.webPages()
+        #expect(pages.count == NoteStore.maximumRecentWebPages + 1)
+        #expect(pages.first?.url == "https://pinned.example/", "the oldest page survives because it is pinned")
+        #expect(pages.dropFirst().first?.url == "https://example.com/\(total)")
+        #expect(!pages.contains { $0.url == "https://example.com/5" } && pages.contains { $0.url == "https://example.com/6" }, "the oldest unpinned ones went")
+    }
+
     @Test func rootsTargetsStagedFilesAndSettings() async throws {
         let store = try makeStore()
         let root = try await store.recordRootOpened(hostID: .local, path: "/tmp/proj", at: Date(timeIntervalSince1970: 5))

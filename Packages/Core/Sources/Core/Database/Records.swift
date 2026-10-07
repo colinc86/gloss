@@ -29,6 +29,15 @@ public struct RootRecord: SnakeCaseRecord, Identifiable {
     public var pinned: Bool
 }
 
+public struct WebPageRecord: SnakeCaseRecord {
+    public static let databaseTableName = "web_page"
+    public var url: String
+    public var hostId: String
+    public var title: String?
+    public var lastVisitedAt: Date
+    public var pinned: Bool
+}
+
 public struct DocumentRecord: SnakeCaseRecord, Identifiable {
     public static let databaseTableName = "document"
     public static let notes = hasMany(NoteRecord.self)

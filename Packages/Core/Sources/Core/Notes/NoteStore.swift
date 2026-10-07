@@ -168,6 +168,57 @@ public struct NoteStore: Sendable {
         _ = try await queue.write { db in try RootRecord.deleteOne(db, key: id.rawValue) }
     }
 
+    // MARK: Web pages
+
+    /// Unpinned pages kept beyond this many are forgotten, oldest first.
+    public static let maximumRecentWebPages = 200
+
+    /// Pinned first, then the most recently visited.
+    public func webPages() async throws -> [WebPage] {
+        try await queue.read { db in
+            try WebPageRecord.order(Column("pinned").desc, Column("last_visited_at").desc).fetchAll(db).map(WebPage.init(record:))
+        }
+    }
+
+    /// A visit to `url` on `hostID`: moves it to the top of the recent pages, keeping its title and pin unless a
+    /// title is given, and forgets the oldest unpinned pages past `maximumRecentWebPages`.
+    @discardableResult
+    public func recordWebPageVisit(url: String, hostID: HostID, title: String? = nil, at date: Date = Date()) async throws -> WebPage {
+        let date = Self.rounded(date)
+        return try await queue.write { db in
+            var record = try WebPageRecord.filter(Column("url") == url && Column("host_id") == hostID.rawValue).fetchOne(db)
+                ?? WebPageRecord(url: url, hostId: hostID.rawValue, title: nil, lastVisitedAt: date, pinned: false)
+            record.lastVisitedAt = date
+            if let title, !title.isEmpty { record.title = title }
+            try record.save(db)
+            try db.execute(sql: """
+                DELETE FROM web_page WHERE pinned = 0 AND rowid NOT IN
+                    (SELECT rowid FROM web_page WHERE pinned = 0 ORDER BY last_visited_at DESC LIMIT ?)
+                """, arguments: [Self.maximumRecentWebPages])
+            return WebPage(record: record)
+        }
+    }
+
+    /// The page's title once it is known; a page never visited is not added.
+    public func setWebPageTitle(url: String, hostID: HostID, title: String) async throws {
+        guard !title.isEmpty else { return }
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE web_page SET title = ? WHERE url = ? AND host_id = ?", arguments: [title, url, hostID.rawValue])
+        }
+    }
+
+    public func setWebPagePinned(url: String, hostID: HostID, _ pinned: Bool) async throws {
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE web_page SET pinned = ? WHERE url = ? AND host_id = ?", arguments: [pinned, url, hostID.rawValue])
+        }
+    }
+
+    public func removeWebPage(url: String, hostID: HostID) async throws {
+        try await queue.write { db in
+            try db.execute(sql: "DELETE FROM web_page WHERE url = ? AND host_id = ?", arguments: [url, hostID.rawValue])
+        }
+    }
+
     // MARK: Documents
 
     public func document(_ id: DocumentID) async throws -> Document? {
@@ -852,6 +903,12 @@ extension Host {
 extension Root {
     init(record: RootRecord) {
         self.init(id: RootID(rawValue: record.id), hostID: HostID(rawValue: record.hostId), path: record.path, lastOpenedAt: record.lastOpenedAt, pinned: record.pinned)
+    }
+}
+
+extension WebPage {
+    init(record: WebPageRecord) {
+        self.init(url: record.url, hostID: HostID(rawValue: record.hostId), title: record.title, lastVisitedAt: record.lastVisitedAt, pinned: record.pinned)
     }
 }
 
