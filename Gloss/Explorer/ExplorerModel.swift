@@ -71,12 +71,14 @@ final class ExplorerModel {
             treeDelegate?.treeDidReplaceRoot()
             if selectedTabID != oldValue {
                 onTabsChange()
-                onSelect()
+                if !selectingQuietly { onSelect() }
             }
         }
     }
     /// Another folder came to the front (or none): the app shows its host.
     @ObservationIgnored var onSelect: () -> Void = {}
+    /// Set while a close moves the selection within the closed folder's host, which changes no host.
+    @ObservationIgnored private var selectingQuietly = false
     /// A folder opened or closed, or another came to the front: the app saves what's open (#9).
     @ObservationIgnored var onTabsChange: () -> Void = {}
     /// Recently opened roots per host, pinned first; one entry per folder.
@@ -248,8 +250,14 @@ final class ExplorerModel {
     func closeTab(_ id: RootID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs[index].watcher?.cancel()
-        tabs.remove(at: index)
-        if selectedTabID == id { selectedTabID = tabs.last?.id }
+        let closed = tabs.remove(at: index)
+        // The next folder on the same host, or none: the explorer stays on that host (or on Web, where the closed
+        // folder was hidden) and says nothing is open rather than jumping to another host's folder.
+        if selectedTabID == id {
+            selectingQuietly = true
+            selectedTabID = tabs.last { $0.hostID == closed.hostID }?.id
+            selectingQuietly = false
+        }
     }
 
     /// Favorite folders: pinned roots stay at the top of the root switcher whether or not they are open.

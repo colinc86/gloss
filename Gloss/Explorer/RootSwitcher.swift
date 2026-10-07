@@ -15,9 +15,7 @@ struct RootSwitcher: View {
     @State private var hovering = false
 
     /// The folder in front, when it is on the picked host; a folder never shows under another host's name.
-    private var shownTab: RootTab? {
-        model.explorer.selectedTab.flatMap { $0.hostID == model.pickedHost ? $0 : nil }
-    }
+    private var shownTab: RootTab? { model.shownTab }
 
     var body: some View {
         let explorer = model.explorer
@@ -287,12 +285,12 @@ private struct RootSwitcherList: View {
         .padding(DS.Space.s)
         .frame(width: 320)
         .onAppear {
-            highlight = SwitcherItem.start(in: flat, query: query, selectedTabID: explorer.selectedTab?.hostID == model.pickedHost ? explorer.selectedTabID : nil,
+            highlight = SwitcherItem.start(in: flat, query: query, selectedTabID: model.shownTab?.id,
                                    pickedHost: model.pickedHost)
             fieldFocused = true
         }
         .onChange(of: query) { _, _ in
-            highlight = SwitcherItem.start(in: lists().flat, query: query, selectedTabID: explorer.selectedTab?.hostID == model.pickedHost ? explorer.selectedTabID : nil,
+            highlight = SwitcherItem.start(in: lists().flat, query: query, selectedTabID: model.shownTab?.id,
                                    pickedHost: model.pickedHost)
         }
         // Closing or re-pinning a row can shorten the list under the highlight.
@@ -351,7 +349,7 @@ private struct RootSwitcherList: View {
         return RootRow(title: entry.title, subtitle: SwitcherEntry.subtitle(hostID: entry.hostID, path: entry.path),
                        symbol: SwitcherEntry.symbol(hostID: entry.hostID, path: entry.path, open: isOpen),
                        host: entry.hostID == .local ? nil : entry.hostID == .github ? "GitHub" : entry.hostID == .atlassian ? "Atlassian" : hostName(entry.hostID),
-                       isCurrent: isOpen && explorer.selectedTabID == entry.id, isOpen: isOpen, isHighlighted: highlighted,
+                       isCurrent: isOpen && explorer.selectedTabID == entry.id && entry.hostID == model.pickedHost, isOpen: isOpen, isHighlighted: highlighted,
                        pinned: entry.pinned, notes: tab.map { explorer.folderCountForRoot($0) } ?? 0,
                        choose: { choose(entry) },
                        togglePin: { Task { await explorer.setPinned(entry.id, hostID: entry.hostID, path: entry.path, !entry.pinned) } },

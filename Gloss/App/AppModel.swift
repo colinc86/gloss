@@ -1057,11 +1057,17 @@ final class AppModel {
     /// Open Quickly over the selected root, on whichever host it belongs to.
     /// A pull request, a Jira project or a Confluence space: browsed, not searched (its files are not on a disk
     /// that ssh or rg can reach).
-    var selectedRootIsVirtual: Bool { explorer.selectedTab?.hostID.isVirtual ?? false }
+    var selectedRootIsVirtual: Bool { shownTab?.hostID.isVirtual ?? false }
+
+    /// The folder in front as the explorer shows it: only on the picked host (with Web or another host picked, the
+    /// selected folder is hidden, and commands on "the folder" leave it alone).
+    var shownTab: RootTab? {
+        explorer.selectedTab.flatMap { $0.hostID == pickedHost ? $0 : nil }
+    }
 
     func presentQuickOpen() {
         // With no folder, or a pull request, project or space in front, it still opens addresses and pages.
-        guard let tab = explorer.selectedTab, !tab.hostID.isVirtual else {
+        guard let tab = shownTab, !tab.hostID.isVirtual else {
             quickOpen.present(root: nil, hostID: .local, connection: nil)
             return
         }
@@ -1079,7 +1085,7 @@ final class AppModel {
     /// Find in Files over the selected root, reconnecting a remote host first; never searches this Mac for a
     /// remote root.
     func runContentSearch() {
-        guard let tab = explorer.selectedTab, !tab.hostID.isVirtual else { return }
+        guard let tab = shownTab, !tab.hostID.isVirtual else { return }
         let search = explorer.contentSearch
         guard tab.hostID != .local else {
             search.search(in: tab.path)
@@ -1483,6 +1489,9 @@ final class AppModel {
             if let tab = explorer.tabs.first(where: { ExplorerModel.markKey($0.hostID, $0.path) == key }) { opened[index] = tab.id }
         }
         if let selected = workspace.selectedFolder, let id = opened[selected] { explorer.selectedTabID = id }
+        // A host that wouldn't connect was picked on the way; the folder in front decides (selecting it again
+        // above changed nothing, so nothing else said so).
+        if let tab = explorer.selectedTab { pickedHost = tab.hostID }
         history = DocumentHistory(back: workspace.back.map(\.entry), current: workspace.document?.place.entry, forward: workspace.forward.map(\.entry))
         guard let document = workspace.document else { return }
         let place = document.place

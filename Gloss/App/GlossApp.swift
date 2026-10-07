@@ -211,13 +211,13 @@ struct AppCommands: Commands {
                 model.explorer.filterFocusRequest += 1
             } label: { Label("Filter Files", systemImage: "line.3.horizontal.decrease.circle") }
                 .keyboardShortcut("j", modifiers: [.command, .option])
-                .disabled(model.explorer.selectedTab == nil)
+                .disabled(model.shownTab == nil)
             Button {
                 model.explorer.contentSearch.isVisible = true
                 model.explorer.contentSearch.focusRequest += 1
             } label: { Label("Find in Files", systemImage: "text.magnifyingglass") }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
-                .disabled(model.explorer.selectedTab == nil || model.selectedRootIsVirtual)
+                .disabled(model.shownTab == nil || model.selectedRootIsVirtual)
             Button { model.revealActiveDocumentInExplorer() } label: { Label("Reveal in Explorer", systemImage: "scope") }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
                 .disabled(model.activeSession == nil)

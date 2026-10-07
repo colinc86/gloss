@@ -37,7 +37,7 @@ struct ExplorerSidebar: View {
             .padding(.vertical, DS.Space.s)
             Divider()
             // A folder shows only under its own host: picking another with nothing open there says so instead.
-            let shown = explorer.selectedTab.flatMap { $0.hostID == pickedHost ? $0 : nil }
+            let shown = model.shownTab
             if pickedHost == .web {
                 WebPagesSection()
             } else if explorer.contentSearch.isVisible, shown != nil {
@@ -206,8 +206,8 @@ struct ExplorerSidebar: View {
             }
             .buttonStyle(.borderless)
             // A pull request, project or space is browsed, not searched.
-            .disabled(explorer.selectedTab?.hostID.isVirtual == true)
-            .onChange(of: explorer.selectedTab?.hostID.isVirtual == true) { _, virtual in if virtual { explorer.contentSearch.isVisible = false } }
+            .disabled(model.shownTab?.hostID.isVirtual == true)
+            .onChange(of: model.shownTab?.hostID.isVirtual == true) { _, virtual in if virtual { explorer.contentSearch.isVisible = false } }
             .help("Search file contents (⌘⇧F)")
             // Shows its state, not just its function: struck through while hidden files stay hidden.
             Toggle(isOn: $explorer.showDotfiles) {

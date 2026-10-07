@@ -93,5 +93,63 @@ struct RootSwitcherTests {
         #expect(model.pickedHost == .local, "however the folder came to the front")
         await model.shutDown()
     }
+
+    @Test @MainActor func closingAFolderStaysOnItsHost() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("switcher-close-\(UUID().uuidString)").path
+        for name in ["a", "b", "c"] { try FileManager.default.createDirectory(atPath: "\(base)/\(name)", withIntermediateDirectories: true) }
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        let explorer = ExplorerModel(noteStore: NoteStore(database: try AppDatabase.inMemory()))
+        let local = LocalFileSystem(deleteBehavior: .permanent)
+        explorer.fileSystemProvider = { _ in local }
+        let box = HostID(rawValue: "h_box")
+        await explorer.openRoot(hostID: .local, path: "\(base)/a")
+        await explorer.openRoot(hostID: box, path: "\(base)/b")
+        await explorer.openRoot(hostID: .local, path: "\(base)/c")
+        var selections = 0
+        explorer.onSelect = { selections += 1 }
+        let a = try #require(explorer.tabs.first { $0.path.hasSuffix("/a") })
+        explorer.selectedTabID = a.id
+        #expect(selections == 1)
+        explorer.closeTab(a.id)
+        #expect(explorer.selectedTab?.path.hasSuffix("/c") == true, "the next folder on the same host, not the other host's")
+        explorer.closeTab(try #require(explorer.selectedTabID))
+        #expect(explorer.selectedTabID == nil, "none left on this host: nothing open here, rather than another host's folder")
+        #expect(selections == 1, "a close changes no host")
+        explorer.stopWatching()
+    }
+
+    @Test @MainActor func folderCommandsActOnlyOnTheFolderShown() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("switcher-shown-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.explorer.openRoot(hostID: .local, path: base)
+        #expect(model.shownTab?.path == model.explorer.selectedTab?.path)
+        model.browse(.webPages)
+        #expect(model.explorer.selectedTab != nil && model.shownTab == nil, "hidden under Web")
+        model.explorer.contentSearch.query = "anything"
+        model.runContentSearch()
+        #expect(!model.explorer.contentSearch.isSearching && model.explorer.contentSearch.searchedPattern == nil, "Find in Files leaves the hidden folder alone")
+        await model.shutDown()
+    }
+
+    /// A host that won't connect is passed over on launch, and the folder in front shows with its own host.
+    @Test @MainActor func restoringPastAHostThatWontConnectShowsTheFolderInFront() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("switcher-restore-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.start()
+        // Nothing listens on port 1 of the loopback: ssh is refused at once.
+        let host = try await model.noteStore.saveHost(id: nil, name: "gloss-test-refused", options: HostOptions(hostName: "127.0.0.1", port: 1))
+        await model.hosts.refresh()
+        var workspace = Workspace()
+        workspace.folders = [.init(host: HostID.local.rawValue, path: base), .init(host: host.id.rawValue, path: "/srv/app")]
+        workspace.selectedFolder = 0
+        await model.restore(workspace)
+        #expect(model.explorer.tabs.map(\.hostID) == [.local])
+        #expect(model.pickedHost == .local && model.shownTab?.path == base)
+        await model.shutDown()
+    }
 }
 
