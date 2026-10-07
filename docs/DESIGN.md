@@ -267,11 +267,12 @@ path. Dropping on the Dock icon is not supported yet.
   (missing ripgrep) is a quiet warning. Each stage is rendered offscreen in `ConnectionNoticeTests` for review.
 - **Follow mode**: shown only where Herdr exists (its binary on this Mac, or a connected host whose probe found
   it), since following needs Herdr's focus events; the Herdr plugin row in Settings → Agents is gated the same way.
-  The toolbar crosshair is a plain button whose symbol turns accent-coloured (and bounces)
-  while following; a toolbar toggle's solid "on" disc hid it. While a pane is followed, a card tops the sidebar:
-  "FOLLOWING" with the agent's `StatusDot`, host (teal) and agent, pane id, and the pane's folder, plus a stop
-  button; it slides in and out from the top. Follow problems (Herdr not running, an unknown machine) stay in the
-  status line.
+  The crosshair (`FollowToggle`) sits right after the address field: a plain glass button while off; while
+  following, a white `scope` on an accent-filled disc of its own (the item's shared glass hidden so it doesn't wash
+  out the fill), the same 28 pt either way, and it bounces as it turns on or off. A toolbar toggle's solid "on" disc
+  hid the symbol. While a pane is followed, a card tops the sidebar: "FOLLOWING" with the agent's `StatusDot`, host
+  (teal) and agent, pane id, and the pane's folder, plus a stop button; it slides in and out from the top. Follow
+  problems (Herdr not running, an unknown machine) stay in the status line.
 
 - **Pull request roots** (milestone 2): with a GitHub token saved, the host menu lists GitHub (`arrow.triangle.pull`)
   after this Mac. A pull request opens as a root named `owner/repo #N` (root switcher, tree root, breadcrumb, notes

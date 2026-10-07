@@ -75,10 +75,6 @@ struct ExplorerSidebar: View {
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
                 hostMenu
-                // Only where Herdr exists: following needs its focus events. Kept while following, so it can be stopped.
-                if !model.herdrHosts.isEmpty || model.followHerdr {
-                    FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
-                }
             }
         }
         .onChange(of: model.explorer.selectedTabID) { _, _ in
@@ -373,26 +369,6 @@ struct RemotePathSheet: View {
         guard path.hasPrefix("/") else { return }
         open(path)
         dismiss()
-    }
-}
-
-/// Follow mode in the toolbar: a plain button whose crosshair turns accent-filled while following (a toolbar
-/// toggle's "on" state is a solid disc that hides the symbol). The card under it carries the live state.
-private struct FollowToggle: View {
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Button {
-            isOn.toggle()
-        } label: {
-            Label(isOn ? "Following Herdr" : "Follow Herdr", systemImage: isOn ? "scope" : "scope")
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(isOn ? Color.accentColor : Color.primary)
-                .symbolEffect(.bounce, value: isOn)
-        }
-        .help(isOn ? "Following the focused Herdr pane: the explorer and the send target follow it. Click to stop."
-                   : "Follow Herdr: the explorer and the send target follow whichever agent pane you focus in Herdr.")
-        .accessibilityValue(isOn ? "On" : "Off")
     }
 }
 
