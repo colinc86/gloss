@@ -28,6 +28,7 @@ struct PacketBuilderTests {
         File: /home/colin/proj/docs/PLAN.md
         Source: markdown
 
+        Note: n_01J9X0000000000000000000
         Lines 40-52
         Excerpt:
         > ## Auth flow
@@ -39,11 +40,12 @@ struct PacketBuilderTests {
         Source: image
         Original size: 2880x1800
 
+        Note: n_01J9Y0000000000000000000
         Region: x=1204 y=312 w=640 h=220 (crop attached)
         Attachment: /tmp/gloss/a1b2c3/dashboard-region-1.png
         User comment: "The legend overlaps the chart here. Move it below."
 
-        Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9X0000000000000000000, n_01J9Y0000000000000000000) when done.
+        Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
         """
         let packet = PacketBuilder.build(notes)
         #expect(packet.text == expected)
@@ -56,7 +58,7 @@ struct PacketBuilderTests {
             comment: "typo", excerptLines: ["Hello *world*"], selectedText: "world"
         )
         let text = PacketBuilder.build([note]).text
-        #expect(text.hasPrefix("File: /p/a.md\nSource: markdown\n\nLine 7\nSelected: \"world\"\nExcerpt:\n> Hello *world*\nUser comment: \"typo\"\n\nNotes: 1."))
+        #expect(text.hasPrefix("File: /p/a.md\nSource: markdown\n\nNote: n_01J9X0000000000000000000\nLine 7\nSelected: \"world\"\nExcerpt:\n> Hello *world*\nUser comment: \"typo\"\n\nNotes: 1."))
     }
 
     /// A file name, resource line or excerpt with a line break can't forge packet lines.
@@ -104,8 +106,8 @@ struct PacketBuilderTests {
         )
         let whole = PacketNote(noteID: imageID, agentPath: "/p/budget.numbers", source: .file, anchor: .wholeFile, comment: "Look at this")
         let text = PacketBuilder.build([pdf, whole]).text
-        #expect(text.contains("File: /p/spec.pdf\nSource: pdf\nPages: 12\n\nPage 3\nRegion: x=72 y=100.5 w=300 h=40\nExcerpt:\n> Section 4\nAttachment: /tmp/gloss/p.png\nUser comment: \"Here\""))
-        #expect(text.contains("File: /p/budget.numbers\nSource: file\n\nWhole file\nUser comment: \"Look at this\""))
+        #expect(text.contains("File: /p/spec.pdf\nSource: pdf\nPages: 12\n\nNote: n_01J9X0000000000000000000\nPage 3\nRegion: x=72 y=100.5 w=300 h=40\nExcerpt:\n> Section 4\nAttachment: /tmp/gloss/p.png\nUser comment: \"Here\""))
+        #expect(text.contains("File: /p/budget.numbers\nSource: file\n\nNote: n_01J9Y0000000000000000000\nWhole file\nUser comment: \"Look at this\""))
 
         let wholeThenPage = PacketNote(noteID: imageID, agentPath: "/p/spec.pdf", source: .pdf, anchor: .wholeFile, comment: "all")
         let both = PacketBuilder.build([wholeThenPage, pdf]).text
@@ -127,6 +129,7 @@ struct PacketBuilderTests {
         File: http://localhost:3000/dashboard
         Source: web
 
+        Note: n_01J9X0000000000000000000
         Element: #toolbar > button:nth-of-type(2)
         Text: "Save"
         Rect: x=120 y=480.3 w=96 h=32 (crop attached)
@@ -137,7 +140,7 @@ struct PacketBuilderTests {
         Attachment: /tmp/gloss/a1/dashboard-element-1.png
         User comment: "Misaligned"
 
-        Notes: 1. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9X0000000000000000000) when done.
+        Notes: 1. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
         """
         #expect(PacketBuilder.build([note]).text == expected)
         #expect(PacketBuilder.summaryLine(note) == "n_01J9X0000000000000000000: http://localhost:3000/dashboard:element(#toolbar > button:nth-of-type(2)) \"Misaligned\"")
@@ -157,7 +160,7 @@ struct PacketBuilderTests {
             resource: "https://github.com/o/r/pull/123", resourceDetails: ["Path: Sources/App.swift at 0f3a9c1"]
         )
         let text = PacketBuilder.build([note]).text
-        #expect(text.hasPrefix("File: /o/r/pull/123/changes/Sources/App.swift\nSource: pull_request\nResource: https://github.com/o/r/pull/123\nPath: Sources/App.swift at 0f3a9c1\n\nLine 7\n"))
+        #expect(text.hasPrefix("File: /o/r/pull/123/changes/Sources/App.swift\nSource: pull_request\nResource: https://github.com/o/r/pull/123\nPath: Sources/App.swift at 0f3a9c1\n\nNote: n_01J9X0000000000000000000\nLine 7\n"))
         #expect(PacketSource(kind: .web) == .web)
         #expect(PacketSource.pullRequest.rawValue == "pull_request")
 
@@ -168,13 +171,13 @@ struct PacketBuilderTests {
         let second = PacketNote(noteID: NoteID.new(), agentPath: "/jira/CP/CP-7.md", source: .jira, anchor: textAnchor(20, 20), comment: "b", excerptLines: ["y"],
                                 resource: url, resourceDetails: ["Comment: \(url)?focusedCommentId=2"])
         let both = PacketBuilder.build([first, second]).text
-        #expect(both.hasPrefix("File: /jira/CP/CP-7.md\nSource: jira\nResource: \(url)\n\nLine 17\nComment: \(url)?focusedCommentId=1\n"), Comment(rawValue: both))
+        #expect(both.hasPrefix("File: /jira/CP/CP-7.md\nSource: jira\nResource: \(url)\n\nNote: n_01J9X0000000000000000000\nLine 17\nComment: \(url)?focusedCommentId=1\n"), Comment(rawValue: both))
         #expect(both.contains("Line 20\nComment: \(url)?focusedCommentId=2\n"), Comment(rawValue: both))
 
         // The first note's lookup failed: the resource still comes from the note that knows it.
         let unknown = PacketNote(noteID: NoteID.new(), agentPath: "/jira/CP/CP-7.md", source: .jira, anchor: textAnchor(3, 3), comment: "c", excerptLines: ["z"])
         let mixed = PacketBuilder.build([unknown, second]).text
-        #expect(mixed.hasPrefix("File: /jira/CP/CP-7.md\nSource: jira\nResource: \(url)\nComment: \(url)?focusedCommentId=2\n\nLine 3\n"), Comment(rawValue: mixed))
+        #expect(mixed.hasPrefix("File: /jira/CP/CP-7.md\nSource: jira\nResource: \(url)\nComment: \(url)?focusedCommentId=2\n\nNote: \(unknown.noteID.rawValue)\nLine 3\n"), Comment(rawValue: mixed))
     }
 
     @Test func escapesCommentsAndSplitsEmbeddedNewlines() {
@@ -194,11 +197,11 @@ struct PacketBuilderTests {
         let aIndex = packet.text.range(of: "File: /p/a.md")!.lowerBound
         let bIndex = packet.text.range(of: "File: /p/b.md")!.lowerBound
         #expect(aIndex < bIndex)
-        #expect(packet.text.contains("User comment: \"a2\"\n\nLine 9\nUser comment: \"a9\"\n\n\nFile: /p/b.md"))
+        #expect(packet.text.contains("User comment: \"a2\"\n\nNote: n_a9\nLine 9\nUser comment: \"a9\"\n\n\nFile: /p/b.md"))
     }
 
     @Test func emptyPacketIsJustTheClosingLine() {
-        #expect(PacketBuilder.build([]).text == "Notes: 0. Mark each resolved with the gloss MCP tool `resolve_note` (ids: ) when done.")
+        #expect(PacketBuilder.build([]).text == "Notes: 0. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.")
     }
 
     @Test func summaryLineTrimsTheComment() {

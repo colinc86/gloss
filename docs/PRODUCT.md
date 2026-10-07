@@ -85,27 +85,30 @@ Send loop: highlight → write a note (draft) → build packet (text, grouped by
 
 **Packet format.** See the `context-packet` skill for the normative grammar. One header per file, then one block per note; excerpts blockquoted and truncated head and tail past 40 lines; attachments referenced by absolute path on the machine the agent runs on; closing line names the note ids and the resolve tool.
 
-Milestone 2 adds sources `web`, `pull_request`, `jira` and `confluence`. A live web page's `File:` line is its URL. Pull requests, issues and pages keep their virtual path in `File:` and add a `Resource:` line with the canonical URL (`https://github.com/o/r/pull/123`, `https://<site>/browse/PROJ-123`, the Confluence page URL) plus `Path: Sources/App.swift at 0f3a9c1` for a PR file, `Field: description` or `Comment: <url>` for an issue or PR body, and `Version: 7` for a page, so the agent can act on the real thing with its own tools. Element notes carry `Element: <selector>`, `Text:`, `Rect:`, `Line` when the page is a file, a blockquoted `Snippet:` of the element's HTML, and a PNG crop attachment.
+Milestone 2 adds sources `web`, `pull_request`, `jira` and `confluence`. A live web page's `File:` line is its URL. Pull requests, issues and pages keep their virtual path in `File:` and add a `Resource:` line with the canonical URL (`https://github.com/o/r/pull/123`, `https://<site>/browse/PROJ-123`, the Confluence page URL) plus `Path: Sources/App.swift at 0f3a9c1` for a PR file, `Field: description` or `Comment: <url>` for an issue or PR body, and `Version: 7` for a page, so the agent can act on the real thing with its own tools. Every note starts with `Note: <id>`, the id `resolve_note` takes, so an agent never matches ids to notes by position (decided 2026-10-06; the ids used to be listed in the closing line). Element notes carry `Element: <selector>`, `Text:`, `Rect:`, `Line` when the page is a file, a blockquoted `Snippet:` of the element's HTML, and a PNG crop attachment.
 
 ```markdown
 File: /home/colin/proj/docs/PLAN.md
 Source: markdown
 
+Note: n_01J9X...
 Lines 40-52
 Excerpt:
 > ## Auth flow
 > The client refreshes tokens every 5 minutes...
 User comment: "This contradicts the 15 minute TTL in api.md. Pick one and fix both."
 
+
 File: /home/colin/proj/design/dashboard.png
 Source: image
 Original size: 2880x1800
 
+Note: n_01J9Y...
 Region: x=1204 y=312 w=640 h=220 (crop attached)
 Attachment: /home/me/.cache/gloss/attachments/a1b2c3/dashboard-region-1.png
 User comment: "The legend overlaps the chart here. Move it below."
 
-Notes: 2. Mark each resolved with the gloss MCP tool when done.
+Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
 ```
 
 **Choosing a target.** The send menu lists every live agent the app can see: Herdr panes on each connected host with agent kind and status, OpenCode servers, and mapped tmux panes. Each folder remembers the agent last chosen in it, or picks the agent working in it: when the folder comes to the front or opens at launch (waiting for discovery when agents are still being found; a later refresh keeps whatever target is set), the app selects the remembered agent when its session is live, else a live agent of the same transport working in the folder (a tmux pane that changed directory or command, a restarted Herdr pane), else a live agent whose directory is the folder or inside it (the folder itself first, then delivery priority). The clipboard and OpenCode's "New session" rows are never picked unless chosen; follow mode pairs folders and panes itself; with no match the current choice stays. Folders are keyed by their normalized path (symlinks resolved on this Mac); Cmd-Enter sends to it (except while text is selected and the Add Note button shows, when Cmd-Enter adds the note).

@@ -17,7 +17,7 @@ struct PullRequestPacketTests {
         let anchor = TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 3, col: 10), text: "let x = 1", before: "", after: "")
         let note = try await model.noteStore.createNote(documentID: document.id, anchor: .text(anchor), body: "Name this", color: .yellow)
         let packet = try await model.send.packet(noteIDs: [note.id])
-        #expect(packet.text.hasPrefix("File: /o/r/pull/2/changes/Sources/App.swift\nSource: pull_request\nResource: https://github.com/o/r/pull/2\nPath: Sources/App.swift at f00d123\n\nLine 3\n"), Comment(rawValue: packet.text))
+        #expect(packet.text.hasPrefix("File: /o/r/pull/2/changes/Sources/App.swift\nSource: pull_request\nResource: https://github.com/o/r/pull/2\nPath: Sources/App.swift at f00d123\n\nNote: \(note.id.rawValue)\nLine 3\n"), Comment(rawValue: packet.text))
 
         let conversation = try await model.noteStore.upsertDocument(hostID: .github, path: "/o/r/pull/2/Conversation.md", kind: .markdown, fingerprint: Fingerprint())
         let reply = try await model.noteStore.createNote(documentID: conversation.id, anchor: .text(TextAnchor(start: .init(line: 4, col: 1), end: .init(line: 4, col: 5), text: "Looks", before: "", after: "")), body: "Answer this", color: .blue)

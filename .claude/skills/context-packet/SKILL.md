@@ -17,6 +17,7 @@ Source: <markdown|text|code|image|pdf|file|web|pull_request|jira|confluence>
 [Original size: <W>x<H>]            # image only
 [Pages: <N>]                        # pdf only
 
+Note: <note id>                     # first line of every note: the id resolve_note takes, and where a note begins
 <anchor line>
 [Excerpt:
 > <blockquoted excerpt lines>]
@@ -26,7 +27,7 @@ User comment: "<escaped comment>"
 
 <blank line between notes, two blank lines between files>
 
-Notes: <count>. Mark each resolved with the gloss MCP tool `resolve_note` (ids: <id1>, <id2>, ...) when done.
+Notes: <count>. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
 ```
 
 ### Anchor line by source
@@ -57,6 +58,7 @@ Notes: <count>. Mark each resolved with the gloss MCP tool `resolve_note` (ids: 
 File: /home/colin/proj/docs/PLAN.md
 Source: markdown
 
+Note: n_01J9X...
 Lines 40-52
 Excerpt:
 > ## Auth flow
@@ -68,11 +70,12 @@ File: /home/colin/proj/design/dashboard.png
 Source: image
 Original size: 2880x1800
 
+Note: n_01J9Y...
 Region: x=1204 y=312 w=640 h=220 (crop attached)
 Attachment: /home/me/.cache/gloss/attachments/a1b2c3/dashboard-region-1.png
 User comment: "The legend overlaps the chart here. Move it below."
 
-Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9X..., n_01J9Y...) when done.
+Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
 ```
 
 ### Milestone 2 sources
@@ -82,7 +85,7 @@ Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9
 - `jira`: `File:` is `/jira/PROJ/PROJ-123.md`, `Resource:` the browse URL, then by position: `Field: summary` on the title line, `Field: description` in the Description section, `Comment: <browse url>?focusedCommentId=<id>` inside a comment; every line but a comment's also gets `Updated: <ISO 8601 time>`, the issue's last update when the packet was built.
 - `confluence`: `File:` is `/confluence/SPACE/<ancestor page ids…>/<page id>/<Title>.md`, `Resource:` the page URL, `Version: <n>` the page's version when the packet was built.
 
-Lines that hold for every note of one file go in its header; a line that differs between them (each on its own comment) goes in that note's block, right under its `Line N`.
+Lines that hold for every note of one file go in its header; a line that differs between them (each on its own comment) goes in that note's block, right under its `Line N` (after its `Note:` line).
 
 The app only ever reads these resources; the agent makes every change with its own GitHub or Atlassian tools, which is why the header names the resource precisely.
 
@@ -100,4 +103,4 @@ The app only ever reads these resources; the agent makes every change with its o
 
 ## Resolution contract
 
-MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?)` flips state to resolved. The packet always ends with the Notes line so agents know the ids. If a transport cannot reach MCP (clipboard to a bare mosh session), the Notes line is still emitted; the user resolves by hand.
+MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?)` flips state to resolved. Each note's id is the first line of its block (decided 2026-10-06; it used to be a list in the Notes line, matched to notes by position), so an agent resolves exactly the note it just read. The packet ends with the Notes line: the count and how to resolve. If a transport cannot reach MCP (clipboard to a bare mosh session), it is still emitted; the user resolves by hand.

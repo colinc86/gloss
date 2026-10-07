@@ -107,17 +107,14 @@ public enum PacketBuilder {
 
         var text = fileBlocks.joined(separator: "\n\n\n")
         if !text.isEmpty { text += "\n\n" }
-        text += closingLine(noteIDs: noteIDs)
+        text += closingLine(count: noteIDs.count)
         return Packet(text: text, noteIDs: noteIDs)
     }
 
-    /// `Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: a, b) when done.`
-    public static func closingLine(noteIDs: [NoteID], maxIDs: Int? = nil) -> String {
-        var ids = noteIDs.map(\.rawValue).joined(separator: ", ")
-        if let maxIDs, noteIDs.count > maxIDs {
-            ids = noteIDs.prefix(maxIDs).map(\.rawValue).joined(separator: ", ") + ", and \(noteIDs.count - maxIDs) more via `list_pending_notes`"
-        }
-        return "Notes: \(noteIDs.count). Mark each resolved with the gloss MCP tool `\(toolName)` (ids: \(ids)) when done."
+    /// `Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id
+    /// on its Note line.` Each id sits at the top of its own note, so it is never matched to a note by position.
+    public static func closingLine(count: Int) -> String {
+        "Notes: \(count). When you've acted on a note, mark it resolved with the gloss MCP tool `\(toolName)`, passing the id on its Note line."
     }
 
     /// `<id>: <file>:<anchor> "<first 80 chars of comment>"`: one note on one line.
@@ -151,14 +148,17 @@ public enum PacketBuilder {
             let own = note.resourceDetails.filter { !shared.contains($0) }
             guard !own.isEmpty else { return block }
             var lines = block.components(separatedBy: "\n")
-            lines.insert(contentsOf: own.map(headerValue), at: min(1, lines.count))
+            // Under the note's id and its place.
+            lines.insert(contentsOf: own.map(headerValue), at: min(2, lines.count))
             return lines.joined(separator: "\n")
         }
         return (header.joined(separator: "\n")) + "\n\n" + blocks.joined(separator: "\n\n")
     }
 
+    /// One note: its id first (what `resolve_note` takes, and where the next note begins), then its place, what it
+    /// points at, and the comment.
     static func noteBlock(_ note: PacketNote) -> String {
-        var lines: [String] = []
+        var lines: [String] = ["Note: \(note.noteID.rawValue)"]
         switch note.anchor {
         case .text(let anchor) where anchor.cells?.isColumns == true:
             // A whole-column note: the column replaces the line range, and the excerpt lists its values by line.

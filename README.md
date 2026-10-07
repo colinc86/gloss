@@ -67,18 +67,20 @@ sequenceDiagram
 File: /home/me/acme-weather/docs/PLAN.md
 Source: markdown
 
+Note: n_01J9XQ4M2T8V6K3R5W7Y9ZB1CD
 Line 8
 Excerpt:
 > We should cache the forecast results for ten minutes at most, and less for severe-weather alerts.
 User comment: "Alerts can't wait ten minutes. Give them their own TTL, at most one minute."
 
+Note: n_01J9XQ7B8R2N4P6S8T0VA3K7QM
 Line 20
 Image: dashboard.png (1440x880)
 Region: x=1004 y=96 w=400 h=220 (crop attached)
 Attachment: /home/me/.cache/gloss/attachments/s_01J9XQ9C4H6M8P0R2T4V6X8Z0B/1-dashboard-region-A3K7QM.png
 User comment: "The legend overlaps the chart here. Move it below."
 
-Notes: 2. Mark each resolved with the gloss MCP tool `resolve_note` (ids: n_01J9XQ4M2T8V6K3R5W7Y9ZB1CD, n_01J9XQ7B8R2N4P6S8T0VA3K7QM) when done.
+Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
 ```
 
 </details>

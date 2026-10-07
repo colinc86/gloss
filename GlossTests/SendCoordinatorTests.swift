@@ -41,7 +41,7 @@ struct SendCoordinatorTests {
         await coordinator.send(noteIDs: [note.id], to: FakeTransport.target)
         #expect(coordinator.lastError == nil)
         let (packet, _, _) = try #require(transport.delivered.first)
-        #expect(packet.text.contains("File: \(path)\nSource: markdown\n\nLines 2-3\nExcerpt:\n> line two\n> line three\nUser comment: \"Fix \\\"this\\\"\""))
+        #expect(packet.text.contains("File: \(path)\nSource: markdown\n\nNote: \(note.id.rawValue)\nLines 2-3\nExcerpt:\n> line two\n> line three\nUser comment: \"Fix \\\"this\\\"\""))
         #expect(try await store.note(note.id)?.state == .sent)
         #expect(try await store.sends(for: note.id).first?.outcome == "delivered")
         #expect(coordinator.lastTarget?.id == FakeTransport.target.id)
@@ -134,7 +134,7 @@ struct SendCoordinatorTests {
         let stagedPath = try #require(staged.first?.agentPath)
         #expect(stagedPath.hasPrefix(directory + "/cache/s_"))
         #expect(FileManager.default.fileExists(atPath: stagedPath))
-        #expect(packet.text.contains("Original size: 10x10\n\nRegion: x=1 y=2 w=3 h=4 (crop attached)\nAttachment: \(stagedPath)\n"))
+        #expect(packet.text.contains("Original size: 10x10\n\nNote: \(note.id.rawValue)\nRegion: x=1 y=2 w=3 h=4 (crop attached)\nAttachment: \(stagedPath)\n"))
     }
 
     @Test func clipboardTransportCopiesThePacket() async throws {
