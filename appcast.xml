@@ -6,6 +6,51 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.2.0</title>
+      <pubDate>Wed, 07 Oct 2026 16:22:57 GMT</pubDate>
+      <sparkle:version>171</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">A big round: web pages are first-class, notes are calmer to work through, and rendered Markdown looks like it does on GitHub.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Web pages in the window.</strong> Click the title to type an address or a path; Open Quickly takes URLs too, and the explorer's Web host lists the pages you've visited.</li>
+<li><strong>Notes on pictures and elements of a web page.</strong> Click a picture to note all of it, or drag across it to note a region, as in Markdown and image files. <strong>Pick Element</strong> (Notes › Pick Element on Page, ⇧⌘E) notes any element; ↑ and ↓ step to its parent or child. The agent gets the picture's size, the region and a crop.</li>
+<li><strong>Notes on pictures in Markdown,</strong> a region or the whole picture.</li>
+<li><strong>Markdown renders as GitHub does:</strong> the HTML READMEs use, pictures from the web, and GIFs that play.</li>
+<li><strong>Hosts and Follow live in the folder dropdown</strong> above the file tree. It lists This Mac, Web, GitHub, Atlassian and your ssh hosts with their connection state, and Follow sits beside it, lit while on (also Go › Follow Herdr).</li>
+<li><strong>Act on several notes at once</strong> from the notes panel, put a sent note back to a draft, and edit a note in its card.</li>
+<li><strong>Show or hide resolved notes,</strong> and the page draws only the notes the panel lists.</li>
+<li><strong>The folder's agent is picked for you</strong> at launch and whenever the folder changes.</li>
+<li><strong>Jira issues show their titles</strong> in the explorer.</li>
+<li><strong>What was open comes back at launch.</strong></li>
+<li>A new app icon, with 16 styles to choose from in Settings.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li><strong>Each note in the packet starts with its id</strong> (<code class="notranslate">Note: n_…</code>), so agents can resolve it without searching.</li>
+<li><strong>Gloss says when an agent's set-up needs updating</strong> and opens Settings › Agents on it; press <strong>Update</strong> there.</li>
+<li>An agent's reply is headed with the agent that resolved it, and a card shows the latest turn of its thread with the rest a click away.</li>
+<li>Sent notes step back and drafts stand out; paths meet the middle of a card's colour bar.</li>
+<li>The notes panel's Send is back for this document's drafts.</li>
+</ul>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>An agent can resolve a note whose text it removed.</li>
+<li>Note outlines no longer sit in the wrong place when a rendered Markdown file first opens.</li>
+<li>Escape puts away the Add Note button and cancels the composer.</li>
+</ul>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/619190519" type="application/octet-stream" sparkle:edSignature="LbEneTaiEMYcwprWZgtiTOTeRSm/v/4bfteS5tnjHyzbyqPx+K6/koLlKsZkRQcMmytNKNckh15zf1tjcWR/Cg==" length="24101469"/>
+    </item>
+    <item>
       <title>Gloss 0.1.2</title>
       <pubDate>Mon, 05 Oct 2026 21:17:33 GMT</pubDate>
       <sparkle:version>132</sparkle:version>
