@@ -41,6 +41,7 @@ The closing line's second sentence (naming `reply_to_note`) was added 2026-10-07
 | Source | Anchor line | Excerpt |
 | --- | --- | --- |
 | text, code, markdown | `Line 42` or `Lines 40-52` | selected lines, blockquoted; over 40 lines → first 20, `> ...`, last 20 |
+| text whose note's text was removed (a point) | `Line 42 (text removed here)` | none, and no `Selected:`: the line holds something else now; the thread's `Moved: … removed … It was:` line carries the old text |
 | csv cells | `Lines 2-4` then `Cells: B2, E4` (`B2:C4` for a full block); rows are the record's first source line | one `> B2 (header): value` per cell, read from the current file |
 | csv columns | `Column E "notes"` or `Columns B "distance_km", C "climb_m"` (replaces the line range) | one `> <line>: value` per record, several columns joined by ` \| ` |
 | markdown with a rendered-view selection | `Lines 40-52` plus `Selected: "<exact text>"` when the selection is a sub-line span | same |
@@ -77,6 +78,17 @@ User comment: "Poll less often."
 Earlier: 3 messages (get_note returns the whole thread)
 Agent (claude) asked: "One minute for all alerts, or only severe ones?"
 User replied: "Only severe ones."
+```
+
+A note whose text was removed, sent again while it still sits where the text was:
+
+```
+Note: n_01J9Z...
+Line 3 (text removed here)
+User comment: "Retry less."
+Moved: lines 3-4 removed, by claude. It was: "retry twice"
+Agent (claude) replied: "Dropped the retry."
+User replied: "Put a comment there instead."
 ```
 
 ## Example

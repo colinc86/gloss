@@ -235,6 +235,10 @@ public enum PacketBuilder {
             lines.append(anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)")
             lines.append("Cells: \(note.cellDescription.map(headerValue) ?? anchor.cells!.references(startLine: anchor.start.line))")
             lines.append(contentsOf: excerpt(note.excerptLines))
+        case .text(let anchor) where anchor.start == anchor.end && anchor.text.isEmpty:
+            // The note's text was removed: the line holds something else now, so nothing is quoted from it. The
+            // thread's `Moved: … removed` line carries what the text was.
+            lines.append("Line \(anchor.start.line) (text removed here)")
         case .text(let anchor):
             lines.append(anchor.isSingleLine ? "Line \(anchor.start.line)" : "Lines \(anchor.start.line)-\(anchor.end.line)")
             if let selected = note.selectedText {

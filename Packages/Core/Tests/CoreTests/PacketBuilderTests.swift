@@ -351,6 +351,26 @@ struct PacketBuilderTests {
             "User replied: \"Put a comment there instead.\"",
         ])
         #expect(PacketThread.recent(messages, at: textAnchor(7, 7)).turns.count == 2, "moved on since: no removal line")
+        // The point quotes nothing from the line it sits on, which now holds something else.
+        let note = PacketNote(noteID: markdownID, agentPath: "/p/a.md", source: .markdown, anchor: point, comment: "Retry less",
+                              excerptLines: ["## Caching"], selectedText: "## Caching", thread: thread)
+        #expect(PacketBuilder.build([note]).text == """
+        File: /p/a.md
+        Source: markdown
+
+        Note: n_01J9X0000000000000000000
+        Line 3 (text removed here)
+        User comment: "Retry less"
+        Moved: lines 3-4 removed, by claude. It was: "retry twice"
+        Agent (claude) replied: "Dropped the retry."
+        User replied: "Put a comment there instead."
+
+        Notes: 1. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
+        """)
+        let whole = PacketNote(noteID: markdownID, agentPath: "/p/a.md", source: .markdown, anchor: point, comment: "Retry less",
+                               excerptLines: ["## Caching"], thread: .full(messages))
+        let text = PacketBuilder.build([whole]).text
+        #expect(text.contains("Line 3 (text removed here)\nUser comment") && !text.contains("Excerpt") && text.contains("It was: \"retry twice\""), "\(text)")
     }
 
     /// A question the user hasn't answered stays in view when a status reply came after it.
