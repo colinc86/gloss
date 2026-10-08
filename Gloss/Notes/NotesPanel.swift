@@ -410,7 +410,7 @@ struct NoteCard: View {
     @State private var hovering = false
     /// The whole thread open: every turn and move, the full comment, the agent's message uncut, and the follow-up
     /// field.
-    @State private var expanded = false
+    @State private var opening = CardOpening()
     /// The collapsed card cuts the comment or the agent's message short, so it offers to open.
     @State private var commentCut = false
     @State private var messageCut = false
@@ -440,6 +440,8 @@ struct NoteCard: View {
     /// A settled note at rest is one line, plus its latest turn if it has one; selected or opened it shows its actions.
     /// The pointer never changes its size: a card that grows under the pointer moves the one below it.
     private var isCompact: Bool { isSettled && !isSelected && !expanded }
+    /// Open: selected (a click), or opened with its toggle.
+    private var expanded: Bool { opening.isOpen(selected: isSelected) }
 
     /// The comment and its thread, from the panel's one observation of every note's messages.
     private var thread: NoteThread { NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id)) }
@@ -507,6 +509,7 @@ struct NoteCard: View {
         .animation(DS.Motion.bouncy, value: note.state)
         .animation(DS.Motion.smooth, value: isCompact)
         .animation(DS.Motion.smooth, value: expanded)
+        .onChange(of: isSelected) { _, selected in if !selected { opening.deselected() } }
         .animation(DS.Motion.smooth, value: editing)
         .animation(DS.Motion.smooth, value: editingMessageID)
         .animation(DS.Motion.smooth, value: openMoves)
@@ -535,7 +538,7 @@ struct NoteCard: View {
         .accessibilityActions {
             commands(dividers: false)
             let thread = thread
-            if showsThreadToggle(thread) { Button(threadToggleTitle(thread)) { expanded.toggle() } }
+            if showsThreadToggle(thread) { Button(threadToggleTitle(thread)) { opening.toggle(selected: isSelected) } }
         }
         // Refetched when the note changes and after every send, so a failure shows without a state change.
         .task(id: "\(note.updatedAt.timeIntervalSince1970)-\(model.send.completedSends)") {
@@ -732,7 +735,7 @@ struct NoteCard: View {
         }
         if showsThreadToggle(thread) {
             Button {
-                withAnimation(DS.Motion.smooth) { expanded.toggle() }
+                withAnimation(DS.Motion.smooth) { opening.toggle(selected: isSelected) }
             } label: {
                 HStack(spacing: DS.Space.xs) {
                     Image(systemName: "chevron.right")
@@ -923,7 +926,7 @@ struct NoteCard: View {
             followUpFocusRequest += 1
         } else {
             followUpFocusPending = true
-            expanded = true
+            opening.open()
         }
     }
 
@@ -1063,6 +1066,33 @@ struct NoteCard: View {
         }
         .padding(.top, DS.Space.xxs)
     }
+}
+
+/// Whether a card shows its whole thread: while it is selected (a click opens it, as before), unless its toggle
+/// closed it then; and whenever its toggle opened it, selected or not. Deselecting closes what selection opened.
+nonisolated struct CardOpening: Equatable {
+    /// Opened by the toggle (or Follow Up…); stays open when the card is deselected.
+    private(set) var pinned = false
+    /// Closed by the toggle while selected; forgotten when the card is deselected.
+    private(set) var closedWhileSelected = false
+
+    func isOpen(selected: Bool) -> Bool { pinned || (selected && !closedWhileSelected) }
+
+    mutating func toggle(selected: Bool) {
+        if isOpen(selected: selected) {
+            pinned = false
+            closedWhileSelected = selected
+        } else {
+            open()
+        }
+    }
+
+    mutating func open() {
+        pinned = true
+        closedWhileSelected = false
+    }
+
+    mutating func deselected() { closedWhileSelected = false }
 }
 
 /// A small preview of a note's cropped region or page render.

@@ -59,4 +59,21 @@ struct NoteThreadTests {
         #expect(thread.latestMove?.title == "Moved by the agent")
         #expect(point.isRemovalPoint && !old.isRemovalPoint)
     }
+
+    /// A click opens a card while it is selected; the toggle closes it then, or opens it to stay open.
+    @Test func selectingOpensACardAndTheTogglePinsOrClosesIt() {
+        var opening = CardOpening()
+        #expect(!opening.isOpen(selected: false) && opening.isOpen(selected: true), "selected is open")
+        opening.toggle(selected: true)
+        #expect(!opening.isOpen(selected: true), "the toggle closes a selected card")
+        opening.deselected()
+        #expect(opening.isOpen(selected: true), "selected again, it opens again")
+        opening.toggle(selected: false)
+        #expect(opening.isOpen(selected: false), "opened by the toggle without selecting")
+        opening.deselected()
+        #expect(opening.isOpen(selected: false), "what the toggle opened stays open after deselecting")
+        opening.toggle(selected: true)
+        opening.deselected()
+        #expect(!opening.isOpen(selected: false))
+    }
 }

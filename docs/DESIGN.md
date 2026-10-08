@@ -337,7 +337,9 @@ path. Dropping on the Dock icon is not supported yet.
   and all the text in one smooth animation; it's there when there is more than the collapsed card shows ("Show more"
   when only text was cut, and always once open, to close it). Whether text is cut is measured on unseen collapsed
   and uncut copies (`TruncatingText`), so the link stays put while the card is open.
-  Open, the card ends with the follow-up field (below). Edit… and the pencil edit only the comment; the turns are
+  Selecting a card (a click) opens it, without taking the keyboard; the toggle closes it while selected, or opens a
+  card without selecting it, and a card the toggle opened stays open when another is selected. Open, the card ends
+  with the follow-up field (below). Edit… and the pencil edit only the comment; the turns are
   their own messages.
 - **The user's turn in a thread**: a follow-up is a block in the accent colour at 6%, inset from the leading edge
   so the two voices read apart, headed "You" in the accent colour. Until it is sent it reads "You · Not sent" with
