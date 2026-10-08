@@ -70,6 +70,14 @@ final class NotesPanelModel {
         }
     }
     @ObservationIgnored private var isRestoringShowResolved = false
+    /// On, open notes are listed above resolved ones, the two runs apart (2026-10-08). Only while resolved notes show.
+    var separateResolved = false {
+        didSet {
+            guard !isRestoringSeparateResolved, separateResolved != oldValue else { return }
+            Task { try? await noteStore.setSetting("notes.separateResolved", separateResolved ? "1" : "0") }
+        }
+    }
+    @ObservationIgnored private var isRestoringSeparateResolved = false
     /// Matched against note text, file name, resolve message, and the thread's messages, case-insensitively.
     var searchText = ""
     /// Bumped by Notes › Search Notes to put the caret in the search field.
@@ -103,6 +111,7 @@ final class NotesPanelModel {
         observation?.cancel()
         let initial = sort
         let initialShowResolved = showResolved
+        let initialSeparateResolved = separateResolved
         Task { [weak self] in
             guard let self, let stored = try? await noteStore.setting("notes.sort"), let restored = Sort(rawValue: stored) else { return }
             // A pick made while the read was in flight wins over the stored value.
@@ -117,6 +126,13 @@ final class NotesPanelModel {
             isRestoringShowResolved = true
             showResolved = stored != "0"
             isRestoringShowResolved = false
+        }
+        Task { [weak self] in
+            guard let self, let stored = try? await noteStore.setting("notes.separateResolved") else { return }
+            guard separateResolved == initialSeparateResolved else { return }
+            isRestoringSeparateResolved = true
+            separateResolved = stored == "1"
+            isRestoringSeparateResolved = false
         }
         messages = noteStore.allMessagesNow()
         let messageStream = noteStore.observeAllMessages()
@@ -214,9 +230,36 @@ final class NotesPanelModel {
         searchText = ""
     }
 
+    /// A run of the list: every note, or with Separate Resolved Notes, the open or the resolved ones. Identified by
+    /// its kind, so a run appearing or going leaves the other's rows as they are.
+    struct Run: Identifiable {
+        enum Kind: Hashable { case all, open, resolved }
+        let id: Kind
+        let groups: [DocumentNotes]
+    }
+
+    /// The list's runs, in the order shown: one normally; with Separate Resolved Notes on, the open notes by
+    /// document, then the resolved ones by document in the same document order (only the runs with notes). A
+    /// document with both kinds is in both runs.
+    var sections: [Run] {
+        let groups = sortedGroups
+        guard separateResolved, showResolved else { return [Run(id: .all, groups: groups)] }
+        func run(_ kind: Run.Kind, _ keep: (Note) -> Bool) -> Run {
+            Run(id: kind, groups: groups.compactMap { group in
+                let notes = group.notes.filter(keep)
+                return notes.isEmpty ? nil : DocumentNotes(document: group.document, notes: notes)
+            })
+        }
+        let runs = [run(.open, Self.isOpen), run(.resolved) { !Self.isOpen($0) }].filter { !$0.groups.isEmpty }
+        return runs.isEmpty ? [Run(id: .open, groups: [])] : runs
+    }
+
+    /// Every listed group in the order shown, the runs one after the other (a document can appear in both).
+    var visibleGroups: [DocumentNotes] { sections.flatMap(\.groups) }
+
     /// Groups after the state, color, and text filters, with notes sorted by `sort` and documents ordered by
     /// their first note under that sort (so "newest" lists the document with the newest note first).
-    var visibleGroups: [DocumentNotes] {
+    private var sortedGroups: [DocumentNotes] {
         let needle = searchText.trimmingCharacters(in: .whitespaces)
         func contains(_ text: String?) -> Bool { Self.contains(text, needle) }
         let filtered = groups.compactMap { group -> DocumentNotes? in
@@ -268,7 +311,7 @@ final class NotesPanelModel {
 
     /// The notes the list shows for a document, for drawing only those on its page.
     func listedIDs(for documentID: DocumentID) -> Set<NoteID> {
-        Set(visibleGroups.first { $0.document.id == documentID }?.notes.map(\.id) ?? [])
+        Set(visibleGroups.filter { $0.document.id == documentID }.flatMap { $0.notes.map(\.id) })
     }
 
     /// A document's notes left off its page: with the panel shown, every note the list doesn't show; with it

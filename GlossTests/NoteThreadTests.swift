@@ -39,7 +39,7 @@ struct NoteThreadTests {
             message(.user, .comment, "Plainer", sent: false),
         ])
         #expect(thread.turns.count == 2, "moves are not turns")
-        #expect(thread.entries.count == 3 && thread.latestMove?.title == "Text removed", "a removal Gloss found names no agent")
+        #expect(thread.entries.count == 3 && thread.latestMove?.title == "Removed", "a removal Gloss found names no agent")
         #expect(thread.unsent.map(\.text) == ["Plainer"])
         #expect(thread.turns[0].agent == nil, "an agent that gave no name is just the agent")
         #expect(thread.latest?.unsent == true)
@@ -56,7 +56,7 @@ struct NoteThreadTests {
         let thread = NoteThread(comment: "Inline b", messages: [moved, message(.agent("codex"), .reply, "Inlined it."), unnamed])
         guard case .move(let first) = thread.entries[0] else { Issue.record("a move first"); return }
         #expect(first.title == "Removed by Codex" && first.oldExcerpt == "let b = 2" && first.removed)
-        #expect(thread.latestMove?.title == "Moved by the agent")
+        #expect(thread.latestMove?.title == "Edited by the agent")
         #expect(point.isRemovalPoint && !old.isRemovalPoint)
     }
 

@@ -2,8 +2,7 @@ import SwiftUI
 
 /// One of the agent's turns in a note's thread: a tinted bubble whose tail points up at what it answers, headed only by
 /// who spoke; whether it asks or reports is in its words. The question still waiting on you is orange, which reading
-/// can't tell; everything else is quiet. A collapsed card
-/// cuts a long message at four lines and offers the rest with Show conversation.
+/// can't tell; everything else is quiet. Its words are never cut: a collapsed card shows its latest turn whole.
 struct AgentMessageBubble: View {
     let message: String
     /// The agent asked something.
@@ -12,9 +11,6 @@ struct AgentMessageBubble: View {
     var waiting = false
     /// The agent the note was last sent to, when there was a send; otherwise "Agent".
     let agent: String?
-    var expanded = true
-    /// Set when the collapsed bubble cuts the message short.
-    var isCut: Binding<Bool> = .constant(false)
 
     private var needsInput: Bool { asks && waiting }
     private var tint: Color { needsInput ? .orange : .secondary }
@@ -24,8 +20,10 @@ struct AgentMessageBubble: View {
             Text(Self.heading(agent: agent))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(tint)
-            TruncatingText(text: Text(message).font(.callout).foregroundStyle(needsInput ? .primary : .secondary),
-                           lineLimit: 4, expanded: expanded, isCut: isCut)
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(needsInput ? .primary : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
         .padding(.horizontal, DS.Space.m)

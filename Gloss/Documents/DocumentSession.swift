@@ -102,7 +102,7 @@ final class DocumentSession: Identifiable {
     @ObservationIgnored private var liveRanges: [NoteID: NSRange] = [:]
     @ObservationIgnored private var invalidatedNotes: Set<NoteID> = []
     /// Anchors this session is writing back from live ranges on save. A stored anchor that changes to anything else
-    /// (an agent's move, Restore Original Place) wins over the note's live range.
+    /// (an agent's move, Restore Original) wins over the note's live range.
     @ObservationIgnored private var anchorsBeingSaved: [NoteID: Anchor] = [:]
     /// The note being created or edited in the popover.
     var noteEditor: NoteEditorState?
@@ -972,7 +972,7 @@ final class DocumentSession: Identifiable {
     }
 
     /// A note whose stored anchor changed while it had a live range, other than by this session's own save, was moved
-    /// by someone else (an agent's relocation, Restore Original Place): its live range goes, so the editor draws the
+    /// by someone else (an agent's relocation, Restore Original): its live range goes, so the editor draws the
     /// new place and the next save can't write the old one back.
     private func dropLiveRangesMovedElsewhere(from old: [Note], to new: [Note]) {
         guard !liveRanges.isEmpty || !invalidatedNotes.isEmpty else { return }

@@ -210,7 +210,7 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var waitingOnUser: Bool
     /// The user wrote a follow-up that hasn't been sent; read from the note's messages by the store's queries.
     public var hasUnsentFollowUps: Bool
-    /// Where the note was before it first moved, for Restore Original Place; nil for a note that never moved.
+    /// Where the note was before it first moved, for Restore Original; nil for a note that never moved.
     public var originalAnchor: Anchor?
 
     public init(

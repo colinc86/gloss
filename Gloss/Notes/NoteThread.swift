@@ -28,7 +28,7 @@ nonisolated struct NoteThread: Equatable {
             case agent(String?)
             /// Gloss, finding the text removed.
             case app
-            /// Restore Original Place.
+            /// Restore Original.
             case user
         }
 
@@ -104,14 +104,14 @@ nonisolated struct NoteThread: Equatable {
 }
 
 nonisolated extension NoteThread.Move {
-    /// The quiet line a move reads as: "Moved by Claude Code", "Removed by Codex", "Text removed", "Text changed"
-    /// (Gloss found the note on rewritten words), "Moved back".
+    /// The quiet line a move reads as: "Edited by Claude Code", "Removed by Codex", "Edited" or "Removed" (Gloss
+    /// found the text rewritten or gone, so no one is named), "Restored original".
     var title: String {
         switch by {
-        case .app: removed ? "Text removed" : "Text changed"
-        case .user: "Moved back to where it was made"
+        case .app: removed ? "Removed" : "Edited"
+        case .user: "Restored original"
         case .agent(let name):
-            "\(removed ? "Removed" : "Moved") by \(AgentMessageBubble.displayName(name ?? "the agent"))"
+            "\(removed ? "Removed" : "Edited") by \(AgentMessageBubble.displayName(name ?? "the agent"))"
         }
     }
 }

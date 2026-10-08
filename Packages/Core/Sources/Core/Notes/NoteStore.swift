@@ -768,7 +768,7 @@ public struct NoteStore: Sendable {
     /// Gloss found a note again after its file changed (a reload, a page that settled, a packet built from a closed
     /// file). Found on the same words, it only follows them: the anchor is updated and an orphan has its place back.
     /// Found on changed words (someone rewrote them), it is a move Gloss records as its own, so the thread says so and
-    /// Restore Original Place can return to the words the note was made on. An agent saying where its change is soon
+    /// Restore Original can return to the words the note was made on. An agent saying where its change is soon
     /// after takes that move over (`relocate`).
     public func applyReanchor(_ noteID: NoteID, to anchor: Anchor, at date: Date = Date()) async throws {
         let date = Self.rounded(date)

@@ -329,7 +329,7 @@ struct NotesPanelModelTests {
         #expect(model.followUpText[gone] == "Still here")
     }
 
-    /// A note an agent moved goes back with Restore Original Place, and the thread says both.
+    /// A note an agent moved goes back with Restore Original, and the thread says both.
     @Test func aMovedNoteGoesBackToWhereItWasMade() async throws {
         let (model, store) = try await makeModel()
         defer { model.stop() }
@@ -341,8 +341,40 @@ struct NotesPanelModelTests {
         #expect(restored.anchor == note.anchor && restored.originalAnchor == nil)
         await waitUntil { model.messages(for: note.id).count == 2 }
         let thread = NoteThread(comment: restored.body, messages: model.messages(for: note.id))
-        #expect(thread.entries.compactMap { if case .move(let move) = $0 { move.title } else { nil } } == ["Moved by Claude Code", "Moved back to where it was made"])
+        #expect(thread.entries.compactMap { if case .move(let move) = $0 { move.title } else { nil } } == ["Edited by Claude Code", "Restored original"])
         #expect(thread.turns.isEmpty)
+    }
+
+    /// Separate Resolved Notes: open notes by document, then resolved ones in the same document order, as two runs;
+    /// one run when only one kind is listed, and nothing changes while it is off.
+    @Test func separatingResolvedNotesListsOpenWorkFirst() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        func runs() -> [[String]] { model.sections.map { $0.groups.flatMap(\.notes).map(\.body) } }
+        #expect(runs() == [["Check the café import", "Rename the helper", "Expand this section"]], "off: one run, as before")
+        model.separateResolved = true
+        #expect(runs() == [["Rename the helper", "Expand this section"], ["Check the café import"]])
+        #expect(model.sections.map(\.id) == [.open, .resolved])
+        #expect(model.visibleGroups.map(\.document.fileName) == ["alpha.swift", "beta.md", "alpha.swift"], "alpha is in both runs")
+        let alpha = try #require(model.groups.first { $0.document.fileName == "alpha.swift" })
+        #expect(model.listedIDs(for: alpha.document.id).count == 2, "a document's notes are listed from both runs")
+        model.filter = .resolved
+        #expect(runs() == [["Check the café import"]] && model.sections.map(\.id) == [.resolved], "the Resolved tab is one run")
+        model.filter = .drafts
+        #expect(runs().count == 1 && model.sections.map(\.id) == [.open], "only open notes: no rule, and the open run keeps its identity")
+        model.filter = .all
+        model.searchText = "café"
+        #expect(runs() == [["Check the café import"]], "a search that finds only resolved notes is one run")
+        model.searchText = ""
+        model.showResolved = false
+        #expect(runs() == [["Rename the helper", "Expand this section"]], "nothing to separate while resolved notes are hidden")
+        model.showResolved = true
+        for _ in 0..<100 where (try? await store.setting("notes.separateResolved")) != "1" { try? await Task.sleep(for: .milliseconds(20)) }
+        let again = NotesPanelModel(noteStore: store)
+        again.start()
+        defer { again.stop() }
+        await waitUntil { again.separateResolved }
+        #expect(again.separateResolved, "remembered")
     }
 
     @Test func theAgentsTurnIsHeadedByWhoSpokeAndHow() {

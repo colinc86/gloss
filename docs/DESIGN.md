@@ -340,11 +340,12 @@ path. Dropping on the Dock icon is not supported yet.
   replies and questions, the user's follow-ups) and moves. The panel reads every note's messages through one
   observation (`NotesPanelModel.messages`), so a card never opens its own.
   Collapsed, a card shows the comment (two lines), the move that took the note from where it was made while it is
-  still away, and the latest turn: the agent's bubble (four lines) or the user's follow-up. A quiet "› Show
-  conversation (N)" link, the chevron that turns as the search results' file headers do, opens every turn and move
-  and all the text in one smooth animation; it's there when there is more than the collapsed card shows ("Show more"
-  when only text was cut, and always once open, to close it). Whether text is cut is measured on unseen collapsed
-  and uncut copies (`TruncatingText`), so the link stays put while the card is open.
+  still away, and the latest turn whole, never cut (the agent's bubble or the user's follow-up; 2026-10-08). A quiet
+  "Show conversation (N)" link with a chevron pointing down opens every turn and move and the whole comment in one
+  smooth animation; open, it reads "Hide conversation" (or "Show less") with the chevron pointing up, the symbol
+  swapping in place. It's there when there is more than the collapsed card shows ("Show more" when only the comment
+  was cut, and always once open, to close it). Whether the comment is cut is measured on unseen collapsed and uncut
+  copies (`TruncatingText`), so the link stays put while the card is open.
   Selecting a card (a click) opens it, without taking the keyboard; the toggle closes it while selected, or opens a
   card without selecting it, and a card the toggle opened stays open when another is selected. Open, the card ends
   with the follow-up field (below). Edit… and the pencil edit only the comment; the turns are
@@ -365,19 +366,25 @@ path. Dropping on the Dock icon is not supported yet.
   opening a card never takes the keyboard. Follow Up… is offered on every note but a draft never sent, whose
   comment is edited instead; its action icon is the accent-filled one while an agent waits on an answer.
 - **Moves** (2026-10-07): when an agent says where its change now is, or the note's text was removed, the thread
-  shows one quiet `.caption` secondary line where it happened: "Moved by Claude Code", "Removed by Codex", "Text
-  removed" or "Text changed" (Gloss found the text gone, or found the note on rewritten words, so no agent is named),
-  "Moved back to where it was made". Gloss's moves in a row (two reloads) are one line. When an agent says where its
+  shows one quiet `.caption` secondary line where it happened, with a pencil for an edit and a minus circle for a
+  removal: "Edited by Claude Code", "Removed by Codex", "Edited" or "Removed" (Gloss found the note on rewritten words,
+  or the text gone, so no one is named), "Restored original" (2026-10-08: "Moved" read as if the note, not the text,
+  had changed). Gloss's moves in a row (two reloads) are one line. When an agent says where its
   change is after Gloss recorded such a move since the note was last sent (its edit reached the file first), the two
   are one line, the agent's, from where the note was before either; a move from before the send (the user's own
-  edit) stays Gloss's. An agent putting the note back where it was leaves no line and nothing to restore. Its chevron shows
-  the text the note was on, struck through in tertiary monospace on the excerpt's well, and, for the move that brought
-  it where it is, a small Restore Original Place button; the card's menu has Restore Original Place too while the
-  note is away. The excerpt well shows the current text, or "Removed" with a minus circle for a removal point.
+  edit) stays Gloss's. An agent putting the note back where it was leaves no line and nothing to restore. Its chevron ("Show the original")
+  shows the text the note was on, struck through in tertiary monospace on the excerpt's well, and, for the move that
+  brought it where it is, a small Restore Original button; the card's menu has Restore Original too while the note is
+  away. The excerpt well shows the current text, or "Removed" with a minus circle for a removal point.
   Resolved notes (not ones where the agent asked a question) rest as one line: anchor, pill, the first line of the
   comment, and their latest turn if they have one. Selected or opened, they show the excerpt, delivery line and
   actions, so finished work stays in reach without crowding the open work above it. In the default sort (Position in File), documents
   with open work come first and documents whose notes are all settled follow, each part in path order.
+- **Separate Resolved Notes** (2026-10-08; the sort menu under Show Resolved Notes, and View; remembered; off by
+  default, and disabled while resolved notes are hidden): the list runs twice, open notes by document, then resolved
+  ones by document in the same document order (a document with both kinds heads both runs), with one thin untitled
+  `Divider` row between, not selectable. When only one kind is listed (the Resolved tab, a search, every note open)
+  there is one run and no rule (`NotesPanelModel.sections`).
 - **The page draws what the panel lists**: the panel's tab, colours and search choose the highlights on the page
   too, so the Drafts tab leaves only drafts on the page. With the panel closed, nothing is filtered on screen and
   every note is drawn. Show Resolved Notes (the sort menu, and View) off takes resolved notes out of every tab but

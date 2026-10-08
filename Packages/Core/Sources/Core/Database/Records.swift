@@ -72,7 +72,7 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     public var resolveAgent: String? = nil
     /// An agent asked the user something and the user hasn't sent an answer yet.
     public var waitingOnUser: Bool = false
-    /// Where the note was before its first move, for Restore Original Place; nil until it moves.
+    /// Where the note was before its first move, for Restore Original; nil until it moves.
     public var originalAnchorJson: String? = nil
     public var originalAnchorType: String? = nil
 }

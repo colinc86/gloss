@@ -1716,7 +1716,7 @@ final class AppModel {
         // With the panel closed nothing is filtered on screen, so nothing is filtered here either.
         guard showNotesPanel, let documentID = session.document?.id else { return drafts }
         // Exactly the cards the panel shows for this document: state tab, colours, and search all apply.
-        let shown = Set(notesPanel.visibleGroups.first { $0.document.id == documentID }?.notes.map(\.id) ?? [])
+        let shown = notesPanel.listedIDs(for: documentID)
         return drafts.filter { shown.contains($0.id) }
     }
 

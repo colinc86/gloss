@@ -44,7 +44,12 @@ final class NoteLinkModel {
 
     /// The notes list's frame.
     @ObservationIgnored var panelViewport: CGRect? {
-        didSet { if panelViewport != oldValue { redraw() } }
+        didSet {
+            guard panelViewport != oldValue else { return }
+            // The whole list moved (the window resized, the header grew): every card moved with it, though no row did.
+            NotificationCenter.default.post(name: Self.panelMoved, object: self)
+            redraw()
+        }
     }
     /// The toasts at the bottom of the list (Undo, a send's result), when any shows: cards under them are covered,
     /// so their ribbons stop as they would at the list's edge.
@@ -80,6 +85,11 @@ final class NoteLinkModel {
     @ObservationIgnored private(set) var viewerViewport: CGRect?
     /// Where each card on screen is, in window coordinates.
     @ObservationIgnored private(set) var cardRects: [NoteID: CGRect] = [:]
+    /// Which card view last placed each note's card: only it can take the card away, so a row leaving late (the
+    /// note moved to the other run of a separated list) doesn't clear where its new row put it.
+    @ObservationIgnored private var cardOwners: [NoteID: ObjectIdentifier] = [:]
+    /// Posted when the notes list moves as a whole; card probes report where they are now.
+    static let panelMoved = Notification.Name("NoteLinkModel.panelMoved")
 
     @ObservationIgnored private let noteStore: NoteStore
     @ObservationIgnored private weak var geometry: NoteGeometry?
@@ -131,7 +141,15 @@ final class NoteLinkModel {
 
     /// A card moved (the list scrolled, a card grew) or left the screen (nil). Kept even while paths are off: a card
     /// only reports when it moves, so turning paths on must find every card where it already is.
-    func card(_ id: NoteID, movedTo frame: CGRect?) {
+    func card(_ id: NoteID, movedTo frame: CGRect?, owner: ObjectIdentifier? = nil) {
+        if let owner {
+            if frame == nil {
+                guard cardOwners[id] == owner else { return }
+                cardOwners[id] = nil
+            } else {
+                cardOwners[id] = owner
+            }
+        }
         guard cardRects[id] != frame else { return }
         cardRects[id] = frame
         // Every card on screen reports on every frame of a list scroll: move just this one's ribbon.

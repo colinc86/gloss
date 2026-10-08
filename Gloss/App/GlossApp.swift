@@ -200,6 +200,10 @@ struct AppCommands: Commands {
             Toggle(isOn: Binding(get: { model.notesPanel.showResolved }, set: { model.notesPanel.showResolved = $0 })) {
                 Label("Show Resolved Notes", systemImage: "checkmark.circle")
             }
+            Toggle(isOn: Binding(get: { model.notesPanel.separateResolved }, set: { model.notesPanel.separateResolved = $0 })) {
+                Label("Separate Resolved Notes", systemImage: "line.3.horizontal.decrease")
+            }
+            .disabled(!model.notesPanel.showResolved)
             Button { model.explorer.refreshAll() } label: { Label("Refresh Explorer", systemImage: "arrow.clockwise") }
                 .keyboardShortcut("r", modifiers: [.command])
             Button {

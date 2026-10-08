@@ -17,7 +17,9 @@ struct NotesPanel: View {
 
     var body: some View {
         @Bindable var panel = model.notesPanel
-        let visible = panel.visibleGroups
+        // Worked out once per pass: the runs, and every group in them.
+        let runs = panel.sections
+        let visible = runs.flatMap(\.groups)
         VStack(spacing: 0) {
             header
             Divider()
@@ -51,27 +53,36 @@ struct NotesPanel: View {
                 let places = PathDisambiguator.places(for: visible.map(\.document.path))
                 ScrollViewReader { proxy in
                 List(selection: $panel.selection) {
-                    ForEach(visible) { group in
-                        Section {
-                            ForEach(group.notes) { note in
-                                NoteCard(note: note, document: group.document, listActive: listFocused && controlActiveState == .key)
-                                    .background(NoSystemSelectionHighlight())
-                                    .tag(note.id)
-                                    .id(note.id)
-                                    // Where the card is, for the path drawn from its note on the page.
-                                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-                                        model.noteLink.card(note.id, movedTo: frame)
-                                    }
-                                    .onDisappear { model.noteLink.card(note.id, movedTo: nil) }
+                    // One run normally; with Separate Resolved Notes, open notes, then a thin rule, then resolved ones.
+                    // Keyed by kind, so a run appearing or going (the first note resolved) keeps the other's rows.
+                    ForEach(runs) { run in
+                        if run.id == .resolved, runs.count > 1 {
+                            Divider()
+                                .padding(.vertical, DS.Space.xs)
+                                .listRowSeparator(.hidden)
+                                .accessibilityLabel("Resolved notes follow")
+                        }
+                        ForEach(run.groups) { group in
+                            Section {
+                                ForEach(group.notes) { note in
+                                    NoteCard(note: note, document: group.document, listActive: listFocused && controlActiveState == .key)
+                                        .background(NoSystemSelectionHighlight())
+                                        // Where the card is, for the path drawn from its note on the page: from AppKit,
+                                        // which knows when the table places or re-tiles a row (SwiftUI's first report
+                                        // can come before, and none after, so paths waited for a first selection).
+                                        .background(CardFrameProbe(id: note.id) { frame, probe in model.noteLink.card(note.id, movedTo: frame, owner: probe) })
+                                        .tag(note.id)
+                                        .id(note.id)
+                                }
+                            } header: {
+                                DocumentGroupHeader(document: group.document, count: group.notes.count, place: places[group.document.path],
+                                                    host: group.document.hostID == .local || group.document.hostID == .web ? nil
+                                                        : group.document.hostID == .github ? PullRequestPath(group.document.path).map { "\($0.repository) #\($0.number)" }
+                                                        : group.document.hostID == .atlassian ? Self.atlassianLabel(group.document.path)
+                                                        : (model.hosts.entry(for: group.document.hostID)?.name).map { group.document.kind == .web ? "via \($0)" : $0 } ?? "remote",
+                                                    // A previous Atlassian site's documents are kept to read, not to open.
+                                                    open: group.document.path.hasPrefix("/previous-sites/") ? {} : { model.openDocument(hostID: group.document.hostID, path: group.document.path) })
                             }
-                        } header: {
-                            DocumentGroupHeader(document: group.document, count: group.notes.count, place: places[group.document.path],
-                                                host: group.document.hostID == .local || group.document.hostID == .web ? nil
-                                                    : group.document.hostID == .github ? PullRequestPath(group.document.path).map { "\($0.repository) #\($0.number)" }
-                                                    : group.document.hostID == .atlassian ? Self.atlassianLabel(group.document.path)
-                                                    : (model.hosts.entry(for: group.document.hostID)?.name).map { group.document.kind == .web ? "via \($0)" : $0 } ?? "remote",
-                                                // A previous Atlassian site's documents are kept to read, not to open.
-                                                open: group.document.path.hasPrefix("/previous-sites/") ? {} : { model.openDocument(hostID: group.document.hostID, path: group.document.path) })
                         }
                     }
                 }
@@ -292,6 +303,9 @@ struct NotesPanel: View {
             .pickerStyle(.inline)
             Divider()
             Toggle("Show Resolved Notes", isOn: $panel.showResolved)
+            // Nothing to separate while resolved notes are hidden.
+            Toggle("Separate Resolved Notes", isOn: $panel.separateResolved)
+                .disabled(!panel.showResolved)
         } label: {
             Image(systemName: panel.sort.symbol)
         }
@@ -443,12 +457,10 @@ struct NoteCard: View {
     /// The anchored line in the editor's colours, worked out once per note.
     @State private var colouredExcerpt: AttributedString?
     @State private var hovering = false
-    /// The whole thread open: every turn and move, the full comment, the agent's message uncut, and the follow-up
-    /// field.
+    /// The whole thread open: every turn and move, the full comment, and the follow-up field.
     @State private var opening = CardOpening()
-    /// The collapsed card cuts the comment or the agent's message short, so it offers to open.
+    /// The collapsed card cuts the comment short, so it offers to open (the latest turn is never cut).
     @State private var commentCut = false
-    @State private var messageCut = false
     /// Follow Up… opens the card and puts the caret in its field; the field otherwise waits to be clicked.
     @State private var followUpFocusPending = false
     @State private var followUpFocusRequest = 0
@@ -613,7 +625,7 @@ struct NoteCard: View {
             Button("Re-anchor to a New Selection") { model.reanchor(note: note, in: document) }
         }
         if note.originalAnchor != nil {
-            Button("Restore Original Place") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
+            Button("Restore Original") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
         }
         if dividers { Divider() }
         if NotesPanelModel.sendable([note]).count == 1, let target = model.send.lastTarget {
@@ -786,10 +798,11 @@ struct NoteCard: View {
                 withAnimation(DS.Motion.smooth) { opening.toggle(selected: isSelected) }
             } label: {
                 HStack(spacing: DS.Space.xs) {
-                    Image(systemName: "chevron.right")
+                    // Down to open, up to close, as the content goes.
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .contentTransition(.symbolEffect(.replace))
                     Text(threadToggleTitle(thread))
                 }
                 .font(.caption)
@@ -809,8 +822,7 @@ struct NoteCard: View {
         case .agent:
             AgentMessageBubble(message: turn.text, asks: turn.asks,
                                waiting: note.waitingOnUser && turn.id == thread.turns.last(where: { $0.speaker == .agent })?.id,
-                               agent: turn.agent ?? note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName),
-                               expanded: expanded || editing, isCut: latest ? $messageCut : .constant(false))
+                               agent: turn.agent ?? note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName))
                 // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
                 .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
                                                      removal: .opacity).calmed)
@@ -881,7 +893,7 @@ struct NoteCard: View {
     }
 
     /// A move, as one quiet line: who moved the note, or that its text was removed. Its chevron shows the text the
-    /// note was on, struck through; for the move that brought it where it is, Restore Original Place sits there too.
+    /// note was on, struck through; for the move that brought it where it is, Restore Original sits there too.
     private func moveLine(_ move: NoteThread.Move, isLatest: Bool) -> some View {
         let open = openMoves.contains(move.id)
         let canRestore = isLatest && note.originalAnchor != nil
@@ -892,7 +904,7 @@ struct NoteCard: View {
                 if open { openMoves.remove(move.id) } else { openMoves.insert(move.id) }
             } label: {
                 HStack(spacing: DS.Space.xs) {
-                    Image(systemName: move.removed ? "minus.circle" : "arrow.turn.down.right")
+                    Image(systemName: move.removed ? "minus.circle" : "pencil")
                     Text(move.title)
                     if hasDetail {
                         Image(systemName: "chevron.right")
@@ -906,7 +918,7 @@ struct NoteCard: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(hasDetail ? (open ? "Hide where the note was" : "Show where the note was") : move.title)
+            .help(hasDetail ? (open ? "Hide the original" : "Show the original") : move.title)
             if open {
                 VStack(alignment: .leading, spacing: DS.Space.xs) {
                     if let old = move.oldExcerpt {
@@ -922,7 +934,7 @@ struct NoteCard: View {
                             .accessibilityLabel("Was on: \(old)")
                     }
                     if canRestore {
-                        Button("Restore Original Place") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
+                        Button("Restore Original") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
                             .controlSize(.small)
                     }
                 }
@@ -985,10 +997,11 @@ struct NoteCard: View {
         Task { followUpFailed = !(await model.notesPanel.commitFollowUp(for: note.id)) }
     }
 
-    /// Offered when there's more than the collapsed card shows: earlier turns or moves, or a comment or message cut
-    /// short. Whether text is cut is measured on its collapsed form, so the button stays put while the card is open.
+    /// Offered when there's more than the collapsed card shows: earlier turns or moves, or a comment cut short (the
+    /// latest turn is never cut). Whether the comment is cut is measured on its collapsed form, so the button stays
+    /// put while the card is open.
     private func showsThreadToggle(_ thread: NoteThread) -> Bool {
-        thread.entries.count > 1 || commentCut || (messageCut && thread.latest?.speaker == .agent)
+        thread.entries.count > 1 || commentCut
             || (thread.latestMove != nil && note.originalAnchor == nil) || expanded
     }
 
@@ -1117,6 +1130,102 @@ struct NoteCard: View {
     }
 }
 
+/// Reports where a card is on screen, in top-left window coordinates (SwiftUI's `.global`), whenever AppKit moves it:
+/// when it enters a window, when its row moves or resizes, when the table resizes, and when the list scrolls. Only a
+/// rect that changed is reported; nil when the card leaves the window.
+struct CardFrameProbe: NSViewRepresentable {
+    /// The note whose card this is: a probe reused for another note reports for it from scratch.
+    let id: NoteID
+    /// The card's rect (nil when it left the window), and which probe says so.
+    let onFrame: (CGRect?, ObjectIdentifier) -> Void
+    /// Posted by `NoSystemSelectionHighlight` once it has restyled the table.
+    static let tableRestyled = Notification.Name("CardFrameProbe.tableRestyled")
+
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) {
+        view.onFrame = onFrame
+        view.noteID = id
+        view.report()
+    }
+
+    final class Probe: NSView {
+        var onFrame: (CGRect?, ObjectIdentifier) -> Void = { _, _ in }
+        /// Changed, nothing has been reported for the new note yet.
+        var noteID: NoteID? {
+            didSet { if noteID != oldValue { last = nil } }
+        }
+        private var last: CGRect??
+        private var observed: [NSObjectProtocol] = []
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observe()
+            report()
+            // Once more after this pass, when the table has tiled its rows.
+            DispatchQueue.main.async { [weak self] in self?.report() }
+        }
+
+        override func layout() {
+            super.layout()
+            report()
+        }
+
+        isolated deinit {
+            for token in observed { NotificationCenter.default.removeObserver(token) }
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            report()
+        }
+
+        override func setFrameOrigin(_ newOrigin: NSPoint) {
+            super.setFrameOrigin(newOrigin)
+            report()
+        }
+
+        func report() {
+            let frame = window == nil ? nil : topLeftWindowRect(bounds)
+            guard last != .some(frame) else { return }
+            last = .some(frame)
+            onFrame(frame, ObjectIdentifier(self))
+        }
+
+        /// The row, the table, the clip view it scrolls in and the scroll view, the window, and the notes list as a
+        /// whole: any of them moving moves the card. Watching stops when the card leaves the window.
+        private func observe() {
+            for token in observed { NotificationCenter.default.removeObserver(token) }
+            observed = []
+            guard let window else { return }
+            var targets: [(AnyObject?, Notification.Name)] = [(window, NSWindow.didResizeNotification), (nil, NoteLinkModel.panelMoved)]
+            var view = superview
+            while let current = view {
+                if current is NSTableRowView { targets.append((current, NSView.frameDidChangeNotification)) }
+                if let table = current as? NSTableView {
+                    targets.append((table, NSView.frameDidChangeNotification))
+                    targets.append((table, CardFrameProbe.tableRestyled))
+                    if let scroll = table.enclosingScrollView {
+                        scroll.contentView.postsBoundsChangedNotifications = true
+                        targets.append((scroll.contentView, NSView.boundsDidChangeNotification))
+                        scroll.postsFrameChangedNotifications = true
+                        targets.append((scroll, NSView.frameDidChangeNotification))
+                    }
+                    break
+                }
+                view = current.superview
+            }
+            for (target, name) in targets {
+                (target as? NSView)?.postsFrameChangedNotifications = true
+                observed.append(NotificationCenter.default.addObserver(forName: name, object: target, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.report() }
+                })
+            }
+        }
+    }
+}
+
 /// Turns off the list's own selection fill (the accent or grey band behind a selected row): a selected card draws its
 /// own outline in its note's colour. SwiftUI has no modifier for it, so a probe in a row finds the table the list is
 /// built on and sets its highlight style to none, a drawing rule only: clicking, ⌘- and ⇧-clicking and arrows still
@@ -1136,6 +1245,8 @@ struct NoSystemSelectionHighlight: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 guard let table = self?.enclosingTable, table.selectionHighlightStyle != .none else { return }
                 table.selectionHighlightStyle = .none
+                // Restyling can re-tile the rows: the cards say where they are now.
+                NotificationCenter.default.post(name: CardFrameProbe.tableRestyled, object: table)
             }
         }
 
