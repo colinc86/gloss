@@ -6,6 +6,43 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.3.0</title>
+      <pubDate>Thu, 08 Oct 2026 14:01:05 GMT</pubDate>
+      <sparkle:version>187</sparkle:version>
+      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">Notes become conversations: you and your agent can go back and forth on a note until it's done.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Each note is a thread.</strong> Write a follow-up on a sent note and send it; the agent gets what it said and what you replied. A follow-up reopens a resolved note.</li>
+<li><strong>Agents can reply and ask.</strong> With <code class="notranslate">reply_to_note</code> an agent answers without closing the note, or asks you something back, and the card shows <strong>Your turn</strong>.</li>
+<li><strong>Notes follow the agent's edits.</strong> When an agent rewrites the text a note is on, it says where the change went and the highlight moves there. The card says <strong>Edited by</strong> the agent, and <strong>Restore Original</strong> puts it back. Where the text was removed, the note becomes a caret at that spot.</li>
+<li><strong>Separate Resolved Notes</strong> in the notes panel's menu lists open notes above resolved ones, with a thin rule between them.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li>A selected card is outlined in its note's colour instead of a blue band.</li>
+<li>A collapsed card shows the whole of the latest message; the chevron points up while a card is open.</li>
+<li>Each turn is headed only with who wrote it: the agent's name or You.</li>
+<li>Agents resolve a note without a message when the change speaks for itself.</li>
+<li>The selection bar appears only when two or more notes are selected.</li>
+</ul>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>Paths to cards draw as soon as a window opens, without selecting a note first.</li>
+<li>Clicking a card's follow-up field keeps the keyboard there.</li>
+</ul>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/621995668" type="application/octet-stream" sparkle:edSignature="Q4jc5HX8HLdzaDi2tkAIn3L0Zx4rkasTp5Fxcn+vcWOAqdP98yQaPwOHOt6Hg4wmKXGRYQW1HTbN0Z1wNP4QAg==" length="24430470"/>
+    </item>
+    <item>
       <title>Gloss 0.2.0</title>
       <pubDate>Wed, 07 Oct 2026 16:22:57 GMT</pubDate>
       <sparkle:version>171</sparkle:version>
