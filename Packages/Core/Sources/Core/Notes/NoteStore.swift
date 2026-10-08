@@ -765,6 +765,33 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// Gloss found a note again after its file changed (a reload, a page that settled, a packet built from a closed
+    /// file). Found on the same words, it only follows them: the anchor is updated and an orphan has its place back.
+    /// Found on changed words (someone rewrote them), it is a move Gloss records as its own, so the thread says so and
+    /// Restore Original Place can return to the words the note was made on. An agent saying where its change is soon
+    /// after takes that move over (`relocate`).
+    public func applyReanchor(_ noteID: NoteID, to anchor: Anchor, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+            let current = try Anchor(type: AnchorType(rawValue: record.anchorType) ?? .file, json: record.anchorJson)
+            if case .text(let was) = current, case .text(let now) = anchor, was.text != now.text {
+                try Self.relocate(&record, to: anchor, removed: false, author: .app, at: date, db)
+            } else {
+                guard anchor != current || record.state == NoteState.orphaned.rawValue else { return }
+                record.anchorJson = try anchor.encodedJSON()
+                record.anchorType = anchor.type.rawValue
+                if record.state == NoteState.orphaned.rawValue {
+                    let previous = record.previousState.flatMap(NoteState.init(rawValue:)) ?? .draft
+                    record.state = (previous == .sent ? NoteState.sent : .draft).rawValue
+                    record.previousState = nil
+                }
+                record.updatedAt = date
+            }
+            try record.update(db)
+        }
+    }
+
     /// Puts a moved note back where it was before its first move, and says so in the thread.
     public func restoreOriginalPlace(_ noteID: NoteID, at date: Date = Date()) async throws {
         let date = Self.rounded(date)
@@ -782,9 +809,28 @@ public struct NoteStore: Sendable {
     }
 
     /// `relocate` inside a write: the record is changed but not saved; the `moved` message is inserted.
+    /// An agent's move that lands right after one Gloss recorded on its own (it re-anchored or found the text removed
+    /// when the agent's edit reached the file, before the agent said where its change is) takes that move over: one
+    /// move, by the agent, from where the note was before either.
     private static func relocate(_ record: inout NoteRecord, to anchor: Anchor, removed: Bool, author: MessageAuthor, at date: Date, _ db: Database) throws {
         let current = try Anchor(type: AnchorType(rawValue: record.anchorType) ?? .file, json: record.anchorJson)
         let orphaned = record.state == NoteState.orphaned.rawValue
+        if case .agent = author, var last = try messageRecords(NoteID(rawValue: record.id), db).last,
+           last.kind == MessageKind.moved.rawValue, last.author == nil,
+           let earlier = last.metaJson.flatMap({ try? JSONDecoder().decode(NoteMove.self, from: Data($0.utf8)) }) {
+            record.anchorJson = try anchor.encodedJSON()
+            record.anchorType = anchor.type.rawValue
+            if orphaned {
+                let previous = record.previousState.flatMap(NoteState.init(rawValue:)) ?? .draft
+                record.state = (previous == .sent ? NoteState.sent : .draft).rawValue
+                record.previousState = nil
+            }
+            record.updatedAt = date
+            last.author = author.stored
+            last.metaJson = String(decoding: try JSONEncoder.sorted.encode(NoteMove(from: earlier.from, to: anchor, removed: removed)), as: UTF8.self)
+            try last.update(db)
+            return
+        }
         guard anchor != current || orphaned else { return }
         if record.originalAnchorJson == nil {
             record.originalAnchorJson = record.anchorJson

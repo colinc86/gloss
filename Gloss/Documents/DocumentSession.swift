@@ -1134,7 +1134,8 @@ final class DocumentSession: Identifiable {
         }
     }
 
-    /// Applies one note's re-anchoring result. A note found again takes its new anchor, and an orphan returns to the
+    /// Applies one note's re-anchoring result. A note found again takes its new anchor (on changed words, a move its
+    /// thread records), and an orphan returns to the
     /// state it had before (`recoverOrphan`); one whose text was removed becomes a point where it was, said in its
     /// thread as Gloss's own finding; a lost one is orphaned, which leaves a resolved note as it is.
     private func apply(_ result: ReAnchorResult, to note: Note, unchanged anchor: Anchor) async throws {
@@ -1144,10 +1145,9 @@ final class DocumentSession: Identifiable {
             if note.state == .orphaned { try await noteStore.recoverOrphan(note.id, anchor: anchor) }
         case .moved(let moved), .movedNeedsReview(let moved):
             if case .movedNeedsReview = result { needsReview.insert(note.id) } else { needsReview.remove(note.id) }
-            if note.state == .orphaned {
-                try await noteStore.recoverOrphan(note.id, anchor: moved)
-            } else if moved != anchor {
-                try await noteStore.updateAnchor(note.id, anchor: moved)
+            // An orphan has its place back; found on changed words, the thread records the move (`applyReanchor`).
+            if note.state == .orphaned || moved != anchor {
+                try await noteStore.applyReanchor(note.id, to: moved)
             }
         case .removed(let point):
             needsReview.remove(note.id)

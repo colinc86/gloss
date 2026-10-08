@@ -421,7 +421,8 @@ final class SendCoordinator {
                     switch ReAnchorer.text(anchor, in: content, newHash: hash) {
                     case .moved(let moved), .movedNeedsReview(let moved):
                         note.anchor = moved
-                        try? await noteStore.updateAnchor(note.id, anchor: moved)
+                        // Found on changed words, the thread records the move (`applyReanchor`).
+                        try? await noteStore.applyReanchor(note.id, to: moved)
                     case .removed(let point):
                         // Its text was removed: the note is a point where it was, which the thread says.
                         note.anchor = point

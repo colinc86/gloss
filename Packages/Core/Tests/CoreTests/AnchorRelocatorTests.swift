@@ -52,21 +52,16 @@ struct AnchorRelocatorTests {
         #expect(lines.text == "first\nnaïve" && lines.end == TextPosition(line: 2, col: 6))
     }
 
-    @Test func aRemovalLandsWhereItsContextMeets() throws {
-        let before = "a\nb\nc\nREMOVE ME\nd\ne\nf"
-        let index = LineIndex(before)
-        let old = ReAnchorer.make(from: index.contentRange(ofLine: 4), in: before, index: index, hash: nil)
-        let after = "a\nb\nc\nd\ne\nf"
-        // The agent's line is a little off; the context decides.
-        let point = try AnchorRelocator.removed(in: after, hash: "h2", line: 6, near: old)
-        #expect(point.start == TextPosition(line: 3, col: 2) && point.end == point.start && point.text.isEmpty && point.hash == "h2")
-        // Without the old context: the end of the line before.
-        let bare = try AnchorRelocator.removed(in: after, hash: nil, line: 5, near: nil)
-        #expect(bare.start == TextPosition(line: 4, col: 2) && bare.end == bare.start)
-        #expect(try AnchorRelocator.removed(in: after, hash: nil, line: 1, near: nil).start == TextPosition(line: 1, col: 1))
-        // Context that no longer meets falls back to the line.
-        let rewritten = "a\nb\nc\nsomething else\nd\ne\nf"
-        #expect(try AnchorRelocator.removed(in: rewritten, hash: nil, line: 4, near: old).start == TextPosition(line: 3, col: 2))
+    /// The agent says which line the text was on; the point is the start of what now sits there, never the end of
+    /// a heading above it.
+    @Test func aRemovalLandsAtTheStartOfTheLineTheAgentGave() throws {
+        let after = "# Title\n\n## Caching\n\nForecasts are fetched each hour.\nlast"
+        let point = try AnchorRelocator.removed(in: after, hash: "h2", line: 5)
+        #expect(point.start == TextPosition(line: 5, col: 1) && point.end == point.start && point.text.isEmpty && point.hash == "h2")
+        #expect(try AnchorRelocator.removed(in: after, hash: nil, line: 4).start == TextPosition(line: 5, col: 1), "a blank line gives way to the paragraph after it")
+        #expect(try AnchorRelocator.removed(in: after, hash: nil, line: 1).start == TextPosition(line: 1, col: 1))
+        #expect(try AnchorRelocator.removed(in: after, hash: nil, line: 7).start == TextPosition(line: 6, col: 5), "past the last line: the end of the file")
+        #expect(throws: RelocationError.lineOutOfRange(line: 8, lineCount: 6)) { try AnchorRelocator.removed(in: after, hash: nil, line: 8) }
     }
 
     @Test func onlyTextAndElementsMove() throws {
@@ -100,9 +95,12 @@ struct ReAnchorRemovalTests {
         let note = anchor(line: 4, in: old)
         let result = ReAnchorer.text(note, in: "one\ntwo\nthree\nfour\nfive", newHash: "new")
         guard case .removed(.text(let point)) = result else { Issue.record("expected a removal, got \(result)"); return }
-        #expect(point.start == TextPosition(line: 3, col: 6) && point.end == point.start && point.text.isEmpty && point.hash == "new")
-        // Only blank lines left between the neighbours is a removal too.
-        guard case .removed = ReAnchorer.text(note, in: "one\ntwo\nthree\n\n  \nfour\nfive", newHash: "new") else { Issue.record("expected a removal"); return }
+        #expect(point.start == TextPosition(line: 4, col: 1) && point.end == point.start && point.text.isEmpty && point.hash == "new",
+                "the start of what now sits where the text was")
+        // Only blank lines left between the neighbours is a removal too, at the start of the line after them, not the
+        // end of the line (a heading, say) above.
+        guard case .removed(.text(let gap)) = ReAnchorer.text(note, in: "one\ntwo\nthree\n\n  \nfour\nfive", newHash: "new") else { Issue.record("expected a removal"); return }
+        #expect(gap.start == TextPosition(line: 6, col: 1))
     }
 
     @Test func removalsAtTheEdgesOfTheFile() {

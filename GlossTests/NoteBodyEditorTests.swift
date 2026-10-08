@@ -43,3 +43,61 @@ struct NoteBodyEditorTests {
         return nil
     }
 }
+
+/// The notes list draws no selection fill of its own (a selected card outlines itself), and still selects.
+@MainActor
+struct NotesListSelectionTests {
+    @Observable final class Box { var selection: Set<Int> = [] }
+
+    struct Rows: View {
+        let box: Box
+        var body: some View {
+            @Bindable var box = box
+            List(selection: $box.selection) {
+                ForEach(0..<3, id: \.self) { row in
+                    Text("Row \(row)").background(NoSystemSelectionHighlight()).tag(row)
+                }
+            }
+            .listStyle(.inset)
+        }
+    }
+
+    @Test func theListDrawsNoSelectionFillAndStillSelects() async throws {
+        let box = Box()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 240), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let host = NSHostingView(rootView: Rows(box: box))
+        host.frame = window.contentView!.bounds
+        window.contentView!.addSubview(host)
+        var table: NSTableView?
+        for _ in 0..<100 {
+            host.layoutSubtreeIfNeeded()
+            table = Self.find(in: host)
+            if let table, table.selectionHighlightStyle == .none { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let list = try #require(table)
+        #expect(list.selectionHighlightStyle == .none)
+        list.selectRowIndexes([1], byExtendingSelection: false)
+        for _ in 0..<50 where box.selection != [1] { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(box.selection == [1], "the table's selection still reaches the binding")
+        // Selected in a focused list, a row's text keeps its own colours: no white-on-accent style is asked for.
+        let row = try #require(list.rowView(atRow: 1, makeIfNecessary: true))
+        row.isEmphasized = true
+        #expect(row.isSelected && row.interiorBackgroundStyle == .normal, "\(row.interiorBackgroundStyle.rawValue)")
+        box.selection = [0, 2]
+        for _ in 0..<50 where list.selectedRowIndexes != [0, 2] {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(list.selectedRowIndexes == [0, 2], "and the binding still selects rows")
+        #expect(list.selectionHighlightStyle == .none, "an update doesn't bring the fill back")
+    }
+
+    private static func find(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView { return table }
+        for subview in view.subviews { if let found = find(in: subview) { return found } }
+        return nil
+    }
+}

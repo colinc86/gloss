@@ -411,13 +411,15 @@ public enum ReAnchorer {
             afterIsEnd = anchor.after.isEmpty
         }
 
-        /// Where the context now meets with nothing but blank lines between: the end of the last line before the
-        /// gap (the before context's own blank lines kept), or the file's start. Nil unless at least one side was
-        /// found and the other was found or is the file's edge.
+        /// Where the context now meets with nothing but blank lines between: the start of the first line after the
+        /// gap, what now sits where the text was (not the end of a heading above it); at the file's end, the end of
+        /// the last line before the gap (the before context's own blank lines kept), or the file's start. Nil unless
+        /// at least one side was found and the other was found or is the file's edge.
         func meetingPoint(in lines: [String]) -> TextPosition? {
             guard before != nil || after != nil else { return nil }
             guard let low = before ?? (beforeIsStart ? 0 : nil), let high = after ?? (afterIsEnd ? lines.count + 1 : nil), high > low else { return nil }
             guard (low + 1..<high).allSatisfy({ lines[$0 - 1].trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+            if high <= lines.count { return TextPosition(line: high, col: 1) }
             let line = low + min(beforeGap, high - low - 1)
             guard line >= 1 else { return TextPosition(line: 1, col: 1) }
             return TextPosition(line: line, col: lines[line - 1].utf16.count + 1)

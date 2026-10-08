@@ -394,7 +394,7 @@ public actor MCPServer {
     /// selector. Gloss finds the text itself; columns and context never come from the agent.
     static let locationSchema: Value = [
         "type": "object",
-        "description": "where the note's text is now: {line, end_line, text} with the exact new text; {removed: true, line} where it was removed; or {selector} for an element on a web page",
+        "description": "where the note's text is now: {line, end_line, text} with the exact new text; {removed: true, line} where it was removed, line being the line that now sits where the text was; or {selector} for an element on a web page",
         "properties": [
             "line": ["type": "integer", "minimum": 1],
             "end_line": ["type": "integer", "minimum": 1],

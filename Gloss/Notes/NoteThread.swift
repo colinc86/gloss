@@ -104,10 +104,11 @@ nonisolated struct NoteThread: Equatable {
 }
 
 nonisolated extension NoteThread.Move {
-    /// The quiet line a move reads as: "Moved by Claude Code", "Removed by Codex", "Text removed", "Moved back".
+    /// The quiet line a move reads as: "Moved by Claude Code", "Removed by Codex", "Text removed", "Text changed"
+    /// (Gloss found the note on rewritten words), "Moved back".
     var title: String {
         switch by {
-        case .app: removed ? "Text removed" : "Moved"
+        case .app: removed ? "Text removed" : "Text changed"
         case .user: "Moved back to where it was made"
         case .agent(let name):
             "\(removed ? "Removed" : "Moved") by \(AgentMessageBubble.displayName(name ?? "the agent"))"

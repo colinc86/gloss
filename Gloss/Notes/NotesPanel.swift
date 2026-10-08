@@ -54,6 +54,7 @@ struct NotesPanel: View {
                         Section {
                             ForEach(group.notes) { note in
                                 NoteCard(note: note, document: group.document)
+                                    .background(NoSystemSelectionHighlight())
                                     .tag(note.id)
                                     .id(note.id)
                                     // Where the card is, for the path drawn from its note on the page.
@@ -443,6 +444,8 @@ struct NoteCard: View {
 
     private var tint: Color { Color(nsColor: Theme.color(for: note.color)) }
     private var isSelected: Bool { model.notesPanel.selectedNoteID == note.id }
+    /// Selected alone or among several: drawn as selected either way.
+    private var isInSelection: Bool { model.notesPanel.selection.contains(note.id) }
     /// Resolved notes step back so open work leads the eye; a question from the agent leaves its note open.
     private var isSettled: Bool { note.state == .resolved }
     /// A settled note at rest is one line, plus its latest turn if it has one; selected or opened it shows its actions.
@@ -465,8 +468,8 @@ struct NoteCard: View {
             // widens it.
             Capsule()
                 .fill(tint.gradient)
-                .frame(width: isSelected ? 4 : 3)
-                .opacity(isSettled ? 0.45 : 1)
+                .frame(width: isInSelection ? 4 : 3)
+                .opacity(isSettled && !isInSelection ? 0.45 : 1)
                 .shadow(color: tint.opacity(hovering ? 0.45 : 0), radius: 4)
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 HStack(spacing: DS.Space.s) {
@@ -521,12 +524,22 @@ struct NoteCard: View {
         .animation(DS.Motion.smooth, value: editing)
         .animation(DS.Motion.smooth, value: editingMessageID)
         .animation(DS.Motion.smooth, value: openMoves)
-        // A note that just arrived glows in its colour, then settles: the panel answers "where did it go?".
+        // Selected, the card is outlined in the note's own colour on a lifted ground, as its highlight and path
+        // strengthen on the page; the list draws no selection of its own. A note that just arrived glows in its
+        // colour, then settles: the panel answers "where did it go?".
         .background {
-            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                .fill(tint.opacity(arrived ? 0.2 : 0))
-                .padding(-DS.Space.xs)
-                .animation(arrived ? DS.Motion.snappy : .easeOut(duration: 0.9), value: arrived)
+            ZStack {
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .fill(Color.primary.opacity(isInSelection ? 0.06 : 0))
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .strokeBorder(tint, lineWidth: 1.5)
+                    .opacity(isInSelection ? 1 : 0)
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .fill(tint.opacity(arrived ? 0.2 : 0))
+                    .animation(arrived ? DS.Motion.snappy : .easeOut(duration: 0.9), value: arrived)
+            }
+            .padding(-DS.Space.xs)
+            .animation(DS.Motion.snappy, value: isInSelection)
         }
         .contextMenu {
             // Right-clicking one of several selected cards acts on all of them, as in Finder and Mail.
@@ -1073,6 +1086,41 @@ struct NoteCard: View {
             InlineIconButton(title: "Delete", symbol: "trash", role: .destructive, emphasized: lit) { Task { await model.notesPanel.delete(note.id) } }
         }
         .padding(.top, DS.Space.xxs)
+    }
+}
+
+/// Turns off the list's own selection fill (the accent or grey band behind a selected row): a selected card draws its
+/// own outline in its note's colour. SwiftUI has no modifier for it, so a probe in a row finds the table the list is
+/// built on and sets its highlight style to none, a drawing rule only: clicking, ⌘- and ⇧-clicking and arrows still
+/// select. Set again on every update, in case the list resets it.
+struct NoSystemSelectionHighlight: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ view: NSView, context: Context) { (view as? Probe)?.apply() }
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+
+        func apply() {
+            // After this pass: the row may not be in its table yet.
+            DispatchQueue.main.async { [weak self] in
+                guard let table = self?.enclosingTable, table.selectionHighlightStyle != .none else { return }
+                table.selectionHighlightStyle = .none
+            }
+        }
+
+        var enclosingTable: NSTableView? {
+            var view = superview
+            while let current = view {
+                if let table = current as? NSTableView { return table }
+                view = current.superview
+            }
+            return nil
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 

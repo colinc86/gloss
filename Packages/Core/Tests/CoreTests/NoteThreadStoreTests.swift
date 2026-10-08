@@ -39,6 +39,47 @@ struct NoteThreadStoreTests {
         #expect(try await iterator.next()?[second.id]?.last?.body == "Thanks")
     }
 
+    /// Gloss re-anchors a note on rewritten words before the agent says where its change is: Gloss's move is
+    /// recorded and keeps the words the note was made on, and the agent's move then takes it over as one line.
+    @Test func aReanchorOnChangedWordsIsAMoveTheAgentTakesOver() async throws {
+        let note = try await sentNote()
+        // The same words a line lower: the note only follows them.
+        try await store.applyReanchor(note.id, to: text(4, "old line"))
+        var current = try #require(try await store.note(note.id))
+        #expect(current.anchor == text(4, "old line") && current.originalAnchor == nil)
+        #expect(try await store.messages(for: note.id).isEmpty)
+        // Rewritten words: a move Gloss records, remembering where the note was made.
+        try await store.applyReanchor(note.id, to: text(4, "new line"))
+        current = try #require(try await store.note(note.id))
+        #expect(current.originalAnchor == text(4, "old line"))
+        var messages = try await store.messages(for: note.id)
+        #expect(messages.count == 1 && messages[0].author == .app && messages[0].move == NoteMove(from: text(4, "old line"), to: text(4, "new line"), removed: false))
+        // The agent says where: one move, by the agent, from where the note was before either.
+        try await store.agentReply(note.id, body: "Rewrote it.", asks: false, agent: "claude",
+                                   relocation: NoteRelocation(anchor: text(5, "newer line"), removed: false))
+        messages = try await store.messages(for: note.id)
+        #expect(messages.map(\.kind) == [.moved, .reply])
+        #expect(messages[0].author == .agent("claude") && messages[0].move == NoteMove(from: text(4, "old line"), to: text(5, "newer line"), removed: false))
+        current = try #require(try await store.note(note.id))
+        #expect(current.anchor == text(5, "newer line") && current.originalAnchor == text(4, "old line"))
+        try await store.restoreOriginalPlace(note.id)
+        #expect(try await store.note(note.id)?.anchor == text(4, "old line"), "back to the words it was made on")
+    }
+
+    /// Gloss found the text removed, then the agent says it removed it: one line, the agent's.
+    @Test func anAgentsRemovalTakesOverTheOneGlossFound() async throws {
+        let note = try await sentNote()
+        let point = Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 3, col: 1), text: "", before: "", after: ""))
+        try await store.applyRelocation(note.id, to: point, removed: true, author: nil)
+        try await store.agentReply(note.id, body: "Removed it.", asks: false, agent: "codex", relocation: NoteRelocation(anchor: point, removed: true))
+        let moves = try await store.messages(for: note.id).filter { $0.kind == .moved }
+        #expect(moves.count == 1 && moves[0].author == .agent("codex") && moves[0].move?.removed == true)
+        #expect(moves[0].move?.from == text(3, "old line"))
+        // Not after something else was said: an agent's later move is its own.
+        try await store.agentReply(note.id, body: "Put it back.", asks: false, agent: "codex", relocation: NoteRelocation(anchor: text(3, "old line"), removed: false))
+        #expect(try await store.messages(for: note.id).filter { $0.kind == .moved }.count == 2)
+    }
+
     @Test func aReplyAndAQuestionKeepTheNoteOpen() async throws {
         let note = try await sentNote()
         try await store.agentReply(note.id, body: "Shortened the intro.", asks: false, agent: "claude")

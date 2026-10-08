@@ -319,7 +319,12 @@ path. Dropping on the Dock icon is not supported yet.
 
 ### Notes
 
-- **Note card**: colour rail (3 pt, 4 pt when selected, faded when settled; hover only lights its glow), anchor label
+- **A selected card** (2026-10-07): the list draws no selection band of its own (no accent or grey fill; its table's
+  highlight style is none, set by `NoSystemSelectionHighlight`). A selected card, alone or among several, is outlined
+  1.5 pt in its note's own colour on a lifted ground (`Color.primary` at 6%, light and dark), with its rail at full
+  strength and 4 pt wide, as the note's highlight and path strengthen on the page. Text, pills, bubbles and fields
+  keep their own colours. The list's keyboard focus ring is left as the system draws it.
+- **Note card**: colour rail (3 pt, 4 pt when selected, faded when settled unless selected; hover only lights its glow), anchor label
   with the anchor kind's symbol, the comment, the latest turn of its thread, the delivery line, then the action row
   with Send first and Delete apart at the trailing edge.
   Under the anchor label, a text note quotes what it is about, as GitHub review comments show their line: the first
@@ -357,7 +362,9 @@ path. Dropping on the Dock icon is not supported yet.
   comment is edited instead; its action icon is the accent-filled one while an agent waits on an answer.
 - **Moves** (2026-10-07): when an agent says where its change now is, or the note's text was removed, the thread
   shows one quiet `.caption` secondary line where it happened: "Moved by Claude Code", "Removed by Codex", "Text
-  removed" (Gloss found the text gone, so no agent is named), "Moved back to where it was made". Its chevron shows
+  removed" or "Text changed" (Gloss found the text gone, or found the note on rewritten words, so no agent is named),
+  "Moved back to where it was made". When an agent says where its change is right after Gloss recorded such a move
+  (its edit reached the file first), the two are one line, the agent's, from where the note was before either. Its chevron shows
   the text the note was on, struck through in tertiary monospace on the excerpt's well, and, for the move that brought
   it where it is, a small Restore Original Place button; the card's menu has Restore Original Place too while the
   note is away. The excerpt well shows the current text, or "Removed" with a minus circle for a removal point.
@@ -637,7 +644,7 @@ path. Dropping on the Dock icon is not supported yet.
   drag elsewhere scrubs the file like a minimap. A removal point is an outlined tick; a highlight whose text was
   replaced while editing (invalidated) leaves the ruler, as it leaves the gutter.
 - **Removal points** (2026-10-07): a note whose text an agent or an edit removed is a point where the text was
-  (a zero-length anchor), drawn as a caret: a 2 pt bar in the note's colour, the line's height, with a small round
+  (a zero-length anchor), at the start of what now sits there (never the end of a heading above it), drawn as a caret: a 2 pt bar in the note's colour, the line's height, with a small round
   cap at its top, at the state ladder's strength (full when focused). The gutter marks its row with a hollow dot in
   the note's lane, the ruler with an outlined tick, and the path ribbon reaches the caret (`NoteGeometry` gives a
   2 pt rect for a point). Rendered Markdown maps the point to one rendered point (the start of an inexact run, never

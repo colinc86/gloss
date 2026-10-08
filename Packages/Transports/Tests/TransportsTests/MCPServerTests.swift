@@ -265,7 +265,7 @@ struct MCPServerTests {
 
         // The text was removed: the note becomes a point where it was.
         let removed = try await call("reply_to_note", ["id": .string(retried.rawValue), "message": .string("Dropped the retry."), "location": ["removed": true, "line": 3]])
-        #expect(removed == ("replied on note \(retried.rawValue); marked its text removed at line 2", false), "\(removed.text)")
+        #expect(removed == ("replied on note \(retried.rawValue); marked its text removed at line 3", false), "the start of the line the agent gave: \(removed.text)")
         let point = try #require(try await store.messages(for: retried).first { $0.kind == .moved }?.move)
         #expect(point.removed && point.to != point.from)
 

@@ -39,7 +39,7 @@ extension RelocationError: LocalizedError {
 public enum RelocationTarget: Sendable, Equatable {
     /// The lines the change is on and its exact new text.
     case text(line: Int, endLine: Int, text: String)
-    /// The note's text was removed; `line` is where it was (where what followed it now starts).
+    /// The note's text was removed; `line` is where it was: where what followed it now starts.
     case removed(line: Int)
     /// A page element's new selector.
     case element(selector: String)
@@ -58,8 +58,8 @@ public enum AnchorRelocator {
         switch (anchor, target) {
         case (.text, .text(let line, let endLine, let text)):
             return NoteRelocation(anchor: .text(try self.text(in: content, hash: hash, line: line, endLine: endLine, text: text)), removed: false)
-        case (.text(let old), .removed(let line)):
-            return NoteRelocation(anchor: .text(try removed(in: content, hash: hash, line: line, near: old)), removed: true)
+        case (.text, .removed(let line)):
+            return NoteRelocation(anchor: .text(try removed(in: content, hash: hash, line: line)), removed: true)
         case (.element(let old), .element(let selector)):
             return NoteRelocation(anchor: .element(try element(selector: selector, from: old)), removed: false)
         case (.text, .element):
@@ -107,19 +107,20 @@ public enum AnchorRelocator {
         return ReAnchorer.make(from: best.range, in: normalized, index: index, hash: hash)
     }
 
-    /// A point where the note's text was removed. With the old anchor's context it lands where that context now
-    /// meets, on or near `line`; otherwise at the end of the line before `line` (the file's start for line 1).
-    public static func removed(in content: String, hash: String?, line: Int, near old: TextAnchor?) throws -> TextAnchor {
+    /// A point where the note's text was removed, at the start of `line`: what now sits where the text was (the
+    /// first line with something on it, if `line` is blank). Past the last line, the end of the file.
+    public static func removed(in content: String, hash: String?, line: Int) throws -> TextAnchor {
         let normalized = ReAnchorer.normalizeNewlines(content)
         let index = LineIndex(normalized)
         guard line >= 1, line <= index.lineCount + 1 else { throw RelocationError.lineOutOfRange(line: line, lineCount: index.lineCount) }
         let lines = (1...max(1, index.lineCount)).map { normalized.line($0, index: index) ?? "" }
-        var position: TextPosition?
-        if let old {
-            let probes = ReAnchorer.ContextProbes(old, lines: lines, beforeTarget: line - 1, afterTarget: line, limit: searchRadius)
-            position = probes.meetingPoint(in: lines).flatMap { abs($0.line - line) <= searchRadius ? $0 : nil }
+        let point: TextPosition
+        if line > lines.count {
+            point = TextPosition(line: lines.count, col: lines[lines.count - 1].utf16.count + 1)
+        } else {
+            let filled = (line...min(lines.count, line + searchRadius)).first { !lines[$0 - 1].trimmingCharacters(in: .whitespaces).isEmpty }
+            point = TextPosition(line: filled ?? line, col: 1)
         }
-        let point = position ?? (line == 1 ? TextPosition(line: 1, col: 1) : TextPosition(line: line - 1, col: lines[min(line - 1, lines.count) - 1].utf16.count + 1))
         return ReAnchorer.make(from: NSRange(location: index.utf16Offset(for: point), length: 0), in: normalized, index: index, hash: hash)
     }
 
