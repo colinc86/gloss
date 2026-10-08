@@ -841,11 +841,18 @@ private struct NotePeekCard: View {
                     .lineLimit(6)
                 // The thread's latest word from the agent, as the card shows it.
                 if let latest = NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id)).latest, latest.speaker == .agent {
+                    // Who spoke, then the words, as the card's bubble has it; orange while the question waits on you.
                     let waiting = latest.asks && note.waitingOnUser
-                    Label(latest.text, systemImage: latest.asks ? "questionmark.bubble" : "checkmark.bubble")
-                        .font(.caption)
-                        .foregroundStyle(waiting ? Color.orange : Color.secondary)
-                        .lineLimit(3)
+                    VStack(alignment: .leading, spacing: DS.Space.xxs) {
+                        Text(AgentMessageBubble.heading(agent: latest.agent ?? note.author ?? note.resolveAgent))
+                            .font(.caption2.weight(.semibold))
+                        Text(latest.text)
+                            .font(.caption)
+                            .lineLimit(3)
+                    }
+                    .foregroundStyle(waiting ? Color.orange : Color.secondary)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(AgentMessageBubble.spoken(agent: latest.agent ?? note.author ?? note.resolveAgent, message: latest.text, waiting: waiting))
                 }
                 HStack(spacing: DS.Space.xxs) {
                     // A draft's next step is sending it, so Send leads, as on the panel's cards.
