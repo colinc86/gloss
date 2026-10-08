@@ -137,7 +137,7 @@ The closing line's second sentence, naming `reply_to_note`, is on every packet s
 | --- | --- |
 | `list_pending_notes(host?, path?)` | Sent notes not yet resolved, with `waiting=user` or `waiting=agent` and the thread's message count |
 | `get_note(id)` | One note as a packet, with its whole thread and attachment URIs |
-| `resolve_note(id, outcome?, message?, location?)` | Resolves it (`done` or `skipped`); `needs_input` asks the user instead and answers "asked the user…" |
+| `resolve_note(id, outcome?, message?, location?)` | Resolves it (`done` or `skipped`). The message is optional and normally left out; it is for what the change and thread don't say (a decision, a caveat, what was skipped and why), and a bare "Done." or "fixed" adds no reply (decided 2026-10-07). `needs_input` asks the user instead and answers "asked the user…" |
 | `reply_to_note(id, message, asks?, location?)` | Adds a reply, or a question when `asks`; the note stays open. Refused for drafts and resolved notes ("the user reopens it with a follow-up") |
 | `ask_user(path, question, line?, end_line?, text?, host?)` | A new note by the agent whose thread opens with its question, waiting on the user; at most 20 open per document |
 | `list_documents()` | Documents with sent notes, counts per state and `waiting_on_user` |

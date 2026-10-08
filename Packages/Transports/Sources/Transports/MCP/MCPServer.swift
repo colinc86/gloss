@@ -331,11 +331,11 @@ public actor MCPServer {
         ),
         Tool(
             name: PacketBuilder.toolName,
-            description: "Mark a note resolved after acting on it, with an optional message for the user. Pass location when your change replaced or removed the note's text. Refused while the user has written a follow-up they haven't sent. (needs_input is the old way to ask; use reply_to_note with asks.)",
+            description: "Mark a note resolved after acting on it. A message is optional: leave it out when the change speaks for itself. Pass location when your change replaced or removed the note's text. Refused while the user has written a follow-up they haven't sent. (needs_input is the old way to ask; use reply_to_note with asks.)",
             inputSchema: ["type": "object", "properties": [
                 "id": ["type": "string"],
                 "outcome": ["type": "string", "enum": ["done", "skipped", "needs_input"]],
-                "message": ["type": "string"],
+                "message": ["type": "string", "description": "only what the change and the thread don't tell the user: a decision, a caveat, what was skipped and why. Leave it out rather than saying \"done\""],
                 "location": locationSchema,
             ], "required": ["id"], "additionalProperties": false],
             annotations: .init(idempotentHint: true)
@@ -407,7 +407,9 @@ public actor MCPServer {
 
     static let instructions = """
         Notes the user sent you about places in files. Call list_pending_notes for the open ones and act on each. \
-        When you've done what a note asks, call resolve_note. To answer the user, or ask them something, without \
+        When you've done what a note asks, call resolve_note; leave out message when the change speaks for itself, and \
+        give one only to tell the user something the change and thread don't (a decision, a caveat, what you skipped \
+        and why). To answer the user, or ask them something, without \
         closing the note, call reply_to_note (asks: true for a question); their answer comes back to you when they send \
         it. A packet shows a note's latest turns; get_note returns its whole thread. Whenever your change replaced or \
         removed the text a note is on, pass location to resolve_note or reply_to_note ({line, end_line, text} with the \
@@ -494,8 +496,10 @@ public actor MCPServer {
                 }
                 outcome = parsed
             }
+            // A bare "Done." says nothing the resolved note doesn't; it adds no reply to the thread.
+            let message = arguments["message"]?.stringValue.flatMap { outcome != .needsInput && Self.isBareAcknowledgement($0) ? nil : $0 }
             // needs_input asks the user, and a question needs words.
-            if outcome == .needsInput, (arguments["message"]?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if outcome == .needsInput, (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return CallTool.Result(content: [text("message is required with needs_input: it is the question for the user")], isError: true)
             }
             let relocation: NoteRelocation?
@@ -504,7 +508,7 @@ public actor MCPServer {
             case .failure(let refusal): return CallTool.Result(content: [text(refusal.description)], isError: true)
             }
             do {
-                try await store.resolveSent(id, outcome: outcome, message: arguments["message"]?.stringValue, agent: agentName, relocation: relocation)
+                try await store.resolveSent(id, outcome: outcome, message: message, agent: agentName, relocation: relocation)
             } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
                 return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
             } catch {
@@ -636,6 +640,13 @@ public actor MCPServer {
 
     /// An argument the agent got wrong, or a move that couldn't be made, in words it can act on.
     struct Refusal: Error, CustomStringConvertible { var description: String }
+
+    /// A resolve message that only acknowledges ("Done.", "fixed", "OK"), which the resolved state already says.
+    nonisolated static func isBareAcknowledgement(_ message: String) -> Bool {
+        var word = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        while word.last == "." || word.last == "!" { word.removeLast() }
+        return ["done", "fixed", "ok", "okay", "resolved"].contains(word)
+    }
 
     /// The turns of a thread an agent was given: what it and the user said, without moves or unsent follow-ups.
     nonisolated static func agentVisibleTurns(_ messages: [NoteMessage]) -> [NoteMessage] {

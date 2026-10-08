@@ -275,15 +275,25 @@ struct MCPServerTests {
         let asking = try await store.note(other)
         #expect(asking?.state == .sent && asking?.waitingOnUser == true)
 
+        // A bare acknowledgement adds no reply: the resolved state already says it.
+        #expect(try await call("resolve_note", ["id": .string(retried.rawValue), "message": .string(" Done. ")]) == ("resolved \(retried.rawValue)", false))
+        let acknowledged = try await store.note(retried)
+        #expect(acknowledged?.state == .resolved && acknowledged?.resolveMessage == nil)
+        #expect(try await store.messages(for: retried).filter { $0.kind == .reply }.map(\.body) == ["Dropped the retry."])
+        #expect(["done", "Done.", "FIXED!", "ok", "Okay", "resolved."].allSatisfy(MCPServer.isBareAcknowledgement))
+        #expect(!MCPServer.isBareAcknowledgement("Done; kept the old name for the API.") && !MCPServer.isBareAcknowledgement("not done"))
+
         // needs_input is a question, so it needs words; a null location is no location; a selector goes alone.
         #expect(try await call("resolve_note", ["id": .string(other.rawValue), "outcome": .string("needs_input"), "message": .string(" ")]).isError)
         #expect(try await call("reply_to_note", ["id": .string(other.rawValue), "message": .string("Still thinking."), "location": .null]) == ("replied on note \(other.rawValue)", false))
         let mixed = try await call("reply_to_note", ["id": .string(other.rawValue), "message": .string("x"), "location": ["selector": "#a", "line": 1]])
         #expect(mixed.isError && mixed.text.contains("not both"), "\(mixed.text)")
 
-        // A draft can't be replied to.
-        try await store.unsend(retried)
+        // A resolved note can't be replied to.
         #expect(try await call("reply_to_note", ["id": .string(retried.rawValue), "message": .string("hi")]).isError)
+        // Nor can a draft.
+        try await store.unsend(other)
+        #expect(try await call("reply_to_note", ["id": .string(other.rawValue), "message": .string("hi")]).isError)
         // The instructions tell agents when to reply, ask, resolve, and pass a location.
         #expect(MCPServer.instructions.contains("reply_to_note") && MCPServer.instructions.contains("location"))
         #expect(MCPServer.toolSchemas.contains { $0.name == "reply_to_note" })

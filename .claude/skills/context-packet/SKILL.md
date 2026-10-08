@@ -142,7 +142,7 @@ The app only ever reads these resources; the agent makes every change with its o
 
 ## Resolution contract
 
-MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?, location?)` flips state to resolved; `message` is added to the thread as the agent's reply. It is refused while the user has a follow-up they haven't sent. `needs_input` (agents with older instructions) asks instead: the note stays sent, waiting on the user, and the answer is "asked the user (note <id>); the answer comes back when they send it".
+MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?, location?)` flips state to resolved. `message` is optional and usually left out: the change speaks for itself. Pass one only to tell the user what the change and thread don't (a decision, a caveat, what was skipped and why); it is added to the thread as the agent's reply. A bare acknowledgement (`done`, `Done.`, `fixed`, `ok`, `okay`, `resolved`, trimmed, any case, trailing `.`/`!`) counts as no message and adds no reply. It is refused while the user has a follow-up they haven't sent. `needs_input` (agents with older instructions) asks instead: the note stays sent, waiting on the user, and the answer is "asked the user (note <id>); the answer comes back when they send it".
 
 `reply_to_note(id, message, asks?, location?)` adds a reply, or a question when `asks` (the note then waits on the user), and never resolves. It is refused for drafts and for resolved notes ("the user reopens it with a follow-up").
 
