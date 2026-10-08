@@ -77,15 +77,18 @@ struct NotesPanel: View {
                 .focused($listFocused)
                 // Clicking the card that is already selected changes no selection, so it would leave the keyboard
                 // in the viewer, and Delete would then edit the file instead of the list.
-                .simultaneousGesture(TapGesture().onEnded { listFocused = true })
+                // A click into a card's own field (a follow-up, an edit) keeps the keyboard there: taking it for the
+                // list after the text view became first responder left typing going nowhere.
+                .simultaneousGesture(TapGesture().onEnded { if !Self.isTypingInCard(NSApp.keyWindow?.firstResponder) { listFocused = true } })
                 // Return shows the selected note with its range selected and the viewer focused; Delete deletes at
                 // once, with Undo in a toast and in the Edit menu.
                 .onKeyPress(.return) {
-                    guard let entry = panel.selectedEntry else { return .ignored }
+                    guard !Self.isTypingInCard(NSApp.keyWindow?.firstResponder), let entry = panel.selectedEntry else { return .ignored }
                     model.reveal(note: entry.note, in: entry.document)
                     return .handled
                 }
                 .onDeleteCommand {
+                    guard !Self.isTypingInCard(NSApp.keyWindow?.firstResponder) else { return }
                     let ids = panel.selectedNotes.map(\.id)
                     guard !ids.isEmpty else { return }
                     Task { await model.notesPanel.delete(ids) }
@@ -123,10 +126,15 @@ struct NotesPanel: View {
             model.noteLink.selectedNoteID = panel.selectedNoteID
             // The selected card's note shows at full strength on the page whatever its state (#12).
             model.activeSession?.textController?.focusedNoteID = panel.selectedNoteID
-            if !panel.selection.isEmpty { listFocused = true }
+            if !panel.selection.isEmpty, !Self.isTypingInCard(NSApp.keyWindow?.firstResponder) { listFocused = true }
             guard let entry = panel.selectedEntry, model.fileSystem(for: entry.document.hostID) != nil else { return }
             model.reveal(note: entry.note, in: entry.document, select: false)
         }
+    }
+
+    /// The keyboard is in a card's text field (a follow-up, an edited comment or follow-up), not on the list.
+    static func isTypingInCard(_ responder: NSResponder?) -> Bool {
+        responder is NoteBodyEditor.SubmitTextView
     }
 
     /// `Jira`, `Confluence`, or, for notes on a site the account no longer uses, that site.
