@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// One of the agent's turns in a note's thread: a tinted bubble whose tail points up at what it answers, with who
-/// spoke and how. The question still waiting on you is orange; a reply, or a question already answered, is quiet.
-/// Messages app and Linear's agent replies read this way: the voice is clear before the words are. A collapsed card
+/// One of the agent's turns in a note's thread: a tinted bubble whose tail points up at what it answers, headed only by
+/// who spoke; whether it asks or reports is in its words. The question still waiting on you is orange, which reading
+/// can't tell; everything else is quiet. A collapsed card
 /// cuts a long message at four lines and offers the rest with Show conversation.
 struct AgentMessageBubble: View {
     let message: String
@@ -21,13 +21,9 @@ struct AgentMessageBubble: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
-            Label {
-                Text(Self.heading(agent: agent, asks: asks, waiting: waiting))
-            } icon: {
-                Image(systemName: asks ? "questionmark.bubble.fill" : "checkmark.bubble.fill")
-            }
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(tint)
+            Text(Self.heading(agent: agent))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(tint)
             TruncatingText(text: Text(message).font(.callout).foregroundStyle(needsInput ? .primary : .secondary),
                            lineLimit: 4, expanded: expanded, isCut: isCut)
                 .textSelection(.enabled)
@@ -38,14 +34,19 @@ struct AgentMessageBubble: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(needsInput ? 0.12 : 0.08), in: BubbleShape())
         .overlay(BubbleShape().stroke(tint.opacity(needsInput ? 0.28 : 0.12), lineWidth: 0.5))
-        .accessibilityElement(children: .combine)
-        .help(needsInput ? "The agent is waiting on your answer" : asks ? "What the agent asked" : "What the agent replied")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.spoken(agent: agent, message: message, waiting: needsInput))
+        .help(needsInput ? "Waiting for your answer" : "")
     }
 
-    /// "Claude Code asks" while it waits, "asked" once answered, "replied" for anything else.
-    nonisolated static func heading(agent: String?, asks: Bool, waiting: Bool = true) -> String {
-        let name = displayName(agent?.trimmingCharacters(in: .whitespaces).nilIfEmpty ?? "Agent")
-        return asks ? (waiting ? "\(name) asks" : "\(name) asked") : "\(name) replied"
+    /// Who spoke: the agent by its own name ("Claude Code"), or "Agent" when it is unknown.
+    nonisolated static func heading(agent: String?) -> String {
+        displayName(agent?.trimmingCharacters(in: .whitespaces).nilIfEmpty ?? "Agent")
+    }
+
+    /// As VoiceOver reads it: the name, the words, and, for the question still open, that it waits on you.
+    nonisolated static func spoken(agent: String?, message: String, waiting: Bool) -> String {
+        "\(heading(agent: agent)): \(message)\(waiting ? ", waiting for your answer" : "")"
     }
 
     /// The agents by their own names; MCP records them as `claude`, `codex` and `opencode`. Any other client keeps

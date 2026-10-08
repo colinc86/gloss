@@ -648,12 +648,13 @@ struct NoteCard: View {
         }
         parts.append(note.body.trimmingCharacters(in: .whitespacesAndNewlines))
         if let latest, latest.speaker == .agent, !latest.text.isEmpty {
-            // As the bubble says it: a question asks, anything else replies.
-            parts.append("\(latest.asks ? "Agent asks" : "Agent replied"): \(latest.text)")
+            // As the bubble shows it: who spoke, the words, and whether it waits on you.
+            parts.append(AgentMessageBubble.spoken(agent: latest.agent ?? note.author ?? note.resolveAgent, message: latest.text,
+                                                   waiting: latest.asks && note.waitingOnUser))
         } else if let latest, latest.speaker == .user, !latest.text.isEmpty {
-            parts.append("\(latest.unsent ? "Your follow-up, not sent" : "You replied"): \(latest.text)")
+            parts.append("\(latest.unsent ? "You, not sent" : "You"): \(latest.text)")
         } else if latest == nil, note.state == .resolved, let reply = note.resolveMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
-            parts.append("Agent replied: \(reply)")
+            parts.append(AgentMessageBubble.spoken(agent: note.resolveAgent, message: reply, waiting: false))
         }
         return parts.filter { !$0.isEmpty }.map { $0.hasSuffix(".") || $0.hasSuffix("?") || $0.hasSuffix("!") ? $0 : $0 + "." }.joined(separator: " ")
     }
@@ -800,8 +801,9 @@ struct NoteCard: View {
                 Text("You")
                     .foregroundStyle(Color.accentColor)
                 if turn.unsent {
-                    Text("· Not sent")
-                        .foregroundStyle(.orange)
+                    Text("Not sent")
+                        .fontWeight(.regular)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 if turn.unsent, let id = turn.id, editingMessageID != id {

@@ -12,15 +12,15 @@ struct AccessibilityTests {
         note.waitingOnUser = true
         let question = NoteThread.Turn(speaker: .agent, text: "Which unit, km or miles?", asks: true)
         #expect(NoteCard.spokenSummary(note, latest: question).hasPrefix("Your turn note, blue"))
-        #expect(NoteCard.spokenSummary(note, latest: question).hasSuffix("Agent asks: Which unit, km or miles?"), "a question is asked, as the bubble says")
+        #expect(NoteCard.spokenSummary(note, latest: question).hasSuffix("Agent: Which unit, km or miles?, waiting for your answer."), "who spoke, the words, and that it waits")
         note.waitingOnUser = false
         let reply = NoteThread.Turn(speaker: .agent, text: "Which unit, km or miles?")
-        #expect(NoteCard.spokenSummary(note, latest: reply).hasSuffix("Agent replied: Which unit, km or miles?"))
+        #expect(NoteCard.spokenSummary(note, latest: reply).hasSuffix("Agent: Which unit, km or miles?"))
         let followUp = NoteThread.Turn(speaker: .user, text: "Miles, please", unsent: true)
-        #expect(NoteCard.spokenSummary(note, latest: followUp).hasSuffix("Your follow-up, not sent: Miles, please."))
+        #expect(NoteCard.spokenSummary(note, latest: followUp).hasSuffix("You, not sent: Miles, please."))
         note.state = .resolved
         note.resolveMessage = "Switched to km."
-        #expect(NoteCard.spokenSummary(note).hasSuffix("Agent replied: Switched to km."), "a resolved note's reply, before its thread loads")
+        #expect(NoteCard.spokenSummary(note).hasSuffix("Agent: Switched to km."), "a resolved note's reply, before its thread loads")
     }
 
     @Test func aTextNoteSaysTheLineItIsAbout() {

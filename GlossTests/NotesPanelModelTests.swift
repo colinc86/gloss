@@ -346,13 +346,14 @@ struct NotesPanelModelTests {
     }
 
     @Test func theAgentsTurnIsHeadedByWhoSpokeAndHow() {
-        #expect(AgentMessageBubble.heading(agent: "claude", asks: true) == "Claude Code asks")
-        #expect(AgentMessageBubble.heading(agent: "claude", asks: true, waiting: false) == "Claude Code asked", "an answered question")
-        #expect(AgentMessageBubble.heading(agent: "codex", asks: false) == "Codex replied")
-        #expect(AgentMessageBubble.heading(agent: "opencode", asks: true) == "OpenCode asks")
-        #expect(AgentMessageBubble.heading(agent: "zed", asks: true) == "zed asks", "another client keeps its own name")
-        #expect(AgentMessageBubble.heading(agent: nil, asks: true) == "Agent asks")
-        #expect(AgentMessageBubble.heading(agent: "  ", asks: false) == "Agent replied")
+        #expect(AgentMessageBubble.heading(agent: "claude") == "Claude Code", "only who spoke: the words say how")
+        #expect(AgentMessageBubble.heading(agent: "codex") == "Codex")
+        #expect(AgentMessageBubble.heading(agent: "opencode") == "OpenCode")
+        #expect(AgentMessageBubble.heading(agent: "zed") == "zed", "another client keeps its own name")
+        #expect(AgentMessageBubble.heading(agent: nil) == "Agent")
+        #expect(AgentMessageBubble.heading(agent: "  ") == "Agent")
+        #expect(AgentMessageBubble.spoken(agent: "claude", message: "Km or miles?", waiting: true) == "Claude Code: Km or miles?, waiting for your answer")
+        #expect(AgentMessageBubble.spoken(agent: "codex", message: "Done.", waiting: false) == "Codex: Done.")
     }
 
     @Test func anEmptyListSaysWhyItIsEmpty() {

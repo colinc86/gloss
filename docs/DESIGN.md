@@ -347,9 +347,10 @@ path. Dropping on the Dock icon is not supported yet.
   with the follow-up field (below). Edit… and the pencil edit only the comment; the turns are
   their own messages.
 - **The user's turn in a thread**: a follow-up is a block in the accent colour at 6%, inset from the leading edge
-  so the two voices read apart, headed "You" in the accent colour. Until it is sent it reads "You · Not sent" with
-  "Not sent" in orange, a 10% fill and a dashed accent outline (a draft's dash), and it carries its own Edit (in
-  place; Return saves, an emptied one is deleted, Escape cancels) and Delete. Sent, it is plain.
+  so the two voices read apart, headed "You" in the accent colour and nothing more: what kind of turn it is, its
+  words say (the user's call, 2026-10-07). Until it is sent, a quiet secondary "Not sent" follows the name, with a
+  10% fill and a dashed accent outline (a draft's dash), and it carries its own Edit (in place; Return saves, an
+  emptied one is deleted, Escape cancels) and Delete. Sent, it is plain.
 - **Following up** (replaces Reply to Agent, 2026-10-07): an open card ends with a field, the composer's own
   (`NoteBodyEditor`), placeholder "Follow up" (or "Your answer", outlined orange, while an agent waits on one).
   Return adds what is typed to the thread as an unsent follow-up and clears the field; Shift-Return starts a new
@@ -382,10 +383,11 @@ path. Dropping on the Dock icon is not supported yet.
   Linear light a new item. Nothing glows on the first load, when everything is new and nothing arrived
   (`NotesPanelModel.arrivals`).
 - **The agent's turn** (`AgentMessageBubble`): each of an agent's messages is a bubble, its small tail pointing up
-  at what it answers, headed by who spoke and how ("Claude Code asks", "Codex replied", "Claude Code asked" once
-  answered; "Agent" when the note was never sent from here). Only the question still waiting on the user is tinted
-  orange with the text in primary, since it asks for you; replies and answered questions are a quiet grey. The latest
-  arrives on the bouncy curve, growing from its tail, and its text is selectable.
+  at what it answers, headed only by who spoke ("Claude Code", "Codex"; "Agent" when the note was never sent from
+  here), with no kind word or icon: whether it asks or reports, its words say (the user's call, 2026-10-07). What
+  reading can't tell is kept: the question still waiting on the user is tinted orange with the text in primary;
+  everything else is a quiet grey. VoiceOver reads the name, the words, and "waiting for your answer" for that open
+  question. The latest arrives on the bouncy curve, growing from its tail, and its text is selectable.
 - **Sending takes off** (`LaunchingPlane`): when a send starts, from the button or ⌘↩, the Send button's paper plane
   flies up and away, tilting 14° and shrinking as it fades (an ease-in over 0.32 s, like something thrown). A small
   spinner fades into its place after 0.2 s while the packet is in flight; when the send is over, a fresh plane glides
@@ -398,7 +400,7 @@ path. Dropping on the Dock icon is not supported yet.
   Resolved: what lands there). An empty Attention tab is good news and says so: "All clear" under a green seal.
   All use `EmptyState`, so they match "No notes yet"; the message cross-fades as the tab changes.
 - **An agent's own question** (`ask_user`, issue #4): a card with no comment of the user's, only the orange bubble
-  headed "claude asks" (the agent's name from its MCP client), on the lines it asked about, under Attention and on
+  headed "Claude Code" (the agent's name from its MCP client), on the lines it asked about, under Attention and on
   the Dock badge like any question. When it arrives the document opens to it and the window comes forward without
   taking the keyboard from the terminal (`orderFrontRegardless`), unless the user is writing a note, when it only
   waits under Attention.
