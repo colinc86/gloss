@@ -445,14 +445,15 @@ path. Dropping on the Dock icon is not supported yet.
 - **Agent chip wraps instead of clipping**: the task sits beside the agent only when it fits whole; otherwise the
   chip grows to two lines (agent, pane, folder badge; then the task in `.caption` secondary). A one-word stub such as
   "Reor…" tells nothing, so it is never shown.
-- **Selection bar** (issue #8): select cards (click, ⌘-click, ⇧-click, ⌘A) and a bar slides in under the colour
-  strip, tinted accent: "3 selected", then `.glassProminent` Send with the count (the paper plane takes off as the
+- **Selection bar** (issue #8): select two or more cards (⌘-click, ⇧-click, ⌘A) and a bar slides in under the colour
+  strip (one selected card relies on its own buttons, so a click never brings the bar or pushes the list down;
+  the user's call, 2026-10-07), tinted accent: "3 selected", then `.glassProminent` Send with the count (the paper plane takes off as the
   send starts), Resolve, Reopen as Drafts, a ⋯ menu (Copy as Packet, Colour, everything again in words), Delete, and ✕
   to clear the selection. Each action counts only the notes it applies to (Send takes drafts and sent notes, Reopen
   resolved ones) and is absent when none apply. Right-clicking a selected card offers the same, worded for the
-  selection ("Send 3 Notes to claude"). With nothing selected, the row beside the agent chip holds the panel's own
+  selection ("Send 3 Notes to claude"). With none or one selected, the row beside the agent chip holds the panel's own
   Send (this document's drafts as the panel shows them, the same as ⌘↩, with the count and any color filter's dots)
-  and a ⋯ menu (Send All Drafts, Copy Packet for Document); a selection hides them, since the bar above then says
+  and a ⋯ menu (Send All Drafts, Copy Packet for Document); selecting several hides them, since the bar above then says
   what goes (2026-10-06: sending every draft had come to need ⌘A first). That Send is as tall as the agent chip,
   one line or two, in the chip's shape: an accent rounded rectangle (`DS.Radius.m`) with a white label, a secondary
   fill while it can't send, and a small press. `.glassProminent` is a fixed-height capsule, half the chip's height

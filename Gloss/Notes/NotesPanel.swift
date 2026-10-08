@@ -200,17 +200,19 @@ struct NotesPanel: View {
                 sortMenu
             }
             ColorFilterStrip(counts: colorCounts, selection: $panel.colorFilter)
-            if !panel.selectedNotes.isEmpty {
+            // Several selected: the bar acts on them all. One selected card carries its own actions, so selecting
+            // a note (a click) never pushes the list down.
+            if panel.selectedNotes.count > 1 {
                 BulkActionBar(notes: panel.selectedNotes)
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
-            // Where notes go, and with nothing selected, this document's drafts as ⌘↩ sends them. A selection brings the
-            // selection bar above, which sends what's selected instead (issue #8).
+            // Where notes go, and this document's drafts as ⌘↩ sends them. Several selected bring the selection bar
+            // above, which sends what's selected instead (issue #8).
             HStack(spacing: 6) {
                 TargetPicker()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(1)
-                if panel.selectedNotes.isEmpty {
+                if panel.selectedNotes.count <= 1 {
                     SendDraftsButton(
                         count: model.visibleDrafts.count,
                         colors: panel.colorFilter,
@@ -229,7 +231,7 @@ struct NotesPanel: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(8)
-        .animation(DS.Motion.snappy, value: panel.selectedNotes.isEmpty)
+        .animation(DS.Motion.snappy, value: panel.selectedNotes.count > 1)
     }
 
     /// Sends beyond this document's drafts, titled like the Notes menu, with how many notes each touches.
