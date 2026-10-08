@@ -49,12 +49,18 @@ public struct PacketNote: Sendable {
     /// Header lines that pin the resource down for the agent: `Path: Sources/App.swift at 0f3a9c1`, `Field: description`,
     /// `Version: 7`. Printed after `Resource:`, taken from the first note of the file block.
     public var resourceDetails: [String]
+    /// The note's turns after its comment, as `PacketThread.recent` or `.full` picks them; empty on a first send.
+    public var thread: PacketThread
+    /// The follow-ups not sent before that this packet carries, with the text it carries for each, which
+    /// `NoteStore.recordSend` stamps sent; one written or changed while the packet is being delivered isn't.
+    public var carriedMessages: [MessageID: String] = [:]
 
     public init(
         noteID: NoteID, agentPath: String, source: PacketSource, anchor: Anchor, comment: String,
         excerptLines: [String] = [], selectedText: String? = nil, attachmentAgentPath: String? = nil, cellDescription: String? = nil,
-        resource: String? = nil, resourceDetails: [String] = []
+        resource: String? = nil, resourceDetails: [String] = [], thread: PacketThread = PacketThread()
     ) {
+        self.thread = thread
         self.cellDescription = cellDescription
         self.resource = resource
         self.resourceDetails = resourceDetails
@@ -66,6 +72,65 @@ public struct PacketNote: Sendable {
         self.excerptLines = excerptLines
         self.selectedText = selectedText
         self.attachmentAgentPath = attachmentAgentPath
+    }
+}
+
+/// The turns of a note's thread a packet carries after its comment, and how many older ones it leaves out.
+public struct PacketThread: Sendable, Equatable {
+    public enum Turn: Sendable, Equatable {
+        /// `Agent (<name>) asked:` or `replied:`.
+        case agent(name: String, asked: Bool, body: String)
+        /// `User replied:`.
+        case user(String)
+        /// `Moved:`, only in `get_note`'s whole thread.
+        case moved(NoteMove, by: MessageAuthor)
+    }
+
+    /// Turns before the ones shown, counted on the `Earlier:` line.
+    public var earlierCount: Int
+    public var turns: [Turn]
+
+    public init(earlierCount: Int = 0, turns: [Turn] = []) {
+        self.earlierCount = earlierCount
+        self.turns = turns
+    }
+
+    public var isEmpty: Bool { earlierCount == 0 && turns.isEmpty }
+
+    /// What a send carries: the agent's last message, then every user message after it and every follow-up not
+    /// sent yet (one written before the agent's last reply arrived too); older turns are only counted. A question the
+    /// user hasn't answered stays in view ahead of a later status reply. Moves are left out, since the anchor lines
+    /// say where the note is now, except a removal while the note still sits where its text was (`anchor`): the
+    /// line it points at isn't what the note was about. A note with no agent message yet carries all its follow-ups.
+    public static func recent(_ messages: [NoteMessage], at anchor: Anchor? = nil) -> PacketThread {
+        var removal: [Turn] = []
+        if let last = messages.last(where: { $0.kind == .moved }), let move = last.move, move.removed, move.to == anchor {
+            removal = [.moved(move, by: last.author)]
+        }
+        let turns = messages.filter { $0.kind != .moved && $0.author != .app }
+        guard !turns.isEmpty else { return PacketThread(turns: removal) }
+        let start = turns.indices.last { turns[$0].author.isAgent } ?? turns.startIndex
+        let answered = turns.indices.last { turns[$0].author == .user && turns[$0].isSent } ?? -1
+        let openQuestion = turns.indices.last { $0 < start && $0 > answered && turns[$0].kind == .question }
+        let lead = [openQuestion, start].compactMap { $0 }
+        let rest = turns.indices.filter { !lead.contains($0) && ($0 > start || !turns[$0].isSent) }
+        let shown = lead + rest
+        return PacketThread(earlierCount: turns.count - shown.count, turns: removal + shown.compactMap { turn(turns[$0]) })
+    }
+
+    /// What `get_note` returns: every turn the agent was given, moves included, in order. A follow-up the user
+    /// hasn't sent stays in the app.
+    public static func full(_ messages: [NoteMessage]) -> PacketThread {
+        PacketThread(turns: messages.filter(\.isSent).compactMap(turn))
+    }
+
+    static func turn(_ message: NoteMessage) -> Turn? {
+        switch (message.kind, message.author) {
+        case (.moved, let author): message.move.map { .moved($0, by: author) }
+        case (_, .agent(let name)): .agent(name: name, asked: message.kind == .question, body: message.body)
+        case (_, .user): .user(message.body)
+        case (_, .app): nil
+        }
     }
 }
 
@@ -85,6 +150,7 @@ public enum PacketBuilder {
     public static let excerptLimit = 40
     public static let excerptHeadTail = 20
     public static let toolName = "resolve_note"
+    public static let replyToolName = "reply_to_note"
 
     public static func build(_ notes: [PacketNote]) -> Packet {
         var order: [String] = []
@@ -112,9 +178,10 @@ public enum PacketBuilder {
     }
 
     /// `Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id
-    /// on its Note line.` Each id sits at the top of its own note, so it is never matched to a note by position.
+    /// on its Note line. To answer or ask something without resolving it, use `reply_to_note`.` Each id sits at the
+    /// top of its own note, so it is never matched to a note by position.
     public static func closingLine(count: Int) -> String {
-        "Notes: \(count). When you've acted on a note, mark it resolved with the gloss MCP tool `\(toolName)`, passing the id on its Note line."
+        "Notes: \(count). When you've acted on a note, mark it resolved with the gloss MCP tool `\(toolName)`, passing the id on its Note line. To answer or ask something without resolving it, use `\(replyToolName)`."
     }
 
     /// `<id>: <file>:<anchor> "<first 80 chars of comment>"`: one note on one line.
@@ -215,8 +282,57 @@ public enum PacketBuilder {
             }
             if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(headerValue(attachment))") }
         }
-        lines.append("User comment: \"\(escape(note.comment))\"")
+        // An agent's own question (`ask_user`) has no comment: its thread opens with the question.
+        if !note.comment.isEmpty || note.thread.turns.isEmpty {
+            lines.append("User comment: \"\(escape(note.comment))\"")
+        }
+        lines.append(contentsOf: threadLines(note.thread))
         return lines.joined(separator: "\n")
+    }
+
+    /// `Earlier: 3 messages (get_note returns the whole thread)`, then one line per turn, each on one logical line.
+    static func threadLines(_ thread: PacketThread) -> [String] {
+        var lines: [String] = []
+        if thread.earlierCount > 0 {
+            lines.append("Earlier: \(thread.earlierCount) message\(thread.earlierCount == 1 ? "" : "s") (get_note returns the whole thread)")
+        }
+        for turn in thread.turns {
+            switch turn {
+            case .agent(let name, let asked, let body):
+                lines.append("Agent (\(headerValue(name))) \(asked ? "asked" : "replied"): \"\(escape(body))\"")
+            case .user(let body):
+                lines.append("User replied: \"\(escape(body))\"")
+            case .moved(let move, let author):
+                lines.append(movedLine(move, by: author))
+            }
+        }
+        return lines
+    }
+
+    /// `Moved: from lines 3-4 to line 9, by claude. It was: "<old text>"`, or `Moved: lines 3-4 removed, by Gloss.`
+    static func movedLine(_ move: NoteMove, by author: MessageAuthor) -> String {
+        let who = switch author {
+        case .agent(let name): headerValue(name)
+        case .user: "the user"
+        case .app: "Gloss"
+        }
+        let line = move.removed
+            ? "Moved: \(place(move.from)) removed, by \(who)."
+            : "Moved: from \(place(move.from)) to \(place(move.to)), by \(who)."
+        let old: String = switch move.from {
+        case .text(let anchor): anchor.text
+        case .element(let anchor): anchor.text
+        default: ""
+        }
+        return old.isEmpty ? line : line + " It was: \"\(escape(old))\""
+    }
+
+    /// `line 9`, `lines 3-4`, or the anchor's summary for what isn't lines.
+    public static func place(_ anchor: Anchor) -> String {
+        if case .text(let text) = anchor, text.cells == nil {
+            return text.isSingleLine ? "line \(text.start.line)" : "lines \(text.start.line)-\(text.end.line)"
+        }
+        return headerValue(anchorSummary(anchor))
     }
 
     /// `Excerpt:` followed by blockquoted lines; over 40 lines keeps the first and last 20 around `> ...`.
@@ -359,4 +475,8 @@ public enum CellExcerpt {
         }
         return (cells.references(startLine: anchor.start.line), lines)
     }
+}
+
+private extension MessageAuthor {
+    var isAgent: Bool { if case .agent = self { true } else { false } }
 }

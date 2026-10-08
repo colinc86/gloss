@@ -45,7 +45,7 @@ struct PacketBuilderTests {
         Attachment: /tmp/gloss/a1b2c3/dashboard-region-1.png
         User comment: "The legend overlaps the chart here. Move it below."
 
-        Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
+        Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
         """
         let packet = PacketBuilder.build(notes)
         #expect(packet.text == expected)
@@ -140,7 +140,7 @@ struct PacketBuilderTests {
         Attachment: /tmp/gloss/a1/dashboard-element-1.png
         User comment: "Misaligned"
 
-        Notes: 1. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
+        Notes: 1. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
         """
         #expect(PacketBuilder.build([note]).text == expected)
         #expect(PacketBuilder.summaryLine(note) == "n_01J9X0000000000000000000: http://localhost:3000/dashboard:element(#toolbar > button:nth-of-type(2)) \"Misaligned\"")
@@ -226,7 +226,7 @@ struct PacketBuilderTests {
     }
 
     @Test func emptyPacketIsJustTheClosingLine() {
-        #expect(PacketBuilder.build([]).text == "Notes: 0. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.")
+        #expect(PacketBuilder.build([]).text == "Notes: 0. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.")
     }
 
     @Test func summaryLineTrimsTheComment() {
@@ -247,5 +247,130 @@ struct PacketBuilderTests {
         #expect(ExcerptExtractor.lines(for: beyond, in: content) == ["four"])
         #expect(ExcerptExtractor.lines(for: anchor, in: "") == [])
         #expect(ExcerptExtractor.allLines("no newline at end") == ["no newline at end"])
+    }
+    // MARK: Threads
+
+    func message(_ author: MessageAuthor, _ kind: MessageKind, _ body: String, sent: Bool = true, move: NoteMove? = nil) -> NoteMessage {
+        NoteMessage(id: MessageID.new(), noteID: markdownID, author: author, kind: kind, body: body, createdAt: Date(), sentAt: sent ? Date() : nil, move: move)
+    }
+
+    /// A note sent again after a round with the agent carries the agent's last message and what the user said since;
+    /// older turns are counted, and a first send has no thread lines at all.
+    @Test func aFollowUpCarriesTheRecentTurns() {
+        let messages = [
+            message(.agent("claude"), .question, "Every minute, or every five?"),
+            message(.user, .comment, "Every five."),
+            message(.agent("claude"), .reply, "Done; I also moved the constant."),
+            message(.agent("claude"), .question, "One minute for all alerts, or only severe ones?"),
+            message(.user, .comment, "Only severe ones.", sent: false),
+        ]
+        let thread = PacketThread.recent(messages)
+        #expect(thread == PacketThread(earlierCount: 3, turns: [
+            .agent(name: "claude", asked: true, body: "One minute for all alerts, or only severe ones?"),
+            .user("Only severe ones."),
+        ]))
+        let note = PacketNote(noteID: markdownID, agentPath: "/p/a.md", source: .markdown, anchor: textAnchor(4, 4), comment: "Poll less \"often\"",
+                              excerptLines: ["poll(every: 60)"], thread: thread)
+        #expect(PacketBuilder.build([note]).text == """
+        File: /p/a.md
+        Source: markdown
+
+        Note: n_01J9X0000000000000000000
+        Line 4
+        Excerpt:
+        > poll(every: 60)
+        User comment: "Poll less \\"often\\""
+        Earlier: 3 messages (get_note returns the whole thread)
+        Agent (claude) asked: "One minute for all alerts, or only severe ones?"
+        User replied: "Only severe ones."
+
+        Notes: 1. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
+        """)
+        #expect(PacketThread.recent([]).isEmpty)
+        let first = PacketNote(noteID: markdownID, agentPath: "/p/a.md", source: .markdown, anchor: textAnchor(4, 4), comment: "Poll less", thread: .recent([]))
+        #expect(!PacketBuilder.build([first]).text.contains("Earlier") && !PacketBuilder.build([first]).text.contains("replied"))
+    }
+
+    /// Follow-ups with no agent message yet all go; one written before the agent's last reply arrived goes after it,
+    /// never counted as earlier, since the agent hasn't seen it.
+    @Test func unsentFollowUpsAreNeverLeftOut() {
+        #expect(PacketThread.recent([message(.user, .comment, "Also the title."), message(.user, .comment, "And the date.", sent: false)])
+                == PacketThread(turns: [.user("Also the title."), .user("And the date.")]))
+        let crossed = [
+            message(.user, .comment, "Use the short name.", sent: false),
+            message(.agent("codex"), .reply, "Renamed it."),
+        ]
+        #expect(PacketThread.recent(crossed) == PacketThread(turns: [.agent(name: "codex", asked: false, body: "Renamed it."), .user("Use the short name.")]))
+    }
+
+    /// An agent's own question (`ask_user`) has no comment line: its thread opens with the question.
+    @Test func anAgentsQuestionOpensItsThread() {
+        let thread = PacketThread.recent([message(.agent("claude"), .question, "Is the TTL right?"), message(.user, .comment, "Yes.", sent: false)])
+        let note = PacketNote(noteID: markdownID, agentPath: "/p/a.md", source: .markdown, anchor: textAnchor(2, 2), comment: "", thread: thread)
+        let text = PacketBuilder.build([note]).text
+        #expect(text.contains("Line 2\nAgent (claude) asked: \"Is the TTL right?\"\nUser replied: \"Yes.\"\n\nNotes: 1."), "\(text)")
+        #expect(!text.contains("User comment"))
+    }
+
+    /// `get_note` gets every sent turn and every move, with the text the note was on; unsent follow-ups stay in the app.
+    @Test func theWholeThreadShowsMoves() {
+        let from = textAnchor(3, 4, text: "refresh every 5 minutes\nand retry")
+        let to = textAnchor(9, 9, text: "refresh every 15 minutes")
+        let messages = [
+            message(.agent("claude"), .reply, "Changed the interval."),
+            message(.agent("claude"), .moved, "", move: NoteMove(from: from, to: to, removed: false)),
+            message(.user, .comment, "Good."),
+            message(.app, .moved, "", move: NoteMove(from: to, to: textAnchor(9, 9), removed: true)),
+            message(.user, .comment, "Not yet sent", sent: false),
+        ]
+        let thread = PacketThread.full(messages)
+        #expect(thread.earlierCount == 0 && thread.turns.count == 4)
+        #expect(PacketBuilder.threadLines(thread) == [
+            "Agent (claude) replied: \"Changed the interval.\"",
+            "Moved: from lines 3-4 to line 9, by claude. It was: \"refresh every 5 minutes\\nand retry\"",
+            "User replied: \"Good.\"",
+            "Moved: line 9 removed, by Gloss. It was: \"refresh every 15 minutes\"",
+        ])
+        // A send leaves moves out: the anchor lines already say where the note is.
+        #expect(PacketThread.recent(messages).turns == [.agent(name: "claude", asked: false, body: "Changed the interval."), .user("Good."), .user("Not yet sent")])
+    }
+    /// A note whose text was removed says so when it is sent again, while it still sits where the text was; once it
+    /// has moved on, the removal is history like any move.
+    @Test func aRemovalTravelsWithTheNote() {
+        let old = textAnchor(3, 4, text: "retry twice")
+        let point = Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 3, col: 1), text: "", before: "", after: ""))
+        let messages = [
+            message(.agent("claude"), .reply, "Dropped the retry."),
+            message(.agent("claude"), .moved, "", move: NoteMove(from: old, to: point, removed: true)),
+            message(.user, .comment, "Put a comment there instead.", sent: false),
+        ]
+        let thread = PacketThread.recent(messages, at: point)
+        #expect(PacketBuilder.threadLines(thread) == [
+            "Moved: lines 3-4 removed, by claude. It was: \"retry twice\"",
+            "Agent (claude) replied: \"Dropped the retry.\"",
+            "User replied: \"Put a comment there instead.\"",
+        ])
+        #expect(PacketThread.recent(messages, at: textAnchor(7, 7)).turns.count == 2, "moved on since: no removal line")
+    }
+
+    /// A question the user hasn't answered stays in view when a status reply came after it.
+    @Test func anOpenQuestionIsNotBuriedByALaterReply() {
+        let messages = [
+            message(.agent("claude"), .reply, "Started on it."),
+            message(.user, .comment, "Thanks."),
+            message(.agent("claude"), .question, "Seconds or minutes?"),
+            message(.agent("claude"), .reply, "Meanwhile I fixed the typo."),
+            message(.user, .comment, "Minutes.", sent: false),
+        ]
+        #expect(PacketThread.recent(messages) == PacketThread(earlierCount: 2, turns: [
+            .agent(name: "claude", asked: true, body: "Seconds or minutes?"),
+            .agent(name: "claude", asked: false, body: "Meanwhile I fixed the typo."),
+            .user("Minutes."),
+        ]))
+        // Answered and sent: the question is history.
+        var answered = messages
+        answered[4].sentAt = Date()
+        answered.append(message(.agent("claude"), .reply, "Done."))
+        #expect(PacketThread.recent(answered).turns == [.agent(name: "claude", asked: false, body: "Done.")])
     }
 }

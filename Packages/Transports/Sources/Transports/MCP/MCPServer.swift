@@ -20,6 +20,9 @@ public struct MCPDependencies: Sendable {
     public var askUser: @Sendable (AgentQuestion) async throws -> NoteID = { _ in throw MCPError.internalError("asking is not available") }
     /// A resource URL (a GitHub pull request) as the host and path it opens under; nil when the app has no host for it.
     public var resolveURL: (@Sendable (URL) -> (host: String, path: String)?) = { _ in nil }
+    /// Where a note goes for an agent's `location` (`reply_to_note`, `resolve_note`), worked out against the document
+    /// as it is now. Nothing is written: the move is stored with the agent's message, in one write.
+    public var relocate: @Sendable (NoteID, RelocationTarget) async throws -> NoteRelocation = { _, _ in throw MCPError.internalError("moving notes is not available") }
     public var appVersion: String
 
     public init(noteStore: NoteStore, packet: @escaping @Sendable ([NoteID]) async throws -> Packet, createDraft: @escaping @Sendable (String, String?, String?, String) async throws -> NoteID, appVersion: String) {
@@ -316,21 +319,37 @@ public actor MCPServer {
     static let toolSchemas: [Tool] = [
         Tool(
             name: "list_pending_notes",
-            description: "Notes the user has sent you that are not resolved yet. Filter by host (\"local\", an ssh alias, or \"github\", \"atlassian\" or \"web\" for notes on pull requests, Jira issues and Confluence pages, and web pages) and/or an absolute path prefix.",
+            description: "Notes the user has sent you that are not resolved yet, each with whose turn it is (waiting: user when you asked something they haven't answered) and how many messages its thread has. Filter by host (\"local\", an ssh alias, or \"github\", \"atlassian\" or \"web\" for notes on pull requests, Jira issues and Confluence pages, and web pages) and/or an absolute path prefix.",
             inputSchema: ["type": "object", "properties": ["host": ["type": "string"], "path": ["type": "string", "description": "absolute file path or directory prefix"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true)
         ),
         Tool(
             name: "get_note",
-            description: "Full text of one note in context-packet form, with excerpt and attachment resource URIs.",
+            description: "Full text of one note in context-packet form, with excerpt, its whole thread (every reply, question, answer and move), and attachment resource URIs.",
             inputSchema: ["type": "object", "properties": ["id": ["type": "string"]], "required": ["id"], "additionalProperties": false],
             annotations: .init(readOnlyHint: true)
         ),
         Tool(
             name: PacketBuilder.toolName,
-            description: "Mark a note resolved after acting on it.",
-            inputSchema: ["type": "object", "properties": ["id": ["type": "string"], "outcome": ["type": "string", "enum": ["done", "skipped", "needs_input"]], "message": ["type": "string"]], "required": ["id"], "additionalProperties": false],
+            description: "Mark a note resolved after acting on it, with an optional message for the user. Pass location when your change replaced or removed the note's text. Refused while the user has written a follow-up they haven't sent. (needs_input is the old way to ask; use reply_to_note with asks.)",
+            inputSchema: ["type": "object", "properties": [
+                "id": ["type": "string"],
+                "outcome": ["type": "string", "enum": ["done", "skipped", "needs_input"]],
+                "message": ["type": "string"],
+                "location": locationSchema,
+            ], "required": ["id"], "additionalProperties": false],
             annotations: .init(idempotentHint: true)
+        ),
+        Tool(
+            name: PacketBuilder.replyToolName,
+            description: "Answer the user on a note, or ask them something (asks: true), without resolving it. A question shows in Gloss under Attention, and their answer comes back to you when they send it. Pass location when your change replaced or removed the note's text.",
+            inputSchema: ["type": "object", "properties": [
+                "id": ["type": "string"],
+                "message": ["type": "string"],
+                "asks": ["type": "boolean", "description": "true when the message is a question for the user"],
+                "location": locationSchema,
+            ], "required": ["id", "message"], "additionalProperties": false],
+            annotations: .init(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false)
         ),
         Tool(
             name: "open_in_viewer",
@@ -365,17 +384,44 @@ public actor MCPServer {
         ),
         Tool(
             name: "list_documents",
-            description: "Documents with notes the user has sent you, with counts per state.",
+            description: "Documents with notes the user has sent you, with counts per state and of notes waiting on the user's answer.",
             inputSchema: ["type": "object", "properties": [:], "additionalProperties": false],
             annotations: .init(readOnlyHint: true)
         ),
     ]
 
+    /// Where a note's text is after the agent's change: the lines and exact new text, a removal, or a page element's
+    /// selector. Gloss finds the text itself; columns and context never come from the agent.
+    static let locationSchema: Value = [
+        "type": "object",
+        "description": "where the note's text is now: {line, end_line, text} with the exact new text; {removed: true, line} where it was removed; or {selector} for an element on a web page",
+        "properties": [
+            "line": ["type": "integer", "minimum": 1],
+            "end_line": ["type": "integer", "minimum": 1],
+            "text": ["type": "string", "description": "exact text now in the file"],
+            "removed": ["type": "boolean"],
+            "selector": ["type": "string", "description": "CSS selector"],
+        ],
+        "additionalProperties": false,
+    ]
+
+    static let instructions = """
+        Notes the user sent you about places in files. Call list_pending_notes for the open ones and act on each. \
+        When you've done what a note asks, call resolve_note. To answer the user, or ask them something, without \
+        closing the note, call reply_to_note (asks: true for a question); their answer comes back to you when they send \
+        it. A packet shows a note's latest turns; get_note returns its whole thread. Whenever your change replaced or \
+        removed the text a note is on, pass location to resolve_note or reply_to_note ({line, end_line, text} with the \
+        exact new text, {removed: true, line}, or {selector} for a page element) so the note follows it. To show the \
+        user something, call open_in_viewer with a path and lines. When you made or changed something the user should \
+        review or decide on and no note is about it, call ask_user with the file, the lines, and your question. \
+        add_favorite keeps a project folder at hand in Gloss's explorer.
+        """
+
     /// Handlers are registered before the server starts, so the first `tools/list` can never race them.
     private func makeServer(agentHost: String, client: ClientName = ClientName()) async -> Server {
         let server = Server(
             name: Self.serverName, version: dependencies.appVersion,
-            instructions: "Notes the user sent you about places in files. Call list_pending_notes for the open ones, act on each, then resolve_note. To show the user something, call open_in_viewer with a path and lines. When you made or changed something the user should review or decide on, call ask_user with the file, the lines, and your question: it appears in Gloss beside that text, and the answer comes back to you when the user sends it. add_favorite keeps a project folder at hand in Gloss's explorer.",
+            instructions: Self.instructions,
             capabilities: .init(resources: .init(subscribe: false, listChanged: false), tools: .init(listChanged: false))
         )
         let dependencies = dependencies
@@ -407,12 +453,17 @@ public actor MCPServer {
                 note.state == .orphaned ? "\(note.anchor.summary) (text no longer found)" : note.anchor.summary
             }
             let hosts = Dictionary(uniqueKeysWithValues: try await store.hosts().map { ($0.id, $0.name) })
+            let turns = try await store.messages(for: pending.map(\.note.id)).mapValues(Self.agentVisibleTurns)
+            func waiting(_ note: Note) -> String { note.waitingOnUser ? "user" : "agent" }
+            /// The comment, or for an agent's own question (no comment) the question.
+            func body(_ note: Note) -> String { note.body.isEmpty ? turns[note.id]?.first?.body ?? "" : note.body }
             let lines = pending.map { entry in
-                let preview = entry.note.body.replacingOccurrences(of: "\n", with: " ").prefix(80)
-                return "\(entry.note.id.rawValue)\t\(hosts[entry.document.hostID] ?? entry.document.hostID.rawValue):\(entry.document.path)\t\(anchor(entry.note))\t\(entry.note.state.rawValue)\t\(preview)"
+                let preview = body(entry.note).replacingOccurrences(of: "\n", with: " ").prefix(80)
+                return "\(entry.note.id.rawValue)\t\(hosts[entry.document.hostID] ?? entry.document.hostID.rawValue):\(entry.document.path)\t\(anchor(entry.note))\t\(entry.note.state.rawValue)\twaiting=\(waiting(entry.note))\tmessages=\(turns[entry.note.id]?.count ?? 0)\t\(preview)"
             }
             let json: [[String: Any]] = pending.map { entry in
-                ["id": entry.note.id.rawValue, "host": hosts[entry.document.hostID] ?? entry.document.hostID.rawValue, "path": entry.document.path, "anchor": anchor(entry.note), "state": entry.note.state.rawValue, "body": entry.note.body]
+                ["id": entry.note.id.rawValue, "host": hosts[entry.document.hostID] ?? entry.document.hostID.rawValue, "path": entry.document.path, "anchor": anchor(entry.note),
+                 "state": entry.note.state.rawValue, "body": body(entry.note), "waiting": waiting(entry.note), "messages": turns[entry.note.id]?.count ?? 0]
             }
             let jsonText = String(data: (try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])) ?? Data(), encoding: .utf8) ?? "[]"
             return CallTool.Result(content: [text(lines.isEmpty ? "No pending notes." : lines.joined(separator: "\n")), text(jsonText)])
@@ -443,14 +494,52 @@ public actor MCPServer {
                 }
                 outcome = parsed
             }
+            // needs_input asks the user, and a question needs words.
+            if outcome == .needsInput, (arguments["message"]?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return CallTool.Result(content: [text("message is required with needs_input: it is the question for the user")], isError: true)
+            }
+            let relocation: NoteRelocation?
+            switch await Self.relocation(for: id, arguments: arguments, dependencies: dependencies) {
+            case .success(let found): relocation = found
+            case .failure(let refusal): return CallTool.Result(content: [text(refusal.description)], isError: true)
+            }
             do {
-                try await store.resolveSent(id, outcome: outcome, message: arguments["message"]?.stringValue, agent: agentName)
+                try await store.resolveSent(id, outcome: outcome, message: arguments["message"]?.stringValue, agent: agentName, relocation: relocation)
             } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
                 return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
             } catch {
                 return CallTool.Result(content: [text(error.localizedDescription)], isError: true)
             }
-            return CallTool.Result(content: [text("resolved \(raw)")])
+            // needs_input, from agents with older instructions, asks the user; the note stays open.
+            let done = outcome == .needsInput ? "asked the user (note \(raw)); the answer comes back when they send it" : "resolved \(raw)"
+            return CallTool.Result(content: [text(done + moved(relocation))])
+        case PacketBuilder.replyToolName:
+            guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), try await store.sharedNoteIDs().contains(id) else {
+                return CallTool.Result(content: [text("unknown note id")], isError: true)
+            }
+            switch note.state {
+            case .draft: return CallTool.Result(content: [text("note \(raw) is a draft: the user took it back and hasn't sent it again")], isError: true)
+            case .resolved: return CallTool.Result(content: [text("note \(raw) is resolved; the user reopens it with a follow-up")], isError: true)
+            case .sent, .orphaned: break
+            }
+            guard let message = arguments["message"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !message.isEmpty else {
+                return CallTool.Result(content: [text("message is required")], isError: true)
+            }
+            let asks = arguments["asks"]?.boolValue ?? false
+            let relocation: NoteRelocation?
+            switch await Self.relocation(for: id, arguments: arguments, dependencies: dependencies) {
+            case .success(let found): relocation = found
+            case .failure(let refusal): return CallTool.Result(content: [text(refusal.description)], isError: true)
+            }
+            do {
+                try await store.agentReply(id, body: message, asks: asks, agent: agentName, relocation: relocation)
+            } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
+                return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
+            } catch {
+                return CallTool.Result(content: [text(error.localizedDescription)], isError: true)
+            }
+            let done = asks ? "asked the user on note \(raw); the answer comes back when they send it" : "replied on note \(raw)"
+            return CallTool.Result(content: [text(done + moved(relocation))])
         case "open_in_viewer":
             var host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
             let path: String
@@ -532,7 +621,8 @@ public actor MCPServer {
                 .filter { !$0.notes.isEmpty }
             let hosts = Dictionary(uniqueKeysWithValues: try await store.hosts().map { ($0.id, $0.name) })
             let lines = documents.map { entry in
-                let counts = NoteState.allCases.filter { $0 != .draft }.map { state in "\(state.rawValue)=\(entry.notes.filter { $0.state == state }.count)" }.joined(separator: " ")
+                let counts = (NoteState.allCases.filter { $0 != .draft }.map { state in "\(state.rawValue)=\(entry.notes.filter { $0.state == state }.count)" }
+                    + ["waiting_on_user=\(entry.notes.filter(\.waitingOnUser).count)"]).joined(separator: " ")
                 return "\(hosts[entry.document.hostID] ?? entry.document.hostID.rawValue):\(entry.document.path)\t\(counts)"
             }
             return CallTool.Result(content: [text(lines.isEmpty ? "No documents have notes." : lines.joined(separator: "\n"))])
@@ -544,9 +634,61 @@ public actor MCPServer {
     /// The open notes an agent may see: sent ones. Drafts stay in the app until the user sends them.
     nonisolated static let sharedStates: Set<NoteState> = [.sent]
 
+    /// An argument the agent got wrong, or a move that couldn't be made, in words it can act on.
+    struct Refusal: Error, CustomStringConvertible { var description: String }
+
+    /// The turns of a thread an agent was given: what it and the user said, without moves or unsent follow-ups.
+    nonisolated static func agentVisibleTurns(_ messages: [NoteMessage]) -> [NoteMessage] {
+        messages.filter { $0.isSent && $0.kind != .moved && $0.author != .app }
+    }
+
+    /// The `location` argument as a target for `AnchorRelocator`; nil when there is none.
+    nonisolated static func location(_ arguments: [String: Value]) throws -> RelocationTarget? {
+        guard let raw = arguments["location"], !raw.isNull else { return nil }
+        guard let object = raw.objectValue else {
+            throw Refusal(description: "location must be an object: {line, end_line, text}, {removed: true, line}, or {selector}")
+        }
+        if let selector = object["selector"] {
+            guard let selector = selector.stringValue else { throw Refusal(description: "location.selector must be a string") }
+            guard ["line", "end_line", "text", "removed"].allSatisfy({ object[$0] == nil }) else {
+                throw Refusal(description: "location is either {selector} or lines, not both")
+            }
+            return .element(selector: selector)
+        }
+        let (line, end) = try lines(object)
+        if object["removed"]?.boolValue == true {
+            guard let line else { throw Refusal(description: "location with removed needs line: where the text was") }
+            return .removed(line: line)
+        }
+        guard let line, let text = object["text"]?.stringValue else {
+            throw Refusal(description: "location needs line and text (the exact new text), or removed: true and line")
+        }
+        return .text(line: line, endLine: end ?? line, text: text)
+    }
+
+    /// The note's new place for the call's `location`, worked out by the app before anything is written, so a
+    /// refusal leaves the note and its thread as they were and the agent can simply try again.
+    nonisolated static func relocation(for id: NoteID, arguments: [String: Value], dependencies: MCPDependencies) async -> Result<NoteRelocation?, Refusal> {
+        do {
+            guard let target = try location(arguments) else { return .success(nil) }
+            return .success(try await dependencies.relocate(id, target))
+        } catch let refusal as Refusal {
+            return .failure(refusal)
+        } catch {
+            let reason = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            return .failure(Refusal(description: "couldn't move the note, so nothing was written: \(reason)"))
+        }
+    }
+
+    /// `; moved it to lines 9-10`, or `; marked its text removed at line 9`, for the tool's answer.
+    nonisolated static func moved(_ relocation: NoteRelocation?) -> String {
+        guard let relocation else { return "" }
+        if relocation.removed, case .text(let point) = relocation.anchor { return "; marked its text removed at line \(point.start.line)" }
+        return "; moved it to \(PacketBuilder.place(relocation.anchor))"
+    }
+
     /// `line` and `end_line` as 1-based integers (end at or after line); both optional.
     nonisolated static func lines(_ arguments: [String: Value]) throws -> (Int?, Int?) {
-        struct Refusal: Error, CustomStringConvertible { var description: String }
         func positive(_ key: String) throws -> Int? {
             guard let raw = arguments[key] else { return nil }
             guard let value = raw.intValue ?? raw.doubleValue.flatMap({ $0.isFinite ? Int(exactly: $0.rounded(.down)) : nil }) ?? raw.stringValue.flatMap({ Int($0) }), value > 0 else {

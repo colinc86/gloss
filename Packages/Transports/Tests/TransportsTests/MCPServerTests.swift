@@ -192,6 +192,103 @@ struct MCPServerTests {
         #expect(documents.text.contains("orphaned=0"), "\(documents.text)")
     }
 
+    /// Threads: an agent replies or asks without resolving, moves a note to its new text or marks the text removed,
+    /// and is refused a move it describes wrongly (with nothing written) or a resolve while the user has an unsent
+    /// follow-up. `needs_input` still asks.
+    @Test func agentsReplyAskAndMoveNotes() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-threads-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/demo/config.md", kind: .markdown, fingerprint: Fingerprint())
+        let content = "# Config\npoll every 60 seconds\nretry twice\n"
+        let edited = "# Config\nretry twice\npoll every 300 seconds, severe alerts only\n"
+        func note(_ line: Int, _ text: String) async throws -> NoteID {
+            let index = LineIndex(content)
+            let range = (content as NSString).range(of: text)
+            precondition(index.position(forUTF16Offset: range.location).line == line)
+            return try await store.createNote(documentID: document.id, anchor: .text(ReAnchorer.make(from: range, in: content, index: index, hash: nil)), body: "Poll less often", color: .yellow).id
+        }
+        let polled = try await note(2, "poll every 60 seconds")
+        let retried = try await note(3, "retry twice")
+        let other = try await note(1, "# Config")
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "", noteIDs: [polled, retried, other], outcome: .delivered)
+        var dependencies = Self.dependencies(store: store)
+        dependencies.relocate = { id, target in
+            let note = try #require(try await store.note(id))
+            return try AnchorRelocator.relocate(note.anchor, to: target, content: edited, hash: nil)
+        }
+        func call(_ name: String, _ arguments: [String: Value]) async throws -> (text: String, isError: Bool) {
+            let result = try await MCPServer.callTool(.init(name: name, arguments: arguments), dependencies: dependencies, agentName: "claude")
+            return (result.content.compactMap { if case .text(let text, _, _) = $0 { text } else { nil } }.joined(separator: "\n"), result.isError ?? false)
+        }
+
+        // A question keeps the note open and waiting on the user; a reply adds to the thread.
+        let asked = try await call("reply_to_note", ["id": .string(polled.rawValue), "message": .string("One minute for all alerts, or only severe ones?"), "asks": .bool(true)])
+        #expect(asked == ("asked the user on note \(polled.rawValue); the answer comes back when they send it", false))
+        let waiting = try await store.note(polled)
+        #expect(waiting?.state == .sent && waiting?.waitingOnUser == true)
+        #expect(try await call("reply_to_note", ["id": .string(other.rawValue), "message": .string("Looked; nothing to change yet.")]) == ("replied on note \(other.rawValue)", false))
+        #expect(try await call("reply_to_note", ["id": .string(other.rawValue), "message": .string("  ")]).isError, "a reply needs words")
+        let listing = try await call("list_pending_notes", [:]).text
+        #expect(listing.contains("\(polled.rawValue)\t") && listing.contains("waiting=user\tmessages=1"), "\(listing)")
+        #expect(listing.contains("waiting=agent\tmessages=0"), "\(listing)")
+        #expect(try await call("list_documents", [:]).text.contains("waiting_on_user=1"))
+
+        // The user answers in a follow-up they haven't sent: the agent can't resolve over it.
+        try await store.addFollowUp(polled, body: "Only severe ones.")
+        let early = try await call("resolve_note", ["id": .string(polled.rawValue)])
+        #expect(early.isError && early.text.contains("follow-up"), "\(early.text)")
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "", noteIDs: [polled], outcome: .delivered)
+        #expect(try await store.note(polled)?.waitingOnUser == false)
+
+        // A move described wrongly is refused and nothing is written, so a retry is clean.
+        let before = try await store.messages(for: polled).count
+        let wrong = try await call("resolve_note", ["id": .string(polled.rawValue), "message": .string("Done."), "location": ["line": 2, "text": "poll every 30 seconds"]])
+        #expect(wrong.isError && wrong.text.contains("nothing was written") && wrong.text.contains("poll every 30 seconds"), "\(wrong.text)")
+        let untouched = try await store.note(polled), after = try await store.messages(for: polled).count
+        #expect(untouched?.state == .sent && after == before)
+        #expect(try await call("resolve_note", ["id": .string(polled.rawValue), "location": ["text": "x"]]).isError, "a location needs its line")
+        #expect(try await call("resolve_note", ["id": .string(polled.rawValue), "location": "line 3"]).isError, "a location is an object")
+        #expect(try await call("resolve_note", ["id": .string(polled.rawValue), "location": ["selector": "#poll"]]).isError, "a text note takes lines, not a selector")
+
+        // Resolving with where the change now is moves the note there, in the same write.
+        let resolved = try await call("resolve_note", ["id": .string(polled.rawValue), "message": .string("Every five minutes, severe only."),
+                                                      "location": ["line": 3, "end_line": 3, "text": "poll every 300 seconds, severe alerts only"]])
+        #expect(resolved == ("resolved \(polled.rawValue); moved it to line 3", false))
+        let moved = try #require(try await store.note(polled))
+        guard case .text(let anchor) = moved.anchor else { Issue.record("not text"); return }
+        #expect(moved.state == .resolved && anchor.start.line == 3 && anchor.text == "poll every 300 seconds, severe alerts only")
+        #expect(try await store.messages(for: polled).map(\.kind) == [.question, .comment, .moved, .reply])
+        let closed = try await call("reply_to_note", ["id": .string(polled.rawValue), "message": .string("One more thing")])
+        #expect(closed.isError && closed.text.contains("reopens it with a follow-up"), "\(closed.text)")
+
+        // The text was removed: the note becomes a point where it was.
+        let removed = try await call("reply_to_note", ["id": .string(retried.rawValue), "message": .string("Dropped the retry."), "location": ["removed": true, "line": 3]])
+        #expect(removed == ("replied on note \(retried.rawValue); marked its text removed at line 2", false), "\(removed.text)")
+        let point = try #require(try await store.messages(for: retried).first { $0.kind == .moved }?.move)
+        #expect(point.removed && point.to != point.from)
+
+        // needs_input, from agents with older instructions, asks rather than resolves.
+        let legacy = try await call("resolve_note", ["id": .string(other.rawValue), "outcome": .string("needs_input"), "message": .string("Rename the heading?")])
+        #expect(legacy == ("asked the user (note \(other.rawValue)); the answer comes back when they send it", false))
+        let asking = try await store.note(other)
+        #expect(asking?.state == .sent && asking?.waitingOnUser == true)
+
+        // needs_input is a question, so it needs words; a null location is no location; a selector goes alone.
+        #expect(try await call("resolve_note", ["id": .string(other.rawValue), "outcome": .string("needs_input"), "message": .string(" ")]).isError)
+        #expect(try await call("reply_to_note", ["id": .string(other.rawValue), "message": .string("Still thinking."), "location": .null]) == ("replied on note \(other.rawValue)", false))
+        let mixed = try await call("reply_to_note", ["id": .string(other.rawValue), "message": .string("x"), "location": ["selector": "#a", "line": 1]])
+        #expect(mixed.isError && mixed.text.contains("not both"), "\(mixed.text)")
+
+        // A draft can't be replied to.
+        try await store.unsend(retried)
+        #expect(try await call("reply_to_note", ["id": .string(retried.rawValue), "message": .string("hi")]).isError)
+        // The instructions tell agents when to reply, ask, resolve, and pass a location.
+        #expect(MCPServer.instructions.contains("reply_to_note") && MCPServer.instructions.contains("location"))
+        #expect(MCPServer.toolSchemas.contains { $0.name == "reply_to_note" })
+    }
+
     /// Issue #4: an agent asks the user about lines it wrote, keeps a folder at hand, and reads the favorites back.
     /// The question carries the agent's name from its client, and the session's host as the default.
     @Test func agentsAskAndKeepFavorites() async throws {
@@ -430,7 +527,7 @@ struct MCPServerTests {
 
             let tools = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": [:]])
             let names = ((tools.reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
-            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "list_documents", "open_in_viewer", "ask_user", "add_favorite", "list_favorites"])
+            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "reply_to_note", "list_documents", "open_in_viewer", "ask_user", "add_favorite", "list_favorites"])
 
             let pending = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "list_pending_notes", "arguments": ["host": "local", "path": "/tmp/demo"]]])
             let listing = (((pending.reply?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""

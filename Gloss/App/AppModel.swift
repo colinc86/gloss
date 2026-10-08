@@ -1180,19 +1180,19 @@ final class AppModel {
         var anchor = Anchor.wholeFile
         if question.line != nil || question.text != nil, attributes.size <= DocumentSession.refuseThreshold {
             let data = try await fileSystem.read(question.path)
-            if let text = String(data: data, encoding: .utf8) {
-                let index = LineIndex(text)
-                var range: NSRange?
-                if let quoted = question.text {
-                    range = Self.occurrence(of: quoted, in: text, index: index, nearLine: question.line)
-                }
-                if range == nil, let line = question.line {
-                    let first = index.contentRange(ofLine: line)
-                    let last = index.contentRange(ofLine: max(line, question.endLine ?? line))
-                    range = NSRange(location: first.location, length: last.location + last.length - first.location)
-                }
-                if let range { anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: data.sha256Hex)) }
+            // Decoded and hashed as an open document does, so the document finds the anchor as made.
+            let text = TextEncoding.decode(data).text
+            let index = LineIndex(text)
+            var range: NSRange?
+            if let quoted = question.text {
+                range = Self.occurrence(of: quoted, in: text, index: index, nearLine: question.line)
             }
+            if range == nil, let line = question.line {
+                let first = index.contentRange(ofLine: line)
+                let last = index.contentRange(ofLine: max(line, question.endLine ?? line))
+                range = NSRange(location: first.location, length: last.location + last.length - first.location)
+            }
+            if let range { anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: Data(text.utf8).sha256Hex)) }
         }
         let document = try await noteStore.upsertDocument(hostID: hostID, path: question.path, kind: DocumentKindDetector.kind(forPath: question.path), fingerprint: attributes.fingerprint)
         let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent)
@@ -1204,6 +1204,54 @@ final class AppModel {
             bringForwardForAgent()
         }
         return note.id
+    }
+
+    /// Where an agent says a note now is (`location` on `reply_to_note` and `resolve_note`), worked out against the
+    /// document as it is now. Nothing is written here: the store saves the move with the agent's message.
+    /// The file is read from its host rather than from an open copy, which may not have caught up with the agent's
+    /// edit yet; an open copy with unsaved edits is refused, since the file on disk isn't what the user sees. A web
+    /// page has no file: its open copy is the page.
+    func relocation(of id: NoteID, to target: RelocationTarget) async throws -> NoteRelocation {
+        guard let note = try await noteStore.note(id), let document = try await noteStore.document(note.documentID) else {
+            throw NoteStoreError.noteNotFound(id)
+        }
+        // Only a text note moved to text reads the document; the relocator moves the rest by selector or refuses it.
+        var readsText = false
+        if case .text = note.anchor { readsText = true }
+        if case .element = target { readsText = false }
+        guard readsText else {
+            return try AnchorRelocator.relocate(note.anchor, to: target, content: "", hash: nil)
+        }
+        let key = "\(document.hostID.rawValue):\(document.path)"
+        let editing = DeliveryError.failed("the user is editing this file; try again once they save it")
+        let session = sessions[key]
+        if session?.isDirty == true { throw editing }
+        if document.kind == .web {
+            guard let text = session?.textController?.text ?? session?.baseText else {
+                throw DeliveryError.failed("the page isn't open in Gloss; give its location after the user opens it")
+            }
+            return try AnchorRelocator.relocate(note.anchor, to: target, content: text, hash: Data(text.utf8).sha256Hex)
+        }
+        guard await ensureConnected(document.hostID), let fileSystem = fileSystems[document.hostID] else {
+            throw DeliveryError.failed("couldn't reach the file's host")
+        }
+        guard (try await fileSystem.stat(document.path)).size <= DocumentSession.refuseThreshold else {
+            throw DeliveryError.failed("the file is too large to follow")
+        }
+        let relocation = try Self.relocation(of: note.anchor, to: target, data: try await fileSystem.read(document.path))
+        // The user may have started typing while the file was read: their edit would carry the old place to disk.
+        if sessions[key]?.isDirty == true { throw editing }
+        return relocation
+    }
+
+    /// The move for a file's bytes, decoded and hashed as an open document does, so its next reload finds the
+    /// note already in place.
+    nonisolated static func relocation(of anchor: Anchor, to target: RelocationTarget, data: Data) throws -> NoteRelocation {
+        if case .text(let text) = anchor, text.cells != nil {
+            throw DeliveryError.failed("This note is on spreadsheet cells; it can't be moved.")
+        }
+        let text = TextEncoding.decode(data).text
+        return try AnchorRelocator.relocate(anchor, to: target, content: text, hash: Data(text.utf8).sha256Hex)
     }
 
     /// Where `needle` occurs in `text`, nearest `line` when it occurs more than once.
@@ -1228,10 +1276,11 @@ final class AppModel {
             var anchor = Anchor.wholeFile
             let size = (try? await fileSystem.stat(path))?.size ?? 0
             // The viewer refuses files above this size; downloading one just to place a line anchor would be worse.
-            if let line, size <= DocumentSession.refuseThreshold, let data = try? await fileSystem.read(path), let text = String(data: data, encoding: .utf8) {
+            if let line, size <= DocumentSession.refuseThreshold, let data = try? await fileSystem.read(path) {
+                let text = TextEncoding.decode(data).text
                 let index = LineIndex(text)
                 let range = index.contentRange(ofLine: line)
-                anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: data.sha256Hex))
+                anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: Data(text.utf8).sha256Hex))
             }
             let kind = DocumentKindDetector.kind(forPath: path)
             let fingerprint = (try? await fileSystem.stat(path))?.fingerprint ?? Fingerprint()
@@ -1551,7 +1600,7 @@ final class AppModel {
         let send = send
         var dependencies = MCPDependencies(
             noteStore: store,
-            packet: { ids in try await send.packet(noteIDs: ids) },
+            packet: { ids in try await send.packet(noteIDs: ids, wholeThread: true) },
             createDraft: { host, path, cwd, text in
                 let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
                 guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }
@@ -1582,6 +1631,10 @@ final class AppModel {
         dependencies.askUser = { [weak self] question in
             guard let self else { throw DeliveryError.failed("Gloss is closing") }
             return try await self.ask(question)
+        }
+        dependencies.relocate = { [weak self] id, target in
+            guard let self else { throw DeliveryError.failed("Gloss is closing") }
+            return try await self.relocation(of: id, to: target)
         }
         // A test host serves without a token (its tests talk to the server directly); a real launch never does.
         let server = MCPServer(dependencies: dependencies, port: settings.mcpPort, token: launchOptions.isTestHost ? nil : MCPServer.loadOrCreateToken())
@@ -1654,11 +1707,12 @@ final class AppModel {
         await send.send(noteIDs: noteIDs, to: target)
     }
 
-    /// The open document's drafts you can see: all of them, or only the colours the notes panel is filtered to.
-    /// What the Send button and ⌘↩ send, so nothing hidden from view goes to the agent.
+    /// The open document's drafts you can see (notes with an unsent follow-up count as drafts): all of them, or
+    /// only the colours the notes panel is filtered to. What the Send button and ⌘↩ send, so nothing hidden from
+    /// view goes to the agent.
     var visibleDrafts: [Note] {
         guard let session = activeSession else { return [] }
-        let drafts = session.notes.filter { $0.state == .draft }
+        let drafts = session.notes.filter(\.isSendable)
         // With the panel closed nothing is filtered on screen, so nothing is filtered here either.
         guard showNotesPanel, let documentID = session.document?.id else { return drafts }
         // Exactly the cards the panel shows for this document: state tab, colours, and search all apply.
@@ -1675,8 +1729,8 @@ final class AppModel {
                 guard let documentID = session.document?.id else { continue }
                 updates.append((session, notesPanel.hiddenIDs(for: documentID, panelShown: showNotesPanel)))
             }
-        } onChange: {
-            Task { @MainActor [weak self] in self?.trackHiddenNotes() }
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackHiddenNotes() }
         }
         // Applied outside the tracking, so what redrawing reads doesn't become something to track.
         for update in updates where update.session.hiddenNoteIDs != update.hidden { update.session.hiddenNoteIDs = update.hidden }

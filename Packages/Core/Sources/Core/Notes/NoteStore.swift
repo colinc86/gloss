@@ -686,6 +686,16 @@ public struct NoteStore: Sendable {
         (try? queue.read { db in try Self.messages(noteID, db) }) ?? []
     }
 
+    /// The threads of several notes in one read, keyed by note; a note with no messages has no entry.
+    public func messages(for noteIDs: [NoteID]) async throws -> [NoteID: [NoteMessage]] {
+        guard !noteIDs.isEmpty else { return [:] }
+        return try await queue.read { db in
+            let records = try NoteMessageRecord.filter(noteIDs.map(\.rawValue).contains(Column("note_id")))
+                .order(Column("created_at"), Column("id")).fetchAll(db)
+            return Dictionary(grouping: records.map(NoteMessage.init(record:)), by: \.noteID)
+        }
+    }
+
     /// The user adds a follow-up, unsent until the note is next sent. On a resolved note it reopens the thread: the
     /// note is sent again if an agent ever had it, a draft if not (an orphan stays an orphan, remembering which), and
     /// the agent's outcome is cleared. On a note waiting on the user, it stays waiting until the follow-up is sent.
@@ -900,10 +910,12 @@ public struct NoteStore: Sendable {
 
     /// Records one delivery and, when it succeeded, flips every draft note in it to `sent`, stamps the follow-ups it
     /// carried as sent, and leaves no note waiting on the user. A resolved note with a follow-up is reopened by it.
-    /// `outcome` is `delivered` or `failed: <message>`.
+    /// `outcome` is `delivered` or `failed: <message>`. `carried` holds the follow-ups the packet held, with the text
+    /// it held for each; one written, or changed, while the delivery was under way stays unsent. Nil stamps every
+    /// unsent follow-up of the notes.
     public func recordSend(
         transport: String, targetJSON: String, packetText: String, noteIDs: [NoteID],
-        outcome: SendOutcome, at date: Date = Date()
+        outcome: SendOutcome, carried: [MessageID: String]? = nil, at date: Date = Date()
     ) async throws -> SendID {
         try await queue.write { db in
             let sendID = SendID.new()
@@ -916,11 +928,17 @@ public struct NoteStore: Sendable {
                 if outcome == .delivered {
                     guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
                     let current = NoteState(rawValue: record.state) ?? .draft
-                    try db.execute(sql: "UPDATE note_message SET sent_at = ? WHERE note_id = ? AND sent_at IS NULL", arguments: [date, noteID.rawValue])
-                    let carried = db.changesCount > 0
+                    var stampedAny = false
+                    for message in try NoteMessageRecord.filter(Column("note_id") == noteID.rawValue && Column("sent_at") == nil).fetchAll(db)
+                    where carried.map({ $0[MessageID(rawValue: message.id)] == message.body }) ?? true {
+                        var stamped = message
+                        stamped.sentAt = date
+                        try stamped.update(db)
+                        stampedAny = true
+                    }
                     if current == .draft || current == .sent {
                         record.state = NoteState.sent.rawValue
-                    } else if current == .resolved, carried {
+                    } else if current == .resolved, stampedAny {
                         if record.previousState == NoteState.orphaned.rawValue {
                             record.state = NoteState.orphaned.rawValue
                             record.previousState = NoteState.sent.rawValue
@@ -932,7 +950,7 @@ public struct NoteStore: Sendable {
                         record.resolveMessage = nil
                         record.resolveAgent = nil
                     }
-                    if record.state != current.rawValue || record.waitingOnUser || carried {
+                    if record.state != current.rawValue || record.waitingOnUser || stampedAny {
                         record.waitingOnUser = false
                         record.updatedAt = date
                         try record.update(db)

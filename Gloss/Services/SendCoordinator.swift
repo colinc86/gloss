@@ -313,7 +313,8 @@ final class SendCoordinator {
             let expiresAt = Date().addingTimeInterval(TimeInterval(stagedFileExpiryDays) * 24 * 3600)
             do {
                 let receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
-                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .delivered)
+                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs,
+                                                              outcome: .delivered, carried: packetNotes.reduce(into: [:]) { $0.merge($1.carriedMessages) { first, _ in first } })
                 if !staging.remoteDirectories.isEmpty {
                     try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
                 }
@@ -356,16 +357,19 @@ final class SendCoordinator {
     }
 
     /// The packet for these notes with attachments at their local paths (for the clipboard, and for MCP readers,
-    /// which run on this Mac or read the crops as resources).
-    func packet(noteIDs: [NoteID]) async throws -> Packet {
+    /// which run on this Mac or read the crops as resources). `wholeThread` is `get_note`'s: every turn the agent was
+    /// given and every move, rather than the latest turns a send carries.
+    func packet(noteIDs: [NoteID], wholeThread: Bool = false) async throws -> Packet {
         let (notes, attachments) = try await collect(noteIDs: noteIDs)
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
-        return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged))
+        return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged, wholeThread: wholeThread))
     }
 
+    /// What Send All sends: drafts, and notes with a follow-up the user hasn't sent.
     func draftNoteIDs(documentID: DocumentID?) async -> [NoteID] {
-        let pending = (try? await noteStore.pendingNotes()) ?? []
-        return pending.filter { $0.note.state == .draft && (documentID == nil || $0.document.id == documentID) }.map(\.note.id)
+        // An orphan that was sent can carry an answer too; Send takes it, so Send All does.
+        let pending = (try? await noteStore.pendingNotes(states: [.draft, .sent, .orphaned])) ?? []
+        return pending.filter { $0.note.isSendable && (documentID == nil || $0.document.id == documentID) }.map(\.note.id)
     }
 
     // MARK: Packet assembly
@@ -383,7 +387,7 @@ final class SendCoordinator {
         return (notes.map { (note: $0.0, document: $0.1) }, attachments)
     }
 
-    private func packetNotes(for notes: [(note: Note, document: Document)], target: AgentTarget, staged: [StagedAttachment]) async throws -> [PacketNote] {
+    private func packetNotes(for notes: [(note: Note, document: Document)], target: AgentTarget, staged: [StagedAttachment], wholeThread: Bool = false) async throws -> [PacketNote] {
         var contents: [String: String] = [:]
         /// Hashes of files read from disk here (not open), to tell whether a note's anchor still describes them.
         var hashes: [String: String] = [:]
@@ -462,26 +466,39 @@ final class SendCoordinator {
             var firstLine: Int?
             if case .text(let anchor) = note.anchor { firstLine = anchor.start.line }
             let resource = document.hostID.isVirtual ? await packetResourceProvider(document.hostID, document.path, firstLine) : nil
-            result.append(PacketNote(
+            let messages = try await noteStore.messages(for: note.id)
+            var packetNote = PacketNote(
                 noteID: note.id, agentPath: document.path, source: Self.source(for: document), anchor: note.anchor,
                 comment: note.body, excerptLines: excerpt, selectedText: selectedText,
                 attachmentAgentPath: staged.first { $0.noteID == note.id }?.agentPath, cellDescription: cellDescription,
-                resource: resource?.url.absoluteString, resourceDetails: resource?.details ?? []
-            ))
+                resource: resource?.url.absoluteString, resourceDetails: resource?.details ?? [],
+                thread: wholeThread ? .full(messages) : .recent(messages, at: note.anchor)
+            )
+            // What the packet says the user wrote is what the send marks sent.
+            if !wholeThread {
+                packetNote.carriedMessages = Dictionary(uniqueKeysWithValues: messages.filter { !$0.isSent }.map { ($0.id, $0.body) })
+            }
+            result.append(packetNote)
         }
         return result
     }
 
     private func readText(hostID: HostID, path: String) async throws -> (text: String, hash: String)? {
         guard let fileSystem = fileSystemProvider(hostID) else { return nil }
-        let data = try await fileSystem.read(path)
-        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else { return nil }
-        return (text, data.sha256Hex)
+        // Decoded and hashed as an open document does, so an anchor made there (or moved by an agent) matches.
+        let text = TextEncoding.decode(try await fileSystem.read(path)).text
+        return (text, Data(text.utf8).sha256Hex)
     }
 
     private func targetJSON(_ target: AgentTarget) -> String {
         (try? JSONEncoder().encode(target)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
+}
+
+extension Note {
+    /// What Send takes: a draft, or a note with a follow-up the user hasn't sent. Sending it again keeps its id, so
+    /// the agent's `resolve_note` and `reply_to_note` keep working.
+    var isSendable: Bool { state == .draft || hasUnsentFollowUps }
 }
 
 extension AgentTarget {

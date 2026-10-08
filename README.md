@@ -81,7 +81,7 @@ Region: x=1004 y=96 w=400 h=220 (crop attached)
 Attachment: /home/me/.cache/gloss/attachments/s_01J9XQ9C4H6M8P0R2T4V6X8Z0B/1-dashboard-region-A3K7QM.png
 User comment: "The legend overlaps the chart here. Move it below."
 
-Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
+Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
 ```
 
 </details>
@@ -92,8 +92,11 @@ Gloss runs an MCP server that the agents you install in **Settings › Agents** 
 
 - **Read your notes.** `list_pending_notes`, `get_note` and `list_documents` show the notes you've sent it. Notes you
   haven't sent stay private.
-- **Answer them.** `resolve_note` checks a note off as done or skipped, with a reply that shows on its card, or hands
-  it back with a question.
+- **Answer them.** `resolve_note` checks a note off as done or skipped, with a reply that shows on its card.
+  `reply_to_note` answers without closing the note, or asks you something back. Each note is a thread: answer with
+  a follow-up and send it, and the agent sees what it asked and what you said.
+- **Move them.** When an agent rewrites or deletes the text a note is on, it can say where the change is, and the
+  highlight moves there. The card shows what moved, and you can put it back.
 - **Show you things.** `open_in_viewer` opens a file at the lines it means, or a pull request, Jira issue,
   Confluence page or web page.
 - **Ask you something.** `ask_user` puts a question beside the text it's about. Your answer goes back when you send

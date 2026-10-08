@@ -23,12 +23,18 @@ Note: <note id>                     # first line of every note: the id resolve_n
 > <blockquoted excerpt lines>]
 [Region: x=<x> y=<y> w=<w> h=<h> (crop attached)]
 [Attachment: <absolute path on the agent's machine>]
-User comment: "<escaped comment>"
+User comment: "<escaped comment>"   # left out only for an agent's own question (ask_user), which has no comment
+[Earlier: <N> message(s) (get_note returns the whole thread)]
+[Agent (<name>) asked: "<escaped>" | Agent (<name>) replied: "<escaped>"]
+[User replied: "<escaped>"]...
+[Moved: from <place> to <place>, by <who>. It was: "<escaped old text>"]   # get_note only
 
 <blank line between notes, two blank lines between files>
 
-Notes: <count>. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
+Notes: <count>. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
 ```
+
+The closing line's second sentence (naming `reply_to_note`) was added 2026-10-07 and is on every packet, first sends included.
 
 ### Anchor line by source
 
@@ -51,6 +57,27 @@ Notes: <count>. When you've acted on a note, mark it resolved with the gloss MCP
 - Excerpt lines are prefixed with `> `; embedded newlines in a selected span become `\n> `. Every kind of line break above starts a new `> ` line.
 - Header values (`File:`, `Resource:`, detail lines such as `Path:`, `Attachment:`, `Element:`, cell descriptions, a summary line's path) are printed as they are unless they contain a line break; then the whole value is escaped as a comment is. A file name with a newline (legal in git) must never start a line of its own.
 - Paths are never quoted. Paths with spaces are fine because they are on their own labeled line.
+
+### Thread lines (decided 2026-10-07)
+
+A note is a thread: its comment (`note.body`), then messages (`note_message`): the user's follow-ups, the agent's replies and questions, and moves. `PacketThread` picks what a block carries:
+
+- **A send** (`PacketThread.recent`, also Copy as Packet): the agent's last message, then every user message after it and every follow-up not sent yet (one written before the agent's last reply arrived goes after that reply, never into the count). A question the user hasn't answered (no sent user message after it) goes first, even when a status reply came after it. Older turns are counted on `Earlier:` (`1 message`, `3 messages`), left out when 0. Moves are left out, since the anchor lines say where the note is now, except the latest removal while the note still sits at the point where its text was: its `Moved: … removed` line goes first, because the line the note now points at isn't what it was about. A note with no agent message carries all its follow-ups. **A first send has no thread lines**, so it is the packet as before.
+- The send marks sent exactly the follow-ups the packet carried, with the words it carried: one written or changed while the delivery is under way stays unsent for the next send.
+- **`get_note`** (`PacketThread.full`): every sent turn in order, plus `Moved:` lines; no `Earlier:`; a follow-up the user hasn't sent never appears.
+- `Moved: from lines 3-4 to line 9, by claude. It was: "<old text>"`, or for a removal `Moved: lines 3-4 removed, by claude.` with the same `It was:`. The place is `line N` / `lines A-B` for text, else the anchor summary (`element(#legend)`). `by` is the agent's name, `Gloss` for a removal Gloss found itself, or `the user` for Restore Original Place. `It was:` is left out when the old anchor has no text.
+- Every message body is escaped and quoted as a comment is; the agent's name is a header value.
+
+```
+Note: n_01J9X...
+Line 8
+Excerpt:
+> pollInterval = 60
+User comment: "Poll less often."
+Earlier: 3 messages (get_note returns the whole thread)
+Agent (claude) asked: "One minute for all alerts, or only severe ones?"
+User replied: "Only severe ones."
+```
 
 ## Example
 
@@ -75,7 +102,7 @@ Region: x=1204 y=312 w=640 h=220 (crop attached)
 Attachment: /home/me/.cache/gloss/attachments/a1b2c3/dashboard-region-1.png
 User comment: "The legend overlaps the chart here. Move it below."
 
-Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line.
+Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
 ```
 
 ### Milestone 2 sources
@@ -103,4 +130,10 @@ The app only ever reads these resources; the agent makes every change with its o
 
 ## Resolution contract
 
-MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?)` flips state to resolved. Each note's id is the first line of its block (decided 2026-10-06; it used to be a list in the Notes line, matched to notes by position), so an agent resolves exactly the note it just read. The packet ends with the Notes line: the count and how to resolve. If a transport cannot reach MCP (clipboard to a bare mosh session), it is still emitted; the user resolves by hand.
+MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?, location?)` flips state to resolved; `message` is added to the thread as the agent's reply. It is refused while the user has a follow-up they haven't sent. `needs_input` (agents with older instructions) asks instead: the note stays sent, waiting on the user, and the answer is "asked the user (note <id>); the answer comes back when they send it".
+
+`reply_to_note(id, message, asks?, location?)` adds a reply, or a question when `asks` (the note then waits on the user), and never resolves. It is refused for drafts and for resolved notes ("the user reopens it with a follow-up").
+
+`location`, on either: `{line, end_line, text}` (the exact new text; looked for in those lines, then nearest them within 50), `{removed: true, line}` (the note becomes a point where the text was), or `{selector}` for an element note. Gloss builds the anchor from the file as it is now; columns and context never come from the agent. A location that doesn't fit is an `isError` answer and nothing is written.
+
+The closing line names both tools: `resolve_note` when the agent has acted, `reply_to_note` to answer or ask without resolving. Each note's id is the first line of its block (decided 2026-10-06; it used to be a list in the Notes line, matched to notes by position), so an agent resolves exactly the note it just read. The packet ends with the Notes line: the count and how to resolve. If a transport cannot reach MCP (clipboard to a bare mosh session), it is still emitted; the user resolves by hand.
