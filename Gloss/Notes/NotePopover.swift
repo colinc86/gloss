@@ -225,6 +225,8 @@ struct NoteBodyEditor: NSViewRepresentable {
     var focusesOnAppear = true
     /// Bumped to put the caret in a field that is already showing.
     var focusRequest = 0
+    /// The note whose card the field is in, so the notes list knows whose keyboard it is.
+    var owner: NoteID? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = SubmitTextView()
@@ -245,6 +247,7 @@ struct NoteBodyEditor: NSViewRepresentable {
         textView.onSubmit = onSubmit
         textView.onCancel = onCancel
         textView.focusesOnAppear = focusesOnAppear
+        textView.owner = owner
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
@@ -258,6 +261,7 @@ struct NoteBodyEditor: NSViewRepresentable {
         guard let textView = nsView.documentView as? SubmitTextView else { return }
         textView.onSubmit = onSubmit
         textView.onCancel = onCancel
+        textView.owner = owner
         if focusRequest != context.coordinator.focusRequest {
             context.coordinator.focusRequest = focusRequest
             DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
@@ -298,6 +302,7 @@ struct NoteBodyEditor: NSViewRepresentable {
         var onSubmit: () -> Void = {}
         var onCancel: () -> Void = {}
         var focusesOnAppear = true
+        var owner: NoteID?
 
         /// Escape. NSTextView would otherwise take it for word completion, so it never reached Cancel.
         override func cancelOperation(_ sender: Any?) {

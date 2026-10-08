@@ -1,4 +1,5 @@
 import AppKit
+import Core
 import SwiftUI
 import Testing
 @testable import Gloss
@@ -34,6 +35,20 @@ struct NoteBodyEditorTests {
         field.insertText("Only severe ones", replacementRange: field.selectedRange())
         #expect(box.text == "Only severe ones")
         #expect(!NotesPanel.isTypingInCard(host))
+        // Its card is selected: selecting keeps the keyboard there; another card selected takes it to the list.
+        let owner = NoteID.new()
+        field.owner = owner
+        #expect(NotesPanel.keepsKeyboard(field, selected: owner))
+        #expect(!NotesPanel.keepsKeyboard(field, selected: NoteID.new()))
+        #expect(!NotesPanel.keepsKeyboard(field, selected: nil))
+        // A click is found in the field it landed on, and nowhere else.
+        let inside = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+        let click = NSEvent.mouseEvent(with: .leftMouseUp, location: inside, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 0)
+        #expect(NotesPanel.cardField(under: click) === field)
+        let outside = NSEvent.mouseEvent(with: .leftMouseUp, location: NSPoint(x: 2, y: 2), modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                         context: nil, eventNumber: 0, clickCount: 1, pressure: 0)
+        #expect(NotesPanel.cardField(under: outside) == nil)
         window.close()
     }
 

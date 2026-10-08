@@ -80,6 +80,63 @@ struct NoteThreadStoreTests {
         #expect(try await store.messages(for: note.id).filter { $0.kind == .moved }.count == 2)
     }
 
+    /// Only a Gloss move made after the agent last had the note is the agent's to take over: the user's own deletion
+    /// before sending stays Gloss's line.
+    @Test func aGlossMoveFromBeforeTheSendStaysGlosss() async throws {
+        let start = Date(timeIntervalSince1970: 2_000_000)
+        let note = try await store.createNote(documentID: document.id, anchor: text(3, "old line"), body: "b", color: .blue, at: start)
+        let point = Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 3, col: 1), text: "", before: "", after: ""))
+        try await store.applyRelocation(note.id, to: point, removed: true, author: nil, at: start.addingTimeInterval(10))
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered,
+                                       at: start.addingTimeInterval(20))
+        try await store.agentReply(note.id, body: "Moved it.", asks: false, agent: "claude",
+                                   relocation: NoteRelocation(anchor: text(4, "new line"), removed: false), at: start.addingTimeInterval(30))
+        let moves = try await store.messages(for: note.id).filter { $0.kind == .moved }
+        #expect(moves.map(\.author) == [.app, .agent("claude")], "the user's deletion isn't credited to the agent")
+    }
+
+    /// Two reloads in a row make one Gloss move, from where the note was to where it is now.
+    @Test func glossMovesInARowAreOne() async throws {
+        let note = try await sentNote()
+        try await store.applyReanchor(note.id, to: text(4, "first rewrite"))
+        try await store.applyReanchor(note.id, to: text(5, "second rewrite"))
+        let moves = try await store.messages(for: note.id).filter { $0.kind == .moved }
+        #expect(moves.count == 1 && moves[0].author == .app)
+        #expect(moves[0].move == NoteMove(from: text(3, "old line"), to: text(5, "second rewrite"), removed: false))
+        #expect(try await store.note(note.id)?.originalAnchor == text(3, "old line"))
+    }
+
+    /// An agent putting a note back where it was before Gloss's move leaves no move, and nothing to restore.
+    @Test func aMoveBackToWhereItWasIsNoMove() async throws {
+        let note = try await sentNote()
+        try await store.applyReanchor(note.id, to: text(4, "rewritten"))
+        try await store.agentReply(note.id, body: "Reverted.", asks: false, agent: "claude", relocation: NoteRelocation(anchor: text(3, "old line"), removed: false))
+        let current = try #require(try await store.note(note.id))
+        #expect(current.anchor == text(3, "old line") && current.originalAnchor == nil)
+        #expect(try await store.messages(for: note.id).map(\.kind) == [.reply])
+    }
+
+    /// A CRLF file's lines end differently from the text Gloss looks for; the same words are no change.
+    @Test func lineEndingsAloneAreNotChangedWords() async throws {
+        let crlf = Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 4, col: 4), text: "one\r\ntwo", before: "", after: ""))
+        let lf = Anchor.text(TextAnchor(start: .init(line: 5, col: 1), end: .init(line: 6, col: 4), text: "one\ntwo", before: "", after: ""))
+        let note = try await store.createNote(documentID: document.id, anchor: crlf, body: "b", color: .blue)
+        try await store.applyReanchor(note.id, to: lf)
+        let current = try #require(try await store.note(note.id))
+        #expect(current.anchor == lf && current.originalAnchor == nil)
+        #expect(try await store.messages(for: note.id).isEmpty)
+    }
+
+    /// An orphan found again on changed words has its place back, and the move is recorded.
+    @Test func anOrphanFoundOnChangedWordsIsAMove() async throws {
+        let note = try await sentNote()
+        try await store.markOrphaned(note.id)
+        try await store.applyReanchor(note.id, to: text(6, "rewritten"))
+        let current = try #require(try await store.note(note.id))
+        #expect(current.state == .sent && current.anchor == text(6, "rewritten") && current.originalAnchor == text(3, "old line"))
+        #expect(try await store.messages(for: note.id).map(\.author) == [.app])
+    }
+
     @Test func aReplyAndAQuestionKeepTheNoteOpen() async throws {
         let note = try await sentNote()
         try await store.agentReply(note.id, body: "Shortened the intro.", asks: false, agent: "claude")

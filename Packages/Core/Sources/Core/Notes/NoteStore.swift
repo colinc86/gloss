@@ -775,7 +775,9 @@ public struct NoteStore: Sendable {
         try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
             let current = try Anchor(type: AnchorType(rawValue: record.anchorType) ?? .file, json: record.anchorJson)
-            if case .text(let was) = current, case .text(let now) = anchor, was.text != now.text {
+            // CRLF files: the stored text and the text found may end their lines differently and still be the same words.
+            if case .text(let was) = current, case .text(let now) = anchor,
+               ReAnchorer.normalizeNewlines(was.text) != ReAnchorer.normalizeNewlines(now.text) {
                 try Self.relocate(&record, to: anchor, removed: false, author: .app, at: date, db)
             } else {
                 guard anchor != current || record.state == NoteState.orphaned.rawValue else { return }
@@ -809,33 +811,53 @@ public struct NoteStore: Sendable {
     }
 
     /// `relocate` inside a write: the record is changed but not saved; the `moved` message is inserted.
-    /// An agent's move that lands right after one Gloss recorded on its own (it re-anchored or found the text removed
-    /// when the agent's edit reached the file, before the agent said where its change is) takes that move over: one
-    /// move, by the agent, from where the note was before either.
+    /// A move Gloss recorded on its own that is still the thread's last word is taken over rather than followed by a
+    /// second line: by Gloss's next move (two reloads, a page that keeps settling), which updates where it went; and by
+    /// an agent's move, when Gloss's came after the note was last sent (the agent's edit reached the file before it
+    /// said where its change is), which makes it one move, the agent's, from where the note was before either. A move
+    /// that ends where the taken-over one began is no move: it goes, and with it the original place if it was the only
+    /// one.
     private static func relocate(_ record: inout NoteRecord, to anchor: Anchor, removed: Bool, author: MessageAuthor, at date: Date, _ db: Database) throws {
         let current = try Anchor(type: AnchorType(rawValue: record.anchorType) ?? .file, json: record.anchorJson)
         let orphaned = record.state == NoteState.orphaned.rawValue
-        if case .agent = author, var last = try messageRecords(NoteID(rawValue: record.id), db).last,
-           last.kind == MessageKind.moved.rawValue, last.author == nil,
+        let noteID = NoteID(rawValue: record.id)
+        if var last = try messageRecords(noteID, db).last, last.kind == MessageKind.moved.rawValue, last.author == nil,
            let earlier = last.metaJson.flatMap({ try? JSONDecoder().decode(NoteMove.self, from: Data($0.utf8)) }) {
-            record.anchorJson = try anchor.encodedJSON()
-            record.anchorType = anchor.type.rawValue
-            if orphaned {
-                let previous = record.previousState.flatMap(NoteState.init(rawValue:)) ?? .draft
-                record.state = (previous == .sent ? NoteState.sent : .draft).rawValue
-                record.previousState = nil
+            let takesOver: Bool
+            switch author {
+            case .app: takesOver = true
+            case .agent: takesOver = try appMove(last, followsLatestSendOf: record, db)
+            case .user: takesOver = false
             }
-            record.updatedAt = date
-            last.author = author.stored
-            last.metaJson = String(decoding: try JSONEncoder.sorted.encode(NoteMove(from: earlier.from, to: anchor, removed: removed)), as: UTF8.self)
-            try last.update(db)
-            return
+            if takesOver {
+                try place(&record, at: anchor, orphaned: orphaned, at: date)
+                if anchor == earlier.from {
+                    _ = try last.delete(db)
+                    let moves = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM note_message WHERE note_id = ? AND kind = 'moved'", arguments: [record.id]) ?? 0
+                    if moves == 0 {
+                        record.originalAnchorJson = nil
+                        record.originalAnchorType = nil
+                    }
+                } else {
+                    last.author = author.stored
+                    last.metaJson = String(decoding: try JSONEncoder.sorted.encode(NoteMove(from: earlier.from, to: anchor, removed: removed)), as: UTF8.self)
+                    try last.update(db)
+                }
+                return
+            }
         }
         guard anchor != current || orphaned else { return }
         if record.originalAnchorJson == nil {
             record.originalAnchorJson = record.anchorJson
             record.originalAnchorType = record.anchorType
         }
+        try place(&record, at: anchor, orphaned: orphaned, at: date)
+        let meta = String(decoding: try JSONEncoder.sorted.encode(NoteMove(from: current, to: anchor, removed: removed)), as: UTF8.self)
+        try insertMessage(note: record.id, author: author, kind: .moved, body: "", meta: meta, at: date, sent: true, db)
+    }
+
+    /// Writes the anchor; an orphan has its place back, in the state it had before.
+    private static func place(_ record: inout NoteRecord, at anchor: Anchor, orphaned: Bool, at date: Date) throws {
         record.anchorJson = try anchor.encodedJSON()
         record.anchorType = anchor.type.rawValue
         if orphaned {
@@ -844,8 +866,18 @@ public struct NoteStore: Sendable {
             record.previousState = nil
         }
         record.updatedAt = date
-        let meta = String(decoding: try JSONEncoder.sorted.encode(NoteMove(from: current, to: anchor, removed: removed)), as: UTF8.self)
-        try insertMessage(note: record.id, author: author, kind: .moved, body: "", meta: meta, at: date, sent: true, db)
+    }
+
+    /// Gloss's move came after the agent last had the note: since its latest delivered send, or, for an agent's own
+    /// question (never sent), since it was asked. A move from before then (the user's own edit, an earlier reload)
+    /// is not the agent's to take over.
+    private static func appMove(_ move: NoteMessageRecord, followsLatestSendOf record: NoteRecord, _ db: Database) throws -> Bool {
+        let sent = try Date.fetchOne(db, sql: """
+            SELECT MAX(send.sent_at) FROM send JOIN send_note ON send_note.send_id = send.id
+            WHERE send_note.note_id = ? AND send.outcome = 'delivered'
+            """, arguments: [record.id])
+        guard let since = sent ?? (record.author != nil ? record.createdAt : nil) else { return false }
+        return move.createdAt >= since
     }
 
     public func restoreDraft(_ id: NoteID, anchor: Anchor, at date: Date = Date()) async throws {

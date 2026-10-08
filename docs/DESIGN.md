@@ -323,7 +323,10 @@ path. Dropping on the Dock icon is not supported yet.
   highlight style is none, set by `NoSystemSelectionHighlight`). A selected card, alone or among several, is outlined
   1.5 pt in its note's own colour on a lifted ground (`Color.primary` at 6%, light and dark), with its rail at full
   strength and 4 pt wide, as the note's highlight and path strengthen on the page. Text, pills, bubbles and fields
-  keep their own colours. The list's keyboard focus ring is left as the system draws it.
+  keep their own colours. The outline is at full strength while the list has the keyboard in the key window and at
+  half otherwise, as a system selection greys, so it still says where typing goes. The list's keyboard focus ring is
+  left as the system draws it. A click into a card's own field keeps the keyboard there; a click anywhere else in the
+  list, or selecting another card, gives it to the list.
 - **Note card**: colour rail (3 pt, 4 pt when selected, faded when settled unless selected; hover only lights its glow), anchor label
   with the anchor kind's symbol, the comment, the latest turn of its thread, the delivery line, then the action row
   with Send first and Delete apart at the trailing edge.
@@ -364,8 +367,10 @@ path. Dropping on the Dock icon is not supported yet.
 - **Moves** (2026-10-07): when an agent says where its change now is, or the note's text was removed, the thread
   shows one quiet `.caption` secondary line where it happened: "Moved by Claude Code", "Removed by Codex", "Text
   removed" or "Text changed" (Gloss found the text gone, or found the note on rewritten words, so no agent is named),
-  "Moved back to where it was made". When an agent says where its change is right after Gloss recorded such a move
-  (its edit reached the file first), the two are one line, the agent's, from where the note was before either. Its chevron shows
+  "Moved back to where it was made". Gloss's moves in a row (two reloads) are one line. When an agent says where its
+  change is after Gloss recorded such a move since the note was last sent (its edit reached the file first), the two
+  are one line, the agent's, from where the note was before either; a move from before the send (the user's own
+  edit) stays Gloss's. An agent putting the note back where it was leaves no line and nothing to restore. Its chevron shows
   the text the note was on, struck through in tertiary monospace on the excerpt's well, and, for the move that brought
   it where it is, a small Restore Original Place button; the card's menu has Restore Original Place too while the
   note is away. The excerpt well shows the current text, or "Removed" with a minus circle for a removal point.

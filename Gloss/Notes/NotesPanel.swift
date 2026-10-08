@@ -13,6 +13,7 @@ struct NotesPanel: View {
     /// keyboard for the list so arrows browse, Return reveals, and Delete deletes.
     @FocusState private var listFocused: Bool
     @FocusState private var searchFocused: Bool
+    @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
         @Bindable var panel = model.notesPanel
@@ -53,7 +54,7 @@ struct NotesPanel: View {
                     ForEach(visible) { group in
                         Section {
                             ForEach(group.notes) { note in
-                                NoteCard(note: note, document: group.document)
+                                NoteCard(note: note, document: group.document, listActive: listFocused && controlActiveState == .key)
                                     .background(NoSystemSelectionHighlight())
                                     .tag(note.id)
                                     .id(note.id)
@@ -80,7 +81,7 @@ struct NotesPanel: View {
                 // in the viewer, and Delete would then edit the file instead of the list.
                 // A click into a card's own field (a follow-up, an edit) keeps the keyboard there: taking it for the
                 // list after the text view became first responder left typing going nowhere.
-                .simultaneousGesture(TapGesture().onEnded { if !Self.isTypingInCard(NSApp.keyWindow?.firstResponder) { listFocused = true } })
+                .simultaneousGesture(TapGesture().onEnded { if Self.cardField(under: NSApp.currentEvent) == nil { listFocused = true } })
                 // Return shows the selected note with its range selected and the viewer focused; Delete deletes at
                 // once, with Undo in a toast and in the Edit menu.
                 .onKeyPress(.return) {
@@ -127,7 +128,8 @@ struct NotesPanel: View {
             model.noteLink.selectedNoteID = panel.selectedNoteID
             // The selected card's note shows at full strength on the page whatever its state (#12).
             model.activeSession?.textController?.focusedNoteID = panel.selectedNoteID
-            if !panel.selection.isEmpty, !Self.isTypingInCard(NSApp.keyWindow?.firstResponder) { listFocused = true }
+            if !panel.selection.isEmpty,
+               !Self.keepsKeyboard(NSApp.keyWindow?.firstResponder, selected: panel.selectedNoteID) { listFocused = true }
             guard let entry = panel.selectedEntry, model.fileSystem(for: entry.document.hostID) != nil else { return }
             model.reveal(note: entry.note, in: entry.document, select: false)
         }
@@ -136,6 +138,25 @@ struct NotesPanel: View {
     /// The keyboard is in a card's text field (a follow-up, an edited comment or follow-up), not on the list.
     static func isTypingInCard(_ responder: NSResponder?) -> Bool {
         responder is NoteBodyEditor.SubmitTextView
+    }
+
+    /// On a change of selection, the keyboard stays in a card's field only if that card is the one now selected:
+    /// typing in one card and then selecting another hands the keyboard to the list.
+    static func keepsKeyboard(_ responder: NSResponder?, selected: NoteID?) -> Bool {
+        guard let field = responder as? NoteBodyEditor.SubmitTextView, let owner = field.owner else { return false }
+        return owner == selected
+    }
+
+    /// The card field a click landed in, if any: a click there keeps the keyboard in it; anywhere else in the list,
+    /// even while another card's field had it, the list takes it.
+    static func cardField(under event: NSEvent?) -> NoteBodyEditor.SubmitTextView? {
+        guard let event, let content = event.window?.contentView, let frame = content.superview else { return nil }
+        var view = content.hitTest(frame.convert(event.locationInWindow, from: nil))
+        while let current = view {
+            if let field = current as? NoteBodyEditor.SubmitTextView { return field }
+            view = current.superview
+        }
+        return nil
     }
 
     /// `Jira`, `Confluence`, or, for notes on a site the account no longer uses, that site.
@@ -414,6 +435,9 @@ struct NoteCard: View {
     @Environment(AppModel.self) private var model
     let note: Note
     let document: Core.Document
+    /// The list has the keyboard in the key window: a selected card's outline is at full strength, muted otherwise,
+    /// as the system's selection greys when a list isn't focused.
+    var listActive = true
     @State private var lastSend: SendSummary?
     @State private var thumbnail: NoteThumbnail?
     /// The anchored line in the editor's colours, worked out once per note.
@@ -535,7 +559,7 @@ struct NoteCard: View {
                     .fill(Color.primary.opacity(isInSelection ? 0.06 : 0))
                 RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
                     .strokeBorder(tint, lineWidth: 1.5)
-                    .opacity(isInSelection ? 1 : 0)
+                    .opacity(isInSelection ? (listActive ? 1 : 0.5) : 0)
                 RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
                     .fill(tint.opacity(arrived ? 0.2 : 0))
                     .animation(arrived ? DS.Motion.snappy : .easeOut(duration: 0.9), value: arrived)
@@ -850,7 +874,7 @@ struct NoteCard: View {
                 if await model.notesPanel.updateFollowUp(id, text) { editingMessageID = nil }
             }
         }
-        return NoteBodyEditor(text: $messageEditText, onSubmit: save, onCancel: { editingMessageID = nil })
+        return NoteBodyEditor(text: $messageEditText, onSubmit: save, onCancel: { editingMessageID = nil }, owner: note.id)
             .frame(minHeight: 28, maxHeight: 120)
             .padding(DS.Space.xs)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
@@ -916,7 +940,7 @@ struct NoteCard: View {
                            set: { model.notesPanel.followUpText[note.id] = $0.isEmpty ? nil : $0 })
         return VStack(alignment: .leading, spacing: DS.Space.xs) {
             NoteBodyEditor(text: text, onSubmit: commitFollowUp, onCancel: { model.notesPanel.followUpText[note.id] = nil },
-                           focusesOnAppear: followUpFocusPending, focusRequest: followUpFocusRequest)
+                           focusesOnAppear: followUpFocusPending, focusRequest: followUpFocusRequest, owner: note.id)
                 .frame(minHeight: 28, maxHeight: 120)
                 .padding(DS.Space.xs)
                 .overlay(alignment: .topLeading) {
@@ -999,7 +1023,7 @@ struct NoteCard: View {
     /// not the note is on screen in the viewer. Only the comment: the thread's turns are their own messages.
     private var editField: some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
-            NoteBodyEditor(text: $editBody, onSubmit: commitEdit, onCancel: cancelEdit)
+            NoteBodyEditor(text: $editBody, onSubmit: commitEdit, onCancel: cancelEdit, owner: note.id)
                 .frame(minHeight: 44, maxHeight: 160)
                 .padding(DS.Space.xs)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
