@@ -17,13 +17,11 @@
   </picture>
 </p>
 
-Gloss is an app that sits beside your terminal. Open any file, locally or over ssh, highlight what needs to
-change, and write a note. Gloss hands your notes to Claude Code, Codex or OpenCode, and the agent checks each one
-off when it's done.
+Gloss adds context to content. Highlight anything, write a note, and send it to your coding agent.
 
 - **Notes on anything.** Code, Markdown, images, PDFs, spreadsheets and web pages.
 - **Local or remote.** Files on your Mac or on any host you reach over ssh.
-- **Reviews too.** GitHub pull requests, Jira issues and Confluence pages.
+- **Integrations.** GitHub pull requests, Jira issues and Confluence pages.
 
 ## Install
 
@@ -86,9 +84,9 @@ Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool 
 
 </details>
 
-## What agents can do in Gloss
+## What agents can do with Gloss
 
-Gloss runs an MCP server that the agents you install in **Settings › Agents** connect to. Through it an agent can:
+Gloss exposes an MCP server. Agents can:
 
 - **Read your notes.** `list_pending_notes`, `get_note` and `list_documents` show the notes you've sent it. Notes you
   haven't sent stay private.
