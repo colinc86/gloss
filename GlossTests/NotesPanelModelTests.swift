@@ -79,8 +79,9 @@ struct NotesPanelModelTests {
         // A question back from an agent is open work: it stays.
         model.filter = .all
         let helper = try #require(alpha.notes.first { $0.body == "Rename the helper" }?.id)
-        try await store.resolve(helper, outcome: .needsInput, message: "Which helper?")
-        await waitUntil { model.groups.flatMap(\.notes).contains { $0.resolveOutcome == .needsInput } }
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [helper], outcome: .delivered)
+        try await store.agentReply(helper, body: "Which helper?", asks: true, agent: "claude")
+        await waitUntil { model.groups.flatMap(\.notes).contains(where: \.waitingOnUser) }
         #expect(bodies(model) == ["Rename the helper", "Expand this section"])
         // Saved like the sort.
         for _ in 0..<100 where (try? await store.setting("notes.showResolved")) != "0" { try? await Task.sleep(for: .milliseconds(20)) }
@@ -230,15 +231,18 @@ struct NotesPanelModelTests {
         #expect(model.draftCount == 3)
     }
 
-    @Test func replyingToAQuestionAddsTheExchangeAndMakesTheNoteADraft() async throws {
+    @Test func replyingToAQuestionAddsAnUnsentFollowUp() async throws {
         let (model, store) = try await makeModel()
         defer { model.stop() }
         let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
-        try await store.resolve(note.id, outcome: .needsInput, message: "Which section?")
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+        try await store.agentReply(note.id, body: "Which section?", asks: true, agent: "claude")
         #expect(await model.reply(to: note.id, with: "  The install steps \n"))
         let replied = try #require(try await store.note(note.id))
-        #expect(replied.state == .draft)
-        #expect(replied.body == "Expand this section\n\nAgent asked: Which section?\nAnswer: The install steps")
+        #expect(replied.state == .sent && replied.hasUnsentFollowUps && replied.waitingOnUser, "the user's turn until it is sent")
+        #expect(replied.body == "Expand this section", "the comment is left as it was")
+        let followUp = try #require(try await store.messages(for: note.id).last)
+        #expect(followUp.body == "The install steps" && followUp.author == .user && !followUp.isSent)
     }
 
     @Test func anAnsweredQuestionReadsAsAConversationOnTheCard() {
@@ -250,18 +254,19 @@ struct NotesPanelModelTests {
         #expect(colored == ["Agent asked:", "Answer:"])
     }
 
-    @Test func answeringUsesTheNoteAsItIsNowAndOnlyOnce() async throws {
+    @Test func anAnswerNeverTouchesTheComment() async throws {
         let (model, store) = try await makeModel()
         defer { model.stop() }
         let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
-        try await store.resolve(note.id, outcome: .needsInput, message: "Which section?")
-        // Edited elsewhere while the field was open: the answer goes on the current text, not the card's copy.
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+        try await store.agentReply(note.id, body: "Which section?", asks: true, agent: "claude")
+        // Edited elsewhere while the field was open: the comment keeps the edit, and the answer is its own turn.
         try await store.updateBody(note.id, body: "Expand the setup section")
         #expect(await model.reply(to: note.id, with: "Mac"))
-        #expect(try await store.note(note.id)?.body == "Expand the setup section\n\nAgent asked: Which section?\nAnswer: Mac")
-        // A second answer to a question already answered changes nothing.
-        #expect(await model.reply(to: note.id, with: "Linux") == false)
-        #expect(try await store.note(note.id)?.body == "Expand the setup section\n\nAgent asked: Which section?\nAnswer: Mac")
+        #expect(await model.reply(to: note.id, with: "and Linux"))
+        #expect(try await store.note(note.id)?.body == "Expand the setup section")
+        #expect(try await store.messages(for: note.id).map(\.body) == ["Which section?", "Mac", "and Linux"])
+        #expect(await model.reply(to: NoteID.new(), with: "Lost") == false, "a note that is gone takes no answer")
     }
 
     @Test func theAgentsTurnIsHeadedByWhoSpokeAndHow() {
@@ -321,9 +326,10 @@ struct NotesPanelModelTests {
         let (model, store) = try await makeModel()
         defer { model.stop() }
         let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
-        try await store.resolve(note.id, outcome: .needsInput, message: "Which section?")
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+        try await store.agentReply(note.id, body: "Which section?", asks: true, agent: "claude")
         #expect(await model.reply(to: note.id, with: "   ") == false)
-        #expect(try await store.note(note.id)?.state == .resolved)
+        #expect(try await store.messages(for: note.id).count == 1)
         #expect(try await store.note(note.id)?.body == "Expand this section")
     }
 

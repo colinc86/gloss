@@ -7,6 +7,9 @@ public enum ReAnchorResult: Sendable, Equatable {
     case moved(Anchor)
     /// A plausible new position was found; store it but flag the note for a glance.
     case movedNeedsReview(Anchor)
+    /// The text is gone but its context is still there, meeting with nothing (or only blank lines) between: the
+    /// anchor is a point where the text was. Stored with `NoteStore.applyRelocation(removed: true)`.
+    case removed(Anchor)
     /// Nothing matched; the note becomes orphaned.
     case orphaned
 }
@@ -195,6 +198,8 @@ public enum ReAnchorer {
         let normalized = normalizeNewlines(newContent)
         let index = LineIndex(normalized)
         let selected = normalizeNewlines(anchor.text)
+        // A point where text was removed has nothing to look for but its context.
+        if selected.isEmpty, anchor.start == anchor.end { return point(anchor, normalized: normalized, index: index, newHash: newHash) }
 
         // 1. Exact match on the selected text; among several, the one whose surrounding lines match best.
         if !selected.isEmpty, let match = bestOccurrence(of: selected, anchor: anchor, in: normalized, index: index) {
@@ -265,16 +270,16 @@ public enum ReAnchorer {
     /// span are added back when placing the candidate.
     static func fuzzyText(_ anchor: TextAnchor, selected: String, normalized: String, index: LineIndex, newHash: String) -> ReAnchorResult {
         let oldLines = selected.isEmpty ? [] : selected.components(separatedBy: "\n")
-        let beforeLines = anchor.before.isEmpty ? [] : anchor.before.components(separatedBy: "\n")
-        let afterLines = anchor.after.isEmpty ? [] : anchor.after.components(separatedBy: "\n")
-        let beforeProbe = beforeLines.lastIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let afterProbe = afterLines.firstIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        let beforeGap = beforeProbe.map { beforeLines.count - 1 - $0 } ?? 0   // blank lines between probe and span
-        let afterGap = afterProbe ?? 0
         let lines = (1...max(1, index.lineCount)).map { normalized.line($0, index: index) ?? "" }
         let limit = max(200, Int(Double(index.lineCount) * 0.2))
-        let foundBefore = beforeProbe.flatMap { nearestLine(equalTo: beforeLines[$0], in: lines, toLine: anchor.start.line - 1 - beforeGap, limit: limit) }
-        let foundAfter = afterProbe.flatMap { nearestLine(equalTo: afterLines[$0], in: lines, toLine: anchor.end.line + 1 + afterGap, limit: limit) }
+        let probes = ContextProbes(anchor, lines: lines, beforeTarget: anchor.start.line - 1, afterTarget: anchor.end.line + 1, limit: limit)
+        let (foundBefore, foundAfter, beforeGap, afterGap) = (probes.before, probes.after, probes.beforeGap, probes.afterGap)
+
+        // The text went and its neighbours closed up behind it: a removal, not a rewrite.
+        if !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let meeting = probes.meetingPoint(in: lines) {
+            let offset = index.utf16Offset(for: meeting)
+            return .removed(.text(make(from: NSRange(location: offset, length: 0), in: normalized, index: index, hash: newHash)))
+        }
 
         var candidate: ClosedRange<Int>?   // 1-based lines
         var bracketed = false              // both context lines found: the location is reliable even if the text changed a lot
@@ -321,6 +326,21 @@ public enum ReAnchorer {
         return score >= accept ? .moved(.text(rebuilt)) : .movedNeedsReview(.text(rebuilt))
     }
 
+    /// A point (text removed earlier) found again by its context: the line after its `before` context, or before its
+    /// `after` context, with the column kept as far as the line allows. Flagged unless both sides agree.
+    static func point(_ anchor: TextAnchor, normalized: String, index: LineIndex, newHash: String) -> ReAnchorResult {
+        let lines = (1...max(1, index.lineCount)).map { normalized.line($0, index: index) ?? "" }
+        let limit = max(200, Int(Double(index.lineCount) * 0.2))
+        let probes = ContextProbes(anchor, lines: lines, beforeTarget: anchor.start.line - 1, afterTarget: anchor.start.line + 1, limit: limit)
+        let fromBefore = probes.before.map { $0 + probes.beforeGap + 1 } ?? (anchor.start.line == 1 ? 1 : nil)
+        let fromAfter = probes.after.map { $0 - probes.afterGap - 1 }
+        guard let line = (fromBefore ?? fromAfter).map({ min(max(1, $0), lines.count) }) else { return .orphaned }
+        let column = min(anchor.start.col, lines[line - 1].utf16.count + 1)
+        let offset = index.utf16Offset(for: TextPosition(line: line, col: column))
+        let rebuilt = make(from: NSRange(location: offset, length: 0), in: normalized, index: index, hash: newHash)
+        return fromBefore != nil && fromBefore == fromAfter && column == anchor.start.col ? .moved(.text(rebuilt)) : .movedNeedsReview(.text(rebuilt))
+    }
+
     /// The part of the span that begins with the selection's first words and ends with its last, when the selection
     /// was shorter than its lines. Nil for whole-line selections, or when either end is gone.
     static func narrowed(_ selected: String, toSpan span: ClosedRange<Int>, in content: String, index: LineIndex) -> NSRange? {
@@ -363,6 +383,45 @@ public enum ReAnchorer {
             start: start, end: end, text: (content as NSString).substring(with: range),
             before: context(lines, before: start.line), after: context(lines, after: end.line), hash: hash
         )
+    }
+
+    /// Where an anchor's context lines are in new text: the last non-blank line of `before` and the first of `after`
+    /// (the probes), found nearest to where they should be, with the blank lines between each probe and the span.
+    /// An anchor whose `before` is empty began the file, and one whose `after` is empty ended it: those sides are
+    /// the file's start (line 0) and end (line count + 1).
+    struct ContextProbes {
+        var before: Int?
+        var after: Int?
+        var beforeGap = 0
+        var afterGap = 0
+        var beforeIsStart = false
+        var afterIsEnd = false
+
+        /// `beforeTarget` is the line the last context line before the span should be on, `afterTarget` the first after it.
+        init(_ anchor: TextAnchor, lines: [String], beforeTarget: Int, afterTarget: Int, limit: Int) {
+            let beforeLines = anchor.before.isEmpty ? [] : anchor.before.components(separatedBy: "\n")
+            let afterLines = anchor.after.isEmpty ? [] : anchor.after.components(separatedBy: "\n")
+            let beforeProbe = beforeLines.lastIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            let afterProbe = afterLines.firstIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            beforeGap = beforeProbe.map { beforeLines.count - 1 - $0 } ?? 0   // blank lines between probe and span
+            afterGap = afterProbe ?? 0
+            before = beforeProbe.flatMap { nearestLine(equalTo: beforeLines[$0], in: lines, toLine: beforeTarget - beforeGap, limit: limit) }
+            after = afterProbe.flatMap { nearestLine(equalTo: afterLines[$0], in: lines, toLine: afterTarget + afterGap, limit: limit) }
+            beforeIsStart = anchor.before.isEmpty
+            afterIsEnd = anchor.after.isEmpty
+        }
+
+        /// Where the context now meets with nothing but blank lines between: the end of the last line before the
+        /// gap (the before context's own blank lines kept), or the file's start. Nil unless at least one side was
+        /// found and the other was found or is the file's edge.
+        func meetingPoint(in lines: [String]) -> TextPosition? {
+            guard before != nil || after != nil else { return nil }
+            guard let low = before ?? (beforeIsStart ? 0 : nil), let high = after ?? (afterIsEnd ? lines.count + 1 : nil), high > low else { return nil }
+            guard (low + 1..<high).allSatisfy({ lines[$0 - 1].trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+            let line = low + min(beforeGap, high - low - 1)
+            guard line >= 1 else { return TextPosition(line: 1, col: 1) }
+            return TextPosition(line: line, col: lines[line - 1].utf16.count + 1)
+        }
     }
 
     static func normalizeNewlines(_ string: String) -> String {

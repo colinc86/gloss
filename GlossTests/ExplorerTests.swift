@@ -156,9 +156,9 @@ struct FileTreeOrderTests {
 
 @MainActor
 struct ExplorerNoteMarkTests {
-    private func note(_ document: Core.Document, _ color: NoteColor, _ state: NoteState, _ outcome: ResolveOutcome? = nil) -> Note {
+    private func note(_ document: Core.Document, _ color: NoteColor, _ state: NoteState, waiting: Bool = false) -> Note {
         Note(id: .new(), documentID: document.id, anchor: .wholeFile, body: "x", state: state, color: color,
-             createdAt: Date(), updatedAt: Date(), resolveOutcome: outcome)
+             createdAt: Date(), updatedAt: Date(), waitingOnUser: waiting)
     }
 
     @Test func marksCountOpenWorkByFileAndFolder() throws {
@@ -169,7 +169,7 @@ struct ExplorerNoteMarkTests {
         explorer.updateNoteMarks([
             DocumentNotes(document: readme, notes: [note(readme, .green, .draft), note(readme, .yellow, .sent), note(readme, .green, .draft),
                                                     note(readme, .blue, .resolved)]),
-            DocumentNotes(document: swift, notes: [note(swift, .pink, .resolved, .needsInput)]),
+            DocumentNotes(document: swift, notes: [note(swift, .pink, .sent, waiting: true)]),
             DocumentNotes(document: done, notes: [note(done, .blue, .resolved)]),
         ])
         let root = FileNode(hostID: .local, entry: DirectoryEntry(name: "p", path: "/tmp/p", kind: .directory), parent: nil)
@@ -222,13 +222,15 @@ struct RootSpellingTests {
 
 struct NoteDisplayStateTests {
     @Test func aQuestionFromTheAgentIsDrawnLikeOpenWork() {
-        func note(_ state: NoteState, _ outcome: ResolveOutcome?) -> Note {
-            Note(id: .new(), documentID: .new(), anchor: .wholeFile, body: "x", state: state, color: .blue, createdAt: Date(), updatedAt: Date(), resolveOutcome: outcome)
+        func note(_ state: NoteState, waiting: Bool = false, unsent: Bool = false) -> Note {
+            Note(id: .new(), documentID: .new(), anchor: .wholeFile, body: "x", state: state, color: .blue, createdAt: Date(), updatedAt: Date(),
+                 waitingOnUser: waiting, hasUnsentFollowUps: unsent)
         }
-        #expect(note(.resolved, .needsInput).displayState == .draft)
-        #expect(note(.resolved, .done).displayState == .resolved)
-        #expect(note(.sent, nil).displayState == .sent)
-        #expect(note(.orphaned, nil).displayState == .orphaned)
+        #expect(note(.sent, waiting: true).displayState == .draft, "the user's turn stands out")
+        #expect(note(.sent, unsent: true).displayState == .draft, "so does a follow-up waiting to be sent")
+        #expect(note(.resolved).displayState == .resolved)
+        #expect(note(.sent).displayState == .sent)
+        #expect(note(.orphaned, waiting: true).displayState == .orphaned)
     }
 }
 

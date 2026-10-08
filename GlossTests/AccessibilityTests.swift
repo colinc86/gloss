@@ -8,13 +8,17 @@ struct AccessibilityTests {
         var note = Note(id: .new(), documentID: .new(), anchor: .wholeFile, body: "Guard zero minutes", state: .draft, color: .blue,
                         createdAt: Date(), updatedAt: Date())
         #expect(NoteCard.spokenSummary(note) == "Draft note, blue, \(Core.Anchor.wholeFile.summary). Guard zero minutes.")
+        note.state = .sent
+        note.waitingOnUser = true
+        let question = NoteThread.Turn(speaker: .agent, text: "Which unit, km or miles?", asks: true)
+        #expect(NoteCard.spokenSummary(note, latest: question).hasPrefix("Needs input note, blue"))
+        #expect(NoteCard.spokenSummary(note, latest: question).hasSuffix("Agent asks: Which unit, km or miles?"), "a question is asked, as the bubble says")
+        note.waitingOnUser = false
+        let reply = NoteThread.Turn(speaker: .agent, text: "Which unit, km or miles?")
+        #expect(NoteCard.spokenSummary(note, latest: reply).hasSuffix("Agent replied: Which unit, km or miles?"))
         note.state = .resolved
-        note.resolveOutcome = .needsInput
-        note.resolveMessage = "Which unit, km or miles?"
-        #expect(NoteCard.spokenSummary(note).hasPrefix("Needs input note, blue"))
-        #expect(NoteCard.spokenSummary(note).hasSuffix("Agent asks: Which unit, km or miles?"), "a question is asked, as the bubble says")
-        note.resolveOutcome = .done
-        #expect(NoteCard.spokenSummary(note).hasSuffix("Agent replied: Which unit, km or miles?"))
+        note.resolveMessage = "Switched to km."
+        #expect(NoteCard.spokenSummary(note).hasSuffix("Agent replied: Switched to km."), "a resolved note's reply, before its thread loads")
     }
 
     @Test func aTextNoteSaysTheLineItIsAbout() {

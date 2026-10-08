@@ -120,20 +120,23 @@ struct NoteStoreTests {
         #expect(NoteStoreError.illegalTransition(from: .resolved, to: .resolved).localizedDescription == "The note is already resolved.")
     }
 
-    /// Issue #4: an agent's question arrives as a note asking for the user, answered with Reply into a draft that
-    /// goes back only on Send; a document takes a bounded number of them.
-    @Test func anAgentQuestionIsAnsweredIntoADraft() async throws {
+    /// Issue #4: an agent's question arrives as a sent note waiting on the user, whose thread opens with the question;
+    /// the answer is a follow-up that goes back only on Send; a document takes a bounded number of them.
+    @Test func anAgentQuestionIsAnsweredWithAFollowUp() async throws {
         let store = try makeStore()
         let document = try await makeDocument(store)
         let anchor = Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 4, col: 2), text: "t", before: "", after: ""))
         let asked = try await store.askUser(documentID: document.id, anchor: anchor, question: "Is the 15 minute TTL right?", author: "claude")
-        #expect(asked.state == .resolved && asked.resolveOutcome == .needsInput && asked.resolveMessage == "Is the 15 minute TTL right?")
+        #expect(asked.state == .sent && asked.waitingOnUser && asked.needsAttention && asked.resolveOutcome == nil)
         #expect(asked.author == "claude" && asked.body.isEmpty && asked.anchor == anchor)
-        try await store.answer(asked.id, with: "Yes, keep it.")
+        let question = try #require(try await store.messages(for: asked.id).first)
+        #expect(question.kind == .question && question.author == .agent("claude") && question.body == "Is the 15 minute TTL right?" && question.isSent)
+        try await store.addFollowUp(asked.id, body: "Yes, keep it.")
         let answered = try #require(try await store.note(asked.id))
-        #expect(answered.state == .draft && answered.author == "claude")
-        #expect(answered.body.contains("Is the 15 minute TTL right?") && answered.body.contains("Yes, keep it."))
-        #expect(try await store.pendingNotes(states: [.sent]).isEmpty, "nothing reaches an agent before Send")
+        #expect(answered.state == .sent && answered.waitingOnUser && answered.hasUnsentFollowUps, "waiting until the answer is sent")
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [asked.id], outcome: .delivered)
+        let sent = try #require(try await store.note(asked.id))
+        #expect(sent.state == .sent && !sent.waitingOnUser && !sent.hasUnsentFollowUps)
 
         for n in 0..<(NoteStore.agentQuestionLimit - 1) {
             _ = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "q\(n)", author: "codex")
@@ -335,11 +338,23 @@ struct NoteStoreTests {
         let store = try makeStore()
         let document = try await makeDocument(store)
         let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "q", color: .blue)
-        try await store.resolve(note.id, outcome: .needsInput, message: "Which TTL?")
+        try await store.resolve(note.id, outcome: .done, message: "Shortened it.")
         let resolved = try #require(try await store.note(note.id))
         #expect(resolved.state == .resolved)
-        #expect(resolved.resolveOutcome == .needsInput)
-        #expect(resolved.resolveMessage == "Which TTL?")
+        #expect(resolved.resolveOutcome == .done)
+        #expect(resolved.resolveMessage == "Shortened it.")
+    }
+
+    /// `needs_input` from an agent with older instructions is a question: the note stays open, waiting on the user.
+    @Test func needsInputAsksInsteadOfResolving() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "q", color: .blue)
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+        try await store.resolveSent(note.id, outcome: .needsInput, message: "Which TTL?", agent: "codex")
+        let asked = try #require(try await store.note(note.id))
+        #expect(asked.state == .sent && asked.waitingOnUser && asked.resolveOutcome == nil)
+        #expect(try await store.messages(for: note.id).map(\.kind) == [.question])
     }
 }
 
@@ -361,6 +376,19 @@ struct NoteUndoTests {
         #expect(notes.first?.body == "keep me" && notes.first?.color == .pink)
         #expect(try await store.attachments(for: note.id).count == 1)
         #expect(try await store.lastSend(for: note.id) != nil)
+    }
+
+    @Test func undoBringsTheThreadBack() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/undo.md", kind: .markdown, fingerprint: Fingerprint())
+        let note = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "Which one?", author: "claude")
+        try await store.addFollowUp(note.id, body: "The first.")
+        let before = try await store.messages(for: note.id)
+        let deleted = try #require(try await store.deleteNoteForUndo(note.id))
+        #expect(try await store.messages(for: note.id).isEmpty)
+        try await store.restore(deleted)
+        #expect(try await store.messages(for: note.id) == before)
+        #expect(try await store.note(note.id)?.hasUnsentFollowUps == true)
     }
 }
 

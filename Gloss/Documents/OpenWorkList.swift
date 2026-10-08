@@ -24,7 +24,7 @@ nonisolated struct OpenWorkItem: Identifiable, Equatable {
                   ExplorerModel.inRootSpelling(group.document.path, root: rootPath, hostID: hostID) != nil else { return nil }
             let drafts = group.notes.filter { $0.state == .draft }.count
             let sent = group.notes.filter { $0.state == .sent }.count
-            let attention = group.notes.filter { $0.state == .orphaned || ($0.state == .resolved && $0.resolveOutcome == .needsInput) }.count
+            let attention = group.notes.filter(\.needsAttention).count
             guard drafts + sent + attention > 0 else { return nil }
             let folder = (ExplorerModel.aliasFree(group.document.path) as NSString).deletingLastPathComponent
             let place = folder.count > base.count ? String(folder.dropFirst(base == "/" ? 1 : base.count + 1)) : ""

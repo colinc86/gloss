@@ -221,9 +221,9 @@ final class NotesPanelModel {
         }
     }
 
-    /// Open work: anything not resolved, plus resolved notes where the agent asked a question back.
+    /// Open work: anything not resolved (an agent's question leaves its note open).
     nonisolated static func isOpen(_ note: Note) -> Bool {
-        note.state != .resolved || note.resolveOutcome == .needsInput
+        note.state != .resolved || note.needsAttention
     }
 
     /// Notes in each state across every document, for the filter bar's counts (before search and color filters,
@@ -276,7 +276,7 @@ final class NotesPanelModel {
         case .drafts: state == .draft
         case .sent: state == .sent
         case .resolved: state == .resolved
-        case .attention: state == .orphaned || (state == .resolved && note.resolveOutcome == .needsInput)
+        case .attention: note.needsAttention
         }
     }
 
@@ -475,15 +475,15 @@ final class NotesPanelModel {
         undoFailure = nil
     }
 
-    /// Answers an agent's question: the exchange is added to the note, which becomes a draft again, ready to send.
-    /// Sending stays the person's choice; nothing goes to the agent from here. Returns false when the answer could
-    /// not be added (the note changed meanwhile), so the card can keep what was typed.
+    /// Answers an agent's question with a follow-up, unsent until the note is sent. Sending stays the person's
+    /// choice; nothing goes to the agent from here. Returns false when the follow-up could not be added (the note
+    /// is gone), so the card can keep what was typed.
     @discardableResult
     func reply(to id: NoteID, with answer: String) async -> Bool {
         let answer = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !answer.isEmpty else { return false }
         do {
-            try await noteStore.answer(id, with: answer)
+            try await noteStore.addFollowUp(id, body: answer)
             return true
         } catch {
             Log.notes.error("reply failed: \(error, privacy: .public)")

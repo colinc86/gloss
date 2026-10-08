@@ -7,12 +7,15 @@ public enum ShiftResult: Equatable, Sendable {
     case resized(NSRange)
     /// The edit was after the range.
     case unchanged(NSRange)
-    /// The edit replaced or deleted the whole range; the note needs re-anchoring from its stored context.
+    /// The edit deleted the whole range and put nothing in its place: the range is a point where the text was, and
+    /// the note is saved as a removal.
+    case collapsed(NSRange)
+    /// The edit replaced the whole range; the note needs re-anchoring from its stored context.
     case invalidated
 
     public var range: NSRange? {
         switch self {
-        case .shifted(let range), .resized(let range), .unchanged(let range): range
+        case .shifted(let range), .resized(let range), .unchanged(let range), .collapsed(let range): range
         case .invalidated: nil
         }
     }
@@ -38,8 +41,8 @@ public enum AnchorShifter {
             return .unchanged(range)
         }
         if edit.location <= range.location && editEnd >= rangeEnd {
-            // Covers the whole anchor.
-            return .invalidated
+            // Covers the whole anchor: deleted, or replaced by new text.
+            return replacementLength == 0 ? .collapsed(NSRange(location: edit.location, length: 0)) : .invalidated
         }
         if edit.location >= range.location && editEnd <= rangeEnd {
             // Strictly inside: the anchor grows or shrinks.

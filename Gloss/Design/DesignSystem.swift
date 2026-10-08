@@ -46,10 +46,10 @@ extension NoteState {
 }
 
 extension Note {
-    /// The state a note's highlight is drawn with. A note the agent answered with a question is open work again,
-    /// so it keeps a draft's strength instead of fading like a finished one.
+    /// The state a note's highlight is drawn with. A note that is the user's turn (an agent asked something, or a
+    /// follow-up waits to be sent) is drawn as a draft so it stands out; one waiting on the agent as sent.
     nonisolated var displayState: NoteState {
-        state == .resolved && resolveOutcome == .needsInput ? .draft : state
+        state != .orphaned && (waitingOnUser || hasUnsentFollowUps) ? .draft : state
     }
 }
 

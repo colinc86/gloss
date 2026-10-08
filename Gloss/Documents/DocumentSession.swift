@@ -1052,7 +1052,8 @@ final class DocumentSession: Identifiable {
         }
     }
 
-    /// Writes shifted anchors back and orphans notes whose text was replaced.
+    /// Writes shifted anchors back, saves notes whose text was deleted as removals (a point where it was), and orphans
+    /// notes whose text was replaced.
     private func persistLiveAnchors(_ ranges: [NoteID: NSRange], invalidated: Set<NoteID>, in text: String, hash: String) async {
         guard !ranges.isEmpty else { return }
         let index = LineIndex(text)
@@ -1071,9 +1072,26 @@ final class DocumentSession: Identifiable {
                     }
                     continue
                 }
-                guard case .text = note.anchor else { continue }
+                guard case .text(let current) = note.anchor else { continue }
                 if invalidated.contains(note.id) {
                     if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
+                } else if range.length == 0, !current.text.isEmpty {
+                    // Deleted while editing, but undo or a paste may have put it back: the saved text decides. Found,
+                    // the note follows it; only text that is really gone is a removal, at the point the edit left.
+                    let result = ReAnchorer.text(current, in: text, newHash: hash)
+                    switch result {
+                    case .moved(let moved), .movedNeedsReview(let moved):
+                        if case .movedNeedsReview = result { needsReview.insert(note.id) }
+                        try await noteStore.updateAnchor(note.id, anchor: moved)
+                    case .unchanged:
+                        // The file is exactly as it was: the stored anchor is still right.
+                        break
+                    case .removed(let point):
+                        try await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil)
+                    case .orphaned:
+                        let point = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
+                        try await noteStore.applyRelocation(note.id, to: .text(point), removed: true, author: nil)
+                    }
                 } else {
                     let anchor = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
                     try await noteStore.updateAnchor(note.id, anchor: .text(anchor))
@@ -1089,7 +1107,8 @@ final class DocumentSession: Identifiable {
     }
 
     /// Applies one note's re-anchoring result. A note found again takes its new anchor, and an orphan returns to the
-    /// state it had before (`recoverOrphan`); a lost one is orphaned, which leaves a resolved note as it is.
+    /// state it had before (`recoverOrphan`); one whose text was removed becomes a point where it was, said in its
+    /// thread as Gloss's own finding; a lost one is orphaned, which leaves a resolved note as it is.
     private func apply(_ result: ReAnchorResult, to note: Note, unchanged anchor: Anchor) async throws {
         switch result {
         case .unchanged:
@@ -1102,6 +1121,9 @@ final class DocumentSession: Identifiable {
             } else if moved != anchor {
                 try await noteStore.updateAnchor(note.id, anchor: moved)
             }
+        case .removed(let point):
+            needsReview.remove(note.id)
+            try await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil)
         case .orphaned:
             if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
         }
@@ -1480,7 +1502,7 @@ final class DocumentSession: Identifiable {
     /// and so are notes the panel isn't listing, so a step never selects a card that isn't there.
     var steppableNotes: [(id: NoteID, key: Double)] {
         let open = notes.filter {
-            ($0.state != .resolved || $0.resolveOutcome == .needsInput) && $0.state != .orphaned && !hiddenNoteIDs.contains($0.id)
+            $0.state != .resolved && $0.state != .orphaned && !hiddenNoteIDs.contains($0.id)
         }
         let keyed: [(id: NoteID, key: Double)] = open.enumerated().compactMap { index, note in
             switch note.anchor {

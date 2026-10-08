@@ -4,7 +4,7 @@ import GRDB
 /// Database schema. Every change is a new migration appended to `migrator`; `v1` is never edited.
 public enum Schema {
     public static let tableNames = [
-        "host", "root", "document", "note", "attachment", "send", "send_note", "staged_file", "target", "setting", "web_page",
+        "host", "root", "document", "note", "attachment", "send", "send_note", "staged_file", "target", "setting", "web_page", "note_message",
     ]
 
     public static var migrator: DatabaseMigrator {
@@ -229,7 +229,100 @@ public enum Schema {
                 CREATE INDEX web_page_recent ON web_page(pinned, last_visited_at);
                 """)
         }
+        migrator.registerMigration("v11-note-threads") { db in
+            // A note becomes a thread: its comment stays in `body`, and every later turn (the user's follow-ups, an
+            // agent's replies and questions, moves) is a message. An agent's question no longer resolves the note;
+            // it leaves it open and waiting on the user. `original_anchor_*` is where the note was before it first moved.
+            try db.execute(sql: """
+                CREATE TABLE note_message (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    note_id TEXT NOT NULL REFERENCES note(id) ON DELETE CASCADE,
+                    author TEXT,
+                    kind TEXT NOT NULL CHECK (kind IN ('comment', 'question', 'reply', 'moved')),
+                    body TEXT NOT NULL,
+                    meta_json TEXT,
+                    created_at DATETIME NOT NULL,
+                    sent_at DATETIME
+                );
+                CREATE INDEX note_message_note ON note_message(note_id);
+                ALTER TABLE note ADD COLUMN waiting_on_user INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE note ADD COLUMN original_anchor_json TEXT;
+                ALTER TABLE note ADD COLUMN original_anchor_type TEXT;
+                """)
+            try Self.splitLegacyThreads(db)
+        }
         return migrator
+    }
+
+    /// Moves the exchanges folded into note bodies into messages, and turns questions stored as `resolved` +
+    /// `needs_input` into open notes waiting on the user.
+    static func splitLegacyThreads(_ db: Database) throws {
+        let rows = try Row.fetchAll(db, sql: """
+            SELECT id, body, state, previous_state, author, resolve_outcome, resolve_message, resolve_agent, updated_at
+            FROM note WHERE body LIKE '%' || ? || '%' OR body LIKE '%' || ? || '%' OR resolve_message IS NOT NULL
+            """, arguments: [LegacyThread.askedLabel, LegacyThread.answerLabel])
+        for row in rows {
+            let id: String = row["id"]
+            let body: String = row["body"]
+            var state: String = row["state"]
+            var previousState: String? = row["previous_state"]
+            let noteAuthor: String? = row["author"]
+            let outcome: String? = row["resolve_outcome"]
+            let resolveMessage: String? = row["resolve_message"]
+            let resolveAgent: String? = row["resolve_agent"]
+            // The stored value as it is, so the messages' times read back exactly as the note's.
+            let updatedAt: DatabaseValue = row["updated_at"]
+            let thread = LegacyThread(body: body)
+            func insert(author: String?, kind: MessageKind, body: String, sent: Bool) throws {
+                try db.execute(sql: "INSERT INTO note_message (id, note_id, author, kind, body, meta_json, created_at, sent_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+                               arguments: [MessageID.new().rawValue, id, author, kind.rawValue, body, updatedAt, sent ? updatedAt : DatabaseValue.null])
+            }
+            // A draft whose last turn is the user's answer hadn't sent that answer: the answer becomes the unsent
+            // follow-up of a sent note, which is how an answer waits to be sent now. Only for a note an agent had (it
+            // asked, or the note was delivered): a never-sent draft whose comment happens to read "Answer:" stays a draft.
+            let isDraft = state == "draft" || (state == "orphaned" && previousState == "draft")
+            let shared = try noteAuthor != nil || (Bool.fetchOne(db, sql: """
+                SELECT EXISTS (SELECT 1 FROM send_note JOIN send ON send.id = send_note.send_id
+                               WHERE send_note.note_id = ? AND send.outcome = 'delivered')
+                """, arguments: [id]) ?? false)
+            let answerUnsent = isDraft && shared && thread.turns.last?.isAgent == false
+            if answerUnsent {
+                if state == "draft" { state = "sent" } else { previousState = "sent" }
+            }
+            for (offset, turn) in thread.turns.enumerated() {
+                let sent = !(answerUnsent && offset == thread.turns.count - 1)
+                try insert(author: turn.isAgent ? (noteAuthor ?? MessageAuthor.unnamedAgent) : MessageAuthor.userValue,
+                           kind: turn.isAgent ? .question : .comment, body: turn.text, sent: sent)
+            }
+            var waiting = false
+            var clearResolve = false
+            let message = resolveMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if state == "resolved", outcome == ResolveOutcome.needsInput.rawValue {
+                // A question: open again, waiting on the user. A question on a note whose text had gone stays an orphan.
+                if !message.isEmpty {
+                    try insert(author: resolveAgent ?? noteAuthor ?? MessageAuthor.unnamedAgent, kind: .question, body: message, sent: true)
+                }
+                if previousState == "orphaned" {
+                    state = "orphaned"
+                    previousState = "sent"
+                } else {
+                    state = "sent"
+                    previousState = nil
+                }
+                waiting = true
+                clearResolve = true
+            } else if state == "resolved", !message.isEmpty {
+                // The resolve message stays on the note (its contract), and is also the thread's last turn.
+                try insert(author: resolveAgent ?? MessageAuthor.unnamedAgent, kind: .reply, body: message, sent: true)
+            }
+            try db.execute(sql: """
+                UPDATE note SET body = ?, state = ?, previous_state = ?, waiting_on_user = ?,
+                    resolve_outcome = CASE WHEN ? THEN NULL ELSE resolve_outcome END,
+                    resolve_message = CASE WHEN ? THEN NULL ELSE resolve_message END,
+                    resolve_agent = CASE WHEN ? THEN NULL ELSE resolve_agent END
+                WHERE id = ?
+                """, arguments: [thread.turns.isEmpty ? body : thread.comment, state, previousState, waiting, clearResolve, clearResolve, clearResolve, id])
+        }
     }
 
     /// The names the integration hosts own.

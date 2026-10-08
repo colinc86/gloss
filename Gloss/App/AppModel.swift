@@ -1388,7 +1388,7 @@ final class AppModel {
     func updateDockBadge(_ groups: [DocumentNotes]? = nil) {
         let groups = groups ?? notesPanel.groups
         let waiting = settings.showsQuestionsOnDock
-            ? groups.reduce(0) { $0 + $1.notes.filter { $0.state == .resolved && $0.resolveOutcome == .needsInput }.count }
+            ? groups.reduce(0) { $0 + $1.notes.filter(\.waitingOnUser).count }
             : 0
         NSApp.dockTile.badgeLabel = waiting > 0 ? String(waiting) : nil
     }

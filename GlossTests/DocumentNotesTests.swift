@@ -73,6 +73,45 @@ struct DocumentNotesTests {
         session.close()
     }
 
+    /// Deleting a note's text in the editor leaves a point where it was, saved as a removal; deleting it and bringing
+    /// it back (undo, or cut and paste) before saving keeps the note on its text, with nothing said in the thread.
+    @Test func deletedTextIsSavedAsARemovalUnlessItCameBack() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        let document = try #require(session.document)
+        let original = "one\ntwo\nthree\n"
+        let index = LineIndex(original)
+        let anchor = ReAnchorer.make(from: index.contentRange(ofLine: 2), in: original, index: index, hash: Data(original.utf8).sha256Hex)
+        let note = try await store.createNote(documentID: document.id, anchor: .text(anchor), body: "b", color: .blue)
+        await waitUntil { controller.highlights.count == 1 }
+
+        // Delete "two", then undo: the text is back where it was.
+        let deleted = "one\n\nthree\n"
+        controller.viewDidProcessEdit(edit: NSRange(location: 4, length: 3), replacementLength: 0, newText: deleted)
+        controller.viewDidChangeText(deleted)
+        #expect(controller.highlights.first?.range == NSRange(location: 4, length: 0), "a point where the text was")
+        controller.viewDidProcessEdit(edit: NSRange(location: 4, length: 0), replacementLength: 3, newText: original)
+        controller.viewDidChangeText(original)
+        await session.save()
+        let kept = try #require(try await store.note(note.id))
+        #expect(kept.anchor == .text(anchor), "still on its text")
+        #expect(try await store.messages(for: note.id).isEmpty, "nothing moved")
+
+        // Delete it for good: saved as a removal Gloss found.
+        controller.viewDidProcessEdit(edit: NSRange(location: 4, length: 3), replacementLength: 0, newText: deleted)
+        controller.viewDidChangeText(deleted)
+        await session.save()
+        let removed = try #require(try await store.note(note.id))
+        guard case .text(let point) = removed.anchor else { Issue.record("expected text anchor"); return }
+        #expect(point.text.isEmpty && point.start == point.end && removed.originalAnchor == .text(anchor))
+        let message = try #require(try await store.messages(for: note.id).last)
+        #expect(message.kind == .moved && message.author == .app && message.move?.removed == true)
+        session.close()
+    }
+
     @Test func aHiddenNoteIsNotDrawnButStillMovesWithEdits() async throws {
         let (directory, path) = try makeFile("one\ntwo\nthree\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }

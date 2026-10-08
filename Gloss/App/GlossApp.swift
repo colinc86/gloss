@@ -347,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         guard let model = AppDelegate.model else { return nil }
         let menu = NSMenu()
-        let questions = model.notesPanel.groups.reduce(0) { $0 + $1.notes.filter { $0.state == .resolved && $0.resolveOutcome == .needsInput }.count }
+        let questions = model.notesPanel.groups.reduce(0) { $0 + $1.notes.filter(\.waitingOnUser).count }
         if questions > 0 {
             let item = NSMenuItem(title: questions == 1 ? "1 Question from an Agent…" : "\(questions) Questions from Agents…",
                                   action: #selector(showQuestions), keyEquivalent: "")

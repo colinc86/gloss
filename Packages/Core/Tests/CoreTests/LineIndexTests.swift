@@ -74,8 +74,10 @@ struct AnchorShifterTests {
         #expect(AnchorShifter.apply(edit: NSRange(location: 13, length: 7), replacementLength: 2, to: anchor) == .resized(NSRange(location: 10, length: 3)))
     }
 
-    @Test func coveringEditInvalidates() {
-        #expect(AnchorShifter.apply(edit: NSRange(location: 10, length: 5), replacementLength: 0, to: anchor) == .invalidated)
+    @Test func coveringEditCollapsesOrInvalidates() {
+        #expect(AnchorShifter.apply(edit: NSRange(location: 10, length: 5), replacementLength: 0, to: anchor) == .collapsed(NSRange(location: 10, length: 0)),
+                "deleting the text leaves a point where it was")
+        #expect(AnchorShifter.apply(edit: NSRange(location: 8, length: 9), replacementLength: 0, to: anchor) == .collapsed(NSRange(location: 8, length: 0)))
         #expect(AnchorShifter.apply(edit: NSRange(location: 9, length: 7), replacementLength: 9, to: anchor) == .invalidated)
         #expect(AnchorShifter.apply(edit: NSRange(location: 10, length: 5), replacementLength: 5, to: anchor) == .invalidated, "replacing the exact text is still a new text")
     }

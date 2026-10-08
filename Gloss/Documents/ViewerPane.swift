@@ -404,7 +404,7 @@ private struct StatusBar: View {
     /// This file's open notes as coloured dots and a count; opens the notes panel.
     @ViewBuilder
     private var openNotes: some View {
-        let open = session.notes.filter { $0.state != .resolved || $0.resolveOutcome == .needsInput }
+        let open = session.notes.filter { $0.state != .resolved || $0.needsAttention }
         if !open.isEmpty {
             Button {
                 model.showNotesPanel = true
@@ -834,7 +834,7 @@ private struct NotePeekCard: View {
                         .font(.caption.weight(.medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                     Spacer(minLength: DS.Space.xs)
-                    let needsInput = note.state == .resolved && note.resolveOutcome == .needsInput
+                    let needsInput = note.waitingOnUser
                     StatusPill(label: needsInput ? "Needs input" : note.state.rawValue.capitalized,
                                symbol: needsInput ? "questionmark.circle.fill" : note.state.style.symbol,
                                tint: needsInput ? .orange : note.state.style.tint)
@@ -842,10 +842,10 @@ private struct NotePeekCard: View {
                 Text((try? AttributedString(markdown: note.body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(note.body))
                     .font(.callout)
                     .lineLimit(6)
-                if let reply = note.resolveMessage, !reply.isEmpty {
-                    Label(reply, systemImage: note.resolveOutcome == .needsInput ? "questionmark.bubble" : "checkmark.bubble")
+                if note.state == .resolved, let reply = note.resolveMessage, !reply.isEmpty {
+                    Label(reply, systemImage: "checkmark.bubble")
                         .font(.caption)
-                        .foregroundStyle(note.resolveOutcome == .needsInput ? Color.orange : Color.secondary)
+                        .foregroundStyle(Color.secondary)
                         .lineLimit(3)
                 }
                 HStack(spacing: DS.Space.xxs) {

@@ -168,20 +168,20 @@ final class ExplorerModel {
     func folderCount(for node: FileNode) -> Int { folderCounts[Self.markKey(node.hostID, node.path)] ?? 0 }
     func folderCountForRoot(_ tab: RootTab) -> Int { folderCounts[Self.markKey(tab.hostID, tab.path)] ?? 0 }
 
-    /// Rebuilds the tree's note markers from the notes panel's groups. Only open work counts: drafts, sent notes,
-    /// orphans, and resolved notes where the agent needs input.
+    /// Rebuilds the tree's note markers from the notes panel's groups. Only open work counts: drafts, sent notes
+    /// (questions from agents among them), and orphans.
     func updateNoteMarks(_ groups: [DocumentNotes]) {
         var files: [String: NoteMark] = [:]
         var folders: [String: Int] = [:]
         for group in groups {
             let open = group.notes.filter { note in
-                note.state != .resolved || note.resolveOutcome == .needsInput
+                note.state != .resolved || note.needsAttention
             }
             guard !open.isEmpty else { continue }
             var tally: [NoteColor: Int] = [:]
             for note in open { tally[note.color, default: 0] += 1 }
             let colors = tally.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key.rawValue < $1.key.rawValue }.prefix(3).map(\.key)
-            let attention = open.contains { $0.state == .orphaned || $0.state == .resolved }
+            let attention = open.contains(where: \.needsAttention)
             let path = group.document.hostID == .local ? Self.aliasFree(group.document.path) : (group.document.path as NSString).standardizingPath
             files[Self.markKey(group.document.hostID, path)] = NoteMark(count: open.count, colors: Array(colors), needsAttention: attention)
             var folder = (path as NSString).deletingLastPathComponent

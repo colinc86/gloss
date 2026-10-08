@@ -181,7 +181,8 @@ public final class TextEditorController {
         highlights = highlights.compactMap { highlight in
             var updated = highlight
             switch AnchorShifter.apply(edit: edit, replacementLength: replacementLength, to: highlight.range) {
-            case .shifted(let range), .resized(let range), .unchanged(let range):
+            case .shifted(let range), .resized(let range), .unchanged(let range), .collapsed(let range):
+                // A collapsed range is a point where the text was deleted; the session saves it as a removal.
                 updated.range = range
                 return updated
             case .invalidated:

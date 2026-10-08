@@ -1,6 +1,7 @@
 import AppKit
 import Core
 import Integrations
+import os
 import SwiftUI
 import Transports
 import UniformTypeIdentifiers
@@ -403,6 +404,9 @@ struct NoteCard: View {
     let note: Note
     let document: Core.Document
     @State private var lastSend: SendSummary?
+    /// The note's thread after its comment, kept current from the store; nil until the observation delivers, when the
+    /// thread is read directly so a card never draws a frame without its question.
+    @State private var messages: [NoteMessage]?
     @State private var thumbnail: NoteThumbnail?
     /// The anchored line in the editor's colours, worked out once per note.
     @State private var colouredExcerpt: AttributedString?
@@ -427,18 +431,18 @@ struct NoteCard: View {
 
     private var arrived: Bool { model.notesPanel.arrivedIDs.contains(note.id) }
 
-    private var needsInput: Bool { note.state == .resolved && note.resolveOutcome == .needsInput }
+    private var needsInput: Bool { note.waitingOnUser }
 
     private var tint: Color { Color(nsColor: Theme.color(for: note.color)) }
     private var isSelected: Bool { model.notesPanel.selectedNoteID == note.id }
-    /// Resolved notes step back so open work leads the eye; a question back from the agent is still open work.
-    private var isSettled: Bool { note.state == .resolved && note.resolveOutcome != .needsInput }
+    /// Resolved notes step back so open work leads the eye; a question from the agent leaves its note open.
+    private var isSettled: Bool { note.state == .resolved }
     /// A settled note at rest is one line, plus its latest turn if it has one; selected or opened it shows its actions.
     /// The pointer never changes its size: a card that grows under the pointer moves the one below it.
     private var isCompact: Bool { isSettled && !isSelected && !expanded }
 
-    /// The comment and its exchanges with the agent; the agent's message counts only while the note is resolved.
-    private var thread: NoteThread { NoteThread(body: note.body, resolveMessage: note.state == .resolved ? note.resolveMessage : nil) }
+    /// The comment and its exchanges with the agent.
+    private var thread: NoteThread { NoteThread(comment: note.body, messages: messages ?? model.noteStore.messagesNow(for: note.id)) }
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.Space.m) {
@@ -484,7 +488,7 @@ struct NoteCard: View {
                 if editing {
                     editField
                         .transition((AnyTransition.opacity.combined(with: .move(edge: .top))).calmed)
-                    if let pending = thread.latest, note.state == .resolved, pending.speaker == .agent {
+                    if let pending = thread.latest, pending.speaker == .agent {
                         turnView(pending, pending: true)
                     }
                 } else {
@@ -547,12 +551,19 @@ struct NoteCard: View {
         // on it, instead of a walk through the rail, the pill, and six unlabeled-looking icons.
         // While answering, the field has to stay reachable, so the card opens up to its children.
         .accessibilityElement(children: replying ? .contain : .ignore)
-        .accessibilityLabel(Self.spokenSummary(note))
+        .accessibilityLabel(Self.spokenSummary(note, latest: thread.latest))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityActions {
             commands(dividers: false)
             let thread = thread
             if showsThreadToggle(thread) { Button(threadToggleTitle(thread)) { expanded.toggle() } }
+        }
+        .task(id: note.id) {
+            do {
+                for try await current in model.noteStore.observeMessages(for: note.id) { messages = current }
+            } catch {
+                Log.notes.error("observing messages failed: \(error, privacy: .public)")
+            }
         }
         // Refetched when the note changes and after every send, so a failure shows without a state change.
         .task(id: "\(note.updatedAt.timeIntervalSince1970)-\(model.send.completedSends)") {
@@ -607,17 +618,20 @@ struct NoteCard: View {
         Button("Delete", role: .destructive) { Task { await model.notesPanel.delete(note.id) } }
     }
 
-    /// What VoiceOver says for a card: state, colour, where, the comment, and the agent's reply if there is one.
-    nonisolated static func spokenSummary(_ note: Note) -> String {
-        let needsInput = note.state == .resolved && note.resolveOutcome == .needsInput
+    /// What VoiceOver says for a card: state, colour, where, the comment, and the agent's latest message if the
+    /// thread ends with one (else a resolved note's reply).
+    nonisolated static func spokenSummary(_ note: Note, latest: NoteThread.Turn? = nil) -> String {
+        let needsInput = note.waitingOnUser
         let state = needsInput ? "Needs input" : note.state.rawValue.capitalized
         var parts = ["\(state) note, \(note.color.rawValue), \(note.anchor.summary)"]
         // What a sighted reader sees in the excerpt well: the line the note is about.
         if let excerpt = excerpt(of: note.anchor) { parts.append("On: \(excerpt)") }
         parts.append(note.body.trimmingCharacters(in: .whitespacesAndNewlines))
-        if note.state == .resolved, let reply = note.resolveMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
-            // As the bubble says it: a question asks, a finished note replies.
-            parts.append("\(needsInput ? "Agent asks" : "Agent replied"): \(reply)")
+        if let latest, latest.speaker == .agent, !latest.text.isEmpty {
+            // As the bubble says it: a question asks, anything else replies.
+            parts.append("\(latest.asks ? "Agent asks" : "Agent replied"): \(latest.text)")
+        } else if latest == nil, note.state == .resolved, let reply = note.resolveMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
+            parts.append("Agent replied: \(reply)")
         }
         return parts.filter { !$0.isEmpty }.map { $0.hasSuffix(".") || $0.hasSuffix("?") || $0.hasSuffix("!") ? $0 : $0 + "." }.joined(separator: " ")
     }
@@ -666,7 +680,7 @@ struct NoteCard: View {
             .transition(.opacity)
         }
         if let latest = thread.latest {
-            turnView(latest, pending: note.state == .resolved && latest.speaker == .agent)
+            turnView(latest, pending: latest.speaker == .agent)
         }
         if showsThreadToggle(thread) {
             Button {
@@ -693,13 +707,14 @@ struct NoteCard: View {
     @ViewBuilder
     private func turnView(_ turn: NoteThread.Turn, pending: Bool) -> some View {
         if pending {
-            AgentMessageBubble(message: turn.text, needsInput: needsInput, agent: note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName),
+            AgentMessageBubble(message: turn.text, needsInput: turn.asks && needsInput,
+                               agent: turn.agent ?? note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName),
                                expanded: expanded || editing, isCut: $messageCut)
                 // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
                 .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
                                                      removal: .opacity).calmed)
         } else {
-            Text(Self.styledBody("\(turn.speaker == .agent ? NoteStore.askedLabel : NoteStore.answerLabel) \(turn.text)"))
+            Text(Self.styledBody("\(turn.speaker == .user ? Self.answerLabel : turn.asks ? Self.askedLabel : Self.repliedLabel) \(turn.text)"))
                 .font(.callout)
                 .foregroundStyle(isSettled ? .secondary : .primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -728,12 +743,17 @@ struct NoteCard: View {
             .first { !$0.isEmpty }
     }
 
-    /// The comment with inline markdown, and the labels of an answered question ("Agent asked:", "Answer:") drawn
-    /// as a little conversation: the agent's in the question's orange, yours in the accent colour. Only the card
-    /// changes; the stored text, and so the packet, stays plain.
+    /// How an earlier turn is labelled on the card.
+    nonisolated static let askedLabel = "Agent asked:"
+    nonisolated static let repliedLabel = "Agent replied:"
+    nonisolated static let answerLabel = "Answer:"
+
+    /// The comment with inline markdown, and the labels of earlier turns ("Agent asked:", "Answer:") drawn as a little
+    /// conversation: the agent's in the question's orange, yours in the accent colour. Only the card changes; the
+    /// stored text, and so the packet, stays plain.
     nonisolated static func styledBody(_ body: String) -> AttributedString {
         var text = (try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)
-        let labels: [(String, Color)] = [(NoteStore.askedLabel, .orange), (NoteStore.answerLabel, .accentColor)]
+        let labels: [(String, Color)] = [(askedLabel, .orange), (repliedLabel, .secondary), (answerLabel, .accentColor)]
         var lineStart = text.startIndex
         while lineStart < text.endIndex {
             let rest = text[lineStart...]
@@ -751,7 +771,7 @@ struct NoteCard: View {
 
     private var stateBadge: some View {
         let style = note.state.style
-        let needsInput = note.state == .resolved && note.resolveOutcome == .needsInput
+        let needsInput = note.waitingOnUser
         return StatusPill(
             label: needsInput ? "Needs input" : note.state.rawValue.capitalized,
             symbol: needsInput ? "questionmark.circle.fill" : style.symbol,

@@ -418,6 +418,10 @@ final class SendCoordinator {
                     case .moved(let moved), .movedNeedsReview(let moved):
                         note.anchor = moved
                         try? await noteStore.updateAnchor(note.id, anchor: moved)
+                    case .removed(let point):
+                        // Its text was removed: the note is a point where it was, which the thread says.
+                        note.anchor = point
+                        try? await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil)
                     case .orphaned:
                         // Its text is gone from the file: quote what the note was made on rather than whatever now
                         // sits at its old lines. The session marks it orphaned when the document opens.
@@ -443,7 +447,7 @@ final class SendCoordinator {
                 case .moved(let moved), .movedNeedsReview(let moved):
                     note.anchor = moved
                     try? await noteStore.updateAnchor(note.id, anchor: moved)
-                case .orphaned, .unchanged:
+                case .orphaned, .unchanged, .removed:
                     break
                 }
             } else if case .pdf(let anchor) = note.anchor, let text = anchor.text {

@@ -98,3 +98,9 @@ public struct StagedFileID: PrefixedIdentifier {
     public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
 }
+
+public struct MessageID: PrefixedIdentifier {
+    public static let prefix = "m_"
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+}

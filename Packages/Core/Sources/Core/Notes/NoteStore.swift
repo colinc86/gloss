@@ -7,6 +7,15 @@ public enum NoteStoreError: Error, Equatable, Sendable {
     case illegalTransition(from: NoteState, to: NoteState)
     /// A document already holds this many open questions from agents.
     case tooManyQuestions(Int)
+    case messageNotFound(MessageID)
+    /// Only a follow-up the user hasn't sent can be changed or deleted.
+    case messageAlreadySent(MessageID)
+    /// The note is resolved: an agent can't add to it until the user reopens it with a follow-up.
+    case noteClosed
+    /// The user wrote a follow-up that hasn't been sent: the agent hasn't seen what they said since.
+    case unsentFollowUp
+    /// The note never moved, so it has no original place to go back to.
+    case noOriginalPlace(NoteID)
 }
 
 extension NoteStoreError: LocalizedError {
@@ -19,6 +28,11 @@ extension NoteStoreError: LocalizedError {
         case .illegalTransition(from: .resolved, to: .resolved): "The note is already resolved."
         case .illegalTransition(let from, let to): "A \(from.rawValue) note can't become \(to.rawValue)."
         case .tooManyQuestions(let limit): "This file already has \(limit) open questions; wait for the user to answer some."
+        case .messageNotFound(let id): "No message with id \(id.rawValue)."
+        case .messageAlreadySent: "That follow-up was already sent."
+        case .noteClosed: "The note is resolved; the user reopens it with a follow-up."
+        case .unsentFollowUp: "The user has written a follow-up they haven't sent yet; wait for it before resolving."
+        case .noOriginalPlace: "The note hasn't moved."
         }
     }
 }
@@ -317,8 +331,9 @@ public struct NoteStore: Sendable {
                 .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id)")
                 .order(Column("host_id"), Column("path"))
                 .fetchAll(db)
+            let unsent = try Self.unsentNoteIDs(db)
             return try documents.map { record in
-                let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0) }
+                let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0, unsent: unsent) }
                 return (Document(record: record), Self.sorted(notes))
             }
         }
@@ -327,12 +342,13 @@ public struct NoteStore: Sendable {
     // MARK: Notes
 
     public func note(_ id: NoteID) async throws -> Note? {
-        try await queue.read { db in try NoteRecord.fetchOne(db, key: id.rawValue).map { try Note(record: $0) } }
+        try await queue.read { db in try NoteRecord.fetchOne(db, key: id.rawValue).map { try Note(record: $0, db) } }
     }
 
     public func notes(for documentID: DocumentID) async throws -> [Note] {
         try await queue.read { db in
-            Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0) })
+            let unsent = try Self.unsentNoteIDs(db)
+            return Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
         }
     }
 
@@ -354,8 +370,9 @@ public struct NoteStore: Sendable {
                 request = request.filter(sql: "document.path = ? OR substr(document.path, 1, ?) = ?", arguments: [pathPrefix, directory.unicodeScalars.count, directory])
             }
             let rows = try request.asRequest(of: NoteWithDocument.self).fetchAll(db)
+            let unsent = try Self.unsentNoteIDs(db)
             return try rows
-                .map { (note: try Note(record: $0.note), document: Document(record: $0.document)) }
+                .map { (note: try Note(record: $0.note, unsent: unsent), document: Document(record: $0.document)) }
                 .sorted { lhs, rhs in
                     if lhs.document.path != rhs.document.path { return lhs.document.path < rhs.document.path }
                     return lhs.note.anchor.sortKey < rhs.note.anchor.sortKey
@@ -374,7 +391,7 @@ public struct NoteStore: Sendable {
                 resolveOutcome: nil, resolveMessage: nil
             )
             try record.insert(db)
-            return try Note(record: try Self.refetch(record, db))
+            return try Note(record: try Self.refetch(record, db), db)
         }
     }
 
@@ -402,25 +419,26 @@ public struct NoteStore: Sendable {
     /// Open questions one document may hold from agents, so a looping agent can't bury the user's own notes.
     public static let agentQuestionLimit = 20
 
-    /// A question an agent asks the user about a place in a file (`ask_user`). It arrives the way an agent's
-    /// question on a sent note does, resolved with `needs_input`, so it shows under Attention, counts on the Dock,
-    /// and is answered with Reply; the answer makes it a draft that goes back only when the user sends it.
+    /// A question an agent asks the user about a place in a file (`ask_user`): a sent note by the agent, with no
+    /// comment, whose thread opens with the question. It waits on the user, so it shows under Attention and counts on
+    /// the Dock; the user's answer is a follow-up that goes back only when they send it.
     public func askUser(documentID: DocumentID, anchor: Anchor, question: String, author: String, color: NoteColor = .orange, at date: Date = Date()) async throws -> Note {
         let date = Self.rounded(date)
         return try await queue.write { db in
             guard try DocumentRecord.exists(db, key: documentID.rawValue) else { throw NoteStoreError.documentNotFound(documentID) }
             let open = try NoteRecord
-                .filter(Column("document_id") == documentID.rawValue && Column("author") != nil && Column("state") == NoteState.resolved.rawValue && Column("resolve_outcome") == ResolveOutcome.needsInput.rawValue)
+                .filter(Column("document_id") == documentID.rawValue && Column("author") != nil && Column("waiting_on_user") == true)
                 .fetchCount(db)
             guard open < Self.agentQuestionLimit else { throw NoteStoreError.tooManyQuestions(Self.agentQuestionLimit) }
             let record = NoteRecord(
                 id: NoteID.new().rawValue, documentId: documentID.rawValue,
                 anchorJson: try anchor.encodedJSON(), anchorType: anchor.type.rawValue,
-                body: "", state: NoteState.resolved.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
-                resolveOutcome: ResolveOutcome.needsInput.rawValue, resolveMessage: question, author: author
+                body: "", state: NoteState.sent.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
+                resolveOutcome: nil, resolveMessage: nil, author: author, waitingOnUser: true
             )
             try record.insert(db)
-            return try Note(record: try Self.refetch(record, db))
+            try Self.insertMessage(note: record.id, author: .agent(author), kind: .question, body: question, at: date, sent: true, db)
+            return try Note(record: try Self.refetch(record, db), db)
         }
     }
 
@@ -470,19 +488,20 @@ public struct NoteStore: Sendable {
         _ = try await queue.write { db in try NoteRecord.deleteOne(db, key: id.rawValue) }
     }
 
-    /// Deletes a note and returns everything the delete removed (the note, its attachment rows, its send links),
+    /// Deletes a note and returns everything the delete removed (the note, its attachment rows, its send links, its thread),
     /// so `restore` can put it back exactly. Attachment files stay on disk; the sweep keeps young files.
     public func deleteNoteForUndo(_ id: NoteID) async throws -> DeletedNote? {
         try await queue.write { db in
             guard let note = try NoteRecord.fetchOne(db, key: id.rawValue) else { return nil }
             let attachments = try AttachmentRecord.filter(Column("note_id") == id.rawValue).fetchAll(db)
             let sends = try SendNoteRecord.filter(Column("note_id") == id.rawValue).fetchAll(db)
+            let messages = try Self.messageRecords(id, db)
             _ = try NoteRecord.deleteOne(db, key: id.rawValue)
-            return DeletedNote(note: note, attachments: attachments, sends: sends)
+            return DeletedNote(note: note, attachments: attachments, sends: sends, messages: messages)
         }
     }
 
-    /// Puts a deleted note back with its id, attachments, and send history (sends that still exist).
+    /// Puts a deleted note back with its id, attachments, thread, and send history (sends that still exist).
     public func restore(_ deleted: DeletedNote) async throws {
         try await queue.write { db in
             guard try DocumentRecord.exists(db, key: deleted.note.documentId) else {
@@ -491,40 +510,98 @@ public struct NoteStore: Sendable {
             try deleted.note.insert(db)
             for attachment in deleted.attachments { try attachment.insert(db) }
             for link in deleted.sends where try SendRecord.exists(db, key: link.sendId) { try link.insert(db) }
+            for message in deleted.messages { try message.insert(db) }
         }
     }
 
     /// `sent` → `resolved`, `draft` → `resolved` when the user resolves by hand, or `orphaned` → `resolved` when the
-    /// text is gone because acting on the note removed it.
+    /// text is gone because acting on the note removed it. An outcome of `needsInput` is a question, never a
+    /// resolution (see `agentReply`).
     public func resolve(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, at date: Date = Date()) async throws {
-        try await resolve(id, outcome: outcome, message: message, agent: nil, at: date, onlySent: false)
+        try await resolve(id, outcome: outcome, message: message, agent: nil, relocation: nil, at: date, onlySent: false)
     }
 
     /// An agent resolves a note it was given: a sent one, or one sent before its text went. Checked in the same write,
-    /// so a note the user takes back meanwhile is never resolved behind their back.
-    /// `agent` is the resolving client's name, which the card's reply is headed with.
-    public func resolveSent(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, agent: String? = nil, at date: Date = Date()) async throws {
-        try await resolve(id, outcome: outcome, message: message, agent: agent, at: date, onlySent: true)
+    /// so a note the user takes back meanwhile is never resolved behind their back, and refused while the user has a
+    /// follow-up they haven't sent, since the agent hasn't heard what they said since.
+    /// `agent` is the resolving client's name, which the card's reply is headed with; `message` is also added to the
+    /// thread as the agent's reply, and `relocation`, worked out by `AnchorRelocator`, moves the note in the same write.
+    public func resolveSent(_ id: NoteID, outcome: ResolveOutcome = .done, message: String? = nil, agent: String? = nil,
+                            relocation: NoteRelocation? = nil, at date: Date = Date()) async throws {
+        try await resolve(id, outcome: outcome, message: message, agent: agent, relocation: relocation, at: date, onlySent: true)
     }
 
-    private func resolve(_ id: NoteID, outcome: ResolveOutcome, message: String?, agent: String?, at date: Date, onlySent: Bool) async throws {
+    private func resolve(_ id: NoteID, outcome: ResolveOutcome, message: String?, agent: String?, relocation: NoteRelocation?, at date: Date, onlySent: Bool) async throws {
+        if outcome == .needsInput {
+            // Agents with older instructions ask by resolving with needs_input; the note stays open, waiting on the user.
+            try await agentReply(id, body: message ?? "", asks: true, agent: agent, relocation: relocation, at: date, onlySent: onlySent)
+            return
+        }
         let date = Self.rounded(date)
         try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
             let current = NoteState(rawValue: record.state) ?? .draft
-            if onlySent, current == .draft || (current == .orphaned && record.previousState != NoteState.sent.rawValue) {
-                throw NoteStoreError.illegalTransition(from: .draft, to: .resolved)
+            if onlySent {
+                try Self.checkAgentMayWrite(record)
+                if try Self.hasUnsentFollowUp(record.id, db) { throw NoteStoreError.unsentFollowUp }
             }
             try Self.checkTransition(from: current, to: .resolved)
+            if let relocation {
+                try Self.relocate(&record, to: relocation.anchor, removed: relocation.removed, author: .agent(agent ?? MessageAuthor.unnamedAgent), at: date, db)
+            }
+            // Relocating may have found an orphan its place again.
+            let state = NoteState(rawValue: record.state) ?? current
             record.state = NoteState.resolved.rawValue
             record.resolveOutcome = outcome.rawValue
             record.resolveMessage = message
             record.resolveAgent = agent
+            record.waitingOnUser = false
             // A resolved orphan remembers its text is gone, so taking it back makes an orphan, not a draft drawn on
             // whatever text sits where its anchor points.
-            record.previousState = current == .orphaned ? NoteState.orphaned.rawValue : nil
+            record.previousState = state == .orphaned ? NoteState.orphaned.rawValue : nil
             record.updatedAt = date
             try record.update(db)
+            if onlySent, let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try Self.insertMessage(note: record.id, author: .agent(agent ?? MessageAuthor.unnamedAgent), kind: .reply, body: message, at: date, sent: true, db)
+            }
+        }
+    }
+
+    /// An agent answers on a sent note (`reply_to_note`): a reply, or a question when `asks`, which leaves the note
+    /// waiting on the user until they send a follow-up (a later reply that doesn't ask leaves it waiting). It never
+    /// resolves the note. Refused for drafts (the user
+    /// hasn't sent them) and resolved notes (the user reopens those with a follow-up). A follow-up the user hasn't
+    /// sent yet stays as it is. `relocation` moves the note in the same write.
+    public func agentReply(_ id: NoteID, body: String, asks: Bool, agent: String?, relocation: NoteRelocation? = nil, at date: Date = Date()) async throws {
+        try await agentReply(id, body: body, asks: asks, agent: agent, relocation: relocation, at: date, onlySent: true)
+    }
+
+    private func agentReply(_ id: NoteID, body: String, asks: Bool, agent: String?, relocation: NoteRelocation?, at date: Date, onlySent: Bool) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
+            if onlySent { try Self.checkAgentMayWrite(record) }
+            if record.state == NoteState.resolved.rawValue { throw NoteStoreError.noteClosed }
+            let author = MessageAuthor.agent(agent ?? MessageAuthor.unnamedAgent)
+            if let relocation {
+                try Self.relocate(&record, to: relocation.anchor, removed: relocation.removed, author: author, at: date, db)
+            }
+            // A status reply doesn't answer the agent's own open question; only the user's sent follow-up or a resolve does.
+            record.waitingOnUser = record.waitingOnUser || asks
+            record.updatedAt = date
+            try record.update(db)
+            let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty || asks {
+                try Self.insertMessage(note: record.id, author: author, kind: asks ? .question : .reply, body: text, at: date, sent: true, db)
+            }
+        }
+    }
+
+    /// An agent may write only to a note it was given: not a draft, nor an orphan that was a draft when its text went.
+    private static func checkAgentMayWrite(_ record: NoteRecord) throws {
+        let current = NoteState(rawValue: record.state) ?? .draft
+        if current == .draft || (current == .orphaned && record.previousState != NoteState.sent.rawValue) {
+            throw NoteStoreError.illegalTransition(from: .draft, to: .resolved)
         }
     }
 
@@ -597,35 +674,122 @@ public struct NoteStore: Sendable {
         try await transition(id, to: .draft, at: date)
     }
 
-    /// The labels an answered question is written with, so the app can show the exchange as a conversation.
-    public static let askedLabel = "Agent asked:"
-    public static let answerLabel = "Answer:"
+    // MARK: Threads
 
-    /// The comment with the agent's question and the person's answer added after a blank line.
-    public static func body(_ body: String, answering question: String?, with answer: String) -> String {
-        let question = question?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return body + "\n\n" + (question.isEmpty ? "" : "\(askedLabel) \(question)\n") + "\(answerLabel) \(answer)"
+    public func messages(for noteID: NoteID) async throws -> [NoteMessage] {
+        try await queue.read { db in try Self.messages(noteID, db) }
     }
 
-    /// The person answers a question an agent resolved the note with: in one write, the question and answer are added
-    /// to the comment as it is now (not as some view last saw it), and the note becomes a draft again. Throws
-    /// `illegalTransition` if the note is no longer waiting for an answer, so nothing is half applied.
-    public func answer(_ id: NoteID, with answer: String, at date: Date = Date()) async throws {
+    /// The same, read on the caller's thread: for a view's first frame, before an observation delivers. One
+    /// indexed query; nothing else should need it.
+    public func messagesNow(for noteID: NoteID) -> [NoteMessage] {
+        (try? queue.read { db in try Self.messages(noteID, db) }) ?? []
+    }
+
+    /// The user adds a follow-up, unsent until the note is next sent. On a resolved note it reopens the thread: the
+    /// note is sent again if an agent ever had it, a draft if not (an orphan stays an orphan, remembering which), and
+    /// the agent's outcome is cleared. On a note waiting on the user, it stays waiting until the follow-up is sent.
+    @discardableResult
+    public func addFollowUp(_ noteID: NoteID, body: String, at date: Date = Date()) async throws -> NoteMessage {
         let date = Self.rounded(date)
-        try await queue.write { db in
-            guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
-            let current = NoteState(rawValue: record.state) ?? .draft
-            guard current == .resolved, record.resolveOutcome == ResolveOutcome.needsInput.rawValue else {
-                throw NoteStoreError.illegalTransition(from: current, to: .draft)
+        return try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+            if record.state == NoteState.resolved.rawValue {
+                // A draft resolved by hand was never an agent's: reopening it must not hand it to one.
+                let open = try Self.wasShared(record, db) ? NoteState.sent : .draft
+                if record.previousState == NoteState.orphaned.rawValue {
+                    record.state = NoteState.orphaned.rawValue
+                    record.previousState = open.rawValue
+                } else {
+                    record.state = open.rawValue
+                    record.previousState = nil
+                }
+                record.resolveOutcome = nil
+                record.resolveMessage = nil
+                record.resolveAgent = nil
             }
-            record.body = Self.body(record.body, answering: record.resolveMessage, with: answer)
-            Self.reopened(&record)
-            record.resolveOutcome = nil
-            record.resolveMessage = nil
-            record.resolveAgent = nil
             record.updatedAt = date
             try record.update(db)
+            let message = try Self.insertMessage(note: record.id, author: .user, kind: .comment, body: body, at: date, sent: false, db)
+            return NoteMessage(record: message)
         }
+    }
+
+    /// Changes a follow-up the user hasn't sent.
+    public func updateFollowUp(_ id: MessageID, body: String, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            var message = try Self.unsentFollowUp(id, db)
+            message.body = body
+            try message.update(db)
+            try db.execute(sql: "UPDATE note SET updated_at = ? WHERE id = ?", arguments: [date, message.noteId])
+        }
+    }
+
+    /// Deletes a follow-up the user hasn't sent.
+    public func deleteFollowUp(_ id: MessageID, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            let message = try Self.unsentFollowUp(id, db)
+            _ = try message.delete(db)
+            try db.execute(sql: "UPDATE note SET updated_at = ? WHERE id = ?", arguments: [date, message.noteId])
+        }
+    }
+
+    private static func unsentFollowUp(_ id: MessageID, _ db: Database) throws -> NoteMessageRecord {
+        guard let message = try NoteMessageRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.messageNotFound(id) }
+        guard message.sentAt == nil else { throw NoteStoreError.messageAlreadySent(id) }
+        return message
+    }
+
+    /// Moves a note to `anchor`, worked out from the document's current text: by an agent saying where its change is
+    /// (`author` its name), or by Gloss finding the text removed (`author` nil). The first move remembers where the
+    /// note was, for `restoreOriginalPlace`; every move adds a `moved` message; an orphan finds its place again as
+    /// `recoverOrphan` does. Moving to where the note already is changes nothing.
+    public func applyRelocation(_ noteID: NoteID, to anchor: Anchor, removed: Bool, author: String?, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+            try Self.relocate(&record, to: anchor, removed: removed, author: author.map(MessageAuthor.agent) ?? .app, at: date, db)
+            try record.update(db)
+        }
+    }
+
+    /// Puts a moved note back where it was before its first move, and says so in the thread.
+    public func restoreOriginalPlace(_ noteID: NoteID, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+            guard let json = record.originalAnchorJson, let rawType = record.originalAnchorType, let type = AnchorType(rawValue: rawType) else {
+                throw NoteStoreError.noOriginalPlace(noteID)
+            }
+            let original = try Anchor(type: type, json: json)
+            try Self.relocate(&record, to: original, removed: false, author: .user, at: date, db)
+            record.originalAnchorJson = nil
+            record.originalAnchorType = nil
+            try record.update(db)
+        }
+    }
+
+    /// `relocate` inside a write: the record is changed but not saved; the `moved` message is inserted.
+    private static func relocate(_ record: inout NoteRecord, to anchor: Anchor, removed: Bool, author: MessageAuthor, at date: Date, _ db: Database) throws {
+        let current = try Anchor(type: AnchorType(rawValue: record.anchorType) ?? .file, json: record.anchorJson)
+        let orphaned = record.state == NoteState.orphaned.rawValue
+        guard anchor != current || orphaned else { return }
+        if record.originalAnchorJson == nil {
+            record.originalAnchorJson = record.anchorJson
+            record.originalAnchorType = record.anchorType
+        }
+        record.anchorJson = try anchor.encodedJSON()
+        record.anchorType = anchor.type.rawValue
+        if orphaned {
+            let previous = record.previousState.flatMap(NoteState.init(rawValue:)) ?? .draft
+            record.state = (previous == .sent ? NoteState.sent : .draft).rawValue
+            record.previousState = nil
+        }
+        record.updatedAt = date
+        let meta = String(decoding: try JSONEncoder.sorted.encode(NoteMove(from: current, to: anchor, removed: removed)), as: UTF8.self)
+        try insertMessage(note: record.id, author: author, kind: .moved, body: "", meta: meta, at: date, sent: true, db)
     }
 
     public func restoreDraft(_ id: NoteID, anchor: Anchor, at date: Date = Date()) async throws {
@@ -664,8 +828,14 @@ public struct NoteStore: Sendable {
     /// Observes the notes of one document, emitting the full sorted list on every change.
     public func observeNotes(for documentID: DocumentID) -> AsyncThrowingStream<[Note], any Error> {
         Self.stream(ValueObservation.tracking { db in
-            Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0) })
+            let unsent = try Self.unsentNoteIDs(db)
+            return Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
         }, in: queue)
+    }
+
+    /// Observes one note's messages, oldest first.
+    public func observeMessages(for noteID: NoteID) -> AsyncThrowingStream<[NoteMessage], any Error> {
+        Self.stream(ValueObservation.tracking { db in try Self.messages(noteID, db) }, in: queue)
     }
 
     /// Observes every document that has notes, for the notes panel.
@@ -675,8 +845,9 @@ public struct NoteStore: Sendable {
                 .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id)")
                 .order(Column("host_id"), Column("path"))
                 .fetchAll(db)
+            let unsent = try Self.unsentNoteIDs(db)
             return try documents.map { record in
-                let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0) }
+                let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0, unsent: unsent) }
                 return DocumentNotes(document: Document(record: record), notes: Self.sorted(notes))
             }
         }, in: queue)
@@ -727,7 +898,8 @@ public struct NoteStore: Sendable {
 
     // MARK: Sends
 
-    /// Records one delivery and, when it succeeded, flips every draft note in it to `sent`.
+    /// Records one delivery and, when it succeeded, flips every draft note in it to `sent`, stamps the follow-ups it
+    /// carried as sent, and leaves no note waiting on the user. A resolved note with a follow-up is reopened by it.
     /// `outcome` is `delivered` or `failed: <message>`.
     public func recordSend(
         transport: String, targetJSON: String, packetText: String, noteIDs: [NoteID],
@@ -744,8 +916,24 @@ public struct NoteStore: Sendable {
                 if outcome == .delivered {
                     guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
                     let current = NoteState(rawValue: record.state) ?? .draft
+                    try db.execute(sql: "UPDATE note_message SET sent_at = ? WHERE note_id = ? AND sent_at IS NULL", arguments: [date, noteID.rawValue])
+                    let carried = db.changesCount > 0
                     if current == .draft || current == .sent {
                         record.state = NoteState.sent.rawValue
+                    } else if current == .resolved, carried {
+                        if record.previousState == NoteState.orphaned.rawValue {
+                            record.state = NoteState.orphaned.rawValue
+                            record.previousState = NoteState.sent.rawValue
+                        } else {
+                            record.state = NoteState.sent.rawValue
+                            record.previousState = nil
+                        }
+                        record.resolveOutcome = nil
+                        record.resolveMessage = nil
+                        record.resolveAgent = nil
+                    }
+                    if record.state != current.rawValue || record.waitingOnUser || carried {
+                        record.waitingOnUser = false
                         record.updatedAt = date
                         try record.update(db)
                     }
@@ -849,6 +1037,40 @@ public struct NoteStore: Sendable {
         Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1000).rounded() / 1000)
     }
 
+    /// The note was given to an agent: delivered at least once, or an agent's own question (as `sharedNoteIDs`).
+    static func wasShared(_ record: NoteRecord, _ db: Database) throws -> Bool {
+        if record.author != nil { return true }
+        return try Bool.fetchOne(db, sql: """
+            SELECT EXISTS (SELECT 1 FROM send_note JOIN send ON send.id = send_note.send_id
+                           WHERE send_note.note_id = ? AND send.outcome = 'delivered')
+            """, arguments: [record.id]) ?? false
+    }
+
+    /// Notes with a follow-up the user hasn't sent; there are only ever a few.
+    static func unsentNoteIDs(_ db: Database) throws -> Set<String> {
+        Set(try String.fetchAll(db, sql: "SELECT DISTINCT note_id FROM note_message WHERE sent_at IS NULL"))
+    }
+
+    static func hasUnsentFollowUp(_ noteID: String, _ db: Database) throws -> Bool {
+        try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM note_message WHERE note_id = ? AND sent_at IS NULL)", arguments: [noteID]) ?? false
+    }
+
+    static func messageRecords(_ noteID: NoteID, _ db: Database) throws -> [NoteMessageRecord] {
+        try NoteMessageRecord.filter(Column("note_id") == noteID.rawValue).order(Column("created_at"), Column("id")).fetchAll(db)
+    }
+
+    static func messages(_ noteID: NoteID, _ db: Database) throws -> [NoteMessage] {
+        try messageRecords(noteID, db).map(NoteMessage.init(record:))
+    }
+
+    @discardableResult
+    static func insertMessage(note noteID: String, author: MessageAuthor, kind: MessageKind, body: String, meta: String? = nil, at date: Date, sent: Bool, _ db: Database) throws -> NoteMessageRecord {
+        let record = NoteMessageRecord(id: MessageID.new().rawValue, noteId: noteID, author: author.stored, kind: kind.rawValue, body: body,
+                                       metaJson: meta, createdAt: date, sentAt: sent ? date : nil)
+        try record.insert(db)
+        return record
+    }
+
     static func sorted(_ notes: [Note]) -> [Note] {
         notes.sorted { lhs, rhs in
             if lhs.anchor.sortKey != rhs.anchor.sortKey { return lhs.anchor.sortKey < rhs.anchor.sortKey }
@@ -883,6 +1105,15 @@ public enum SendOutcome: Equatable, Sendable {
         case .delivered: "delivered"
         case .failed(let message): "failed: \(message)"
         }
+    }
+}
+
+extension JSONEncoder {
+    /// Sorted keys, so stored JSON is diffable.
+    static var sorted: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return encoder
     }
 }
 
@@ -923,15 +1154,37 @@ extension Document {
 }
 
 extension Note {
-    init(record: NoteRecord) throws {
+    /// `unsent` holds the ids of notes with a follow-up not sent yet (`NoteStore.unsentNoteIDs`).
+    init(record: NoteRecord, unsent: Set<String>) throws {
         let type = AnchorType(rawValue: record.anchorType) ?? .file
+        var original: Anchor?
+        if let json = record.originalAnchorJson, let rawType = record.originalAnchorType, let originalType = AnchorType(rawValue: rawType) {
+            original = try? Anchor(type: originalType, json: json)
+        }
         self.init(
             id: NoteID(rawValue: record.id), documentID: DocumentID(rawValue: record.documentId),
             anchor: try Anchor(type: type, json: record.anchorJson), body: record.body,
             state: NoteState(rawValue: record.state) ?? .draft, color: NoteColor(rawValue: record.color) ?? .yellow,
             createdAt: record.createdAt, updatedAt: record.updatedAt,
             resolveOutcome: record.resolveOutcome.flatMap(ResolveOutcome.init(rawValue:)), resolveMessage: record.resolveMessage,
-            author: record.author, resolveAgent: record.resolveAgent
+            author: record.author, resolveAgent: record.resolveAgent, waitingOnUser: record.waitingOnUser,
+            hasUnsentFollowUps: unsent.contains(record.id), originalAnchor: original
+        )
+    }
+
+    /// One note, asking the database whether it has an unsent follow-up.
+    init(record: NoteRecord, _ db: Database) throws {
+        let unsent = try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM note_message WHERE note_id = ? AND sent_at IS NULL)", arguments: [record.id]) ?? false
+        try self.init(record: record, unsent: unsent ? [record.id] : [])
+    }
+}
+
+extension NoteMessage {
+    init(record: NoteMessageRecord) {
+        self.init(
+            id: MessageID(rawValue: record.id), noteID: NoteID(rawValue: record.noteId), author: MessageAuthor(stored: record.author),
+            kind: MessageKind(rawValue: record.kind) ?? .comment, body: record.body, createdAt: record.createdAt, sentAt: record.sentAt,
+            move: record.metaJson.flatMap { try? JSONDecoder().decode(NoteMove.self, from: Data($0.utf8)) }
         )
     }
 }
@@ -959,6 +1212,7 @@ public struct DeletedNote: Sendable, Equatable {
     public let note: NoteRecord
     public let attachments: [AttachmentRecord]
     public let sends: [SendNoteRecord]
+    public let messages: [NoteMessageRecord]
     public var id: NoteID { NoteID(rawValue: note.id) }
 
     public static func == (lhs: DeletedNote, rhs: DeletedNote) -> Bool { lhs.note.id == rhs.note.id }

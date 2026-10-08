@@ -70,6 +70,26 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     public var author: String? = nil
     /// The agent that resolved the note through MCP; nil when resolved by hand or not resolved.
     public var resolveAgent: String? = nil
+    /// An agent asked the user something and the user hasn't sent an answer yet.
+    public var waitingOnUser: Bool = false
+    /// Where the note was before its first move, for Restore Original Place; nil until it moves.
+    public var originalAnchorJson: String? = nil
+    public var originalAnchorType: String? = nil
+}
+
+public struct NoteMessageRecord: SnakeCaseRecord, Identifiable {
+    public static let databaseTableName = "note_message"
+    public var id: String
+    public var noteId: String
+    /// `user`, the agent's name, or nil for Gloss itself (a removal it found on its own).
+    public var author: String?
+    public var kind: String
+    public var body: String
+    /// For `moved`: the `NoteMove` as JSON.
+    public var metaJson: String?
+    public var createdAt: Date
+    /// Nil for a user's follow-up until it is sent; set on write for everything else.
+    public var sentAt: Date?
 }
 
 public struct AttachmentRecord: SnakeCaseRecord, Identifiable {

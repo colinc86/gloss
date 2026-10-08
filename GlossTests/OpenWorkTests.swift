@@ -4,9 +4,9 @@ import Testing
 @testable import Gloss
 
 struct OpenWorkTests {
-    private func note(_ state: NoteState, at seconds: TimeInterval, outcome: ResolveOutcome? = nil) -> Note {
+    private func note(_ state: NoteState, at seconds: TimeInterval, waiting: Bool = false) -> Note {
         Note(id: .new(), documentID: .new(), anchor: .wholeFile, body: "x", state: state, color: .yellow,
-             createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: seconds), resolveOutcome: outcome)
+             createdAt: Date(timeIntervalSince1970: 0), updatedAt: Date(timeIntervalSince1970: seconds), waitingOnUser: waiting)
     }
 
     private func document(_ path: String, host: HostID = .local) -> Core.Document {
@@ -16,7 +16,7 @@ struct OpenWorkTests {
     @Test func listsOpenWorkInTheRootNewestFirst() {
         let groups = [
             DocumentNotes(document: document("/private/tmp/p/README.md"), notes: [note(.draft, at: 10), note(.sent, at: 20)]),
-            DocumentNotes(document: document("/tmp/p/src/app/a.swift"), notes: [note(.resolved, at: 50, outcome: .needsInput)]),
+            DocumentNotes(document: document("/tmp/p/src/app/a.swift"), notes: [note(.sent, at: 50, waiting: true)]),
             DocumentNotes(document: document("/tmp/p/done.md"), notes: [note(.resolved, at: 90)]),
             DocumentNotes(document: document("/tmp/elsewhere/b.md"), notes: [note(.draft, at: 99)]),
             DocumentNotes(document: document("/tmp/p/c.md", host: HostID(rawValue: "remote")), notes: [note(.draft, at: 99)]),

@@ -206,11 +206,18 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var author: String?
     /// The agent that resolved the note through MCP (its client's name); nil when the user resolved it.
     public var resolveAgent: String?
+    /// An agent asked the user something (`reply_to_note` asking, or `ask_user`) and no answer has been sent yet.
+    public var waitingOnUser: Bool
+    /// The user wrote a follow-up that hasn't been sent; read from the note's messages by the store's queries.
+    public var hasUnsentFollowUps: Bool
+    /// Where the note was before it first moved, for Restore Original Place; nil for a note that never moved.
+    public var originalAnchor: Anchor?
 
     public init(
         id: NoteID, documentID: DocumentID, anchor: Anchor, body: String, state: NoteState,
         color: NoteColor, createdAt: Date, updatedAt: Date, resolveOutcome: ResolveOutcome? = nil, resolveMessage: String? = nil,
-        author: String? = nil, resolveAgent: String? = nil
+        author: String? = nil, resolveAgent: String? = nil, waitingOnUser: Bool = false, hasUnsentFollowUps: Bool = false,
+        originalAnchor: Anchor? = nil
     ) {
         self.id = id
         self.documentID = documentID
@@ -224,10 +231,110 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
         self.resolveMessage = resolveMessage
         self.author = author
         self.resolveAgent = resolveAgent
+        self.waitingOnUser = waitingOnUser
+        self.hasUnsentFollowUps = hasUnsentFollowUps
+        self.originalAnchor = originalAnchor
     }
 
     /// Notes an agent still has to act on.
     public var isPending: Bool { state == .draft || state == .sent }
+
+    /// The user has to look: an agent asked something, or the note lost its place.
+    public var needsAttention: Bool { waitingOnUser || state == .orphaned }
+}
+
+/// One turn of a note's thread, after the comment in `Note.body`.
+public enum MessageKind: String, Codable, Sendable, CaseIterable {
+    /// The user's follow-up.
+    case comment
+    /// An agent asks the user something; the note waits on the user.
+    case question
+    /// An agent's answer or report.
+    case reply
+    /// The note's anchor moved, or its text was removed.
+    case moved
+}
+
+/// Who wrote a message.
+public enum MessageAuthor: Hashable, Sendable {
+    case user
+    /// An agent, by the name its MCP client gave (`agent` when it gave none).
+    case agent(String)
+    /// Gloss itself: a removal it found while re-anchoring.
+    case app
+
+    /// The `author` column: `user`, the agent's name, or NULL for Gloss.
+    public init(stored: String?) {
+        switch stored {
+        case nil: self = .app
+        case Self.userValue?: self = .user
+        case let name?: self = .agent(name)
+        }
+    }
+
+    public var stored: String? {
+        switch self {
+        case .user: Self.userValue
+        case .agent(let name): name
+        case .app: nil
+        }
+    }
+
+    static let userValue = "user"
+    /// The name an agent is stored under when its client gave none.
+    public static let unnamedAgent = "agent"
+}
+
+/// Where a moved note was and is: `meta_json` of a `moved` message.
+public struct NoteMove: Codable, Hashable, Sendable {
+    public var from: Anchor
+    public var to: Anchor
+    /// The text was removed; `to` is a point where it was.
+    public var removed: Bool
+
+    public init(from: Anchor, to: Anchor, removed: Bool) {
+        self.from = from
+        self.to = to
+        self.removed = removed
+    }
+}
+
+public struct NoteMessage: Identifiable, Hashable, Sendable {
+    public var id: MessageID
+    public var noteID: NoteID
+    public var author: MessageAuthor
+    public var kind: MessageKind
+    public var body: String
+    public var createdAt: Date
+    /// Nil for a follow-up the user hasn't sent yet.
+    public var sentAt: Date?
+    /// For `moved` messages.
+    public var move: NoteMove?
+
+    public init(id: MessageID, noteID: NoteID, author: MessageAuthor, kind: MessageKind, body: String, createdAt: Date, sentAt: Date?, move: NoteMove? = nil) {
+        self.id = id
+        self.noteID = noteID
+        self.author = author
+        self.kind = kind
+        self.body = body
+        self.createdAt = createdAt
+        self.sentAt = sentAt
+        self.move = move
+    }
+
+    public var isSent: Bool { sentAt != nil }
+}
+
+/// A new place for a note, worked out by `AnchorRelocator` from the document's current text.
+public struct NoteRelocation: Hashable, Sendable {
+    public var anchor: Anchor
+    /// The text was removed and `anchor` is a point where it was.
+    public var removed: Bool
+
+    public init(anchor: Anchor, removed: Bool) {
+        self.anchor = anchor
+        self.removed = removed
+    }
 }
 
 public enum AttachmentKind: String, Codable, Sendable {
@@ -257,6 +364,8 @@ public struct Attachment: Identifiable, Hashable, Codable, Sendable {
 public enum ResolveOutcome: String, Codable, Sendable {
     case done
     case skipped
+    /// Accepted from agents with older instructions, and stored as a question (`NoteStore.agentReply` asking):
+    /// a note is never resolved with it.
     case needsInput = "needs_input"
 }
 
