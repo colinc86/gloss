@@ -221,6 +221,10 @@ struct NoteBodyEditor: NSViewRepresentable {
     @Binding var text: String
     let onSubmit: () -> Void
     var onCancel: () -> Void = {}
+    /// Takes focus when it appears. A card's follow-up field, always there in an open card, waits to be asked.
+    var focusesOnAppear = true
+    /// Bumped to put the caret in a field that is already showing.
+    var focusRequest = 0
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = SubmitTextView()
@@ -240,6 +244,7 @@ struct NoteBodyEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
         textView.onCancel = onCancel
+        textView.focusesOnAppear = focusesOnAppear
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
@@ -253,6 +258,10 @@ struct NoteBodyEditor: NSViewRepresentable {
         guard let textView = nsView.documentView as? SubmitTextView else { return }
         textView.onSubmit = onSubmit
         textView.onCancel = onCancel
+        if focusRequest != context.coordinator.focusRequest {
+            context.coordinator.focusRequest = focusRequest
+            DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
+        }
         if textView.string != text {
             textView.string = text
             // Setting `string` bypasses undo; older typing entries would now edit the wrong text.
@@ -264,12 +273,17 @@ struct NoteBodyEditor: NSViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, focusRequest: focusRequest) }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         private let text: Binding<String>
+        /// The request last acted on; one made before the field existed is its `focusesOnAppear`.
+        var focusRequest: Int
 
-        init(text: Binding<String>) { self.text = text }
+        init(text: Binding<String>, focusRequest: Int) {
+            self.text = text
+            self.focusRequest = focusRequest
+        }
 
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? NSTextView else { return }
@@ -283,6 +297,7 @@ struct NoteBodyEditor: NSViewRepresentable {
     final class SubmitTextView: NSTextView {
         var onSubmit: () -> Void = {}
         var onCancel: () -> Void = {}
+        var focusesOnAppear = true
 
         /// Escape. NSTextView would otherwise take it for word completion, so it never reached Cancel.
         override func cancelOperation(_ sender: Any?) {
@@ -293,7 +308,7 @@ struct NoteBodyEditor: NSViewRepresentable {
         /// in `makeNSView`; typing right after the popover opens must land in the field.
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            window?.makeFirstResponder(self)
+            if focusesOnAppear { window?.makeFirstResponder(self) }
         }
 
         override func insertNewline(_ sender: Any?) {

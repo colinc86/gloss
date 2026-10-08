@@ -90,6 +90,22 @@ struct MarkdownRendererTests {
         #expect(heading.map { renderedSubstring(output, $0) } == ["Head"])
     }
 
+    /// A note whose text was removed maps to one rendered point: exact inside text, the start of an inexact run,
+    /// and between blocks the end of the run before; never a whole run or block.
+    @Test func aSourcePointMapsToARenderedPoint() {
+        let source = "# Head\n\nOne two three.\n"
+        let output = MarkdownRenderer.render(source)
+        let two = (source as NSString).range(of: "two")
+        let inText = output.map.renderedRanges(forSource: NSRange(location: two.location, length: 0))
+        #expect(inText.count == 1 && inText[0].length == 0)
+        #expect((output.text.string as NSString).substring(from: inText[0].location).hasPrefix("two"))
+        let betweenBlocks = output.map.renderedRanges(forSource: NSRange(location: 7, length: 0))
+        #expect(betweenBlocks.count == 1 && betweenBlocks[0].length == 0)
+        let map = RenderedSourceMap(spans: [SourceSpan(rendered: NSRange(location: 10, length: 4), source: NSRange(location: 20, length: 9), exact: false)], blocks: [])
+        #expect(map.renderedRanges(forSource: NSRange(location: 24, length: 0)) == [NSRange(location: 10, length: 0)], "an inexact run's start")
+        #expect(map.renderedRanges(forSource: NSRange(location: 29, length: 0)) == [NSRange(location: 14, length: 0)], "right after a run: its end")
+    }
+
     @Test func codeBlockLinesAreLinePrecise() {
         let source = "```swift\nlet a = 1\nlet b = 2\n```\n"
         let output = MarkdownRenderer.render(source)

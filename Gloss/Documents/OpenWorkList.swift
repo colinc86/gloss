@@ -22,8 +22,9 @@ nonisolated struct OpenWorkItem: Identifiable, Equatable {
         return groups.compactMap { group -> OpenWorkItem? in
             guard group.document.hostID == hostID,
                   ExplorerModel.inRootSpelling(group.document.path, root: rootPath, hostID: hostID) != nil else { return nil }
-            let drafts = group.notes.filter { $0.state == .draft }.count
-            let sent = group.notes.filter { $0.state == .sent }.count
+            let drafts = group.notes.filter(NotesPanelModel.isUnsent).count
+            // Waiting on the agent; a note that is the user's turn counts as a draft or under attention instead.
+            let sent = group.notes.filter { $0.state == .sent && !$0.waitingOnUser && !$0.hasUnsentFollowUps }.count
             let attention = group.notes.filter(\.needsAttention).count
             guard drafts + sent + attention > 0 else { return nil }
             let folder = (ExplorerModel.aliasFree(group.document.path) as NSString).deletingLastPathComponent

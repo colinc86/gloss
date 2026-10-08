@@ -44,6 +44,21 @@ enum WebBridge {
         }
         return null;
       }
+      // A collapsed range before the character at `start`: where two text nodes meet, at the start of the later
+      // one, so a point between paragraphs sits with the text that follows it.
+      function pointAt(start) {
+        let position = 0, last = null;
+        for (const node of textNodes()) {
+          const length = node.data.length;
+          if (start < position + length) { const range = document.createRange(); range.setStart(node, start - position); return range; }
+          position += length;
+          last = node;
+        }
+        if (!last || start !== position) return null;
+        const range = document.createRange();
+        range.setStart(last, last.data.length);
+        return range;
+      }
 
       // MARK: Selection
       let timer = null;
@@ -294,6 +309,8 @@ enum WebBridge {
       // MARK: Overlay: boxes for element notes, the pick-mode hover and the chosen picture, drawn above everything,
       // taking no events.
       const boxes = new Map();
+      // Notes whose text was removed: a caret where it was, by note id, with the collapsed range it sits at.
+      const carets = new Map();
       let hover = null;
       function ensureOverlay() {
         if (overlay && overlay.isConnected) return overlay;
@@ -304,7 +321,7 @@ enum WebBridge {
       }
       // The overlay is idle once nothing is drawn in it: it goes, so the page is left exactly as it was.
       function retireOverlayIfIdle() {
-        if (overlay && overlay.isConnected && !picking && !boxes.size && !chosen) { retiredOverlay = overlay; overlay.remove(); overlay = null; }
+        if (overlay && overlay.isConnected && !picking && !boxes.size && !carets.size && !chosen) { retiredOverlay = overlay; overlay.remove(); overlay = null; }
       }
       function placeRect(box, r) {
         box.style.left = (r.x + scrollX) + 'px';
@@ -334,6 +351,7 @@ enum WebBridge {
             if (!entry.element) continue;
             if (entry.element.isConnected) placeRect(entry.box, noteRect(entry.element, entry.region)); else entry.box.style.display = 'none';
           }
+          placeCarets();
           if (hover) place(hover.box, hover.element);
           if (chosen) {
             drawChosen();
@@ -341,7 +359,7 @@ enum WebBridge {
             if (chosen && chosen.selected) post({ pictureRect: regionRect(chosen.element, chosen.region) });
           }
           // The app draws paths to element notes: it needs their boxes after every scroll and resize.
-          if (boxes.size) post({ elementRects: elementRects() });
+          if (boxes.size || carets.size) post({ elementRects: elementRects() });
         });
       }
       function findCandidates(item) {
@@ -375,7 +393,7 @@ enum WebBridge {
       function highlightElements(list) {
         for (const [, entry] of boxes) entry.box.remove();
         boxes.clear();
-        const rects = {};
+        const rects = caretRects();
         if (!list.length) { retireOverlayIfIdle(); return rects; }
         ensureOverlay();
         for (const item of list) {
@@ -407,12 +425,71 @@ enum WebBridge {
         return rects;
       }
       function elementRects() {
-        const rects = {};
+        const rects = caretRects();
         for (const [id, entry] of boxes) {
           if (entry.element) rects[id] = noteRect(entry.element, entry.region);
           else if (entry.rect) rects[id] = { x: entry.rect.x - scrollX, y: entry.rect.y - scrollY, w: entry.rect.w, h: entry.rect.h };
         }
         return rects;
+      }
+      // A collapsed range has no box of its own in WebKit: the caret is the edge of the character beside it, 2 px
+      // wide and as tall as that character's line (viewport coordinates). A point in text that has no box (the
+      // whitespace between blocks, the newline at the end) takes the start of the next text that shows, else the end
+      // of the last one before it, else its element's top left.
+      const caretBar = (x, r) => ({ x: x - 1, y: r.top, w: 2, h: r.height });
+      function caretRect(range) {
+        const box = range.getBoundingClientRect();
+        if (box.height > 0) return { x: box.left - 1, y: box.top, w: 2, h: box.height };
+        const node = range.startContainer, offset = range.startOffset;
+        const probe = document.createRange();
+        if (node.nodeType === 3) {
+          if (offset < node.data.length) {
+            probe.setStart(node, offset); probe.setEnd(node, offset + 1);
+            const r = probe.getClientRects()[0];
+            if (r && r.height > 0) return caretBar(r.left, r);
+          }
+          if (offset > 0) {
+            probe.setStart(node, offset - 1); probe.setEnd(node, offset);
+            const all = probe.getClientRects(), r = all[all.length - 1];
+            if (r && r.height > 0) return caretBar(r.right, r);
+          }
+          const nodes = textNodes(), at = nodes.indexOf(node);
+          const shown = (n) => { probe.selectNodeContents(n); return [...probe.getClientRects()].filter((r) => r.height > 0); };
+          for (let i = at + 1; at >= 0 && i < nodes.length; i++) {
+            if (inOverlay(nodes[i])) continue;
+            const rects = shown(nodes[i]);
+            if (rects.length) return caretBar(rects[0].left, rects[0]);
+          }
+          for (let i = at - 1; i >= 0; i--) {
+            if (inOverlay(nodes[i])) continue;
+            const rects = shown(nodes[i]);
+            if (rects.length) { const r = rects[rects.length - 1]; return caretBar(r.right, r); }
+          }
+        }
+        const element = node.nodeType === 1 ? node : node.parentElement;
+        const r = element && element.getBoundingClientRect();
+        if (r && r.height > 0) return { x: r.left - 1, y: r.top, w: 2, h: Math.min(r.height, 20) };
+        return null;
+      }
+      function placeCarets() {
+        for (const [, entry] of carets) {
+          const r = entry.range.startContainer.isConnected ? caretRect(entry.range) : null;
+          if (r) { placeRect(entry.box, r); entry.box.style.display = 'block'; } else entry.box.style.display = 'none';
+        }
+      }
+      function caretRects() {
+        const rects = {};
+        for (const [id, entry] of carets) { const r = entry.range.startContainer.isConnected ? caretRect(entry.range) : null; if (r) rects[id] = r; }
+        return rects;
+      }
+      // A bar with a small round cap on top, in the note's colour; empty elements, so no text is added.
+      function makeCaret(color) {
+        const bar = document.createElement('div');
+        bar.setAttribute('style', 'all:initial;position:absolute;display:block;border-radius:1px;pointer-events:none;background:' + color + ';');
+        const cap = document.createElement('div');
+        cap.setAttribute('style', 'all:initial;position:absolute;display:block;left:-1.5px;top:0;width:5px;height:5px;border-radius:50%;pointer-events:none;background:' + color + ';');
+        bar.appendChild(cap);
+        return bar;
       }
       function scrollToElement(selector) {
         let el = null;
@@ -697,16 +774,30 @@ enum WebBridge {
           overlay.style.visibility = hidden ? 'hidden' : 'visible';
           return true;
         },
+        // Text notes as CSS highlights; a note whose text was removed (`caret`: its colour) as a caret in the
+        // overlay. Returns the carets' rects (viewport coordinates) by note id, for the app's paths.
         highlight(list, css) {
           ensureSheet();
           sheet.replaceSync(labelCSS + css);
-          if (!window.CSS || !CSS.highlights) return;
+          const painted = window.CSS && CSS.highlights;
           // Only our own highlights: the page may have its own.
-          for (const name of [...CSS.highlights.keys()]) { if (name.startsWith('gloss-note-')) CSS.highlights.delete(name); }
+          if (painted) { for (const name of [...CSS.highlights.keys()]) { if (name.startsWith('gloss-note-')) CSS.highlights.delete(name); } }
+          for (const [, entry] of carets) entry.box.remove();
+          carets.clear();
           for (const item of list) {
-            const range = rangeAt(item.start, item.end);
-            if (range) CSS.highlights.set(item.name, new Highlight(range));
+            const range = item.caret ? pointAt(item.start) : rangeAt(item.start, item.end);
+            if (!range) continue;
+            if (item.caret) {
+              const box = makeCaret(item.caret);
+              ensureOverlay().appendChild(box);
+              carets.set(item.id, { box, range });
+            } else if (painted) {
+              CSS.highlights.set(item.name, new Highlight(range));
+            }
           }
+          placeCarets();
+          retireOverlayIfIdle();
+          return caretRects();
         },
         scrollTo(start, end, select) {
           const range = rangeAt(start, end);

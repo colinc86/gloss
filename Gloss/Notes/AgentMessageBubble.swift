@@ -1,26 +1,30 @@
 import SwiftUI
 
-/// What the agent said when it resolved a note, drawn as its turn in a conversation: a tinted bubble whose tail points
-/// up at the comment it answers, with who spoke and how. A question is orange and asks for you; a finished note's
-/// reply is quiet. Messages app and Linear's agent replies read this way: the voice is clear before the words are.
-/// A collapsed card cuts a long message at four lines and offers the rest with Show conversation.
+/// One of the agent's turns in a note's thread: a tinted bubble whose tail points up at what it answers, with who
+/// spoke and how. The question still waiting on you is orange; a reply, or a question already answered, is quiet.
+/// Messages app and Linear's agent replies read this way: the voice is clear before the words are. A collapsed card
+/// cuts a long message at four lines and offers the rest with Show conversation.
 struct AgentMessageBubble: View {
     let message: String
-    let needsInput: Bool
+    /// The agent asked something.
+    let asks: Bool
+    /// …and is still waiting on the user's answer; only then is the bubble orange.
+    var waiting = false
     /// The agent the note was last sent to, when there was a send; otherwise "Agent".
     let agent: String?
     var expanded = true
     /// Set when the collapsed bubble cuts the message short.
     var isCut: Binding<Bool> = .constant(false)
 
+    private var needsInput: Bool { asks && waiting }
     private var tint: Color { needsInput ? .orange : .secondary }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
             Label {
-                Text(Self.heading(agent: agent, needsInput: needsInput))
+                Text(Self.heading(agent: agent, asks: asks, waiting: waiting))
             } icon: {
-                Image(systemName: needsInput ? "questionmark.bubble.fill" : "checkmark.bubble.fill")
+                Image(systemName: asks ? "questionmark.bubble.fill" : "checkmark.bubble.fill")
             }
             .font(.caption2.weight(.semibold))
             .foregroundStyle(tint)
@@ -35,12 +39,13 @@ struct AgentMessageBubble: View {
         .background(tint.opacity(needsInput ? 0.12 : 0.08), in: BubbleShape())
         .overlay(BubbleShape().stroke(tint.opacity(needsInput ? 0.28 : 0.12), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
-        .help("What the agent said when it resolved this note")
+        .help(needsInput ? "The agent is waiting on your answer" : asks ? "What the agent asked" : "What the agent replied")
     }
 
-    nonisolated static func heading(agent: String?, needsInput: Bool) -> String {
+    /// "Claude Code asks" while it waits, "asked" once answered, "replied" for anything else.
+    nonisolated static func heading(agent: String?, asks: Bool, waiting: Bool = true) -> String {
         let name = displayName(agent?.trimmingCharacters(in: .whitespaces).nilIfEmpty ?? "Agent")
-        return needsInput ? "\(name) asks" : "\(name) replied"
+        return asks ? (waiting ? "\(name) asks" : "\(name) asked") : "\(name) replied"
     }
 
     /// The agents by their own names; MCP records them as `claude`, `codex` and `opencode`. Any other client keeps
@@ -85,8 +90,8 @@ nonisolated private extension String {
 
 #Preview {
     VStack(spacing: 12) {
-        AgentMessageBubble(message: "Should it be shorter, or just plainer?", needsInput: true, agent: "claude")
-        AgentMessageBubble(message: "Moved the helper to Utilities and renamed it.", needsInput: false, agent: nil)
+        AgentMessageBubble(message: "Should it be shorter, or just plainer?", asks: true, waiting: true, agent: "claude")
+        AgentMessageBubble(message: "Moved the helper to Utilities and renamed it.", asks: false, agent: nil)
     }
     .padding()
     .frame(width: 300)

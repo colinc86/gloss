@@ -8,11 +8,14 @@ final class HighlightBackdropView: NSView {
         var range: NSRange
         var noteColor: NoteColor
         var mark: Theme.NoteMark
+        /// How strong a removal point's caret is: the state ladder, full while in focus.
+        var strength: CGFloat
 
         init(range: NSRange, color: NoteColor, state: NoteState, focused: Bool) {
             self.range = range
             noteColor = color
             mark = Theme.mark(for: state, focused: focused)
+            strength = focused ? 1 : Theme.strength(for: state)
         }
     }
 
@@ -63,6 +66,9 @@ final class HighlightBackdropView: NSView {
             : NSColor(white: 0, alpha: 0.04)
     }
 
+    /// The round cap on a removal point's caret.
+    static let caretCap: CGFloat = 5
+
     override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -92,7 +98,16 @@ final class HighlightBackdropView: NSView {
         if showsIndentGuides {
             drawIndentGuides(in: dirtyRect, layoutManager: layoutManager, contentManager: contentManager)
         }
-        for entry in entries where entry.range.length > 0 {
+        for entry in entries {
+            // Text an agent or an edit removed: a caret where it was, in the note's colour, with a round cap on top.
+            if entry.range.length == 0 {
+                guard let caret = textView.caretRect(at: entry.range.location), caret.insetBy(dx: -3, dy: -3).intersects(dirtyRect) else { continue }
+                Theme.color(for: entry.noteColor).withAlphaComponent(entry.strength).setFill()
+                NSBezierPath(roundedRect: caret, xRadius: caret.width / 2, yRadius: caret.width / 2).fill()
+                let cap = Self.caretCap
+                NSBezierPath(ovalIn: NSRect(x: caret.midX - cap / 2, y: caret.minY, width: cap, height: cap)).fill()
+                continue
+            }
             guard let from = contentManager.location(documentStart, offsetBy: entry.range.location),
                   let to = contentManager.location(documentStart, offsetBy: entry.range.location + entry.range.length),
                   let textRange = NSTextRange(location: from, end: to) else { continue }

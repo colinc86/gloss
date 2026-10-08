@@ -133,6 +133,76 @@ struct WebBridgeTests {
         #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
     }
 
+    /// A note whose text was removed is a caret in the overlay, at the collapsed range, adding no text; drawn again
+    /// without it, the caret and the overlay go. Driven through the page's own highlights, as the app does: the
+    /// viewer re-applies them whenever the page settles, so a caret painted around it would be wiped.
+    @Test func aRemovalPointIsACaretInTheOverlay() async throws {
+        let harness = Harness(html: Self.fixture)
+        try await harness.ready()
+        let before = try await harness.string("return document.documentElement.textContent")
+        let id = NoteID.new()
+        // The live page's source is the DOM serialised once it settles, which can land after the page aligned; as the
+        // app's session does, the point is placed again in the source as it is now.
+        try await harness.wait("the caret's rect") {
+            let offset = (harness.page.source.text as NSString).range(of: "Target paragraph").location
+            if harness.page.source.highlights.first?.range.location != offset {
+                harness.page.source.highlights = [TextHighlight(id: id, range: NSRange(location: offset, length: 0), color: .yellow, state: .draft)]
+            }
+            return harness.page.elementRects[id] != nil
+        }
+        let caret = try #require(try await harness.js("""
+            const b = document.querySelector('gloss-overlay > div').getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }
+            """) as? [String: Any])
+        #expect(caret["w"] as? Double == 2)
+        #expect((caret["h"] as? Double ?? 0) > 8)
+        let word = try #require(try await harness.js("""
+            const p = [...document.querySelectorAll('p')].find((e) => e.textContent.startsWith('Target paragraph'));
+            const b = p.getBoundingClientRect(); return { x: b.left, y: b.top }
+            """) as? [String: Any])
+        #expect(abs((caret["x"] as? Double ?? 0) + 1 - (word["x"] as? Double ?? 0)) < 1.5, "at the start of the paragraph, not the end of the one before")
+        #expect(abs((caret["y"] as? Double ?? 0) - (word["y"] as? Double ?? 0)) < 4)
+        #expect(try await harness.js("return document.querySelectorAll('gloss-overlay > div').length") as? Int == 1)
+        #expect(try await harness.js("return [...CSS.highlights.keys()].some((k) => k.startsWith('gloss-note-'))") as? Bool == false, "not a one-letter highlight")
+        #expect(try await harness.string("return document.documentElement.textContent") == before, "the caret holds no text")
+        harness.page.source.highlights = []
+        try await harness.wait("the caret to go") { harness.page.elementRects[id] == nil }
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
+    }
+
+    /// A point in text WebKit gives no box (the whitespace between two paragraphs, the newline at the very end) still
+    /// gets a caret: at the start of the next text that shows, else the end of the last one before it.
+    @Test func aPointInUnboxedWhitespaceStillHasACaret() async throws {
+        let harness = Harness(html: "<!doctype html><html><head><title>W</title></head><body><p>Alpha</p>\n<p>Beta</p>\n</body></html>\n")
+        try await harness.ready()
+        let between = NoteID.new(), end = NoteID.new()
+        try await harness.wait("both carets") {
+            let text = harness.page.source.text as NSString
+            let found = text.range(of: "</p>\n<p>")
+            guard found.location != NSNotFound else { return false }
+            let gap = found.location + 4, last = text.length
+            let wanted = [TextHighlight(id: between, range: NSRange(location: gap, length: 0), color: .yellow, state: .draft),
+                          TextHighlight(id: end, range: NSRange(location: last, length: 0), color: .blue, state: .draft)]
+            if harness.page.source.highlights != wanted { harness.page.source.highlights = wanted }
+            return harness.page.elementRects[between] != nil && harness.page.elementRects[end] != nil
+        }
+        let carets = try #require(try await harness.js("""
+            return [...document.querySelectorAll('gloss-overlay > div')].map((d) => { const b = d.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width } })
+            """) as? [[String: Any]])
+        try #require(carets.count == 2, "\(carets)")
+        #expect(carets.allSatisfy { $0["w"] as? Double == 2 && $0["x"] as? Double ?? -1 >= 0 }, "\(carets)")
+        let words = try #require(try await harness.js("""
+            const r = document.createRange(), [a, b] = document.querySelectorAll('p');
+            r.selectNodeContents(b); const beta = r.getClientRects()[0];
+            r.selectNodeContents(a); const alpha = r.getClientRects()[0];
+            return { betaX: beta.left, betaY: beta.top, betaRight: beta.right }
+            """) as? [String: Any])
+        let ys = carets.compactMap { $0["y"] as? Double }
+        #expect(ys.allSatisfy { abs($0 - (words["betaY"] as? Double ?? 0)) < 4 }, "both sit on Beta's line: the start of the next text, the end of the last")
+        let xs = carets.compactMap { $0["x"] as? Double }.sorted()
+        #expect(abs(xs[0] + 1 - (words["betaX"] as? Double ?? 0)) < 1.5)
+        #expect(abs(xs[1] + 1 - (words["betaRight"] as? Double ?? 0)) < 1.5)
+    }
+
     @Test func selectorsPreferIdsThenTestIdsThenPositions() async throws {
         let harness = Harness(html: Self.fixture)
         try await harness.ready()

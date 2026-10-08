@@ -70,8 +70,11 @@ public struct RenderedSourceMap: Sendable {
         return Mapping(source: NSRange(location: start, length: end - start), exact: exact)
     }
 
-    /// Rendered ranges that show a source range (several when the source spans runs).
+    /// Rendered ranges that show a source range (several when the source spans runs). A point (a note whose text
+    /// was removed) maps to one rendered point: exact inside an exact run, else the start of the run it falls in, or
+    /// the end of the run it follows; never a whole run or block.
     public func renderedRanges(forSource source: NSRange) -> [NSRange] {
+        if source.length == 0 { return renderedPoint(forSource: source.location).map { [NSRange(location: $0, length: 0)] } ?? [] }
         let sourceEnd = source.location + source.length
         var ranges: [NSRange] = []
         for span in spans {
@@ -89,5 +92,17 @@ public struct RenderedSourceMap: Sendable {
             }
         }
         return ranges
+    }
+
+    private func renderedPoint(forSource location: Int) -> Int? {
+        if let span = spans.first(where: { $0.source.location <= location && location < $0.source.location + $0.source.length }) {
+            return span.exact ? span.rendered.location + location - span.source.location : span.rendered.location
+        }
+        // Between runs (where removed text was): the end of the run it follows, else the start of the next.
+        if let before = spans.last(where: { $0.source.location + $0.source.length == location }) {
+            return before.rendered.location + before.rendered.length
+        }
+        return spans.first { $0.source.location >= location }?.rendered.location
+            ?? spans.last.map { $0.rendered.location + $0.rendered.length }
     }
 }

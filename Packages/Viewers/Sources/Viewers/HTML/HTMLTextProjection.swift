@@ -145,8 +145,17 @@ nonisolated public struct HTMLTextProjection: Sendable {
         return NSRange(location: start, length: max(0, end - start))
     }
 
-    /// Projected ranges covering a source range (one run; text inside tags has no projection).
+    /// Projected ranges covering a source range (one run; text inside tags has no projection). A point (a note whose
+    /// text was removed) stays a point: before the first projected character at or after it.
     public func projectedRange(forSource source: NSRange) -> NSRange? {
+        if source.length == 0 {
+            var low = 0, high = ends.count
+            while low < high {
+                let mid = (low + high) / 2
+                if ends[mid] <= source.location { low = mid + 1 } else { high = mid }
+            }
+            return starts.isEmpty ? nil : NSRange(location: low, length: 0)
+        }
         let sourceEnd = source.location + source.length
         // First unit ending after the source start, last unit starting before its end.
         var low = 0, high = ends.count
@@ -254,6 +263,13 @@ nonisolated public struct HTMLTextProjection: Sendable {
         }
 
         public func dom(_ projected: NSRange) -> NSRange? {
+            if projected.length == 0 {
+                // A point sits before the character at it, or after the one before it at the end of the text.
+                let location = projected.location
+                if location < projectionToDOM.count, location >= 0, let dom = projectionToDOM[location] { return NSRange(location: dom, length: 0) }
+                if location > 0, location <= projectionToDOM.count, let dom = projectionToDOM[location - 1] { return NSRange(location: dom + 1, length: 0) }
+                return nil
+            }
             guard projected.length > 0, projected.location >= 0, projected.location + projected.length <= projectionToDOM.count else { return nil }
             let mapped = (projected.location..<(projected.location + projected.length)).compactMap { projectionToDOM[$0] }
             guard let first = mapped.first, let last = mapped.last else { return nil }

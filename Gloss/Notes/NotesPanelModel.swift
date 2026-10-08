@@ -36,6 +36,10 @@ final class NotesPanelModel {
 
     private let noteStore: NoteStore
     private(set) var groups: [DocumentNotes] = []
+    /// Every note's thread after its comment, by note, kept current by one observation for all the cards.
+    private(set) var messages: [NoteID: [NoteMessage]] = [:]
+    /// What is typed in each card's follow-up field and not yet added, kept here so a recycled row doesn't lose it.
+    var followUpText: [NoteID: String] = [:]
     /// Notes that just appeared (made, or brought back by Undo); their cards glow briefly so the eye finds them.
     private(set) var arrivedIDs: Set<NoteID> = []
     @ObservationIgnored private var hasLoaded = false
@@ -66,7 +70,7 @@ final class NotesPanelModel {
         }
     }
     @ObservationIgnored private var isRestoringShowResolved = false
-    /// Matched against note text, file name, and resolve message, case-insensitively.
+    /// Matched against note text, file name, resolve message, and the thread's messages, case-insensitively.
     var searchText = ""
     /// Bumped by Notes › Search Notes to put the caret in the search field.
     var searchFocusRequest = 0
@@ -89,6 +93,7 @@ final class NotesPanelModel {
         set { selection = newValue.map { [$0] } ?? [] }
     }
     @ObservationIgnored private var observation: Task<Void, Never>?
+    @ObservationIgnored private var messageObservation: Task<Void, Never>?
 
     init(noteStore: NoteStore) {
         self.noteStore = noteStore
@@ -112,6 +117,16 @@ final class NotesPanelModel {
             isRestoringShowResolved = true
             showResolved = stored != "0"
             isRestoringShowResolved = false
+        }
+        messages = noteStore.allMessagesNow()
+        let messageStream = noteStore.observeAllMessages()
+        messageObservation?.cancel()
+        messageObservation = Task { [weak self] in
+            do {
+                for try await messages in messageStream { self?.messages = messages }
+            } catch {
+                Log.notes.error("notes panel message observation failed: \(error, privacy: .public)")
+            }
         }
         let stream = noteStore.observeDocumentsWithNotes()
         observation = Task { [weak self] in
@@ -140,7 +155,11 @@ final class NotesPanelModel {
 
     func stop() {
         observation?.cancel()
+        messageObservation?.cancel()
     }
+
+    /// A note's messages, oldest first.
+    func messages(for id: NoteID) -> [NoteMessage] { messages[id] ?? [] }
 
     var isFiltering: Bool { filter != .all || !colorFilter.isEmpty || !searchText.trimmingCharacters(in: .whitespaces).isEmpty || isHidingResolved }
 
@@ -163,7 +182,7 @@ final class NotesPanelModel {
         let query = search.trimmingCharacters(in: .whitespaces)
         if !query.isEmpty {
             return EmptyCopy(symbol: "magnifyingglass", title: "No notes match “\(query)”",
-                             message: "Search looks through comments, file names, and agents' replies.", action: "Clear Search")
+                             message: "Search looks through comments, file names, and every message in a thread.", action: "Clear Search")
         }
         if hidingResolved, filter == .all, colors.isEmpty {
             return EmptyCopy(symbol: "checkmark.circle", title: "Every note is resolved",
@@ -199,13 +218,13 @@ final class NotesPanelModel {
     /// their first note under that sort (so "newest" lists the document with the newest note first).
     var visibleGroups: [DocumentNotes] {
         let needle = searchText.trimmingCharacters(in: .whitespaces)
-        func contains(_ text: String?) -> Bool { text?.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        func contains(_ text: String?) -> Bool { Self.contains(text, needle) }
         let filtered = groups.compactMap { group -> DocumentNotes? in
             let fileMatches = !needle.isEmpty && contains(group.document.fileName)
             let notes = group.notes.filter { note in
                 listed(in: filter, note)
                     && (colorFilter.isEmpty || colorFilter.contains(note.color))
-                    && (needle.isEmpty || fileMatches || contains(note.body) || contains(note.resolveMessage))
+                    && (needle.isEmpty || fileMatches || textMatches(note, needle))
             }
             return notes.isEmpty ? nil : DocumentNotes(document: group.document, notes: notes.sorted(by: ordering))
         }
@@ -219,6 +238,16 @@ final class NotesPanelModel {
             guard let a = lhs.notes.first, let b = rhs.notes.first else { return false }
             return ordering(a, b)
         }
+    }
+
+    nonisolated private static func contains(_ text: String?, _ needle: String) -> Bool {
+        text?.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+
+    /// The note's own words match: its comment, a resolve message, or any message in its thread.
+    private func textMatches(_ note: Note, _ needle: String) -> Bool {
+        Self.contains(note.body, needle) || Self.contains(note.resolveMessage, needle)
+            || messages(for: note.id).contains { Self.contains($0.body, needle) }
     }
 
     /// Open work: anything not resolved (an agent's question leaves its note open).
@@ -259,22 +288,22 @@ final class NotesPanelModel {
     /// one, and a colour filter or search that still hides it is cleared.
     func makeListed(_ note: Note) {
         let needle = searchText.trimmingCharacters(in: .whitespaces)
-        func contains(_ text: String?) -> Bool { text?.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
         if !listed(in: filter, note) {
             filter = .all
             if !showResolved, !Self.isOpen(note) { showResolved = true }
         }
         if !colorFilter.isEmpty, !colorFilter.contains(note.color) { colorFilter = [] }
         let fileName = groups.first { group in group.notes.contains { $0.id == note.id } }?.document.fileName
-        if !needle.isEmpty, !contains(fileName), !contains(note.body), !contains(note.resolveMessage) { searchText = "" }
+        if !needle.isEmpty, !Self.contains(fileName, needle), !textMatches(note, needle) { searchText = "" }
     }
 
     private func matches(_ filter: Filter, _ note: Note) -> Bool {
         let state = note.state
         return switch filter {
         case .all: true
-        case .drafts: state == .draft
-        case .sent: state == .sent
+        case .drafts: Self.isUnsent(note)
+        // Waiting on the agent: a question back, or a follow-up still to send, is the user's turn.
+        case .sent: state == .sent && !note.waitingOnUser && !note.hasUnsentFollowUps
         case .resolved: state == .resolved
         case .attention: note.needsAttention
         }
@@ -294,7 +323,11 @@ final class NotesPanelModel {
     /// Drafts first: what still needs sending is what the panel is for.
     private static func rank(_ state: NoteState) -> Int { NoteState.allCases.firstIndex(of: state) ?? 0 }
 
-    var draftCount: Int { groups.reduce(0) { $0 + $1.notes.filter { $0.state == .draft }.count } }
+    /// Drafts, and notes with a follow-up not yet sent: what Send would hand over.
+    var draftCount: Int { groups.reduce(0) { $0 + $1.notes.filter(Self.isUnsent).count } }
+
+    /// Something in the note hasn't left the app: it is a draft, or has a follow-up not yet sent.
+    nonisolated static func isUnsent(_ note: Note) -> Bool { note.state == .draft || note.hasUnsentFollowUps }
 
     /// One line about a note's latest delivery for its card: where it went and when, or that it failed.
     /// Who a note was sent to, for naming the agent that answered it when the reply doesn't say. The clipboard is
@@ -339,7 +372,8 @@ final class NotesPanelModel {
     }
 
     /// What each bulk action would touch among `notes`: only notes the action makes sense for.
-    nonisolated static func sendable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent } }
+    /// Sendable: drafts and sent notes (sent again), and any note with a follow-up waiting, an orphan's too.
+    nonisolated static func sendable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent || $0.hasUnsentFollowUps } }
     nonisolated static func resolvable(_ notes: [Note]) -> [Note] { notes.filter { $0.state != .resolved } }
     /// Notes that can go back to drafts: resolved ones, and sent ones (#13).
     nonisolated static func reopenable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .resolved || $0.state == .sent } }
@@ -475,20 +509,54 @@ final class NotesPanelModel {
         undoFailure = nil
     }
 
-    /// Answers an agent's question with a follow-up, unsent until the note is sent. Sending stays the person's
-    /// choice; nothing goes to the agent from here. Returns false when the follow-up could not be added (the note
-    /// is gone), so the card can keep what was typed.
+    /// Adds a follow-up to a note's thread, unsent until the note is sent: an answer to the agent's question, or
+    /// anything more to say (on a resolved note it reopens the thread). Sending stays the person's choice; nothing
+    /// goes to the agent from here. Returns false when it could not be added (the note is gone), so the card keeps
+    /// what was typed.
     @discardableResult
-    func reply(to id: NoteID, with answer: String) async -> Bool {
-        let answer = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !answer.isEmpty else { return false }
+    func addFollowUp(to id: NoteID, _ text: String) async -> Bool {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return false }
         do {
-            try await noteStore.addFollowUp(id, body: answer)
+            try await noteStore.addFollowUp(id, body: text)
             return true
         } catch {
-            Log.notes.error("reply failed: \(error, privacy: .public)")
+            Log.notes.error("follow-up failed: \(error, privacy: .public)")
             return false
         }
+    }
+
+    /// Adds what is typed in a card's follow-up field and clears it; the text stays when it couldn't be added.
+    @discardableResult
+    func commitFollowUp(for id: NoteID) async -> Bool {
+        // Taken out of the field before the write, so a second Return while it is in flight adds nothing twice.
+        guard let text = followUpText.removeValue(forKey: id) else { return false }
+        if await addFollowUp(to: id, text) { return true }
+        // Not added: what was typed comes back, ahead of anything typed meanwhile.
+        followUpText[id] = text + (followUpText[id].map { "\n" + $0 } ?? "")
+        return false
+    }
+
+    /// Changes a follow-up not yet sent; a blank one is deleted. False when it was sent meanwhile.
+    @discardableResult
+    func updateFollowUp(_ id: MessageID, _ text: String) async -> Bool {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            if text.isEmpty { try await noteStore.deleteFollowUp(id) } else { try await noteStore.updateFollowUp(id, body: text) }
+            return true
+        } catch {
+            Log.notes.error("follow-up edit failed: \(error, privacy: .public)")
+            return false
+        }
+    }
+
+    func deleteFollowUp(_ id: MessageID) async {
+        do { try await noteStore.deleteFollowUp(id) } catch { Log.notes.error("follow-up delete failed: \(error, privacy: .public)") }
+    }
+
+    /// Puts a moved note back where it was before its first move.
+    func restoreOriginalPlace(_ id: NoteID) async {
+        do { try await noteStore.restoreOriginalPlace(id) } catch { Log.notes.error("restore original place failed: \(error, privacy: .public)") }
     }
 
     func reopen(_ id: NoteID) async {

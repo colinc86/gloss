@@ -28,8 +28,9 @@ public final class SourceTextView: NSTextView {
         DispatchQueue.main.async { [weak self] in self?.onFocusChange?() }
         return resigned
     }
-    /// The character under the pointer as it moves (nil when it leaves), for note peeks.
-    var onHoverCharacter: ((Int?) -> Void)?
+    /// The character under the pointer as it moves (nil when it leaves), and the insertion point when the pointer is
+    /// within a few points of it, for note peeks.
+    var onHoverCharacter: ((_ index: Int?, _ caret: Int?) -> Void)?
     private var hoverTracking: NSTrackingArea?
 
     override public func updateTrackingAreas() {
@@ -44,26 +45,28 @@ public final class SourceTextView: NSTextView {
         super.mouseMoved(with: event)
         // No peeks while a button is down (selecting) or text is selected.
         guard NSEvent.pressedMouseButtons == 0, selectedRange().length == 0 else {
-            onHoverCharacter?(nil)
+            onHoverCharacter?(nil, nil)
             return
         }
         let point = convert(event.locationInWindow, from: nil)
         let index = characterIndexForInsertion(at: point)
+        // A removal point is a 2 pt caret: within 3 pt of it counts as over it.
+        let caret = caretRect(at: index).map { $0.insetBy(dx: -3, dy: 0).contains(point) } == true ? index : nil
         // Insertion points snap to the nearest gap; only report a character the pointer is actually over.
         if index < (string as NSString).length, firstRect(forCharacterRange: NSRange(location: index, length: 1), actualRange: nil)
             .insetBy(dx: -2, dy: -2).contains(NSEvent.mouseLocation) {
-            onHoverCharacter?(index)
+            onHoverCharacter?(index, caret)
         } else if index > 0, firstRect(forCharacterRange: NSRange(location: index - 1, length: 1), actualRange: nil)
             .insetBy(dx: -2, dy: -2).contains(NSEvent.mouseLocation) {
-            onHoverCharacter?(index - 1)
+            onHoverCharacter?(index - 1, caret)
         } else {
-            onHoverCharacter?(nil)
+            onHoverCharacter?(nil, caret)
         }
     }
 
     override public func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        onHoverCharacter?(nil)
+        onHoverCharacter?(nil, nil)
     }
 
     // A window torn down with the editor still in it frees the view without `viewWillMove(toWindow: nil)`.

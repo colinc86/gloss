@@ -223,6 +223,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         func rect(for range: NSRange) -> CGRect? {
             guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager,
                   let container = textView.enclosingScrollView else { return nil }
+            if range.length == 0, let caret = textView.caretRect(at: range.location) { return textView.topLeftWindowRect(caret) }
             let documentStart = contentManager.documentRange.location
             guard let from = contentManager.location(documentStart, offsetBy: range.location),
                   let to = contentManager.location(documentStart, offsetBy: range.location + range.length),

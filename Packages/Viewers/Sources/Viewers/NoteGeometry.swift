@@ -18,6 +18,15 @@ public final class NoteGeometry {
     public func changed() {
         onChange?()
     }
+
+    /// How wide a removal point's caret is drawn: wide enough to see and to aim a path at.
+    public static let caretWidth: CGFloat = 2
+
+    /// The caret drawn for a removal point (a zero-length note), centred on the insertion point's segment and as
+    /// tall as its line.
+    public static func caretBar(at segment: CGRect) -> CGRect {
+        CGRect(x: segment.minX - caretWidth / 2, y: segment.minY, width: caretWidth, height: segment.height)
+    }
 }
 
 extension NSTextView {
@@ -39,7 +48,14 @@ extension NSTextView {
         let visible = visibleRect
         let inset = textContainerInset
         var result: [NoteID: [CGRect]] = [:]
-        for (id, range) in ranges where range.length > 0 {
+        for (id, range) in ranges {
+            // A removal point is its caret, so a path reaches where the text was.
+            if range.length == 0 {
+                guard range.location >= visibleStart, range.location <= visibleEnd, let caret = caretRect(at: range.location) else { continue }
+                let clipped = caret.intersection(visible)
+                if !clipped.isNull, clipped.height > 0, let rect = topLeftWindowRect(clipped) { result[id, default: []].append(rect) }
+                continue
+            }
             let lower = max(range.location, visibleStart)
             let upper = min(range.location + range.length, visibleEnd)
             guard upper > lower,
@@ -55,5 +71,27 @@ extension NSTextView {
             if !rects.isEmpty { result[id, default: []] += rects }
         }
         return result
+    }
+}
+
+extension NSTextView {
+    /// The caret of a removal point at `offset`: the insertion point there, `NoteGeometry.caretWidth` wide and as
+    /// tall as its line, in this view's coordinates (container inset applied). Nil when TextKit has no segment there.
+    func caretRect(at offset: Int) -> CGRect? {
+        guard let layoutManager = textLayoutManager, let contentManager = layoutManager.textContentManager,
+              let location = contentManager.location(contentManager.documentRange.location, offsetBy: offset) else { return nil }
+        var segment: CGRect?
+        // `.standard` gives an empty range its insertion point, as a text view's own caret is found.
+        layoutManager.enumerateTextSegments(in: NSTextRange(location: location), type: .standard, options: [.rangeNotRequired]) { _, frame, _, _ in
+            segment = frame
+            return false
+        }
+        guard var frame = segment else { return nil }
+        if frame.height < 1 {
+            // After the last line TextKit gives the caret no height: use a line of the editor's font.
+            let font = self.font ?? Theme.editorFont
+            frame.size.height = (font.ascender - font.descender + font.leading).rounded(.up)
+        }
+        return NoteGeometry.caretBar(at: frame.offsetBy(dx: textContainerInset.width, dy: textContainerInset.height))
     }
 }

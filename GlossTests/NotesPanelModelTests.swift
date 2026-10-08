@@ -237,7 +237,7 @@ struct NotesPanelModelTests {
         let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
         _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
         try await store.agentReply(note.id, body: "Which section?", asks: true, agent: "claude")
-        #expect(await model.reply(to: note.id, with: "  The install steps \n"))
+        #expect(await model.addFollowUp(to: note.id, "  The install steps \n"))
         let replied = try #require(try await store.note(note.id))
         #expect(replied.state == .sent && replied.hasUnsentFollowUps && replied.waitingOnUser, "the user's turn until it is sent")
         #expect(replied.body == "Expand this section", "the comment is left as it was")
@@ -245,13 +245,10 @@ struct NotesPanelModelTests {
         #expect(followUp.body == "The install steps" && followUp.author == .user && !followUp.isSent)
     }
 
-    @Test func anAnsweredQuestionReadsAsAConversationOnTheCard() {
-        let body = "Tighten *this*\n\nAgent asked: Shorter?\nAnswer: Agent asked: no, plainer"
-        let styled = NoteCard.styledBody(body)
-        #expect(String(styled.characters) == "Tighten this\n\nAgent asked: Shorter?\nAnswer: Agent asked: no, plainer")
-        let colored = styled.runs.compactMap { run in run.foregroundColor.map { _ in String(styled[run.range].characters) } }
-        // Only the labels at the start of a line, never the same words inside an answer.
-        #expect(colored == ["Agent asked:", "Answer:"])
+    @Test func aCommentKeepsItsInlineMarkdownAndNothingElse() {
+        let styled = NoteCard.styledBody("Tighten *this*\nAgent asked: Shorter?")
+        #expect(String(styled.characters) == "Tighten this\nAgent asked: Shorter?")
+        #expect(styled.runs.allSatisfy { $0.foregroundColor == nil }, "a comment is only the comment: no turn labels are coloured in it")
     }
 
     @Test func anAnswerNeverTouchesTheComment() async throws {
@@ -262,20 +259,100 @@ struct NotesPanelModelTests {
         try await store.agentReply(note.id, body: "Which section?", asks: true, agent: "claude")
         // Edited elsewhere while the field was open: the comment keeps the edit, and the answer is its own turn.
         try await store.updateBody(note.id, body: "Expand the setup section")
-        #expect(await model.reply(to: note.id, with: "Mac"))
-        #expect(await model.reply(to: note.id, with: "and Linux"))
+        #expect(await model.addFollowUp(to: note.id, "Mac"))
+        #expect(await model.addFollowUp(to: note.id, "and Linux"))
         #expect(try await store.note(note.id)?.body == "Expand the setup section")
         #expect(try await store.messages(for: note.id).map(\.body) == ["Which section?", "Mac", "and Linux"])
-        #expect(await model.reply(to: NoteID.new(), with: "Lost") == false, "a note that is gone takes no answer")
+        #expect(await model.addFollowUp(to: NoteID.new(), "Lost") == false, "a note that is gone takes no answer")
+    }
+
+    /// Threads in the panel: a follow-up not yet sent counts as a draft, an agent's question as the user's turn
+    /// (Attention, not Sent), and search reads every message.
+    @Test func followUpsAndQuestionsAreCountedAndFoundAsThreads() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+        await waitUntil { model.count(for: .sent) == 1 }
+        #expect(model.draftCount == 1 && model.count(for: .sent) == 1, "sent and waiting on the agent")
+
+        try await store.agentReply(note.id, body: "Which platform, Mac or Linux?", asks: true, agent: "claude")
+        await waitUntil { model.count(for: .attention) == 1 && model.messages(for: note.id).count == 1 }
+        #expect(model.count(for: .attention) == 1 && model.count(for: .sent) == 0, "a question is the user's turn")
+        model.searchText = "platform"
+        #expect(bodies(model) == ["Expand this section"], "search reads the agent's messages")
+        model.searchText = ""
+
+        model.followUpText[note.id] = "  Both \n"
+        #expect(await model.commitFollowUp(for: note.id))
+        #expect(model.followUpText[note.id] == nil, "the field clears once the follow-up is in the thread")
+        await waitUntil { model.draftCount == 2 }
+        #expect(model.draftCount == 2 && model.count(for: .drafts) == 2, "a note with an unsent follow-up is sendable")
+        model.filter = .drafts
+        #expect(Set(bodies(model)) == ["Rename the helper", "Expand this section"])
+
+        let followUp = try #require(model.messages(for: note.id).last)
+        #expect(followUp.body == "Both" && !followUp.isSent)
+        #expect(await model.updateFollowUp(followUp.id, "Both, Mac first"))
+        await waitUntil { model.messages(for: note.id).last?.body == "Both, Mac first" }
+        #expect(await model.updateFollowUp(followUp.id, "  "), "a blank edit deletes it")
+        await waitUntil { model.draftCount == 1 }
+        #expect(model.messages(for: note.id).map(\.body) == ["Which platform, Mac or Linux?"] && model.draftCount == 1)
+    }
+
+    /// Return pressed twice while the first follow-up is still being written adds it once; an orphan with a follow-up
+    /// waiting can be sent like any other.
+    @Test func aFollowUpIsAddedOnceAndAnOrphanWithOneIsSendable() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
+        model.followUpText[note.id] = "Once"
+        async let first = model.commitFollowUp(for: note.id)
+        async let second = model.commitFollowUp(for: note.id)
+        let results = await [first, second]
+        #expect(results.filter { $0 }.count == 1)
+        #expect(try await store.messages(for: note.id).map(\.body) == ["Once"])
+        try await store.markOrphaned(note.id)
+        let orphan = try #require(try await store.note(note.id))
+        #expect(orphan.state == .orphaned && orphan.hasUnsentFollowUps)
+        #expect(NotesPanelModel.sendable([orphan]).count == 1, "its Send is on the card")
+    }
+
+    /// A follow-up that can't be added (the note is gone) goes back into the field.
+    @Test func aFollowUpThatFailsStaysInTheField() async throws {
+        let (model, _) = try await makeModel()
+        defer { model.stop() }
+        let gone = NoteID.new()
+        model.followUpText[gone] = "Still here"
+        #expect(await model.commitFollowUp(for: gone) == false)
+        #expect(model.followUpText[gone] == "Still here")
+    }
+
+    /// A note an agent moved goes back with Restore Original Place, and the thread says both.
+    @Test func aMovedNoteGoesBackToWhereItWasMade() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
+        try await store.applyRelocation(note.id, to: anchor(line: 7), removed: false, author: "claude")
+        await waitUntil { model.groups.flatMap(\.notes).first { $0.id == note.id }?.originalAnchor != nil }
+        await model.restoreOriginalPlace(note.id)
+        let restored = try #require(try await store.note(note.id))
+        #expect(restored.anchor == note.anchor && restored.originalAnchor == nil)
+        await waitUntil { model.messages(for: note.id).count == 2 }
+        let thread = NoteThread(comment: restored.body, messages: model.messages(for: note.id))
+        #expect(thread.entries.compactMap { if case .move(let move) = $0 { move.title } else { nil } } == ["Moved by Claude Code", "Moved back to where it was made"])
+        #expect(thread.turns.isEmpty)
     }
 
     @Test func theAgentsTurnIsHeadedByWhoSpokeAndHow() {
-        #expect(AgentMessageBubble.heading(agent: "claude", needsInput: true) == "Claude Code asks")
-        #expect(AgentMessageBubble.heading(agent: "codex", needsInput: false) == "Codex replied")
-        #expect(AgentMessageBubble.heading(agent: "opencode", needsInput: true) == "OpenCode asks")
-        #expect(AgentMessageBubble.heading(agent: "zed", needsInput: true) == "zed asks", "another client keeps its own name")
-        #expect(AgentMessageBubble.heading(agent: nil, needsInput: true) == "Agent asks")
-        #expect(AgentMessageBubble.heading(agent: "  ", needsInput: false) == "Agent replied")
+        #expect(AgentMessageBubble.heading(agent: "claude", asks: true) == "Claude Code asks")
+        #expect(AgentMessageBubble.heading(agent: "claude", asks: true, waiting: false) == "Claude Code asked", "an answered question")
+        #expect(AgentMessageBubble.heading(agent: "codex", asks: false) == "Codex replied")
+        #expect(AgentMessageBubble.heading(agent: "opencode", asks: true) == "OpenCode asks")
+        #expect(AgentMessageBubble.heading(agent: "zed", asks: true) == "zed asks", "another client keeps its own name")
+        #expect(AgentMessageBubble.heading(agent: nil, asks: true) == "Agent asks")
+        #expect(AgentMessageBubble.heading(agent: "  ", asks: false) == "Agent replied")
     }
 
     @Test func anEmptyListSaysWhyItIsEmpty() {
@@ -328,7 +405,7 @@ struct NotesPanelModelTests {
         let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
         _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered)
         try await store.agentReply(note.id, body: "Which section?", asks: true, agent: "claude")
-        #expect(await model.reply(to: note.id, with: "   ") == false)
+        #expect(await model.addFollowUp(to: note.id, "   ") == false)
         #expect(try await store.messages(for: note.id).count == 1)
         #expect(try await store.note(note.id)?.body == "Expand this section")
     }

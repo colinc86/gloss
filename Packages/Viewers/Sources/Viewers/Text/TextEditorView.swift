@@ -73,7 +73,7 @@ public struct TextEditorView: NSViewRepresentable {
             textView.onAttachedToWindow = { [weak self] in self?.sync() }
             textView.onFocusChange = { [weak self] in self?.updateCurrentLine() }
             textView.structuralExpansion = { [controller] range in controller.structuralExpansion(of: range) }
-            textView.onHoverCharacter = { [weak controller] index in controller?.hover(at: index) }
+            textView.onHoverCharacter = { [weak controller] index, caret in controller?.hover(at: index, caret: caret) }
             controller.rectProvider = { [weak self] range in self?.rect(for: range) }
             controller.topVisibleLocationProvider = { [weak self] in self?.textView?.topVisibleCharacterIndex }
             controller.noteGeometry.viewport = { [weak textView] in textView?.visibleWindowRect() }
@@ -271,6 +271,8 @@ public struct TextEditorView: NSViewRepresentable {
         /// Union of the selection segments for `range`, converted to the container view's coordinates.
         func rect(for range: NSRange) -> CGRect? {
             guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager else { return nil }
+            // A removal point (or a caret) is where its caret is drawn.
+            if range.length == 0, let caret = textView.caretRect(at: range.location) { return textView.topLeftWindowRect(caret) }
             let documentStart = contentManager.documentRange.location
             guard let from = contentManager.location(documentStart, offsetBy: range.location),
                   let to = contentManager.location(documentStart, offsetBy: range.location + range.length),

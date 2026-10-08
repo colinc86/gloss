@@ -18,6 +18,8 @@ final class OverviewRulerView: NSView {
         var color: NoteColor
         var state: NoteState
         var invalidated: Bool
+        /// The note's text was removed: an outlined tick at the point where it was.
+        var isPoint: Bool
         var line: Int
         var start: CGFloat
         var end: CGFloat
@@ -27,10 +29,11 @@ final class OverviewRulerView: NSView {
         let lines = CGFloat(max(1, lineIndex.lineCount))
         // Settled notes underneath, open work on top.
         let order: [NoteState: Int] = [.resolved: 0, .sent: 1, .orphaned: 2, .draft: 3]
-        return highlights.map { highlight in
+        // Text replaced under a note leaves no place to mark, as in the gutter.
+        return highlights.filter { !$0.isInvalidated }.map { highlight in
             let first = lineIndex.position(forUTF16Offset: highlight.range.location).line
             let last = lineIndex.position(forUTF16Offset: highlight.range.location + max(0, highlight.range.length - 1)).line
-            return Mark(noteID: highlight.id, color: highlight.color, state: highlight.state, invalidated: highlight.isInvalidated,
+            return Mark(noteID: highlight.id, color: highlight.color, state: highlight.state, invalidated: highlight.isInvalidated, isPoint: highlight.range.length == 0,
                         line: first, start: CGFloat(first - 1) / lines, end: CGFloat(last) / lines)
         }
         .sorted { (order[$0.state] ?? 0, $0.line) < (order[$1.state] ?? 0, $1.line) }
@@ -60,7 +63,7 @@ final class OverviewRulerView: NSView {
 
     override var isFlipped: Bool { true }
 
-    var hasMarks: Bool { !(controller?.drawnHighlights.isEmpty ?? true) || !(controller?.lineChanges?.isEmpty ?? true) }
+    var hasMarks: Bool { (controller?.drawnHighlights.contains { !$0.isInvalidated } ?? false) || !(controller?.lineChanges?.isEmpty ?? true) }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -108,7 +111,13 @@ final class OverviewRulerView: NSView {
             let rect = NSRect(x: x, y: min(y, track.maxY - 3), width: bounds.width - x - 1.5, height: height)
             let path = NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5)
             let color = Theme.color(for: mark.color)
-            if mark.state == .orphaned || mark.invalidated {
+            if mark.isPoint {
+                // An outlined tick, as the gutter's hollow dot: where the text was, not text.
+                let tick = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 1.5, yRadius: 1.5)
+                color.withAlphaComponent(isHovered ? 1 : max(0.6, Theme.strength(for: mark.state))).setStroke()
+                tick.lineWidth = 1
+                tick.stroke()
+            } else if mark.state == .orphaned || mark.invalidated {
                 color.setStroke()
                 path.lineWidth = 1
                 path.stroke()

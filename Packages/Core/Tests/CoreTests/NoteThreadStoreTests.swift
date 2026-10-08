@@ -22,6 +22,23 @@ struct NoteThreadStoreTests {
         return try #require(try await store.note(note.id))
     }
 
+    /// The notes panel reads every thread through one observation, by note and oldest first.
+    @Test func everyThreadIsObservedAtOnce() async throws {
+        let first = try await sentNote("one", line: 1)
+        let second = try await sentNote("two", line: 2)
+        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "no thread", color: .blue)
+        try await store.agentReply(first.id, body: "Done?", asks: true, agent: "claude")
+        try await store.addFollowUp(first.id, body: "Yes")
+        try await store.agentReply(second.id, body: "Done.", asks: false, agent: "codex")
+        let all = store.allMessagesNow()
+        #expect(Set(all.keys) == [first.id, second.id], "notes without messages are absent")
+        #expect(all[first.id]?.map(\.body) == ["Done?", "Yes"] && all[second.id]?.map(\.body) == ["Done."])
+        var iterator = store.observeAllMessages().makeAsyncIterator()
+        #expect(try await iterator.next() == all)
+        try await store.addFollowUp(second.id, body: "Thanks")
+        #expect(try await iterator.next()?[second.id]?.last?.body == "Thanks")
+    }
+
     @Test func aReplyAndAQuestionKeepTheNoteOpen() async throws {
         let note = try await sentNote()
         try await store.agentReply(note.id, body: "Shortened the intro.", asks: false, agent: "claude")

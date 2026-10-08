@@ -834,18 +834,17 @@ private struct NotePeekCard: View {
                         .font(.caption.weight(.medium).monospacedDigit())
                         .foregroundStyle(.secondary)
                     Spacer(minLength: DS.Space.xs)
-                    let needsInput = note.waitingOnUser
-                    StatusPill(label: needsInput ? "Needs input" : note.state.rawValue.capitalized,
-                               symbol: needsInput ? "questionmark.circle.fill" : note.state.style.symbol,
-                               tint: needsInput ? .orange : note.state.style.tint)
+                    NoteCard.badge(note)
                 }
                 Text((try? AttributedString(markdown: note.body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(note.body))
                     .font(.callout)
                     .lineLimit(6)
-                if note.state == .resolved, let reply = note.resolveMessage, !reply.isEmpty {
-                    Label(reply, systemImage: "checkmark.bubble")
+                // The thread's latest word from the agent, as the card shows it.
+                if let latest = NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id)).latest, latest.speaker == .agent {
+                    let waiting = latest.asks && note.waitingOnUser
+                    Label(latest.text, systemImage: latest.asks ? "questionmark.bubble" : "checkmark.bubble")
                         .font(.caption)
-                        .foregroundStyle(Color.secondary)
+                        .foregroundStyle(waiting ? Color.orange : Color.secondary)
                         .lineLimit(3)
                 }
                 HStack(spacing: DS.Space.xxs) {

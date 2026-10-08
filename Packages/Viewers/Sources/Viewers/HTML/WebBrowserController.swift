@@ -728,7 +728,8 @@ public final class WebBrowserController {
                 if case .success(let value) = result, let map = value as? [String: Any] {
                     current.elementRects = self.windowRects(map)
                 } else {
-                    current.elementRects = [:]
+                    // The text pass's carets are still drawn: only the element boxes are gone.
+                    current.elementRects = current.elementRects.filter { self.caretIDs.contains($0.key) }
                 }
                 current.noteGeometry.changed()
             }
@@ -745,6 +746,17 @@ public final class WebBrowserController {
         var css = ""
         for (index, highlight) in current.source.drawnHighlights.enumerated() where !highlight.isInvalidated {
             guard let dom = current.domRange(forSource: highlight.range) else { continue }
+            if highlight.range.length == 0 {
+                // The note's text was removed: a caret where it was, in its colour at its state's strength.
+                var color = NSColor.clear
+                NSAppearance(named: .aqua)?.performAsCurrentDrawingAppearance {
+                    let strength = current.source.isFocused(highlight.id) ? 1 : Theme.strength(for: highlight.state)
+                    color = Theme.color(for: highlight.color).withAlphaComponent(strength).usingColorSpace(.sRGB) ?? .clear
+                }
+                list.append(["id": highlight.id.rawValue, "start": dom.location, "end": dom.location,
+                             "caret": "rgba(\(Int(color.redComponent * 255)), \(Int(color.greenComponent * 255)), \(Int(color.blueComponent * 255)), \(color.alphaComponent))"])
+                continue
+            }
             // A page brings its own (usually light) background, so its tints are the light ones whatever the app's
             // appearance; resolved explicitly, since this runs outside any drawing context.
             var color = NSColor.clear
@@ -755,8 +767,28 @@ public final class WebBrowserController {
             list.append(["name": name, "start": dom.location, "end": dom.location + dom.length])
             css += "::highlight(\(name)) { background-color: rgba(\(Int(color.redComponent * 255)), \(Int(color.greenComponent * 255)), \(Int(color.blueComponent * 255)), \(color.alphaComponent)); }\n"
         }
-        webView.callAsyncJavaScript("window.__cc && window.__cc.highlight(list, css)", arguments: ["list": list, "css": css], in: nil, in: .defaultClient)
+        let started = current
+        let pointIDs = Set(current.source.drawnHighlights.lazy.filter { $0.range.length == 0 }.map(\.id))
+        webView.callAsyncJavaScript("return window.__cc ? window.__cc.highlight(list, css) : {}", arguments: ["list": list, "css": css], in: nil, in: .defaultClient) { [weak self] result in
+            MainActor.assumeIsolated {
+                guard let self, let current = self.current, current === started else { return }
+                // Carets share the element boxes' map, so paths reach them; the ones drawn before are replaced.
+                var rects = current.elementRects.filter { !pointIDs.contains($0.key) && !self.caretIDs.contains($0.key) }
+                if case .success(let value) = result, let map = value as? [String: Any] {
+                    let carets = self.windowRects(map)
+                    rects.merge(carets) { _, new in new }
+                    self.caretIDs = Set(carets.keys)
+                } else {
+                    self.caretIDs = []
+                }
+                if rects != current.elementRects { current.elementRects = rects }
+                current.noteGeometry.changed()
+            }
+        }
     }
+
+    /// The notes drawn as carets in the last text pass, so the next pass takes their rects away before adding its own.
+    @ObservationIgnored private var caretIDs: Set<NoteID> = []
 
     private func applyPendingScroll() {
         guard isLoaded, let current, appliedScrollVersion != current.pendingScrollVersion, let pending = current.pendingScroll,

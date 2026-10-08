@@ -39,6 +39,8 @@ final class LineNumberGutterView: NSView {
     static let maxLanes = 3
     static let barWidth: CGFloat = 3
     static let laneGap: CGFloat = 2
+    /// A removal point's hollow dot.
+    static let pointDiameter: CGFloat = 6
 
     /// Assigns each highlight (by start and end line) the first lane free at its start; extras share the last lane.
     static func lanes(for spans: [(id: NoteID, start: Int, end: Int)]) -> [NoteID: Int] {
@@ -74,7 +76,7 @@ final class LineNumberGutterView: NSView {
         hoveredNoteID = hit
         needsDisplay = true
         if let hit, let range = controller?.highlights.first(where: { $0.id == hit })?.range {
-            controller?.hover(at: range.location)
+            controller?.hover(at: range.length > 0 ? range.location : nil, caret: range.length > 0 ? nil : range.location)
         } else {
             controller?.hover(at: nil)
         }
@@ -156,16 +158,33 @@ final class LineNumberGutterView: NSView {
             return (highlight.id, start.line, max(start.line, last))
         }
         let lanes = Self.lanes(for: spans)
-        for span in spans where span.end >= firstVisible && span.start <= lastVisible {
+        for span in spans {
             guard let highlight = controller.highlights.first(where: { $0.id == span.id }) else { continue }
+            let hovered = span.id == hoveredNoteID
+            let lane = CGFloat(lanes[span.id] ?? 0)
+            let color = Theme.color(for: highlight.color)
+            // A removal point is a hollow dot on its caret's row: there is no text left for a bar to span. Placed by
+            // the caret itself, since the empty last line after a final newline has no layout fragment of its own.
+            if highlight.range.length == 0 {
+                let diameter = Self.pointDiameter + (hovered ? 1.5 : 0)
+                guard let caret = textView.caretRect(at: highlight.range.location) else { continue }
+                let caretY = caret.midY - visible.minY
+                guard caretY >= -diameter, caretY <= bounds.height + diameter else { continue }
+                let dot = NSRect(x: 3 + lane * (Self.barWidth + Self.laneGap) + Self.barWidth / 2 - diameter / 2, y: caretY - diameter / 2,
+                                 width: diameter, height: diameter).insetBy(dx: 0.75, dy: 0.75)
+                let ring = NSBezierPath(ovalIn: dot)
+                ring.lineWidth = 1.5
+                color.withAlphaComponent(hovered || highlight.needsReview ? 1 : 0.9 * Theme.strength(for: highlight.state)).setStroke()
+                ring.stroke()
+                markerRects.append((dot.insetBy(dx: -3, dy: -3), span.id))
+                continue
+            }
+            guard span.end >= firstVisible, span.start <= lastVisible else { continue }
             let topLine = max(span.start, firstVisible), bottomLine = min(span.end, lastVisible)
             guard let top = (topLine...bottomLine).lazy.compactMap({ lineFrames[$0]?.top }).first,
                   let bottom = (topLine...bottomLine).reversed().lazy.compactMap({ lineFrames[$0]?.bottom }).first else { continue }
-            let hovered = span.id == hoveredNoteID
-            let lane = CGFloat(lanes[span.id] ?? 0)
             let width = Self.barWidth + (hovered ? 1.5 : 0)
             let bar = NSRect(x: 3 + lane * (Self.barWidth + Self.laneGap) - (hovered ? 0.75 : 0), y: top + 2, width: width, height: max(4, bottom - top - 4))
-            let color = Theme.color(for: highlight.color)
             let path = NSBezierPath(roundedRect: bar, xRadius: width / 2, yRadius: width / 2)
             switch highlight.state {
             case .orphaned:

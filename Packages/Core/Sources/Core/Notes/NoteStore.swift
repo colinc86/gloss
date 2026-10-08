@@ -848,6 +848,22 @@ public struct NoteStore: Sendable {
         Self.stream(ValueObservation.tracking { db in try Self.messages(noteID, db) }, in: queue)
     }
 
+    /// Observes every note's messages, by note and oldest first: one observation for the notes panel, rather than one
+    /// per card. Notes without messages are absent.
+    public func observeAllMessages() -> AsyncThrowingStream<[NoteID: [NoteMessage]], any Error> {
+        Self.stream(ValueObservation.tracking { db in try Self.allMessages(db) }, in: queue)
+    }
+
+    /// The same, read on the caller's thread: the panel's first frame, before the observation delivers.
+    public func allMessagesNow() -> [NoteID: [NoteMessage]] {
+        (try? queue.read { db in try Self.allMessages(db) }) ?? [:]
+    }
+
+    static func allMessages(_ db: Database) throws -> [NoteID: [NoteMessage]] {
+        let records = try NoteMessageRecord.order(Column("note_id"), Column("created_at"), Column("id")).fetchAll(db)
+        return Dictionary(grouping: records.map(NoteMessage.init(record:)), by: \.noteID)
+    }
+
     /// Observes every document that has notes, for the notes panel.
     public func observeDocumentsWithNotes() -> AsyncThrowingStream<[DocumentNotes], any Error> {
         Self.stream(ValueObservation.tracking { db in

@@ -58,4 +58,35 @@ struct NoteGeometryTests {
         #expect(rects[far]?.count == 1)
         #expect(rects[single] == nil)
     }
+
+    /// A note whose text was removed is a caret where it was: one rect, 2 pt wide and a line tall, so its path
+    /// reaches it; the backdrop draws the same rect.
+    @Test func aRemovalPointIsItsCaret() throws {
+        #expect(NoteGeometry.caretBar(at: CGRect(x: 10, y: 20, width: 0, height: 15)) == CGRect(x: 9, y: 20, width: 2, height: 15))
+        let text = "first line\nsecond line\nthird line"
+        let controller = TextEditorController(text: text)
+        let point = NoteID.new(), span = NoteID.new()
+        controller.highlights = [
+            TextHighlight(id: point, range: NSRange(location: 17, length: 0), color: .orange, state: .sent),
+            TextHighlight(id: span, range: NSRange(location: 11, length: 6), color: .blue, state: .draft),
+        ]
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
+        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        window.layoutIfNeeded()
+        window.displayIfNeeded()
+
+        let rects = controller.noteGeometry.visibleNoteRects()
+        let caret = try #require(rects[point]?.first)
+        #expect(rects[point]?.count == 1)
+        #expect(caret.width == NoteGeometry.caretWidth)
+        #expect(caret.height > 8, "as tall as its line")
+        // "second" spans 11..<17: the caret sits at its end, on the same line.
+        let word = try #require(rects[span]?.first)
+        #expect(abs(caret.midX - word.maxX) < 1.5)
+        #expect(abs(caret.midY - word.midY) < 2)
+        #expect(controller.rect(for: NSRange(location: 17, length: 0)).map { abs($0.midX - caret.midX) < 0.5 } == true, "the peek points at the caret")
+    }
 }

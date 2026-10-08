@@ -56,6 +56,20 @@ struct HTMLTextProjectionTests {
         #expect((projection.text as NSString).substring(with: whole) == "Fish & chips & peas — done", "a whole source line maps to its text")
     }
 
+    /// A note whose text was removed keeps length 0 all the way to the DOM, so the page draws a caret, not a letter.
+    @Test func aPointStaysAPoint() throws {
+        let source = "<p>Fish &amp; chips</p>"
+        let projection = HTMLTextProjection(source)
+        let chips = (source as NSString).range(of: "chips")
+        let point = try #require(projection.projectedRange(forSource: NSRange(location: chips.location, length: 0)))
+        #expect(point.length == 0)
+        #expect((projection.text as NSString).substring(from: point.location) == "chips")
+        let alignment = projection.alignment(withDOM: projection.text)
+        #expect(alignment.dom(point) == NSRange(location: point.location, length: 0))
+        let end = try #require(projection.projectedRange(forSource: NSRange(location: chips.location + chips.length, length: 0)))
+        #expect(alignment.dom(end) == NSRange(location: (projection.text as NSString).length, length: 0), "after the last character")
+    }
+
     @Test func crlfCountsAsOneNewline() {
         let projection = HTMLTextProjection("<p>a\r\nb</p>")
         #expect(projection.text == "a\nb")

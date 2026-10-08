@@ -186,7 +186,10 @@ path. Dropping on the Dock icon is not supported yet.
 ### Shared components
 
 - **StatusPill**: symbol + label in a 14% tinted capsule. States: Draft (dashed circle, secondary), Sent (paper
-  plane, blue), Resolved (check, green), Needs input (question mark, orange), Orphaned (warning, orange).
+  plane, blue: waiting on the agent), Resolved (check, green), Your turn (orange: a question mark while an agent waits
+  on an answer, the draft's dashed circle while a follow-up waits to be sent), Orphaned (warning, orange; it wins over
+  Your turn, since nothing else matters until the note has a place). The page's peek uses the same pill
+  (`NoteCard.badge`).
 - **InlineIconButton**: 22×20 icon button with a tooltip and accessibility label. At rest 55% secondary; full
   secondary when its card is hovered or selected; primary with a soft fill under the pointer. `prominent` makes the
   one primary action accent-filled; destructive turns red only under the pointer.
@@ -325,14 +328,37 @@ path. Dropping on the Dock icon is not supported yet.
   on compact settled cards; regions, cells, and whole-file notes have none.
   The pointer never changes a card's size: a card that grows under it pushes the one below and flickers in and out
   of hover. Hover lights the rail's glow, the action icons and the note's path on the page, nothing more.
-  The thread (`NoteThread`) is the comment, then each "Agent asked:" / "Answer:" exchange, then the agent's message
-  if it resolved the note with one. Turns start only where answering writes them (after a blank line, or an answer
-  right under its question), so a comment line that begins "Answer:" stays text. A card shows the comment (two
-  lines) and the latest turn: the agent's bubble (four lines), or your "Answer:" line. A quiet "› Show conversation
-  (N)" link, the chevron that turns as the search results' file headers do, opens every turn and all the text in one
-  smooth animation; it's there when there are earlier turns or text was cut short ("Show more" when only text was).
-  Whether text is cut is measured on unseen collapsed and uncut copies (`TruncatingText`), so the link stays put
-  while the card is open. Editing works on the whole body.
+  The thread (`NoteThread`) is the comment, then the note's messages in order (2026-10-07): turns (the agent's
+  replies and questions, the user's follow-ups) and moves. The panel reads every note's messages through one
+  observation (`NotesPanelModel.messages`), so a card never opens its own.
+  Collapsed, a card shows the comment (two lines), the move that took the note from where it was made while it is
+  still away, and the latest turn: the agent's bubble (four lines) or the user's follow-up. A quiet "› Show
+  conversation (N)" link, the chevron that turns as the search results' file headers do, opens every turn and move
+  and all the text in one smooth animation; it's there when there is more than the collapsed card shows ("Show more"
+  when only text was cut, and always once open, to close it). Whether text is cut is measured on unseen collapsed
+  and uncut copies (`TruncatingText`), so the link stays put while the card is open.
+  Open, the card ends with the follow-up field (below). Edit… and the pencil edit only the comment; the turns are
+  their own messages.
+- **The user's turn in a thread**: a follow-up is a block in the accent colour at 6%, inset from the leading edge
+  so the two voices read apart, headed "You" in the accent colour. Until it is sent it reads "You · Not sent" with
+  "Not sent" in orange, a 10% fill and a dashed accent outline (a draft's dash), and it carries its own Edit (in
+  place; Return saves, an emptied one is deleted, Escape cancels) and Delete. Sent, it is plain.
+- **Following up** (replaces Reply to Agent, 2026-10-07): an open card ends with a field, the composer's own
+  (`NoteBodyEditor`), placeholder "Follow up" (or "Your answer", outlined orange, while an agent waits on one).
+  Return adds what is typed to the thread as an unsent follow-up and clears the field; Shift-Return starts a new
+  line; Escape clears it. Nothing leaves the app until the card's Send (the paper plane, lit while a follow-up waits)
+  or any other Send takes the note, so the person sees what goes before it goes. A follow-up on a resolved note
+  reopens it. The typed text lives in `NotesPanelModel.followUpText`, keyed by note, so a recycled row never loses
+  it; if the follow-up can't be added, the text stays with an orange line saying so. The field waits to be clicked:
+  only Follow Up… (menu, the ↩ action icon, accessibility action) opens the card and puts the caret in it, so
+  opening a card never takes the keyboard. Follow Up… is offered on every note but a draft never sent, whose
+  comment is edited instead; its action icon is the accent-filled one while an agent waits on an answer.
+- **Moves** (2026-10-07): when an agent says where its change now is, or the note's text was removed, the thread
+  shows one quiet `.caption` secondary line where it happened: "Moved by Claude Code", "Removed by Codex", "Text
+  removed" (Gloss found the text gone, so no agent is named), "Moved back to where it was made". Its chevron shows
+  the text the note was on, struck through in tertiary monospace on the excerpt's well, and, for the move that brought
+  it where it is, a small Restore Original Place button; the card's menu has Restore Original Place too while the
+  note is away. The excerpt well shows the current text, or "Removed" with a minus circle for a removal point.
   Resolved notes (not ones where the agent asked a question) rest as one line: anchor, pill, the first line of the
   comment, and their latest turn if they have one. Selected or opened, they show the excerpt, delivery line and
   actions, so finished work stays in reach without crowding the open work above it. In the default sort (Position in File), documents
@@ -346,11 +372,11 @@ path. Dropping on the Dock icon is not supported yet.
   own colour at 20% for 1.6 s, then fades over 0.9 s, so the panel answers "where did it go?" the way Things and
   Linear light a new item. Nothing glows on the first load, when everything is new and nothing arrived
   (`NotesPanelModel.arrivals`).
-- **The agent's turn** (`AgentMessageBubble`): what an agent said when it resolved a note is a bubble under the
-  comment, its small tail pointing up at what it answers, headed by who spoke and how ("claude asks", "codex replied";
-  "Agent" when the note was never sent from here). A question is tinted orange with the text in primary, since it
-  asks for you; a finished reply is a quiet grey. It arrives on the bouncy curve, growing from its tail, and its text
-  is selectable.
+- **The agent's turn** (`AgentMessageBubble`): each of an agent's messages is a bubble, its small tail pointing up
+  at what it answers, headed by who spoke and how ("Claude Code asks", "Codex replied", "Claude Code asked" once
+  answered; "Agent" when the note was never sent from here). Only the question still waiting on the user is tinted
+  orange with the text in primary, since it asks for you; replies and answered questions are a quiet grey. The latest
+  arrives on the bouncy curve, growing from its tail, and its text is selectable.
 - **Sending takes off** (`LaunchingPlane`): when a send starts, from the button or ⌘↩, the Send button's paper plane
   flies up and away, tilting 14° and shrinking as it fades (an ease-in over 0.32 s, like something thrown). A small
   spinner fades into its place after 0.2 s while the packet is in flight; when the send is over, a fresh plane glides
@@ -377,17 +403,6 @@ path. Dropping on the Dock icon is not supported yet.
   and the field's border takes the note's colour. It doesn't depend on the note being on screen in the viewer (the
   composer popover is for new notes and re-anchoring). If the comment changed while it was open (an agent's answer was
   added), Save refuses with an orange line and keeps the typing; a second Save then means it.
-- **Answering a question**: when an agent resolves a note with a question, the card leads its action row with an
-  accent Reply (↩), also first in the context menu and the card's accessibility actions. It opens a one-line field
-  under the question, already focused, with a Reply button beside it; Return answers, Escape puts it away. Answering
-  adds the exchange to the comment ("Agent asked: … / Answer: …") and makes the note a draft again, so the card turns
-  into an ordinary draft with Send first. Sending stays a separate, deliberate step: the person sees exactly what goes
-  back before it goes. While the field is open the card exposes its children to VoiceOver, so the field is reachable.
-  On the card, the labels of an answered exchange are coloured like a conversation: "Agent asked:" in the question's
-  orange, "Answer:" in the accent colour, semibold; the stored text (and so the packet) stays plain. The answer is
-  added in one write to the comment as it is now, so an edit made meanwhile is kept. If the note stops waiting for an
-  answer while the field is open, or the write fails, the field stays with the typed text and an orange line saying
-  why, so nothing typed is lost.
 - **Document group header**: the file's system icon, its name (middle-truncated), a count capsule, and the host
   only when it is not this Mac.
   The header opens its document on click (a quiet ↗ appears under the pointer, as group headers open their subject in
@@ -448,9 +463,11 @@ path. Dropping on the Dock icon is not supported yet.
   Failed: a red mark, the reason, Retry (same notes, same agent), and it stays until dismissed.
 - **Note peek**: resting the pointer on highlighted text for 450 ms shows that note in a 320 pt glass card beside
   it (below the text, above when there is no room): colour rail, anchor label, state pill, the comment, the agent's
-  reply, and Edit / Resolve (or Reopen) / Show in notes panel. Moving to another note switches at once; the card
+  latest word in its thread (orange while it is a question waiting on you), and Edit / Resolve (or Reopen) / Show in
+  notes panel. Moving to another note switches at once; the card
   stays while the pointer is on it and leaves 250 ms after the pointer leaves both; scrolling, typing, or a
-  selection dismisses it. Orphaned and invalidated highlights never peek.
+  selection dismisses it. Orphaned and invalidated highlights never peek. A removal point peeks when the pointer is
+  within 3 pt of its caret.
   The card is read over busy code, so its glass sits on a 88% window-colour fill: the lines behind never cross the
   note's words (glass alone suits controls, not content). A draft or sent note's peek leads with Send to the current
   agent (prominent), then Edit, Resolve, and Show in Notes Panel, matching the panel's cards.
@@ -615,7 +632,15 @@ path. Dropping on the Dock icon is not supported yet.
   its colour at its place (a multi-line note spans its lines): drafts solid, sent at 70%, resolved at 35%, orphaned
   as an outline; open work draws over settled work. A faint band marks the part on screen. Ticks widen under the
   pointer and a click scrolls to the note the way browsing the notes panel does (the keyboard stays put); a click or
-  drag elsewhere scrubs the file like a minimap.
+  drag elsewhere scrubs the file like a minimap. A removal point is an outlined tick; a highlight whose text was
+  replaced while editing (invalidated) leaves the ruler, as it leaves the gutter.
+- **Removal points** (2026-10-07): a note whose text an agent or an edit removed is a point where the text was
+  (a zero-length anchor), drawn as a caret: a 2 pt bar in the note's colour, the line's height, with a small round
+  cap at its top, at the state ladder's strength (full when focused). The gutter marks its row with a hollow dot in
+  the note's lane, the ruler with an outlined tick, and the path ribbon reaches the caret (`NoteGeometry` gives a
+  2 pt rect for a point). Rendered Markdown maps the point to one rendered point (the start of an inexact run, never
+  the whole block) and draws the same caret; a web page's text note draws it as an element in `<gloss-overlay>` at
+  the collapsed range, since a CSS highlight of nothing shows nothing.
 - **Stepping through notes**: Notes › Next Note (⌘') and Previous Note (⇧⌘'), the keys Xcode uses for issues, and
   ⌃/⌄ steppers beside the status bar's note count. Open notes go in reading order (text by offset, PDF by page then
   top to bottom, images in the order made); a step goes on from the note last reached, or from the caret once it has

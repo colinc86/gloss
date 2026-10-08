@@ -102,11 +102,12 @@ public final class TextEditorController {
     /// Rest before a peek appears, so skimming over highlights does not flash cards.
     static let peekDelay: Duration = .milliseconds(450)
 
-    /// The pointer is over `index` (nil: over nothing). Shows the note there after a rest, hides when it leaves.
-    public func hover(at index: Int?) {
-        let highlight = index.flatMap { index in
-            drawnHighlights.last { !$0.isInvalidated && $0.state != .orphaned && NSLocationInRange(index, $0.range) }
-        }
+    /// The pointer is over `index` (nil: over nothing), or within a few points of the insertion point `caret`. Shows
+    /// the note there after a rest, hides when it leaves. A removal point is found by its caret, the narrower target.
+    public func hover(at index: Int?, caret: Int? = nil) {
+        let candidates = drawnHighlights.filter { !$0.isInvalidated && $0.state != .orphaned }
+        let point = caret.flatMap { caret in candidates.last { $0.range.length == 0 && $0.range.location == caret } }
+        let highlight = point ?? index.flatMap { index in candidates.last { NSLocationInRange(index, $0.range) } }
         guard highlight?.id != hoveredNoteID else { return }
         hoveredNoteID = highlight?.id
         peekTask?.cancel()

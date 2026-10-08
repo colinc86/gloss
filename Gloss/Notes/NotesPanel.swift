@@ -404,22 +404,25 @@ struct NoteCard: View {
     let note: Note
     let document: Core.Document
     @State private var lastSend: SendSummary?
-    /// The note's thread after its comment, kept current from the store; nil until the observation delivers, when the
-    /// thread is read directly so a card never draws a frame without its question.
-    @State private var messages: [NoteMessage]?
     @State private var thumbnail: NoteThumbnail?
     /// The anchored line in the editor's colours, worked out once per note.
     @State private var colouredExcerpt: AttributedString?
     @State private var hovering = false
-    /// The whole thread open: every turn, the full comment, and the agent's message uncut.
+    /// The whole thread open: every turn and move, the full comment, the agent's message uncut, and the follow-up
+    /// field.
     @State private var expanded = false
     /// The collapsed card cuts the comment or the agent's message short, so it offers to open.
     @State private var commentCut = false
     @State private var messageCut = false
-    /// Answering an agent's question in place.
-    @State private var replying = false
-    @State private var answer = ""
-    @State private var replyFailed = false
+    /// Follow Up… opens the card and puts the caret in its field; the field otherwise waits to be clicked.
+    @State private var followUpFocusPending = false
+    @State private var followUpFocusRequest = 0
+    @State private var followUpFailed = false
+    /// Changing a follow-up not yet sent, in place.
+    @State private var editingMessageID: MessageID?
+    @State private var messageEditText = ""
+    /// Moves whose old text is shown, struck through.
+    @State private var openMoves: Set<MessageID> = []
     /// Editing the comment in place (#14): what is typed, the colour picked, and the comment as it was when editing
     /// began, so a change made meanwhile isn't overwritten.
     @State private var editing = false
@@ -427,11 +430,8 @@ struct NoteCard: View {
     @State private var editColor = NoteColor.yellow
     @State private var editOriginal = ""
     @State private var editRefusal: NotesPanelModel.EditRefusal?
-    @FocusState private var answerFocused: Bool
 
     private var arrived: Bool { model.notesPanel.arrivedIDs.contains(note.id) }
-
-    private var needsInput: Bool { note.waitingOnUser }
 
     private var tint: Color { Color(nsColor: Theme.color(for: note.color)) }
     private var isSelected: Bool { model.notesPanel.selectedNoteID == note.id }
@@ -441,8 +441,13 @@ struct NoteCard: View {
     /// The pointer never changes its size: a card that grows under the pointer moves the one below it.
     private var isCompact: Bool { isSettled && !isSelected && !expanded }
 
-    /// The comment and its exchanges with the agent.
-    private var thread: NoteThread { NoteThread(comment: note.body, messages: messages ?? model.noteStore.messagesNow(for: note.id)) }
+    /// The comment and its thread, from the panel's one observation of every note's messages.
+    private var thread: NoteThread { NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id)) }
+
+    /// A follow-up needs someone to follow: every note but a draft never sent, whose comment is edited instead.
+    private func canFollowUp(_ thread: NoteThread) -> Bool {
+        note.state != .draft || lastSend != nil || note.author != nil || !thread.entries.isEmpty
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: DS.Space.m) {
@@ -463,33 +468,13 @@ struct NoteCard: View {
                     Spacer(minLength: DS.Space.xs)
                     stateBadge
                 }
-                // What the note is about, as GitHub review comments show their line: the first line of the anchored
-                // text, in the editor's colours, so a list of notes across files reads without opening each one.
-                if !isCompact, let excerpt = Self.excerpt(of: note.anchor) {
-                    Group {
-                        if let colouredExcerpt { Text(colouredExcerpt) } else { Text(excerpt) }
-                    }
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.horizontal, DS.Space.s)
-                    .padding(.vertical, DS.Space.xxs + 1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
-                    .help(excerpt)
-                    .accessibilityHidden(true)
-                    .transition(.opacity)
-                    .task(id: excerpt) {
-                        colouredExcerpt = SyntaxTheme.highlighted(excerpt, language: GrammarCatalog.languageName(forPath: document.path))
-                    }
-                }
+                if !isCompact { excerptWell }
                 // An agent's own question (ask_user) has no comment of the user's above it: the bubble is the note.
                 if editing {
                     editField
                         .transition((AnyTransition.opacity.combined(with: .move(edge: .top))).calmed)
                     if let pending = thread.latest, pending.speaker == .agent {
-                        turnView(pending, pending: true)
+                        turnView(pending, latest: true, thread: thread)
                     }
                 } else {
                     threadView
@@ -503,10 +488,6 @@ struct NoteCard: View {
                                 .lineLimit(2)
                         }
                     }
-                }
-                if replying {
-                    replyField
-                        .transition((AnyTransition.opacity.combined(with: .move(edge: .top))).calmed)
                 }
                 if !isCompact {
                     actions
@@ -526,11 +507,9 @@ struct NoteCard: View {
         .animation(DS.Motion.bouncy, value: note.state)
         .animation(DS.Motion.smooth, value: isCompact)
         .animation(DS.Motion.smooth, value: expanded)
-        .animation(DS.Motion.smooth, value: replying)
         .animation(DS.Motion.smooth, value: editing)
-        .onChange(of: needsInput) { _, waiting in
-            if !waiting, answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { replying = false }
-        }
+        .animation(DS.Motion.smooth, value: editingMessageID)
+        .animation(DS.Motion.smooth, value: openMoves)
         // A note that just arrived glows in its colour, then settles: the panel answers "where did it go?".
         .background {
             RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
@@ -549,21 +528,14 @@ struct NoteCard: View {
         }
         // One element for VoiceOver: the card is read as a sentence, and every button and menu command is an action
         // on it, instead of a walk through the rail, the pill, and six unlabeled-looking icons.
-        // While answering, the field has to stay reachable, so the card opens up to its children.
-        .accessibilityElement(children: replying ? .contain : .ignore)
+        // Open, the thread and its follow-up field have to stay reachable, so the card opens up to its children.
+        .accessibilityElement(children: expanded || editing ? .contain : .ignore)
         .accessibilityLabel(Self.spokenSummary(note, latest: thread.latest))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityActions {
             commands(dividers: false)
             let thread = thread
             if showsThreadToggle(thread) { Button(threadToggleTitle(thread)) { expanded.toggle() } }
-        }
-        .task(id: note.id) {
-            do {
-                for try await current in model.noteStore.observeMessages(for: note.id) { messages = current }
-            } catch {
-                Log.notes.error("observing messages failed: \(error, privacy: .public)")
-            }
         }
         // Refetched when the note changes and after every send, so a failure shows without a state change.
         .task(id: "\(note.updatedAt.timeIntervalSince1970)-\(model.send.completedSends)") {
@@ -581,8 +553,8 @@ struct NoteCard: View {
 
     @ViewBuilder
     private func commands(dividers: Bool) -> some View {
-        if needsInput {
-            Button("Reply to Agent…", action: startReply)
+        if canFollowUp(thread) {
+            Button("Follow Up…", action: startFollowUp)
             if dividers { Divider() }
         }
         Button("Reveal in Viewer") { model.reveal(note: note, in: document) }
@@ -590,8 +562,11 @@ struct NoteCard: View {
         if note.state == .orphaned {
             Button("Re-anchor to a New Selection") { model.reanchor(note: note, in: document) }
         }
+        if note.originalAnchor != nil {
+            Button("Restore Original Place") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
+        }
         if dividers { Divider() }
-        if note.state == .draft || note.state == .sent, let target = model.send.lastTarget {
+        if NotesPanelModel.sendable([note]).count == 1, let target = model.send.lastTarget {
             Button("Send to \(target.label)") { Task { await model.send(noteIDs: [note.id]) } }
         }
         Button("Copy as Packet") { Task { await model.copyPacket(noteIDs: [note.id]) } }
@@ -618,18 +593,39 @@ struct NoteCard: View {
         Button("Delete", role: .destructive) { Task { await model.notesPanel.delete(note.id) } }
     }
 
+    /// The badge's words: orphaned first (nothing else matters until it has a place), then whose turn it is.
+    nonisolated static func badgeLabel(_ note: Note) -> String {
+        if note.state == .orphaned { return "Orphaned" }
+        if note.waitingOnUser || note.hasUnsentFollowUps { return "Your turn" }
+        return note.state.rawValue.capitalized
+    }
+
+    /// The badge on a card and on the page's peek: Your turn is orange, with a question mark while an agent waits on
+    /// an answer and a draft's dashed circle while a follow-up waits to be sent.
+    static func badge(_ note: Note) -> StatusPill {
+        let style = note.state.style
+        let yourTurn = note.state != .orphaned && (note.waitingOnUser || note.hasUnsentFollowUps)
+        return StatusPill(label: badgeLabel(note),
+                          symbol: yourTurn ? (note.waitingOnUser ? "questionmark.circle.fill" : NoteState.draft.style.symbol) : style.symbol,
+                          tint: yourTurn ? .orange : style.tint)
+    }
+
     /// What VoiceOver says for a card: state, colour, where, the comment, and the agent's latest message if the
     /// thread ends with one (else a resolved note's reply).
     nonisolated static func spokenSummary(_ note: Note, latest: NoteThread.Turn? = nil) -> String {
-        let needsInput = note.waitingOnUser
-        let state = needsInput ? "Needs input" : note.state.rawValue.capitalized
-        var parts = ["\(state) note, \(note.color.rawValue), \(note.anchor.summary)"]
-        // What a sighted reader sees in the excerpt well: the line the note is about.
-        if let excerpt = excerpt(of: note.anchor) { parts.append("On: \(excerpt)") }
+        var parts = ["\(badgeLabel(note)) note, \(note.color.rawValue), \(note.anchor.summary)"]
+        // What a sighted reader sees in the excerpt well: the line the note is about, or that it was removed.
+        if note.anchor.isRemovalPoint {
+            parts.append("Its text was removed")
+        } else if let excerpt = excerpt(of: note.anchor) {
+            parts.append("On: \(excerpt)")
+        }
         parts.append(note.body.trimmingCharacters(in: .whitespacesAndNewlines))
         if let latest, latest.speaker == .agent, !latest.text.isEmpty {
             // As the bubble says it: a question asks, anything else replies.
             parts.append("\(latest.asks ? "Agent asks" : "Agent replied"): \(latest.text)")
+        } else if let latest, latest.speaker == .user, !latest.text.isEmpty {
+            parts.append("\(latest.unsent ? "Your follow-up, not sent" : "You replied"): \(latest.text)")
         } else if latest == nil, note.state == .resolved, let reply = note.resolveMessage?.trimmingCharacters(in: .whitespacesAndNewlines), !reply.isEmpty {
             parts.append("Agent replied: \(reply)")
         }
@@ -658,8 +654,47 @@ struct NoteCard: View {
         return note.state == .draft && !line.failed ? nil : line
     }
 
-    /// The comment, then the latest turn (an agent's message cut at four lines); the earlier turns and the rest of
-    /// long text wait behind "Show conversation", so a reply is always in sight and hovering never resizes the card.
+    /// What the note is about, as GitHub review comments show their line: the first line of the anchored text, in the
+    /// editor's colours, so a list of notes across files reads without opening each one. A note whose text was
+    /// removed says so where the text would be.
+    @ViewBuilder
+    private var excerptWell: some View {
+        if note.anchor.isRemovalPoint {
+            Label("Removed", systemImage: "minus.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, DS.Space.s)
+                .padding(.vertical, DS.Space.xxs + 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+                .help("The text this note was on has been removed; the note marks where it was")
+                .accessibilityHidden(true)
+                .transition(.opacity)
+        } else if let excerpt = Self.excerpt(of: note.anchor) {
+            Group {
+                if let colouredExcerpt { Text(colouredExcerpt) } else { Text(excerpt) }
+            }
+            .font(.caption.monospaced())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, DS.Space.s)
+            .padding(.vertical, DS.Space.xxs + 1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+            .help(excerpt)
+            .accessibilityHidden(true)
+            .transition(.opacity)
+            .task(id: excerpt) {
+                colouredExcerpt = SyntaxTheme.highlighted(excerpt, language: GrammarCatalog.languageName(forPath: document.path))
+            }
+        }
+    }
+
+    /// Collapsed: the comment, the move that took the note from where it was made (while it is still away), and the
+    /// latest turn. Open: every turn and move in order, then the follow-up field. The rest of long text and the
+    /// earlier turns wait behind "Show conversation", so the latest turn is always in sight and hovering never
+    /// resizes the card.
     @ViewBuilder
     private var threadView: some View {
         let thread = thread
@@ -674,13 +709,26 @@ struct NoteCard: View {
             }
         }
         if expanded {
-            ForEach(Array(thread.earlier.enumerated()), id: \.offset) { _, turn in
-                turnView(turn, pending: false)
+            ForEach(thread.entries) { entry in
+                switch entry {
+                case .turn(let turn):
+                    turnView(turn, latest: turn.id != nil && turn.id == thread.latest?.id, thread: thread)
+                case .move(let move):
+                    moveLine(move, isLatest: move.id == thread.latestMove?.id)
+                }
             }
             .transition(.opacity)
-        }
-        if let latest = thread.latest {
-            turnView(latest, pending: latest.speaker == .agent)
+            if canFollowUp(thread) {
+                followUpField
+                    .transition(.opacity)
+            }
+        } else {
+            if !isCompact, note.originalAnchor != nil, let move = thread.latestMove {
+                moveLine(move, isLatest: true)
+            }
+            if let latest = thread.latest {
+                turnView(latest, latest: true, thread: thread)
+            }
         }
         if showsThreadToggle(thread) {
             Button {
@@ -702,30 +750,194 @@ struct NoteCard: View {
         }
     }
 
-    /// One turn of the exchange: the agent's message still waiting is its bubble; an answered question and the
-    /// user's answers read as the labeled lines they are stored as.
+    /// One turn: the agent's as its bubble (orange only for the question still waiting on you), the user's as a
+    /// quieter block, marked "Not sent" with Edit and Delete until it goes.
     @ViewBuilder
-    private func turnView(_ turn: NoteThread.Turn, pending: Bool) -> some View {
-        if pending {
-            AgentMessageBubble(message: turn.text, needsInput: turn.asks && needsInput,
+    private func turnView(_ turn: NoteThread.Turn, latest: Bool, thread: NoteThread) -> some View {
+        switch turn.speaker {
+        case .agent:
+            AgentMessageBubble(message: turn.text, asks: turn.asks,
+                               waiting: note.waitingOnUser && turn.id == thread.turns.last(where: { $0.speaker == .agent })?.id,
                                agent: turn.agent ?? note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName),
-                               expanded: expanded || editing, isCut: $messageCut)
+                               expanded: expanded || editing, isCut: latest ? $messageCut : .constant(false))
                 // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
                 .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
                                                      removal: .opacity).calmed)
-        } else {
-            Text(Self.styledBody("\(turn.speaker == .user ? Self.answerLabel : turn.asks ? Self.askedLabel : Self.repliedLabel) \(turn.text)"))
-                .font(.callout)
-                .foregroundStyle(isSettled ? .secondary : .primary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        case .user:
+            userTurnView(turn)
         }
     }
 
-    /// Offered when there's more than the collapsed card shows: earlier turns, or a comment or message cut short.
-    /// Whether text is cut is measured on its collapsed form, so the button stays put while the card is open.
+    private func userTurnView(_ turn: NoteThread.Turn) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.xxs) {
+            HStack(spacing: DS.Space.xs) {
+                Text("You")
+                    .foregroundStyle(Color.accentColor)
+                if turn.unsent {
+                    Text("· Not sent")
+                        .foregroundStyle(.orange)
+                }
+                Spacer(minLength: 0)
+                if turn.unsent, let id = turn.id, editingMessageID != id {
+                    InlineIconButton(title: "Edit this follow-up", symbol: "pencil", emphasized: hovering || isSelected) {
+                        messageEditText = turn.text
+                        editingMessageID = id
+                    }
+                    InlineIconButton(title: "Delete this follow-up", symbol: "trash", role: .destructive, emphasized: hovering || isSelected) {
+                        Task { await model.notesPanel.deleteFollowUp(id) }
+                    }
+                }
+            }
+            .font(.caption2.weight(.semibold))
+            if let id = turn.id, editingMessageID == id {
+                messageEditor(id)
+            } else {
+                Text(Self.styledBody(turn.text))
+                    .font(.callout)
+                    .foregroundStyle(isSettled ? .secondary : .primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.horizontal, DS.Space.m)
+        .padding(.vertical, DS.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(turn.unsent ? 0.1 : 0.06), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .overlay {
+            // An unsent follow-up is outlined dashed, as a draft's highlight is: it hasn't left the app.
+            if turn.unsent {
+                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.35), style: StrokeStyle(lineWidth: 0.75, dash: [3, 2]))
+            }
+        }
+        .padding(.leading, DS.Space.l)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A follow-up not yet sent, changed in place: Return saves (empty deletes it), Escape cancels.
+    private func messageEditor(_ id: MessageID) -> some View {
+        let save = {
+            let text = messageEditText
+            Task {
+                if await model.notesPanel.updateFollowUp(id, text) { editingMessageID = nil }
+            }
+        }
+        return NoteBodyEditor(text: $messageEditText, onSubmit: save, onCancel: { editingMessageID = nil })
+            .frame(minHeight: 28, maxHeight: 120)
+            .padding(DS.Space.xs)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+    }
+
+    /// A move, as one quiet line: who moved the note, or that its text was removed. Its chevron shows the text the
+    /// note was on, struck through; for the move that brought it where it is, Restore Original Place sits there too.
+    private func moveLine(_ move: NoteThread.Move, isLatest: Bool) -> some View {
+        let open = openMoves.contains(move.id)
+        let canRestore = isLatest && note.originalAnchor != nil
+        let hasDetail = move.oldExcerpt != nil || canRestore
+        return VStack(alignment: .leading, spacing: DS.Space.xs) {
+            Button {
+                guard hasDetail else { return }
+                if open { openMoves.remove(move.id) } else { openMoves.insert(move.id) }
+            } label: {
+                HStack(spacing: DS.Space.xs) {
+                    Image(systemName: move.removed ? "minus.circle" : "arrow.turn.down.right")
+                    Text(move.title)
+                    if hasDetail {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(hasDetail ? (open ? "Hide where the note was" : "Show where the note was") : move.title)
+            if open {
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    if let old = move.oldExcerpt {
+                        Text(old)
+                            .strikethrough()
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                            .padding(.horizontal, DS.Space.s)
+                            .padding(.vertical, DS.Space.xxs + 1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+                            .accessibilityLabel("Was on: \(old)")
+                    }
+                    if canRestore {
+                        Button("Restore Original Place") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.leading, DS.Space.l)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    /// The follow-up field at the bottom of an open card. Return adds what is typed to the thread, unsent; the card's
+    /// Send hands it over. Shift-Return starts a new line; Escape clears it. What is typed lives in the panel model,
+    /// so it survives the row being recycled.
+    private var followUpField: some View {
+        let text = Binding(get: { model.notesPanel.followUpText[note.id] ?? "" },
+                           set: { model.notesPanel.followUpText[note.id] = $0.isEmpty ? nil : $0 })
+        return VStack(alignment: .leading, spacing: DS.Space.xs) {
+            NoteBodyEditor(text: text, onSubmit: commitFollowUp, onCancel: { model.notesPanel.followUpText[note.id] = nil },
+                           focusesOnAppear: followUpFocusPending, focusRequest: followUpFocusRequest)
+                .frame(minHeight: 28, maxHeight: 120)
+                .padding(DS.Space.xs)
+                .overlay(alignment: .topLeading) {
+                    if text.wrappedValue.isEmpty {
+                        // Where the text view draws its first character: its line padding and inset, plus ours.
+                        Text(note.waitingOnUser ? "Your answer" : "Follow up")
+                            .font(.body)
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, DS.Space.xs + 5)
+                            .padding(.top, DS.Space.xs + 2)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
+                    .strokeBorder(note.waitingOnUser ? Color.orange.opacity(0.5) : Color.primary.opacity(0.12)))
+                .onAppear { DispatchQueue.main.async { followUpFocusPending = false } }
+                .accessibilityLabel(note.waitingOnUser ? "Your answer" : "Follow up")
+            if followUpFailed {
+                Label("The follow-up couldn't be added. It's still here.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private func startFollowUp() {
+        followUpFailed = false
+        if expanded {
+            followUpFocusRequest += 1
+        } else {
+            followUpFocusPending = true
+            expanded = true
+        }
+    }
+
+    /// The field clears only once the follow-up is in the thread; if it couldn't be added, the text stays.
+    private func commitFollowUp() {
+        guard !(model.notesPanel.followUpText[note.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        Task { followUpFailed = !(await model.notesPanel.commitFollowUp(for: note.id)) }
+    }
+
+    /// Offered when there's more than the collapsed card shows: earlier turns or moves, or a comment or message cut
+    /// short. Whether text is cut is measured on its collapsed form, so the button stays put while the card is open.
     private func showsThreadToggle(_ thread: NoteThread) -> Bool {
-        !thread.earlier.isEmpty || commentCut || (messageCut && thread.latest?.speaker == .agent)
+        thread.entries.count > 1 || commentCut || (messageCut && thread.latest?.speaker == .agent)
+            || (thread.latestMove != nil && note.originalAnchor == nil) || expanded
     }
 
     private func threadToggleTitle(_ thread: NoteThread) -> String {
@@ -743,83 +955,20 @@ struct NoteCard: View {
             .first { !$0.isEmpty }
     }
 
-    /// How an earlier turn is labelled on the card.
-    nonisolated static let askedLabel = "Agent asked:"
-    nonisolated static let repliedLabel = "Agent replied:"
-    nonisolated static let answerLabel = "Answer:"
-
-    /// The comment with inline markdown, and the labels of earlier turns ("Agent asked:", "Answer:") drawn as a little
-    /// conversation: the agent's in the question's orange, yours in the accent colour. Only the card changes; the
-    /// stored text, and so the packet, stays plain.
+    /// A comment or follow-up with its inline markdown drawn. Only the card changes; the stored text, and so the
+    /// packet, stays plain.
     nonisolated static func styledBody(_ body: String) -> AttributedString {
-        var text = (try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)
-        let labels: [(String, Color)] = [(askedLabel, .orange), (repliedLabel, .secondary), (answerLabel, .accentColor)]
-        var lineStart = text.startIndex
-        while lineStart < text.endIndex {
-            let rest = text[lineStart...]
-            let lineEnd = rest.characters.firstIndex(of: "\n") ?? text.endIndex
-            let line = String(text[lineStart..<lineEnd].characters)
-            if let (label, color) = labels.first(where: { line.hasPrefix($0.0) }) {
-                let end = text.characters.index(lineStart, offsetBy: label.count)
-                text[lineStart..<end].foregroundColor = color
-                text[lineStart..<end].font = .callout.weight(.semibold)
-            }
-            lineStart = lineEnd < text.endIndex ? text.characters.index(after: lineEnd) : text.endIndex
-        }
-        return text
+        (try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)
     }
 
     private var stateBadge: some View {
-        let style = note.state.style
-        let needsInput = note.waitingOnUser
-        return StatusPill(
-            label: needsInput ? "Needs input" : note.state.rawValue.capitalized,
-            symbol: needsInput ? "questionmark.circle.fill" : style.symbol,
-            tint: needsInput ? .orange : style.tint
-        )
-        .id(note.state)
+        Self.badge(note)
+            .id(Self.badgeLabel(note))
         .transition((AnyTransition.scale(scale: 0.85).combined(with: .opacity)).calmed)
     }
 
-    /// Icon actions, quiet until the card is hovered or selected. Send leads for notes still waiting on an agent.
-    /// The answer, written where the question is: Return adds it to the note and makes it a draft to send;
-    /// Escape puts it away.
-    private var replyField: some View {
-        VStack(alignment: .leading, spacing: DS.Space.xs) {
-        HStack(spacing: DS.Space.s) {
-            TextField("Your answer", text: $answer)
-                .textFieldStyle(.plain)
-                .focused($answerFocused)
-                // Focus once the field exists: set together with `replying`, it can land before the field does.
-                .onAppear { answerFocused = true }
-                .onSubmit(commitReply)
-                .onKeyPress(.escape) {
-                    replying = false
-                    answer = ""
-                    return .handled
-                }
-            Button("Reply", action: commitReply)
-                .buttonStyle(.glassProminent)
-                .controlSize(.small)
-                .disabled(!needsInput || answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-        // Said in place, with the typed answer kept so it can be copied: the note moved on, or the write failed.
-        if !needsInput || replyFailed {
-            Label(needsInput ? "The answer couldn't be added. It's still here." : "This note isn't waiting for an answer any more.",
-                  systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .transition(.opacity)
-        }
-        }
-        .font(.callout)
-        .padding(DS.Space.s)
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.orange.opacity(0.5)))
-    }
-
     /// The comment, editable where it is: Return saves, Shift-Return adds a line, Escape cancels. Works whether or
-    /// not the note is on screen in the viewer.
+    /// not the note is on screen in the viewer. Only the comment: the thread's turns are their own messages.
     private var editField: some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             NoteBodyEditor(text: $editBody, onSubmit: commitEdit, onCancel: cancelEdit)
@@ -877,43 +1026,28 @@ struct NoteCard: View {
         }
     }
 
-    private func startReply() {
-        replyFailed = false
-        replying = true
-    }
-
-    /// The field closes only once the answer is in the note; if the note changed meanwhile, the text stays.
-    private func commitReply() {
-        guard !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        Task {
-            if await model.notesPanel.reply(to: note.id, with: answer) {
-                replying = false
-                answer = ""
-            } else {
-                replyFailed = true
-            }
-        }
-    }
-
+    /// Icon actions, quiet until the card is hovered or selected. Send leads for notes still waiting on an agent;
+    /// Follow Up leads while the agent waits on the user.
     private var actions: some View {
         let lit = hovering || isSelected
         return HStack(spacing: DS.Space.xxs) {
-            if note.state == .draft || note.state == .sent {
+            if !NotesPanelModel.sendable([note]).isEmpty {
                 InlineIconButton(title: model.send.lastTarget.map { "Send to \($0.label)" } ?? "Choose an agent to send to",
-                                 symbol: "paperplane.fill", prominent: true, emphasized: lit) {
+                                 symbol: "paperplane.fill", prominent: true, emphasized: lit || note.hasUnsentFollowUps) {
                     Task { await model.send(noteIDs: [note.id]) }
                 }
                 .disabled(model.send.lastTarget == nil)
             }
-            if needsInput {
-                InlineIconButton(title: "Reply to the agent", symbol: "arrowshape.turn.up.left.fill", prominent: true, emphasized: lit, action: startReply)
+            if canFollowUp(thread) {
+                InlineIconButton(title: note.waitingOnUser ? "Answer the agent" : "Follow up", symbol: "arrowshape.turn.up.left.fill",
+                                 prominent: note.waitingOnUser, emphasized: lit, action: startFollowUp)
             }
             InlineIconButton(title: "Reveal in viewer", symbol: "scope", emphasized: lit) { model.reveal(note: note, in: document) }
             if note.state == .orphaned {
                 InlineIconButton(title: "Re-anchor to a new selection", symbol: "link", emphasized: lit) { model.reanchor(note: note, in: document) }
                 InlineIconButton(title: "Restore as draft", symbol: "arrow.uturn.backward", emphasized: lit) { Task { await model.notesPanel.restoreDraft(note) } }
             }
-            InlineIconButton(title: "Edit", symbol: "pencil", emphasized: lit, action: startEdit)
+            InlineIconButton(title: "Edit the comment", symbol: "pencil", emphasized: lit, action: startEdit)
             if note.state == .sent {
                 InlineIconButton(title: "Back to draft (the agent may already have read it)", symbol: "arrow.uturn.backward", emphasized: lit) {
                     Task { await model.notesPanel.unsend(note.id) }

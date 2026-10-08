@@ -39,7 +39,24 @@ struct NoteThreadTests {
             message(.user, .comment, "Plainer", sent: false),
         ])
         #expect(thread.turns.count == 2, "moves are not turns")
+        #expect(thread.entries.count == 3 && thread.latestMove?.title == "Text removed", "a removal Gloss found names no agent")
+        #expect(thread.unsent.map(\.text) == ["Plainer"])
         #expect(thread.turns[0].agent == nil, "an agent that gave no name is just the agent")
         #expect(thread.latest?.unsent == true)
+    }
+
+    @Test func aMoveNamesWhoMovedItAndKeepsTheOldText() {
+        let index = LineIndex("let a = 1\nlet b = 2")
+        let old = Anchor.text(ReAnchorer.make(from: index.contentRange(ofLine: 2), in: "let a = 1\nlet b = 2", index: index, hash: nil))
+        let point = Anchor.text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 1), text: "", before: "let a = 1", after: ""))
+        var moved = message(.agent("codex"), .moved, "")
+        moved.move = NoteMove(from: old, to: point, removed: true)
+        var unnamed = message(.agent(MessageAuthor.unnamedAgent), .moved, "")
+        unnamed.move = NoteMove(from: point, to: old, removed: false)
+        let thread = NoteThread(comment: "Inline b", messages: [moved, message(.agent("codex"), .reply, "Inlined it."), unnamed])
+        guard case .move(let first) = thread.entries[0] else { Issue.record("a move first"); return }
+        #expect(first.title == "Removed by Codex" && first.oldExcerpt == "let b = 2" && first.removed)
+        #expect(thread.latestMove?.title == "Moved by the agent")
+        #expect(point.isRemovalPoint && !old.isRemovalPoint)
     }
 }

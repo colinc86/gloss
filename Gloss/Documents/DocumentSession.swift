@@ -101,6 +101,9 @@ final class DocumentSession: Identifiable {
     /// Live ranges of text notes while editing, before they are written back on save.
     @ObservationIgnored private var liveRanges: [NoteID: NSRange] = [:]
     @ObservationIgnored private var invalidatedNotes: Set<NoteID> = []
+    /// Anchors this session is writing back from live ranges on save. A stored anchor that changes to anything else
+    /// (an agent's move, Restore Original Place) wins over the note's live range.
+    @ObservationIgnored private var anchorsBeingSaved: [NoteID: Anchor] = [:]
     /// The note being created or edited in the popover.
     var noteEditor: NoteEditorState?
     /// An orphaned note waiting for the user to select its new range (⌘⇧N then places it).
@@ -949,6 +952,7 @@ final class DocumentSession: Identifiable {
             do {
                 for try await notes in stream {
                     guard let self else { return }
+                    self.dropLiveRangesMovedElsewhere(from: self.notes, to: notes)
                     self.notes = notes
                     self.syncHighlights()
                     if !self.notesDelivered {
@@ -964,6 +968,23 @@ final class DocumentSession: Identifiable {
             } catch {
                 Log.notes.error("note observation failed: \(error, privacy: .public)")
             }
+        }
+    }
+
+    /// A note whose stored anchor changed while it had a live range, other than by this session's own save, was moved
+    /// by someone else (an agent's relocation, Restore Original Place): its live range goes, so the editor draws the
+    /// new place and the next save can't write the old one back.
+    private func dropLiveRangesMovedElsewhere(from old: [Note], to new: [Note]) {
+        guard !liveRanges.isEmpty || !invalidatedNotes.isEmpty else { return }
+        let before = Dictionary(old.map { ($0.id, $0.anchor) }, uniquingKeysWith: { first, _ in first })
+        for note in new where liveRanges[note.id] != nil || invalidatedNotes.contains(note.id) {
+            guard let previous = before[note.id], previous != note.anchor else { continue }
+            if anchorsBeingSaved[note.id] == note.anchor {
+                anchorsBeingSaved[note.id] = nil
+                continue
+            }
+            liveRanges[note.id] = nil
+            invalidatedNotes.remove(note.id)
         }
     }
 
@@ -1068,6 +1089,7 @@ final class DocumentSession: Identifiable {
                     } else {
                         picture.embed = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
                         picture.occurrence = ReAnchorer.embedOccurrence(of: picture.source, before: range.location, in: text)
+                        anchorsBeingSaved[note.id] = .embeddedImage(picture)
                         try await noteStore.updateAnchor(note.id, anchor: .embeddedImage(picture))
                     }
                     continue
@@ -1082,18 +1104,22 @@ final class DocumentSession: Identifiable {
                     switch result {
                     case .moved(let moved), .movedNeedsReview(let moved):
                         if case .movedNeedsReview = result { needsReview.insert(note.id) }
+                        anchorsBeingSaved[note.id] = moved
                         try await noteStore.updateAnchor(note.id, anchor: moved)
                     case .unchanged:
                         // The file is exactly as it was: the stored anchor is still right.
                         break
                     case .removed(let point):
+                        anchorsBeingSaved[note.id] = point
                         try await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil)
                     case .orphaned:
                         let point = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
+                        anchorsBeingSaved[note.id] = .text(point)
                         try await noteStore.applyRelocation(note.id, to: .text(point), removed: true, author: nil)
                     }
                 } else {
                     let anchor = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
+                    anchorsBeingSaved[note.id] = .text(anchor)
                     try await noteStore.updateAnchor(note.id, anchor: .text(anchor))
                 }
             } catch {
@@ -1103,6 +1129,8 @@ final class DocumentSession: Identifiable {
         if !isDirty {
             liveRanges = [:]
             invalidatedNotes = []
+            // Their observations may still be on the way; with no live ranges left, they change nothing.
+            anchorsBeingSaved = [:]
         }
     }
 

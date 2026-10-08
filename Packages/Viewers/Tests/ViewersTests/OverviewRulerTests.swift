@@ -27,6 +27,20 @@ struct OverviewRulerTests {
     }
 }
 
+extension OverviewRulerTests {
+    /// Replaced text has no place to mark, as in the gutter; removed text is an outlined tick where it was.
+    @Test func invalidatedNotesLeaveTheRulerAndPointsAreMarked() {
+        let index = LineIndex((1...10).map { "line \($0)" }.joined(separator: "\n"))
+        let replaced = NoteID.new(), removed = NoteID.new()
+        let marks = OverviewRulerView.marks(for: [
+            TextHighlight(id: replaced, range: NSRange(location: 3, length: 0), color: .yellow, state: .draft, isInvalidated: true),
+            TextHighlight(id: removed, range: NSRange(location: index.contentRange(ofLine: 5).location, length: 0), color: .blue, state: .sent),
+        ], lineIndex: index)
+        #expect(marks.map(\.noteID) == [removed])
+        #expect(marks[0].isPoint && marks[0].line == 5)
+    }
+}
+
 struct JumpIndicatorTests {
     @Test func aLongNoteIndicatesOnlyItsFirstLine() {
         let index = LineIndex("alpha beta\ngamma delta\nepsilon")

@@ -11,11 +11,13 @@ struct AccessibilityTests {
         note.state = .sent
         note.waitingOnUser = true
         let question = NoteThread.Turn(speaker: .agent, text: "Which unit, km or miles?", asks: true)
-        #expect(NoteCard.spokenSummary(note, latest: question).hasPrefix("Needs input note, blue"))
+        #expect(NoteCard.spokenSummary(note, latest: question).hasPrefix("Your turn note, blue"))
         #expect(NoteCard.spokenSummary(note, latest: question).hasSuffix("Agent asks: Which unit, km or miles?"), "a question is asked, as the bubble says")
         note.waitingOnUser = false
         let reply = NoteThread.Turn(speaker: .agent, text: "Which unit, km or miles?")
         #expect(NoteCard.spokenSummary(note, latest: reply).hasSuffix("Agent replied: Which unit, km or miles?"))
+        let followUp = NoteThread.Turn(speaker: .user, text: "Miles, please", unsent: true)
+        #expect(NoteCard.spokenSummary(note, latest: followUp).hasSuffix("Your follow-up, not sent: Miles, please."))
         note.state = .resolved
         note.resolveMessage = "Switched to km."
         #expect(NoteCard.spokenSummary(note).hasSuffix("Agent replied: Switched to km."), "a resolved note's reply, before its thread loads")
@@ -28,6 +30,9 @@ struct AccessibilityTests {
         let note = Note(id: .new(), documentID: .new(), anchor: anchor, body: "Use 10%", state: .draft, color: .yellow,
                         createdAt: Date(), updatedAt: Date())
         #expect(NoteCard.spokenSummary(note) == "Draft note, yellow, \(anchor.summary). On: var isSteep: Bool { true }. Use 10%.")
+        var removed = note
+        removed.anchor = .text(TextAnchor(start: .init(line: 1, col: 5), end: .init(line: 1, col: 5), text: "", before: "", after: ""))
+        #expect(NoteCard.spokenSummary(removed).contains("Its text was removed."), "a removal point says so instead of quoting nothing")
     }
 
     @Test func treeRowsSayWhatTheirMarksShow() {
