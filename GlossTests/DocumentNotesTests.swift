@@ -19,11 +19,16 @@ struct DocumentNotesTests {
         return (DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store), store)
     }
 
-    func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
-        for _ in 0..<100 {
+    /// Waits for the session to catch up. A loaded full run can take seconds to deliver a just-opened document's
+    /// notes, so the wait is long, and running out fails the test rather than letting it go on half set up.
+    func waitUntil(timeout: Duration = .seconds(10), _ condition: @escaping @MainActor () -> Bool,
+                   sourceLocation: SourceLocation = #_sourceLocation) async {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
             if condition() { return }
             try? await Task.sleep(for: .milliseconds(20))
         }
+        Issue.record("timed out waiting", sourceLocation: sourceLocation)
     }
 
     @Test func createsANoteFromTheSelectionAndShowsIt() async throws {
@@ -112,7 +117,7 @@ struct DocumentNotesTests {
         let document = try #require(session.document)
         let note = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 4), text: "two", before: "one", after: "three", hash: nil)), body: "b", color: .blue)
         // Drawn before typing, however slowly the notes arrive under load: typing earlier shifts nothing.
-        for _ in 0..<500 where controller.highlights.count != 1 { try await Task.sleep(for: .milliseconds(20)) }
+        await waitUntil { controller.highlights.count == 1 }
         try #require(controller.highlights.count == 1)
         let newText = "zero\none\ntwo\nthree\n"
         controller.viewDidProcessEdit(edit: NSRange(location: 0, length: 0), replacementLength: 5, newText: newText)
