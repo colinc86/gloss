@@ -36,13 +36,23 @@ struct SettingsView: View {
                         Text("Dotfiles appear in the file tree from the start; the eye under the tree switches them until you quit.")
                     }
                 }
+                Section {
+                    Picker(selection: $settings.trashRetentionDays) {
+                        ForEach(SettingsStore.trashRetentionChoices, id: \.self) { days in
+                            Text(days == 0 ? "Until I empty it" : "\(days) days").tag(days)
+                        }
+                    } label: {
+                        Text("Keep deleted notes")
+                        Text("Deleted notes wait in Recently Deleted, at the bottom of the notes panel's filter menu, until then.")
+                    }
+                }
                 AppIconSection(selection: $settings.appIcon)
                 if model.updates.isAvailable {
                     UpdatesSection()
                 }
             }
             .formStyle(.grouped)
-            .frame(height: model.updates.isAvailable ? 684 : 540)
+            .frame(height: model.updates.isAvailable ? 754 : 610)
             .tabItem { Label("General", systemImage: "gear") }
             .tag(SettingsTab.general)
 

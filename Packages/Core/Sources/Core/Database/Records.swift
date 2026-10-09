@@ -75,6 +75,8 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     /// Where the note was before its first move, for Restore Original; nil until it moves.
     public var originalAnchorJson: String? = nil
     public var originalAnchorType: String? = nil
+    /// When the user deleted the note, which put it in Recently Deleted; nil for a note that isn't deleted.
+    public var deletedAt: Date? = nil
 }
 
 public struct NoteMessageRecord: SnakeCaseRecord, Identifiable {

@@ -481,13 +481,20 @@ path. Dropping on the Dock icon is not supported yet.
   once the chip wraps.
 - **Delete is undoable, not confirmed**: deleting a note (trash button, context menu, or the Delete key) happens at
   once, and several selected go as one ("3 notes deleted", one Undo brings them all back); a glass toast ("Note deleted", the note's first line, Undo) rises over the bottom of the panel for 6 s
-  (held while the pointer is on it), and Edit › Undo (⌘Z) does the same. Undo restores the note with its id,
-  image attachments, and send history (`NoteStore.deleteNoteForUndo` / `restore`). A question before every delete
+  (held while the pointer is on it), and Edit › Undo (⌘Z) does the same. A deleted note goes to Recently Deleted
+  (`NoteStore.trashNotes`), so Undo only takes it out again, with its id, thread, image attachments and send history
+  (issue #15). A question before every delete
   gets clicked through; a way back doesn't. Every delete path uses the same undoable delete (the composer's trash too), and each
   text editor keeps its own undo history so loading a file can't wipe the window's Undo Delete Note.
   An Undo that fails is never silent: the toast turns to an orange warning ("Undo didn't work", a sentence why),
   offers Try Again and a dismiss button, and stays until dismissed. Every way the toast goes (restored, dismissed,
   replaced by a newer delete) is logged under `notes`, so a note that did not come back leaves a trace.
+- **Recently Deleted** (issue #15): the last item of the sort menu, after a divider, with a trash symbol. It replaces
+  the list (and the filter bar, search and send row) with a bar: a "‹ Notes" back button, the title, and Empty…
+  (destructive, confirmed: "Delete every note in Recently Deleted for good?"). Under it, the notes deleted under the
+  folder in front, grouped by file, newest deletion first; each card is read-only (the color rail at 60 %, the
+  anchor, the comment, "Deleted 3 days ago") with Restore and Delete Now, also in its context menu. A footer says how
+  long notes stay. Deleted notes draw nothing on the page and no paths. With no folder in front it says so.
 - **Send toast**: a glass card floating over the bottom of the notes panel that slides up with `DS.Motion.bouncy`.
   Sending: a spinner and "Sending 2 notes…" with the agent. Delivered: a green check that bounces, "Sent 2 notes",
   "to claude · task", and a hairline that drains over 4 s (hovering pauses it) before it leaves on its own.
@@ -840,7 +847,7 @@ path. Dropping on the Dock icon is not supported yet.
   Install touches and how to undo it: nothing changes until you press Install, each edited settings file is first
   copied beside itself (`*.gloss-backup-…`, the last three kept), and Remove takes out only what was added.
 - **Settings**: every tab is a `.formStyle(.grouped)` form, 600 pt wide, with its own height so the window
-  resizes to each tab as System Settings does (General 380 with its Updates section, 236 in debug builds without it, Editor 330, Agents 640, Integrations 660, Attachments 380, Hosts 440). Toggles
+  resizes to each tab as System Settings does (General 754 with its Updates section, 610 without it, with Keep deleted notes under the first section, Editor 330, Agents 640, Integrations 660, Attachments 380, Hosts 440). Toggles
   carry a second line saying what they do; words match the rest of the app ("folder", never "root"). A setting
   shows its effect where it can: the editor font slider drives a live code preview, with the size in monospaced
   digits beside it. A setting must do something, at once: Editor's font size, wrapping, and indent guides

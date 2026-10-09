@@ -445,9 +445,9 @@ struct NotesPanelModelTests {
         let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
         await model.delete(note.id)
         let deleted = try #require(model.lastDeleted.first)
-        // Brought back elsewhere first, so this restore collides with the row that is already there.
-        try await store.restore(deleted)
-        await model.undoDelete(deleted)
+        // Deleted for good from Recently Deleted first, so there is nothing left to bring back.
+        try await store.deleteForever([deleted.id])
+        await model.undoDelete([deleted])
         #expect(model.undoFailure != nil, "a failed undo is said, not silent")
         #expect(model.lastDeleted == [deleted], "the toast stays, with Try Again")
         model.dismissUndo()
@@ -491,7 +491,8 @@ struct NoteDeleteUndoTests {
         #expect(deleted.id == note.id)
         #expect(try await store.documentsWithNotes().flatMap(\.notes).isEmpty)
 
-        await panel.undoDelete(deleted)
+        #expect(try await store.isTrashed(note.id), "it waits in Recently Deleted")
+        await panel.undoDelete([deleted])
         #expect(panel.lastDeleted.isEmpty)
         #expect(panel.selectedNoteID == note.id)
         #expect(try await store.documentsWithNotes().flatMap(\.notes).map(\.body) == ["come back"])
@@ -513,6 +514,55 @@ struct NoteDeleteUndoTests {
         await panel.undoDelete(panel.lastDeleted)
         #expect(panel.lastDeleted.isEmpty && panel.selection == Set(ids))
         #expect(Set(try await store.documentsWithNotes().flatMap(\.notes).map(\.body)) == ["one", "two", "three"])
+    }
+}
+
+/// Issue #15: Recently Deleted lists the folder's deleted notes and restores or deletes them for good.
+@MainActor
+struct RecentlyDeletedTests {
+    func waitUntil(_ condition: @escaping @MainActor () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
+        for _ in 0..<100 {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        Issue.record("timed out waiting", sourceLocation: sourceLocation)
+    }
+
+    @Test func recentlyDeletedIsScopedToTheFolderAndRestoresWithTheThread() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let inside = try await store.upsertDocument(hostID: .local, path: "/tmp/proj/a.md", kind: .markdown, fingerprint: Fingerprint())
+        let outside = try await store.upsertDocument(hostID: .local, path: "/tmp/other/b.md", kind: .markdown, fingerprint: Fingerprint())
+        let kept = try await store.askUser(documentID: inside.id, anchor: .wholeFile, question: "Which one?", author: "claude")
+        try await store.addFollowUp(kept.id, body: "The first.")
+        let gone = try await store.createNote(documentID: inside.id, anchor: .wholeFile, body: "gone", color: .pink)
+        let elsewhere = try await store.createNote(documentID: outside.id, anchor: .wholeFile, body: "elsewhere", color: .blue)
+        let panel = NotesPanelModel(noteStore: store)
+        var restored: [NoteID] = []
+        panel.onRestored = { restored += $0.map(\.id) }
+        await panel.delete([kept.id, gone.id, elsewhere.id])
+        panel.dismissUndo()
+
+        panel.observeTrash(RecentlyDeletedScope(hostID: .local, path: "/tmp/proj"))
+        await waitUntil { panel.trashed.count == 2 }
+        #expect(Set(panel.trashed.map(\.id)) == [kept.id, gone.id], "only the folder's notes")
+
+        await panel.restoreFromTrash([kept.id])
+        #expect(restored == [kept.id], "the restored note is handed on to be re-anchored")
+        #expect(try await store.note(kept.id)?.waitingOnUser == true)
+        #expect(try await store.messages(for: kept.id).count == 2, "back with its thread")
+        await waitUntil { panel.trashed.map(\.id) == [gone.id] }
+
+        await panel.deleteNow([gone.id])
+        await waitUntil { panel.trashed.isEmpty }
+        #expect(try await store.isTrashed(gone.id) == false)
+        #expect(try await store.note(gone.id) == nil)
+
+        panel.observeTrash(RecentlyDeletedScope(hostID: .local, path: "/tmp/other"))
+        await waitUntil { panel.trashed.count == 1 }
+        await panel.emptyRecentlyDeleted()
+        await waitUntil { panel.trashed.isEmpty }
+        #expect(try await store.isTrashed(elsewhere.id) == false)
+        panel.observeTrash(nil)
     }
 }
 

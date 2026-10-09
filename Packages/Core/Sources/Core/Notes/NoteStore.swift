@@ -16,6 +16,8 @@ public enum NoteStoreError: Error, Equatable, Sendable {
     case unsentFollowUp
     /// The note never moved, so it has no original place to go back to.
     case noOriginalPlace(NoteID)
+    /// The user deleted the note: it is in Recently Deleted, where an agent can't reach it.
+    case noteDeleted(NoteID)
 }
 
 extension NoteStoreError: LocalizedError {
@@ -33,6 +35,7 @@ extension NoteStoreError: LocalizedError {
         case .noteClosed: "The note is resolved; the user reopens it with a follow-up."
         case .unsentFollowUp: "The user has written a follow-up they haven't sent yet; wait for it before resolving."
         case .noOriginalPlace: "The note hasn't moved."
+        case .noteDeleted(let id): "Note \(id.rawValue) was deleted by the user."
         }
     }
 }
@@ -328,12 +331,12 @@ public struct NoteStore: Sendable {
     public func documentsWithNotes() async throws -> [(document: Document, notes: [Note])] {
         try await queue.read { db in
             let documents = try DocumentRecord
-                .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id)")
+                .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id AND note.deleted_at IS NULL)")
                 .order(Column("host_id"), Column("path"))
                 .fetchAll(db)
             let unsent = try Self.unsentNoteIDs(db)
             return try documents.map { record in
-                let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0, unsent: unsent) }
+                let notes = try NoteRecord.live.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0, unsent: unsent) }
                 return (Document(record: record), Self.sorted(notes))
             }
         }
@@ -342,13 +345,13 @@ public struct NoteStore: Sendable {
     // MARK: Notes
 
     public func note(_ id: NoteID) async throws -> Note? {
-        try await queue.read { db in try NoteRecord.fetchOne(db, key: id.rawValue).map { try Note(record: $0, db) } }
+        try await queue.read { db in try NoteRecord.live.filter(key: id.rawValue).fetchOne(db).map { try Note(record: $0, db) } }
     }
 
     public func notes(for documentID: DocumentID) async throws -> [Note] {
         try await queue.read { db in
             let unsent = try Self.unsentNoteIDs(db)
-            return Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
+            return Self.sorted(try NoteRecord.live.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
         }
     }
 
@@ -357,7 +360,7 @@ public struct NoteStore: Sendable {
     public func pendingNotes(hostID: HostID? = nil, pathPrefix: String? = nil, states: Set<NoteState> = [.draft, .sent]) async throws -> [(note: Note, document: Document)] {
         let stateValues = states.map(\.rawValue)
         return try await queue.read { db in
-            var request = NoteRecord
+            var request = NoteRecord.live
                 .filter(stateValues.contains(Column("state")))
                 .including(required: NoteRecord.document)
             if let hostID {
@@ -400,9 +403,9 @@ public struct NoteStore: Sendable {
     public func sharedNoteIDs() async throws -> Set<NoteID> {
         try await queue.read { db in
             Set(try String.fetchAll(db, sql: """
-                SELECT note.id FROM note WHERE note.author IS NOT NULL OR EXISTS (
+                SELECT note.id FROM note WHERE note.deleted_at IS NULL AND (note.author IS NOT NULL OR EXISTS (
                     SELECT 1 FROM send_note JOIN send ON send.id = send_note.send_id
-                    WHERE send_note.note_id = note.id AND send.outcome = 'delivered')
+                    WHERE send_note.note_id = note.id AND send.outcome = 'delivered'))
                 """).map(NoteID.init(rawValue:)))
         }
     }
@@ -411,7 +414,7 @@ public struct NoteStore: Sendable {
     /// is often what the note asked for.
     public func sentOrphanIDs() async throws -> Set<NoteID> {
         try await queue.read { db in
-            Set(try String.fetchAll(db, sql: "SELECT id FROM note WHERE state = 'orphaned' AND previous_state = 'sent'")
+            Set(try String.fetchAll(db, sql: "SELECT id FROM note WHERE state = 'orphaned' AND previous_state = 'sent' AND deleted_at IS NULL")
                 .map(NoteID.init(rawValue:)))
         }
     }
@@ -427,7 +430,7 @@ public struct NoteStore: Sendable {
         return try await queue.write { db in
             guard try DocumentRecord.exists(db, key: documentID.rawValue) else { throw NoteStoreError.documentNotFound(documentID) }
             let open = try NoteRecord
-                .filter(Column("document_id") == documentID.rawValue && Column("author") != nil && Column("waiting_on_user") == true)
+                .filter(Column("document_id") == documentID.rawValue && Column("author") != nil && Column("waiting_on_user") == true && Column("deleted_at") == nil)
                 .fetchCount(db)
             guard open < Self.agentQuestionLimit else { throw NoteStoreError.tooManyQuestions(Self.agentQuestionLimit) }
             let record = NoteRecord(
@@ -511,6 +514,100 @@ public struct NoteStore: Sendable {
             for attachment in deleted.attachments { try attachment.insert(db) }
             for link in deleted.sends where try SendRecord.exists(db, key: link.sendId) { try link.insert(db) }
             for message in deleted.messages { try message.insert(db) }
+        }
+    }
+
+    // MARK: Recently Deleted
+
+    /// Puts notes in Recently Deleted (issue #15): every read leaves them out, and they draw nothing, but the row,
+    /// its thread, attachments and sends stay until `untrashNotes`, `deleteForever` or `purgeTrash`.
+    public func trashNotes(_ ids: [NoteID], at date: Date = Date()) async throws {
+        guard !ids.isEmpty else { return }
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE note SET deleted_at = ? WHERE id IN (\(Self.placeholders(ids.count))) AND deleted_at IS NULL",
+                           arguments: StatementArguments([date] + ids.map(\.rawValue)))
+        }
+    }
+
+    /// Brings notes back from Recently Deleted to their documents, as they were. Returns the ones that came back: a
+    /// note deleted for good meanwhile, or never deleted, is not among them.
+    @discardableResult
+    public func untrashNotes(_ ids: [NoteID]) async throws -> Set<NoteID> {
+        guard !ids.isEmpty else { return [] }
+        return try await queue.write { db in
+            let arguments = StatementArguments(ids.map(\.rawValue))
+            let trashed = try String.fetchAll(db, sql: "SELECT id FROM note WHERE id IN (\(Self.placeholders(ids.count))) AND deleted_at IS NOT NULL", arguments: arguments)
+            try db.execute(sql: "UPDATE note SET deleted_at = NULL WHERE id IN (\(Self.placeholders(ids.count)))", arguments: arguments)
+            return Set(trashed.map(NoteID.init(rawValue:)))
+        }
+    }
+
+    /// Whether the user deleted this note (it is in Recently Deleted), so an agent asking for it is told so.
+    public func isTrashed(_ id: NoteID) async throws -> Bool {
+        try await queue.read { db in
+            try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM note WHERE id = ? AND deleted_at IS NOT NULL)", arguments: [id.rawValue]) ?? false
+        }
+    }
+
+    /// Whether an agent was ever given this note (delivered, or its own question), deleted or not: only such a
+    /// note is named to an agent as deleted.
+    public func wasShared(_ id: NoteID) async throws -> Bool {
+        try await queue.read { db in
+            guard let record = try NoteRecord.fetchOne(db, key: id.rawValue) else { return false }
+            return try Self.wasShared(record, db)
+        }
+    }
+
+    /// Every document with a note, Recently Deleted's included: what still needs its host row and path kept until
+    /// those notes are purged.
+    public func documentsWithAnyNotes() async throws -> [Document] {
+        try await queue.read { db in
+            try DocumentRecord.filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id)")
+                .order(Column("host_id"), Column("path")).fetchAll(db).map(Document.init(record:))
+        }
+    }
+
+    /// Recently Deleted for one location: the deleted notes of documents at or under `path` on `hostID`, the most
+    /// recently deleted first.
+    public func trashedNotes(underRoot path: String, hostID: HostID) async throws -> [TrashedNote] {
+        try await queue.read { db in try Self.trashedNotes(underRoot: path, hostID: hostID, db) }
+    }
+
+    /// The same, observed: the Recently Deleted view follows deletes, restores and purges.
+    public func observeTrashedNotes(underRoot path: String, hostID: HostID) -> AsyncThrowingStream<[TrashedNote], any Error> {
+        Self.stream(ValueObservation.tracking { db in try Self.trashedNotes(underRoot: path, hostID: hostID, db) }, in: queue)
+    }
+
+    static func trashedNotes(underRoot path: String, hostID: HostID, _ db: Database) throws -> [TrashedNote] {
+        let directory = path.hasSuffix("/") ? path : path + "/"
+        let rows = try NoteRecord
+            .filter(Column("deleted_at") != nil)
+            .including(required: NoteRecord.document)
+            .filter(sql: "document.host_id = ? AND (document.path = ? OR substr(document.path, 1, ?) = ?)",
+                    arguments: [hostID.rawValue, path, directory.unicodeScalars.count, directory])
+            .asRequest(of: NoteWithDocument.self).fetchAll(db)
+        let unsent = try Self.unsentNoteIDs(db)
+        return try rows.compactMap { row in
+            guard let deletedAt = row.note.deletedAt else { return nil }
+            return TrashedNote(note: try Note(record: row.note, unsent: unsent), document: Document(record: row.document), deletedAt: deletedAt)
+        }
+        .sorted { $0.deletedAt != $1.deletedAt ? $0.deletedAt > $1.deletedAt : $0.note.id.rawValue > $1.note.id.rawValue }
+    }
+
+    /// Deletes notes for good, with their threads, attachment rows and send links. Attachment files stay on disk for
+    /// the attachment sweep.
+    public func deleteForever(_ ids: [NoteID]) async throws {
+        guard !ids.isEmpty else { return }
+        _ = try await queue.write { db in try NoteRecord.deleteAll(db, keys: ids.map(\.rawValue)) }
+    }
+
+    /// Deletes for good every note deleted at or before `date`; returns how many went.
+    @discardableResult
+    public func purgeTrash(olderThan date: Date) async throws -> Int {
+        try await queue.write { db in
+            try db.execute(sql: "DELETE FROM note WHERE deleted_at IS NOT NULL AND deleted_at <= ?", arguments: [Self.rounded(date)])
+            return db.changesCount
         }
     }
 
@@ -599,6 +696,7 @@ public struct NoteStore: Sendable {
 
     /// An agent may write only to a note it was given: not a draft, nor an orphan that was a draft when its text went.
     private static func checkAgentMayWrite(_ record: NoteRecord) throws {
+        if record.deletedAt != nil { throw NoteStoreError.noteDeleted(NoteID(rawValue: record.id)) }
         let current = NoteState(rawValue: record.state) ?? .draft
         if current == .draft || (current == .orphaned && record.previousState != NoteState.sent.rawValue) {
             throw NoteStoreError.illegalTransition(from: .draft, to: .resolved)
@@ -917,7 +1015,7 @@ public struct NoteStore: Sendable {
     public func observeNotes(for documentID: DocumentID) -> AsyncThrowingStream<[Note], any Error> {
         Self.stream(ValueObservation.tracking { db in
             let unsent = try Self.unsentNoteIDs(db)
-            return Self.sorted(try NoteRecord.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
+            return Self.sorted(try NoteRecord.live.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
         }, in: queue)
     }
 
@@ -946,12 +1044,12 @@ public struct NoteStore: Sendable {
     public func observeDocumentsWithNotes() -> AsyncThrowingStream<[DocumentNotes], any Error> {
         Self.stream(ValueObservation.tracking { db in
             let documents = try DocumentRecord
-                .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id)")
+                .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id AND note.deleted_at IS NULL)")
                 .order(Column("host_id"), Column("path"))
                 .fetchAll(db)
             let unsent = try Self.unsentNoteIDs(db)
             return try documents.map { record in
-                let notes = try NoteRecord.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0, unsent: unsent) }
+                let notes = try NoteRecord.live.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0, unsent: unsent) }
                 return DocumentNotes(document: Document(record: record), notes: Self.sorted(notes))
             }
         }, in: queue)
@@ -1163,6 +1261,11 @@ public struct NoteStore: Sendable {
         Set(try String.fetchAll(db, sql: "SELECT DISTINCT note_id FROM note_message WHERE sent_at IS NULL"))
     }
 
+    /// `?, ?, ?` for an `IN` list of `count` values.
+    static func placeholders(_ count: Int) -> String {
+        Array(repeating: "?", count: count).joined(separator: ", ")
+    }
+
     static func hasUnsentFollowUp(_ noteID: String, _ db: Database) throws -> Bool {
         try Bool.fetchOne(db, sql: "SELECT EXISTS (SELECT 1 FROM note_message WHERE note_id = ? AND sent_at IS NULL)", arguments: [noteID]) ?? false
     }
@@ -1194,6 +1297,20 @@ public struct NoteStore: Sendable {
     static func refetch<R: FetchableRecord & PersistableRecord & Identifiable>(_ record: R, _ db: Database) throws -> R where R.ID == String {
         guard let fresh = try R.fetchOne(db, key: record.id) else { throw DatabaseError(message: "row vanished after write") }
         return fresh
+    }
+}
+
+/// A note in Recently Deleted, with its document and when it was deleted.
+public struct TrashedNote: Hashable, Sendable, Identifiable {
+    public var note: Note
+    public var document: Document
+    public var deletedAt: Date
+    public var id: NoteID { note.id }
+
+    public init(note: Note, document: Document, deletedAt: Date) {
+        self.note = note
+        self.document = document
+        self.deletedAt = deletedAt
     }
 }
 
@@ -1232,6 +1349,11 @@ extension JSONEncoder {
 private struct NoteWithDocument: Decodable, FetchableRecord {
     var note: NoteRecord
     var document: DocumentRecord
+}
+
+extension NoteRecord {
+    /// Notes not in Recently Deleted: what every read and observation of notes starts from.
+    static var live: QueryInterfaceRequest<NoteRecord> { NoteRecord.filter(Column("deleted_at") == nil) }
 }
 
 // MARK: Record ↔ domain conversions

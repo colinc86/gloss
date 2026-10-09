@@ -489,29 +489,34 @@ final class NotesPanelModel {
     }
 
     /// The notes deleted last, offered back together in the undo toast for a few seconds; empty when there is none.
-    private(set) var lastDeleted: [DeletedNote] = []
+    private(set) var lastDeleted: [Note] = []
     /// Why the last Undo could not bring the note back, in a sentence; the toast says so and offers Try Again.
     private(set) var undoFailure: String?
     @ObservationIgnored private var undoTokens: [NoteID: UndoToken] = [:]
     private final class UndoToken {}
+    /// Called with the notes brought back from Recently Deleted, so their open documents re-anchor them.
+    @ObservationIgnored var onRestored: ([Note]) -> Void = { _ in }
 
     /// Deletes at once (no confirmation) and makes it undoable: the toast's Undo, and Edit › Undo (⌘Z).
     func delete(_ id: NoteID) async {
         await delete([id])
     }
 
-    /// Deletes several notes as one step: one toast, one Undo that brings them all back.
+    /// Deletes several notes as one step: one toast, one Undo that brings them all back. A deleted note goes to
+    /// Recently Deleted (issue #15), so Undo only takes it out again.
     func delete(_ ids: [NoteID]) async {
-        var batch: [DeletedNote] = []
+        var batch: [Note] = []
         for id in ids {
-            do {
-                if let deleted = try await noteStore.deleteNoteForUndo(id) { batch.append(deleted) }
-            } catch {
-                Log.notes.error("delete failed: \(error, privacy: .public)")
-            }
+            if let note = try? await noteStore.note(id) { batch.append(note) }
         }
         guard !batch.isEmpty else { return }
-        if !lastDeleted.isEmpty, lastDeleted != batch {
+        do {
+            try await noteStore.trashNotes(batch.map(\.id))
+        } catch {
+            Log.notes.error("delete failed: \(error, privacy: .public)")
+            return
+        }
+        if !lastDeleted.isEmpty, lastDeleted.map(\.id) != batch.map(\.id) {
             Log.notes.info("undo toast replaced: \(self.lastDeleted.count, privacy: .public) by \(batch.count, privacy: .public) notes")
         }
         lastDeleted = batch
@@ -528,12 +533,9 @@ final class NotesPanelModel {
         }
     }
 
-    func undoDelete(_ deleted: DeletedNote) async {
-        await undoDelete([deleted])
-    }
-
-    /// Brings a deleted batch back and selects it. Notes that can't come back stay listed in the toast with Try Again.
-    func undoDelete(_ batch: [DeletedNote]) async {
+    /// Brings a deleted batch back from Recently Deleted and selects it. Notes that can't come back (deleted for good
+    /// meanwhile) stay listed in the toast with Try Again.
+    func undoDelete(_ batch: [Note]) async {
         // Undone from the toast: the Edit › Undo entry would now restore notes that are already back.
         var tokens: [UndoToken] = []
         for id in batch.map(\.id) {
@@ -542,17 +544,20 @@ final class NotesPanelModel {
         for token in tokens {
             for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) { window.undoManager?.removeAllActions(withTarget: token) }
         }
-        var failed: [DeletedNote] = []
-        for deleted in batch {
-            do {
-                try await noteStore.restore(deleted)
-                Log.notes.info("undo toast: restored \(deleted.id.rawValue, privacy: .public)")
-            } catch {
-                Log.notes.error("undo delete failed: \(error, privacy: .public)")
-                failed.append(deleted)
-            }
+        var restored: Set<NoteID> = []
+        do {
+            restored = try await noteStore.untrashNotes(batch.map(\.id))
+            Log.notes.info("undo toast: restored \(restored.count, privacy: .public) of \(batch.count, privacy: .public) notes")
+        } catch {
+            Log.notes.error("undo delete failed: \(error, privacy: .public)")
         }
-        let wasShown = lastDeleted == batch
+        // A note already back (restored from Recently Deleted meanwhile) is not a failure.
+        var failed: [Note] = []
+        for note in batch where !restored.contains(note.id) {
+            if (try? await noteStore.note(note.id)) == nil { failed.append(note) }
+        }
+        onRestored(batch.filter { restored.contains($0.id) })
+        let wasShown = lastDeleted.map(\.id) == batch.map(\.id)
         if failed.isEmpty {
             if wasShown {
                 lastDeleted = []
@@ -561,9 +566,58 @@ final class NotesPanelModel {
         } else if wasShown {
             // The toast stays and says so: a silent failure looked exactly like a note that had come back.
             lastDeleted = failed
-            undoFailure = failed.count == 1 ? "Couldn't bring the note back. It may have changed elsewhere." : "Couldn't bring \(failed.count) notes back. They may have changed elsewhere."
+            undoFailure = failed.count == 1 ? "Couldn't bring the note back. It was deleted for good." : "Couldn't bring \(failed.count) notes back. They were deleted for good."
         }
         selection = Set(batch.map(\.id)).subtracting(failed.map(\.id))
+    }
+
+    // MARK: Recently Deleted
+
+    /// The panel shows Recently Deleted instead of the notes (issue #15).
+    var showsRecentlyDeleted = false
+    /// The deleted notes under the folder in front, newest first, while Recently Deleted shows.
+    private(set) var trashed: [TrashedNote] = []
+    @ObservationIgnored private var trashObservation: Task<Void, Never>?
+    @ObservationIgnored private var trashScope: RecentlyDeletedScope?
+
+    /// Follows the deleted notes under `scope`; nil stops.
+    func observeTrash(_ scope: RecentlyDeletedScope?) {
+        guard scope != trashScope || trashObservation == nil else { return }
+        trashObservation?.cancel()
+        trashObservation = nil
+        trashScope = scope
+        trashed = []
+        guard let scope else { return }
+        let stream = noteStore.observeTrashedNotes(underRoot: scope.path, hostID: scope.hostID)
+        trashObservation = Task { [weak self] in
+            do {
+                for try await trashed in stream { self?.trashed = trashed }
+            } catch {
+                Log.notes.error("Recently Deleted observation failed: \(error, privacy: .public)")
+            }
+        }
+    }
+
+    /// Puts notes back on their documents, re-anchored against the text there now.
+    func restoreFromTrash(_ ids: [NoteID]) async {
+        let wanted = Set(ids)
+        let notes = trashed.map(\.note).filter { wanted.contains($0.id) }
+        do {
+            let restored = try await noteStore.untrashNotes(ids)
+            onRestored(notes.filter { restored.contains($0.id) })
+        } catch {
+            Log.notes.error("restore from Recently Deleted failed: \(error, privacy: .public)")
+        }
+    }
+
+    /// Deletes notes for good, from Recently Deleted.
+    func deleteNow(_ ids: [NoteID]) async {
+        do { try await noteStore.deleteForever(ids) } catch { Log.notes.error("delete now failed: \(error, privacy: .public)") }
+    }
+
+    /// Deletes for good every note Recently Deleted lists (the folder in front's).
+    func emptyRecentlyDeleted() async {
+        await deleteNow(trashed.map(\.id))
     }
 
     func dismissUndo() {

@@ -251,6 +251,12 @@ public enum Schema {
                 """)
             try Self.splitLegacyThreads(db)
         }
+        migrator.registerMigration("v12-note-trash") { db in
+            // Deleting a note puts it in Recently Deleted (issue #15): the row stays, with its thread, attachments and
+            // sends, until it is restored, deleted for good, or purged after the retention the user picked.
+            try db.execute(sql: "ALTER TABLE note ADD COLUMN deleted_at DATETIME")
+            try db.execute(sql: "CREATE INDEX note_deleted_at ON note(deleted_at)")
+        }
         return migrator
     }
 

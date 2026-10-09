@@ -92,6 +92,8 @@ final class AppModel {
     /// Remote home directories, learned from the probe when a host connects (hook installs need them).
     private(set) var hostHomes: [HostID: String] = [:]
     @ObservationIgnored private var cleanupTasks: [HostID: Task<Void, Never>] = [:]
+    /// Empties Recently Deleted of notes past the retention in Settings, at launch and every 24 h.
+    @ObservationIgnored private var trashPurge: Task<Void, Never>?
     @ObservationIgnored private var warnedNonAtomic: Set<HostID> = []
     /// Follow mode: the explorer opens the directory of whichever Herdr agent pane has focus.
     var followHerdr = false {
@@ -337,6 +339,9 @@ final class AppModel {
         notesPanel.onGroupsChange = { [weak self, weak explorer] groups in
             explorer?.updateNoteMarks(groups)
             self?.updateDockBadge(groups)
+        }
+        notesPanel.onRestored = { [weak self] restored in
+            Task { await self?.reanchorRestored(restored) }
         }
         explorer.onCopied = { [weak self] text in self?.flashCopied(text) }
         explorer.onCreateFileNote = { [weak self] hostID, path, body, color in
@@ -714,7 +719,8 @@ final class AppModel {
             canonicalPages.insert(path)
             return path
         }
-        let earlier = ((try? await noteStore.documentsWithNotes()) ?? []).map(\.document).filter { document in
+        // Notes in Recently Deleted move too, so restoring one puts it on the page as it is now.
+        let earlier = ((try? await noteStore.documentsWithAnyNotes()) ?? []).filter { document in
             document.hostID == .atlassian && document.path != canonical && AtlassianPath(document.path)?.pageID == id
         }
         for document in earlier {
@@ -1054,6 +1060,28 @@ final class AppModel {
         }
     }
 
+    /// Deletes for good the notes in Recently Deleted longer than Settings keeps them (never, when it keeps them all).
+    private func purgeTrash() async {
+        let days = settings.trashRetentionDays
+        guard days > 0 else { return }
+        do {
+            let purged = try await noteStore.purgeTrash(olderThan: Date().addingTimeInterval(-TimeInterval(days) * 24 * 3600))
+            if purged > 0 { Log.notes.info("purged \(purged) notes from Recently Deleted") }
+        } catch {
+            Log.notes.error("purging Recently Deleted failed: \(error, privacy: .public)")
+        }
+    }
+
+    /// Notes brought back from Recently Deleted are re-anchored by their open documents against the text there now;
+    /// a closed document re-anchors them when it next opens.
+    func reanchorRestored(_ restored: [Note]) async {
+        for (documentID, notes) in Dictionary(grouping: restored, by: \.documentID) {
+            for session in sessions.values where session.document?.id == documentID {
+                await session.reanchorRestored(notes)
+            }
+        }
+    }
+
     /// Open Quickly over the selected root, on whichever host it belongs to.
     /// A pull request, a Jira project or a Confluence space: browsed, not searched (its files are not on a disk
     /// that ssh or rg can reach).
@@ -1382,8 +1410,15 @@ final class AppModel {
         send.stagedFileExpiryDays = settings.stagedFileExpiryDays
         settings.onStagedExpiryChange = { [weak self] days in self?.send.stagedFileExpiryDays = days }
         settings.onDockSettingChange = { [weak self] in self?.updateDockBadge() }
+        settings.onTrashRetentionChange = { [weak self] in Task { await self?.purgeTrash() } }
         updateDockBadge()
         sweepAttachments()
+        trashPurge = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.purgeTrash()
+                try? await Task.sleep(for: .seconds(24 * 3600))
+            }
+        }
         await hosts.load()
         await webPages.load()
         // The token note links must carry exists before the Herdr plugin first reads it.
@@ -1835,6 +1870,7 @@ final class AppModel {
     func shutDown() async {
         guard !isShutDown else { return }
         isShutDown = true
+        trashPurge?.cancel()
         // Bounded: a slow or locked database must not hold up quitting.
         workspaceSave?.cancel()
         // Quitting while a restore still waits (a host's key agent) keeps the saved workspace whole.

@@ -159,6 +159,41 @@ struct MCPServerTests {
         }
     }
 
+    /// A sent note the user deleted (it is in Recently Deleted, issue #15) is named as deleted, not unknown, and is
+    /// left out of the listings.
+    @Test func agentsAreToldANoteWasDeleted() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-trash-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, ids) = try await Self.makeStore(count: 2, attachmentDirectory: directory)
+        let dependencies = Self.dependencies(store: store)
+        func call(_ name: String, _ arguments: [String: Value] = [:]) async throws -> (text: String, isError: Bool) {
+            let result = try await MCPServer.callTool(.init(name: name, arguments: arguments), dependencies: dependencies)
+            let text = result.content.compactMap { if case .text(let text, _, _) = $0 { text } else { nil } }.joined(separator: "\n")
+            return (text, result.isError ?? false)
+        }
+        try await store.trashNotes([ids[0]])
+        let deleted = "Note \(ids[0].rawValue) was deleted by the user."
+        for tool in ["get_note", "resolve_note"] {
+            let result = try await call(tool, ["id": .string(ids[0].rawValue)])
+            #expect(result.isError && result.text == deleted, "\(tool): \(result.text)")
+        }
+        let reply = try await call("reply_to_note", ["id": .string(ids[0].rawValue), "message": .string("Done?")])
+        #expect(reply.isError && reply.text == deleted, "\(reply.text)")
+        #expect(try await call("get_note", ["id": .string(NoteID.new().rawValue)]).text == "unknown note id", "an id never seen is still unknown")
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/demo/README.md", kind: .markdown, fingerprint: Fingerprint())
+        let draft = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "never sent", color: .yellow)
+        try await store.trashNotes([draft.id])
+        #expect(try await call("get_note", ["id": .string(draft.id.rawValue)]).text == "unknown note id", "a deleted draft no agent had stays unknown")
+        let listing = try await call("list_pending_notes")
+        #expect(!listing.text.contains(ids[0].rawValue) && listing.text.contains(ids[1].rawValue), "\(listing.text)")
+        #expect(try await call("list_documents").text.contains("sent=1"))
+        #expect(try await MCPServer.resources(dependencies: dependencies).isEmpty, "the deleted note's attachment is no longer offered")
+
+        try await store.untrashNotes([ids[0]])
+        #expect(try await call("get_note", ["id": .string(ids[0].rawValue)]).isError == false, "restored, it is the agent's again")
+    }
+
     /// A sent note whose text the agent removed (as the note asked) is still listed, marked as gone, and can be
     /// resolved; one taken back to a draft before its text went can't.
     @Test func agentsResolveNotesWhoseTextIsGone() async throws {

@@ -470,6 +470,7 @@ public actor MCPServer {
             let jsonText = String(data: (try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])) ?? Data(), encoding: .utf8) ?? "[]"
             return CallTool.Result(content: [text(lines.isEmpty ? "No pending notes." : lines.joined(separator: "\n")), text(jsonText)])
         case "get_note":
+            if let deleted = try await deletedNote(arguments, store: store) { return deleted }
             guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), try await store.sharedNoteIDs().contains(id) else {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
@@ -481,6 +482,7 @@ public actor MCPServer {
             }
             return CallTool.Result(content: [text(body)])
         case PacketBuilder.toolName:
+            if let deleted = try await deletedNote(arguments, store: store) { return deleted }
             guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), try await store.sharedNoteIDs().contains(id) else {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
@@ -518,6 +520,7 @@ public actor MCPServer {
             let done = outcome == .needsInput ? "asked the user (note \(raw)); the answer comes back when they send it" : "resolved \(raw)"
             return CallTool.Result(content: [text(done + moved(relocation))])
         case PacketBuilder.replyToolName:
+            if let deleted = try await deletedNote(arguments, store: store) { return deleted }
             guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw), let note = try await store.note(id), try await store.sharedNoteIDs().contains(id) else {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
@@ -633,6 +636,14 @@ public actor MCPServer {
         default:
             throw MCPError.methodNotFound("unknown tool \(params.name)")
         }
+    }
+
+    /// A note the user deleted (it is in Recently Deleted) is named as deleted rather than unknown, so an agent that
+    /// was given it knows to stop. Nil for any other id; a deleted draft no agent was given stays unknown.
+    nonisolated static func deletedNote(_ arguments: [String: Value], store: NoteStore) async throws -> CallTool.Result? {
+        guard let raw = arguments["id"]?.stringValue, let id = NoteID(validating: raw),
+              try await store.isTrashed(id), try await store.wasShared(id) else { return nil }
+        return CallTool.Result(content: [text(NoteStoreError.noteDeleted(id).localizedDescription)], isError: true)
     }
 
     /// The open notes an agent may see: sent ones. Drafts stay in the app until the user sends them.

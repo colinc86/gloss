@@ -1160,6 +1160,38 @@ final class DocumentSession: Identifiable {
     /// Re-anchors every text note against new content (reload after an external change, or a file that changed
     /// while it was closed).
     func reanchorAll(in text: String, hash: String) async {
+        await reanchor(notes, in: text, hash: hash)
+    }
+
+    /// Notes brought back from Recently Deleted, against the text on disk now: the file may have changed while they
+    /// were away. A page re-anchors its notes when it next settles.
+    func reanchorRestored(_ restored: [Note]) async {
+        if isDirty, csvController == nil, let controller = textController {
+            // Unsaved edits: the notes are found in the text being edited and held as live ranges, which the next
+            // save stores; what is on disk no longer matches what is shown. Held only once the notes are listed here,
+            // since drawing drops live ranges of notes it doesn't have.
+            let ids = Set(restored.map(\.id))
+            for _ in 0..<50 where !ids.isSubset(of: notes.map(\.id)) { try? await Task.sleep(for: .milliseconds(50)) }
+            let text = controller.text
+            let index = LineIndex(text)
+            for note in restored {
+                guard case .text(let anchor) = note.anchor else { continue }
+                switch ReAnchorer.text(anchor, in: text, newHash: Data(text.utf8).sha256Hex) {
+                case .unchanged: liveRanges[note.id] = index.range(for: anchor)
+                case .moved(.text(let moved)), .movedNeedsReview(.text(let moved)): liveRanges[note.id] = index.range(for: moved)
+                default: continue
+                }
+            }
+            syncHighlights()
+            return
+        }
+        guard let text = baseText else { return }
+        // The same hash the open-time pass uses: a grid's anchors hash the text itself.
+        let hash = csvController != nil ? Data(text.utf8).sha256Hex : fingerprintAtOpen?.hash ?? Data(text.utf8).sha256Hex
+        await reanchor(restored, in: text, hash: hash)
+    }
+
+    private func reanchor(_ notes: [Note], in text: String, hash: String) async {
         for note in notes {
             if Task.isCancelled { return }
             do {
@@ -1473,11 +1505,6 @@ final class DocumentSession: Identifiable {
         let url = directory.appendingPathComponent("\(base)-element-\(noteID.rawValue.suffix(6)).png")
         try crop.png.write(to: url, options: .atomic)
         _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
-    }
-
-    func deleteNote(_ id: NoteID) async {
-        do { try await noteStore.deleteNote(id) } catch { lastError = "Deleting the note failed: \(error)" }
-        noteEditor = nil
     }
 
     func resolveNote(_ id: NoteID) async {

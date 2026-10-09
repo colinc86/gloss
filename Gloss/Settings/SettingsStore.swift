@@ -52,6 +52,16 @@ final class SettingsStore {
     }
     /// Sends started after a change use the new expiry at once, not after a relaunch.
     @ObservationIgnored var onStagedExpiryChange: (Int) -> Void = { _ in }
+    /// Days a deleted note stays in Recently Deleted before it goes for good; 0 keeps it until it is emptied (issue #15).
+    var trashRetentionDays = 30 {
+        didSet {
+            persist("notes.trashDays", String(trashRetentionDays))
+            if loaded, trashRetentionDays != oldValue { onTrashRetentionChange() }
+        }
+    }
+    /// A shorter retention deletes what is now past it at once, not at the next daily purge.
+    @ObservationIgnored var onTrashRetentionChange: () -> Void = {}
+    static let trashRetentionChoices = [7, 30, 90, 0]
     var mcpPort = 47831 { didSet { persist("mcp.port", String(mcpPort)) } }
     private(set) var loaded = false
 
@@ -74,6 +84,7 @@ final class SettingsStore {
         if let value = await read("editor.wrap") { wrapLines = value == "1" }
         if let value = await read("editor.guides") { showIndentGuides = value == "1" }
         if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = days }
+        if let value = await read("notes.trashDays"), let days = Int(value), Self.trashRetentionChoices.contains(days) { trashRetentionDays = days }
         if let value = await read("mcp.port"), let port = Int(value) { mcpPort = port }
         loaded = true
     }

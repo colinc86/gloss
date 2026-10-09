@@ -73,6 +73,33 @@ struct DocumentNotesTests {
         session.close()
     }
 
+    /// A note restored from Recently Deleted while the file has unsaved edits is found in the text being edited, drawn
+    /// there, and stored there on save (issue #15).
+    @Test func aNoteRestoredWhileEditingLandsInTheEditedText() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        let document = try #require(session.document)
+        let note = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 4), text: "two", before: "one", after: "three", hash: nil)), body: "b", color: .blue)
+        await waitUntil { controller.highlights.count == 1 }
+        try await store.trashNotes([note.id])
+        await waitUntil { controller.highlights.isEmpty }
+        let newText = "zero\none\ntwo\nthree\n"
+        controller.viewDidProcessEdit(edit: NSRange(location: 0, length: 0), replacementLength: 5, newText: newText)
+        controller.viewDidChangeText(newText)
+        #expect(session.isDirty)
+        try await store.untrashNotes([note.id])
+        await session.reanchorRestored([note])
+        #expect(controller.highlights.first?.range == NSRange(location: 9, length: 3), "drawn on the edited text")
+        await session.save()
+        let saved = try #require(try await store.note(note.id))
+        guard case .text(let anchor) = saved.anchor else { Issue.record("expected text anchor"); return }
+        #expect(anchor.start.line == 3 && anchor.text == "two")
+        session.close()
+    }
+
     /// An agent moves a note while the user is typing: the move wins over the note's live range, so the next save
     /// doesn't write the old place back under a thread that says it moved.
     @Test func aMoveWhileEditingIsNotUndoneBySaving() async throws {

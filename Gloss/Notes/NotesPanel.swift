@@ -16,6 +16,14 @@ struct NotesPanel: View {
     @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
+        if model.notesPanel.showsRecentlyDeleted {
+            RecentlyDeletedView()
+        } else {
+            notes
+        }
+    }
+
+    @ViewBuilder private var notes: some View {
         @Bindable var panel = model.notesPanel
         // Worked out once per pass: the runs, and every group in them.
         let runs = panel.sections
@@ -315,6 +323,8 @@ struct NotesPanel: View {
             // Nothing to separate while resolved notes are hidden.
             Toggle("Separate Resolved Notes", isOn: $panel.separateResolved)
                 .disabled(!panel.showResolved)
+            Divider()
+            Button("Recently Deleted", systemImage: "trash") { panel.showsRecentlyDeleted = true }
         } label: {
             Image(systemName: panel.sort.symbol)
         }
@@ -1868,7 +1878,7 @@ private struct UndoDeleteToast: View {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(failure != nil ? "Undo didn't work" : deleted.count == 1 ? "Note deleted" : "\(deleted.count) notes deleted")
                             .font(.callout.weight(.semibold))
-                        Text(failure ?? (deleted.count == 1 ? first.note.body : deleted.map { $0.note.body.split(separator: "\n").first.map(String.init) ?? "" }.joined(separator: " · ")))
+                        Text(failure ?? (deleted.count == 1 ? first.body : deleted.map { $0.body.split(separator: "\n").first.map(String.init) ?? "" }.joined(separator: " · ")))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(failure == nil ? 1 : 2)
@@ -1888,7 +1898,7 @@ private struct UndoDeleteToast: View {
                 // Removed under the pointer (after Undo) it gets no hover-out; the next toast must still time out.
                 .onDisappear { hovering = false }
                 .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
-                .task(id: "\(deleted.map(\.note.id))-\(hovering)-\(failure != nil)") {
+                .task(id: "\(deleted.map(\.id))-\(hovering)-\(failure != nil)") {
                     // A failure stays until dismissed: it needs reading, and the deleted notes are still recoverable.
                     guard !hovering, failure == nil else { return }
                     try? await Task.sleep(for: .seconds(6))
@@ -1899,7 +1909,7 @@ private struct UndoDeleteToast: View {
                 .accessibilityLabel(deleted.count == 1 ? "Note deleted" : "\(deleted.count) notes deleted")
             }
         }
-        .animation(DS.Motion.bouncy, value: panel.lastDeleted.map(\.note.id))
+        .animation(DS.Motion.bouncy, value: panel.lastDeleted.map(\.id))
     }
 }
 

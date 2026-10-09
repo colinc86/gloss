@@ -118,7 +118,8 @@ final class HostsModel {
             }
         }
         var list = [Entry(id: .local, name: "local", kind: .local, origin: .local)]
-        let documents = (try? await noteStore.documentsWithNotes()) ?? []
+        // Notes in Recently Deleted count: the host stays until they are purged.
+        let documents = (try? await noteStore.documentsWithAnyNotes()) ?? []
         for host in (try? await noteStore.hosts()) ?? [] where host.kind == .ssh {
             switch host.origin {
             case .manual:
@@ -133,7 +134,7 @@ final class HostsModel {
                     continue
                 }
                 let stillListed = importsSSHConfigStored && aliases.contains(host.options?.alias ?? host.name)
-                let hasNotes = documents.contains { $0.document.hostID == host.id }
+                let hasNotes = documents.contains { $0.hostID == host.id }
                 if stillListed || hasNotes { list.append(Entry(id: host.id, name: host.name, kind: .ssh, origin: .sshConfig, options: host.options)) }
             case .local:
                 continue
