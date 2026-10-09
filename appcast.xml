@@ -6,6 +6,44 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.4.0</title>
+      <pubDate>Fri, 09 Oct 2026 18:30:57 GMT</pubDate>
+      <sparkle:version>204</sparkle:version>
+      <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">Rounds of review, a safety net for deleted notes, and a notes panel that follows the folder you're in.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Iterations.</strong> Each file's notes come in numbered rounds. Start a new iteration from the menu in the file's header, choose whether open notes come along, and look back at any earlier round: the file as it was, its notes where they were taken, and the lines changed since. Gloss keeps its own snapshots and never writes to your repository. Settings › Notes can start a new round after every note is resolved, or when a file's git commit changes.</li>
+<li><strong>Recently Deleted.</strong> Deleted notes go to Recently Deleted in the notes panel's menu, where you can restore them with their threads or delete them for good. They're kept for 30 days by default.</li>
+<li><strong>Mermaid diagrams</strong> draw in the rendered Markdown view, in light and dark, and you can add notes to a region of a diagram.</li>
+<li><strong>Renames keep your notes.</strong> Renaming a file or folder in Gloss carries its notes, iterations and unsaved edits to the new name.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li>The notes panel shows the notes of the folder in front; switching folders hides the others without touching them.</li>
+<li>Send has a menu built in: pick This File or This Location, or copy the same notes as a packet.</li>
+<li>Selecting adjacent notes draws one outline around them, blending their colors.</li>
+<li>The location dropdown lists your favorites from every host, and opening one on another host connects first.</li>
+<li>When the chosen agent isn't running any more, the picker marks it instead of quietly picking another.</li>
+<li>New File and New Folder never replace something that's already there.</li>
+</ul>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>A send that's called off because the folder or notes changed says why, instead of showing as a failed delivery.</li>
+<li>Edits to a file opened under <code class="notranslate">/tmp</code> reload as they happen.</li>
+</ul>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/625815191" type="application/octet-stream" sparkle:edSignature="peRzXuptbDBTRIYWZcPQDn8FtOdJXKHDJik1n6OcmKGXrEhzK8WmLyJmbKDMHgIlORWzXNUufHPq9g6kqPmWCQ==" length="26177046"/>
+    </item>
+    <item>
       <title>Gloss 0.3.0</title>
       <pubDate>Thu, 08 Oct 2026 14:01:05 GMT</pubDate>
       <sparkle:version>187</sparkle:version>
