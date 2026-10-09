@@ -100,6 +100,35 @@ struct DocumentNotesTests {
         session.close()
     }
 
+    /// The open-time re-anchor can land after the user starts typing (the notes arrive late under load): the session's
+    /// own write must not count as someone else's move and drop the typed shift before it is saved.
+    @Test func aLateOpenReanchorKeepsTheTypedShift() async throws {
+        let original = "one\ntwo\nthree\n"
+        let (directory, path) = try makeFile(original)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        let document = try #require(session.document)
+        let note = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 4), text: "two", before: "one", after: "three", hash: nil)), body: "b", color: .blue)
+        await waitUntil { controller.highlights.count == 1 }
+        let newText = "zero\none\ntwo\nthree\n"
+        controller.viewDidProcessEdit(edit: NSRange(location: 0, length: 0), replacementLength: 5, newText: newText)
+        controller.viewDidChangeText(newText)
+        // The open-time pass, late: it stamps the disk text's hash on the anchor (a hash this anchor doesn't have yet,
+        // so it writes, as it does when the notes arrive after the note was made).
+        await session.reanchorAll(in: original, hash: "disk-at-open")
+        // Its write comes back through the session's observation of the notes.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(controller.highlights.first?.range == NSRange(location: 9, length: 3))
+        await session.save()
+        let saved = try #require(try await store.notes(for: document.id).first { $0.id == note.id })
+        guard case .text(let anchor) = saved.anchor else { Issue.record("expected text anchor"); return }
+        #expect(anchor.start.line == 3)
+        #expect(anchor.hash == Data(newText.utf8).sha256Hex)
+        session.close()
+    }
+
     /// An agent moves a note while the user is typing: the move wins over the note's live range, so the next save
     /// doesn't write the old place back under a thread that says it moved.
     @Test func aMoveWhileEditingIsNotUndoneBySaving() async throws {

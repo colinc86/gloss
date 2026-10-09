@@ -1147,10 +1147,14 @@ final class DocumentSession: Identifiable {
             if case .movedNeedsReview = result { needsReview.insert(note.id) } else { needsReview.remove(note.id) }
             // An orphan has its place back; found on changed words, the thread records the move (`applyReanchor`).
             if note.state == .orphaned || moved != anchor {
+                // This session's own write: when it comes back after typing has begun (the notes arrived late),
+                // it must not be taken for someone else's move and drop the typed shift.
+                anchorsBeingSaved[note.id] = moved
                 try await noteStore.applyReanchor(note.id, to: moved)
             }
         case .removed(let point):
             needsReview.remove(note.id)
+            anchorsBeingSaved[note.id] = point
             try await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil)
         case .orphaned:
             if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
