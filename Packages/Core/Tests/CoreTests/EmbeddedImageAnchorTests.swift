@@ -112,4 +112,74 @@ struct EmbeddedImageAnchorTests {
         #expect(EmbedScanner.firstCandidate(inSrcset: "a.png, b.png 2x") == "a.png")
         #expect(EmbedScanner.embeds(in: "<source src=\"clip.mp4\">\n").isEmpty, "a source without srcset names no picture")
     }
+
+    /// A ```` ```mermaid ```` block is drawn as a picture, so it is an embed of `mermaid` covering the whole fence;
+    /// other fences, and a Mermaid fence's contents, are not.
+    @Test func mermaidFencesAreEmbeds() {
+        let doc = """
+        ![a](a.png)
+
+        ```mermaid
+        flowchart LR
+          A --> B
+        ```
+
+        ```swift
+        let x = "![b](a.png)"
+        ```
+
+        - ~~~ Mermaid {theme: dark}
+          sequenceDiagram
+          ~~~
+
+        > ```mermaid
+        > graph TD
+        """
+        let embeds = EmbedScanner.embeds(in: doc)
+        #expect(embeds.map(\.source) == ["a.png", "mermaid:", "mermaid:", "mermaid:"])
+        #expect(embeds.map(\.range.location) == embeds.map(\.range.location).sorted(), "in document order")
+        let ns = doc as NSString
+        #expect(ns.substring(with: embeds[1].range) == "```mermaid\nflowchart LR\n  A --> B\n```")
+        #expect(ns.substring(with: embeds[2].range).hasPrefix("~~~ Mermaid") && ns.substring(with: embeds[2].range).hasSuffix("~~~"))
+        #expect(ns.substring(with: embeds[3].range) == "```mermaid\n> graph TD", "an unclosed fence runs to the end")
+        #expect(ReAnchorer.embedOccurrence(of: "mermaid:", before: embeds[3].range.location, in: doc) == 2)
+        #expect(EmbedScanner.embeds(in: "```mermaidx\nA\n```\n\n`mermaid`\n").isEmpty)
+    }
+
+    /// A note on a diagram follows its fence, and the packet calls it a Mermaid diagram rather than naming a file.
+    @Test func aDiagramNoteFollowsItsFenceAndNamesItself() {
+        let doc = "# Flow\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\nText.\n"
+        let range = (doc as NSString).range(of: "```mermaid\nflowchart LR\n  A --> B\n```")
+        let anchor = EmbeddedImageAnchor(source: EmbedScanner.mermaidSource, occurrence: 0, region: ImageAnchor(x: 4, y: 6, w: 80, h: 40, imageW: 400, imageH: 120),
+                                         embed: ReAnchorer.make(from: range, in: doc, index: LineIndex(doc), hash: "old"))
+        #expect(anchor.isMermaidDiagram && anchor.fileName == "Mermaid diagram")
+        let note = PacketNote(noteID: NoteID.new(), agentPath: "/repo/flow.md", source: .markdown, anchor: .embeddedImage(anchor),
+                              comment: "Swap these", attachmentAgentPath: "/tmp/crop.png")
+        let text = PacketBuilder.build([note]).text
+        #expect(text.contains("Line 3\nImage: Mermaid diagram (400x120)\nRegion: x=4 y=6 w=80 h=40 (crop attached)"), "\(text)")
+        let moved = "Intro.\n\n```mermaid\nflowchart TB\n  Z --> Y\n```\n\n" + doc
+        guard case .moved(.embeddedImage(let next)) = ReAnchorer.embeddedImage(anchor, in: moved, newHash: "new") else { Issue.record("expected moved"); return }
+        #expect(next.embed.start.line == 10 && next.occurrence == 1, "a diagram added above makes this the second")
+        let notADiagram = doc.replacingOccurrences(of: "```mermaid", with: "```text")
+        #expect(ReAnchorer.embeddedImage(anchor, in: "Intro.\n\n" + notADiagram, newHash: "new") == .orphaned, "the fence is no longer Mermaid")
+    }
+
+    /// A fence ends with the quote or list item that holds it, closed or not, so a diagram after it is counted.
+    @Test func aDiagramFenceEndsWithItsContainer() {
+        let quoted = "> ```mermaid\n> graph TD\n\n```mermaid\nflowchart LR\n```\n"
+        let inQuote = EmbedScanner.embeds(in: quoted)
+        #expect(inQuote.map(\.source) == ["mermaid:", "mermaid:"])
+        #expect((quoted as NSString).substring(with: inQuote[0].range) == "```mermaid\n> graph TD")
+        #expect(inQuote[1].range.location == (quoted as NSString).range(of: "```mermaid\nflowchart").location)
+
+        let listed = "- item\n\n  ```mermaid\n  graph TD\n- next\n\n```mermaid\nflowchart LR\n```\n"
+        let inList = EmbedScanner.embeds(in: listed)
+        #expect(inList.count == 2)
+        #expect((listed as NSString).substring(with: inList[0].range) == "```mermaid\n  graph TD")
+
+        let quoteInList = "- > ```mermaid\n  > graph TD\n  > ```\n\n```mermaid\nflowchart LR\n```\n"
+        let both = EmbedScanner.embeds(in: quoteInList)
+        #expect(both.count == 2)
+        #expect((quoteInList as NSString).substring(with: both[0].range) == "```mermaid\n  > graph TD\n  > ```")
+    }
 }

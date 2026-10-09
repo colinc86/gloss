@@ -1241,7 +1241,7 @@ final class DocumentSession: Identifiable {
         }
         // A region of a picture in rendered Markdown, or the whole picture.
         if let markdown, markdown.mode == .rendered, let selection = markdown.imageSelection, let controller = textController {
-            let data = markdown.imageData(for: selection.image.source)
+            let data = markdown.imageData(for: selection.image.source, occurrence: selection.image.occurrence)
             let region = ImageAnchor(x: Int(selection.region.minX), y: Int(selection.region.minY), w: Int(selection.region.width), h: Int(selection.region.height),
                                      imageW: Int(selection.pixelSize.width), imageH: Int(selection.pixelSize.height), hash: data?.sha256Hex)
             let embed = ReAnchorer.make(from: selection.embedSource, in: controller.text, index: controller.lineIndex, hash: Data(controller.text.utf8).sha256Hex)
@@ -1372,7 +1372,7 @@ final class DocumentSession: Identifiable {
                 }
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
                 onNoteCommitted(note)
-                if case .embeddedImage(let anchor) = state.anchor, let data = markdown?.imageData(for: anchor.source) {
+                if case .embeddedImage(let anchor) = state.anchor, let data = markdown?.imageData(for: anchor.source, occurrence: anchor.occurrence) {
                     // A bonus too: a picture that can't be decoded (an SVG, a huge one) still leaves the note.
                     do {
                         try await saveEmbeddedCrop(of: anchor, from: data, for: note.id)

@@ -15,6 +15,10 @@ public struct MarkdownRenderer {
         /// Relative image sources that were neither on this Mac nor given: the controller fetches them from the
         /// document's host and renders again.
         public var unresolvedImages: [String] = []
+        /// Mermaid blocks with no drawing yet, by their source: the controller draws them and renders again.
+        public var unresolvedDiagrams: [String] = []
+        /// Each drawn diagram's source, by its occurrence, so a region note's crop reads the right PNG.
+        public var diagramSources: [Int: String] = [:]
     }
 
     public static let sourceSpanKey = NSAttributedString.Key("gloss.sourceSpan")
@@ -23,17 +27,27 @@ public struct MarkdownRenderer {
     /// `baseURL` is the document's folder on this Mac; relative images resolve against it. `images` are pictures
     /// already fetched from a document's own host (an ssh host, a ticket's attachments), by source as written.
     /// Anything else shows as a placeholder. Under `reduceMotion` animated pictures hold still, and a `<picture>`
-    /// draws a source meant for reduced motion.
-    public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], reduceMotion: Bool = false) -> Output {
+    /// draws a source meant for reduced motion. `diagrams` are Mermaid blocks already drawn (or refused), by their
+    /// source; any other Mermaid block shows as code until it is.
+    public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], diagrams: [String: MermaidRenderer.Result] = [:],
+                              reduceMotion: Bool = false) -> Output {
         let document = Document(parsing: source, options: [.disableSmartOpts])
         var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
         walker.images = images
+        walker.diagrams = diagrams
         walker.reduceMotion = reduceMotion
         walker.visit(document)
         walker.finish()
         var output = Output(text: walker.output, map: RenderedSourceMap(spans: walker.spans, blocks: walker.blocks))
         output.unresolvedImages = walker.unresolvedImages
+        output.unresolvedDiagrams = walker.unresolvedDiagrams
+        output.diagramSources = walker.diagramSources
         return output
+    }
+
+    /// A fence whose language is Mermaid, read as `EmbedScanner` reads it.
+    nonisolated static func isMermaid(fence info: String?) -> Bool {
+        info?.split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first?.lowercased() == "mermaid"
     }
 
     // MARK: Styles
@@ -111,8 +125,11 @@ public struct MarkdownRenderer {
         let sourceNS: NSString
         let baseURL: URL?
         var images: [String: NSImage] = [:]
+        var diagrams: [String: MermaidRenderer.Result] = [:]
         var reduceMotion = false
         var unresolvedImages: [String] = []
+        var unresolvedDiagrams: [String] = []
+        var diagramSources: [Int: String] = [:]
         /// Where each picture is embedded, by `EmbedScanner` (read on the first picture), so a repeated one is told
         /// apart exactly as the re-anchorer tells it apart.
         private var embedLocations: [String: [Int]]?
@@ -315,6 +332,56 @@ public struct MarkdownRenderer {
         }
 
         mutating func visitCodeBlock(_ codeBlock: CodeBlock) {
+            guard MarkdownRenderer.isMermaid(fence: codeBlock.language) else { return drawCode(codeBlock) }
+            switch diagrams[codeBlock.code] {
+            case .diagram(let image, _)?:
+                appendDiagram(image, code: codeBlock.code, range: codeBlock.range.map { table.nsRange($0) })
+                endBlock(codeBlock)
+            case .failed(let reason)?:
+                drawCode(codeBlock)
+                appendDiagramFailure(reason)
+            case .unavailable?, nil:
+                if !unresolvedDiagrams.contains(codeBlock.code) { unresolvedDiagrams.append(codeBlock.code) }
+                drawCode(codeBlock)
+            }
+        }
+
+        /// A Mermaid diagram drawn as a picture mapped to its whole fenced block, so a note on it is a note on an
+        /// embedded picture whose source is `EmbedScanner.mermaidSource`.
+        private mutating func appendDiagram(_ image: NSImage, code: String, range: NSRange?) {
+            openBlock()
+            let attachment = FittedImageAttachment()
+            attachment.image = image
+            attachment.naturalSize = image.size
+            attachment.pixelSize = FittedImageAttachment.pixelSize(of: image)
+            // Notes only on a diagram `EmbedScanner` sees where it is drawn, so a fence it reads otherwise never
+            // takes another diagram's number.
+            if let range, scannedEmbed(of: EmbedScanner.mermaidSource, at: range.location) {
+                attachment.source = EmbedScanner.mermaidSource
+                attachment.occurrence = occurrence(of: EmbedScanner.mermaidSource, at: range)
+                diagramSources[attachment.occurrence] = code
+            }
+            append("\u{FFFC}", source: range, exact: false, extra: [.attachment: attachment])
+        }
+
+        /// One line under a diagram Mermaid refused, saying why.
+        private mutating func appendDiagramFailure(_ reason: String) {
+            openBlock(gapOverride: 6)
+            let saved = style
+            style.color = .secondaryLabelColor
+            style.font = NSFont.systemFont(ofSize: 12)
+            if let symbol = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Diagram error")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.secondaryLabelColor])) {
+                let attachment = NSTextAttachment()
+                attachment.image = symbol
+                appendGenerated("\u{FFFC}\u{00A0}", extra: [.attachment: attachment])
+            }
+            appendGenerated("Mermaid couldn't draw this diagram: \(reason)")
+            style = saved
+            endBlock(source: nil)
+        }
+
+        private mutating func drawCode(_ codeBlock: CodeBlock) {
             openBlock(.codeBlock)
             decoration = decoration.labelled(MarkdownBlockDecoration.languageName(codeBlock.language))
             let saved = style
@@ -1192,15 +1259,25 @@ public struct MarkdownRenderer {
             style = saved
         }
 
+        /// Whether `EmbedScanner` finds an embed of `source` starting at `location`.
+        private mutating func scannedEmbed(of source: String, at location: Int) -> Bool {
+            loadEmbedLocations()
+            return embedLocations?[source]?.contains(location) ?? false
+        }
+
+        private mutating func loadEmbedLocations() {
+            if embedLocations == nil {
+                embedLocations = Dictionary(grouping: EmbedScanner.embeds(in: self.source), by: \.source).mapValues { $0.map(\.range.location) }
+            }
+        }
+
         /// Which embed of `source` the one at `range` is, as `EmbedScanner` numbers them.
         private mutating func occurrence(of source: String, at range: NSRange?) -> Int {
             guard let range else {
                 defer { imageOccurrences[source, default: 0] += 1 }
                 return imageOccurrences[source, default: 0]
             }
-            if embedLocations == nil {
-                embedLocations = Dictionary(grouping: EmbedScanner.embeds(in: self.source), by: \.source).mapValues { $0.map(\.range.location) }
-            }
+            loadEmbedLocations()
             let locations = embedLocations?[source] ?? []
             // Sorted, as the scanner reads in document order: count those before this embed.
             var low = 0, high = locations.count

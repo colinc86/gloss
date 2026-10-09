@@ -409,9 +409,16 @@ final class RenderedTextView: NSTextView {
             .replacingOccurrences(of: "\u{FFFC}", with: "")
     }
 
+    /// Diagrams follow light and dark: Mermaid draws them again in the matching theme.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        controller?.setDarkAppearance(effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
+        controller?.setDarkAppearance(effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
         RunLoop.main.perform(inModes: [.common]) { [weak self] in
             MainActor.assumeIsolated { self?.onAttachedToWindow?() }
         }

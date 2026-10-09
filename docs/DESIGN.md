@@ -557,6 +557,20 @@ path. Dropping on the Dock icon is not supported yet.
   its corner: up to three of the notes' colours as overlapping dots and their count, popping in on the bouncy curve
   as notes are added. A click goes to the page. Thumbnails render lazily as they scroll in. Off until asked for; the
   toggle draws filled while the column shows.
+- **Mermaid diagrams in rendered Markdown** (issue #16, 2026-10-08): a fence whose language is `mermaid` is drawn by
+  the Mermaid release bundled in `Viewers/Resources/Mermaid` (MIT, pinned, see `MermaidRenderer.version`), in one
+  offscreen web view shared by every document that draws a diagram at a time and closes after 30 s idle. Every
+  diagram is laid out on a page of the same size, so none takes its width from the one before. A step that takes
+  over 10 s gives the web view up and starts a fresh one; such a failure is not remembered, and the next render tries
+  again. The page loads nothing (a content security policy and a navigation policy that refuses every load but its
+  own), Mermaid runs with `securityLevel: 'strict'`, and the diagram is snapshotted to a PNG at 2x on the page's own
+  background, so HTML labels draw as on GitHub. Drawings are kept by source and theme, up to 96 MB; the rendered
+  view's appearance picks Mermaid's `default` or `dark` theme, and a change draws them again, each replacing the old one as it arrives. Until a
+  diagram is drawn its code shows; one Mermaid refuses stays code with a line under it giving Mermaid's error. A
+  diagram is a picture whose source is `mermaid:` (which no picture's address can be), mapped to its whole fence;
+  `EmbedScanner` counts Mermaid fences as embeds of `mermaid:`, ending a fence with the quote or list item that holds
+  it, so notes, crops and occurrences work as on any picture, and the packet says `Image: Mermaid diagram (WxH)`. A
+  diagram the scanner doesn't see where it is drawn takes no notes, rather than another diagram's number.
 - **Image viewer canvas**: the picture lies on the under-page grey like a sheet, with a soft shadow (10 pt blur, 2 pt
   drop, 24% black) that stays the same on screen at any zoom. A picture with transparency sits on a quiet
   checkerboard (8-point squares at any zoom; white and 93% grey in light, 20% and 25% in dark), clipped to the

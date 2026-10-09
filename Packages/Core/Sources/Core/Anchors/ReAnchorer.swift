@@ -493,7 +493,11 @@ public enum ReAnchorer {
     public static func embeddedImage(_ anchor: EmbeddedImageAnchor, in newContent: String, newHash: String) -> ReAnchorResult {
         let result = text(anchor.embed, in: newContent, newHash: newHash)
         func moved(_ embed: TextAnchor) -> EmbeddedImageAnchor? {
-            guard embed.text.contains(anchor.source) else { return nil }
+            // A diagram's embed is its fence, which never spells its source: it must still open a Mermaid fence.
+            let stillEmbeds = anchor.isMermaidDiagram
+                ? EmbedScanner.embeds(in: embed.text).contains { $0.source == anchor.source && $0.range.location == 0 }
+                : embed.text.contains(anchor.source)
+            guard stillEmbeds else { return nil }
             var next = anchor
             next.embed = embed
             // The rendered view finds the picture by which embed of it this is: embeds added or removed above change that.

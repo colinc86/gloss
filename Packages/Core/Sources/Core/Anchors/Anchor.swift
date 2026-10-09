@@ -162,8 +162,12 @@ public struct EmbeddedImageAnchor: Codable, Hashable, Sendable {
     /// The note covers the whole picture.
     public var isWholeImage: Bool { region.isWholeImage }
 
+    /// A Mermaid diagram drawn from a fenced block rather than a picture file.
+    public var isMermaidDiagram: Bool { source == EmbedScanner.mermaidSource }
+
     /// The picture's file name, for cards and summaries.
     public var fileName: String {
+        if isMermaidDiagram { return "Mermaid diagram" }
         let path = (source.removingPercentEncoding ?? source).split(separator: "?").first.map(String.init) ?? source
         return (path as NSString).lastPathComponent
     }

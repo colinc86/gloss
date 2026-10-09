@@ -7,12 +7,18 @@ import Foundation
 ///
 /// It reads the document as CommonMark blocks do, closely enough to skip what is never drawn as a picture: fenced
 /// and indented code, code spans, HTML comments, and Markdown image syntax inside HTML blocks (which stays literal).
+/// A fenced ```` ```mermaid ```` block is drawn as a picture, so it is an embed too, of `mermaidSource`.
 public enum EmbedScanner {
+    /// The source every Mermaid diagram is embedded as, one no Markdown picture can have (a destination or `src`
+    /// never ends in a bare colon): diagrams are told apart by occurrence.
+    public static let mermaidSource = "mermaid:"
+
     public struct Embed: Equatable, Sendable {
         /// The picture as the document names it: a Markdown destination with escapes and entities decoded, an
-        /// `<img>`'s `src` as written, or the first address in a `<source>`'s `srcset`.
+        /// `<img>`'s `src` as written, the first address in a `<source>`'s `srcset`, or `mermaidSource`.
         public var source: String
-        /// The whole embed: `![alt](src)` from `!`, or the `<img …>` or `<source …>` tag.
+        /// The whole embed: `![alt](src)` from `!`, the `<img …>` or `<source …>` tag, or a diagram's fenced block
+        /// from its opening fence to the end of its closing one.
         public var range: NSRange
     }
 
@@ -64,33 +70,56 @@ public enum EmbedScanner {
                 }
                 line = last + 1
             }
-            return embeds
+            // Diagrams were found while classifying, ahead of the pictures.
+            return embeds.sorted { $0.range.location < $1.range.location }
         }
 
         // MARK: Blocks
 
-        /// Each line's block: code (fenced or indented), an HTML block, text, or blank.
-        func classify() -> [LineKind] {
+        /// Each line's block: code (fenced or indented), an HTML block, text, or blank. A Mermaid fence is recorded
+        /// as an embed on the way.
+        mutating func classify() -> [LineKind] {
             var kinds: [LineKind] = []
             var fence: (char: UInt16, length: Int)?
+            /// The open fence's containers: the quotes around its list item, how far that item's lines are indented,
+            /// and the quotes inside the item (`- > ```mermaid`).
+            var fenceContainers = (outer: 0, indent: 0, inner: 0)
+            var diagramStart: Int?
+            var previousEnd = 0
             var html: Int?  // the open HTML block's CommonMark type
             var previous = LineKind.blank
             var inList = false
             for line in 1...index.lineCount {
                 let range = index.contentRange(ofLine: line)
-                var i = afterQuotes(range)
+                let outer = quotes(from: range.location, NSMaxRange(range))
+                var i = outer.end
                 let end = NSMaxRange(range)
                 var kind = LineKind.text
                 defer {
                     kinds.append(kind)
                     previous = kind
+                    previousEnd = end
                 }
                 let blank = (i..<end).allSatisfy { isSpace(units[$0]) }
                 if let open = fence {
-                    kind = .code
-                    let j = skipSpaces(skipListMarkers(i, end), end)
-                    if run(of: open.char, at: j, end) >= open.length, (j + run(of: open.char, at: j, end)..<end).allSatisfy({ isSpace(units[$0]) }) { fence = nil }
-                    continue
+                    // A fence ends with the quote or list item holding it, closed or not.
+                    let around = quotes(from: range.location, end, limit: fenceContainers.outer)
+                    let lead = skipSpaces(around.end, end)
+                    let inner = quotes(from: lead, end)
+                    if around.count < fenceContainers.outer || (!blank && lead - around.end < fenceContainers.indent) || inner.count < fenceContainers.inner {
+                        fence = nil
+                        if let start = diagramStart { embeds.append(Embed(source: EmbedScanner.mermaidSource, range: NSRange(location: start, length: previousEnd - start))) }
+                        diagramStart = nil
+                    } else {
+                        kind = .code
+                        let j = skipSpaces(skipListMarkers(inner.end, end), end)
+                        if run(of: open.char, at: j, end) >= open.length, (j + run(of: open.char, at: j, end)..<end).allSatisfy({ isSpace(units[$0]) }) {
+                            fence = nil
+                            if let start = diagramStart { embeds.append(Embed(source: EmbedScanner.mermaidSource, range: NSRange(location: start, length: end - start))) }
+                            diagramStart = nil
+                        }
+                        continue
+                    }
                 }
                 if let type = html {
                     if type >= 6 {
@@ -109,12 +138,17 @@ public enum EmbedScanner {
                 }
                 let core = skipListMarkers(i, end)
                 if core != i { inList = true } else if indent == 0, previous == .blank { inList = false }
-                i = skipSpaces(core, end)
+                // A quote can open inside a list item (`- > text`).
+                let inner = quotes(from: core, end)
+                let contentIndent = skipSpaces(core, end) - i
+                i = skipSpaces(inner.end, end)
                 if i < end, units[i] == 96 || units[i] == 126 /* ` ~ */ {
                     let length = run(of: units[i], at: i, end)
                     if length >= 3, units[i] == 126 || !(i + length..<end).contains(where: { units[$0] == 96 }) {
                         fence = (units[i], length)
+                        fenceContainers = (outer.count, inList ? contentIndent : 0, inner.count)
                         kind = .code
+                        if isMermaid(info: i + length, end) { diagramStart = i }
                         continue
                     }
                 }
@@ -123,7 +157,17 @@ public enum EmbedScanner {
                     if type < 6, !htmlEnds(type, i, end, opening: true) { html = type } else if type >= 6 { html = type }
                 }
             }
+            // A fence left open runs to the end of the document.
+            if let start = diagramStart { embeds.append(Embed(source: EmbedScanner.mermaidSource, range: NSRange(location: start, length: units.count - start))) }
             return kinds
+        }
+
+        /// A fence's info string names Mermaid: its first word, as the renderer reads a fence's language.
+        func isMermaid(info i: Int, _ end: Int) -> Bool {
+            let start = skipSpaces(i, end)
+            var j = start
+            while j < end, !isSpace(units[j]), units[j] != 123, units[j] != 44 /* { , */ { j += 1 }
+            return lowercased(start, j) == "mermaid"
         }
 
         /// The CommonMark HTML block type (1–7) a line starts, if any.
@@ -345,14 +389,21 @@ public enum EmbedScanner {
 
         /// Past a line's block-quote markers (`> `, `>>`).
         func afterQuotes(_ range: NSRange) -> Int {
-            let end = NSMaxRange(range)
-            var i = range.location
-            while true {
+            quotes(from: range.location, NSMaxRange(range)).end
+        }
+
+        /// Past the block-quote markers from `i` (at most `limit`), and how many there are.
+        func quotes(from i: Int, _ end: Int, limit: Int = .max) -> (count: Int, end: Int) {
+            var i = i
+            var count = 0
+            while count < limit {
                 let j = skipSpaces(i, end)
-                guard j < end, units[j] == 62, j - i <= 3 else { return i }
+                guard j < end, units[j] == 62, j - i <= 3 else { return (count, i) }
                 i = j + 1
+                count += 1
                 if i < end, units[i] == 32 { i += 1 }
             }
+            return (count, i)
         }
 
         /// Past any list markers (`- `, `1. `, `- 1) `) and the spaces before them.

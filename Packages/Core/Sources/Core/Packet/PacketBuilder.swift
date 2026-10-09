@@ -262,7 +262,7 @@ public enum PacketBuilder {
         case .embeddedImage(let anchor):
             // The picture as the document names it, where it is embedded, and the part of it the note is about.
             lines.append("Line \(anchor.embed.start.line)")
-            lines.append("Image: \(headerValue(anchor.source)) (\(anchor.region.imageW)x\(anchor.region.imageH))")
+            lines.append("Image: \(anchor.isMermaidDiagram ? anchor.fileName : headerValue(anchor.source)) (\(anchor.region.imageW)x\(anchor.region.imageH))")
             let suffix = note.attachmentAgentPath == nil ? "" : (anchor.isWholeImage ? " (image attached)" : " (crop attached)")
             lines.append(anchor.isWholeImage ? "Whole image\(suffix)" : "Region: x=\(anchor.region.x) y=\(anchor.region.y) w=\(anchor.region.w) h=\(anchor.region.h)\(suffix)")
             if let attachment = note.attachmentAgentPath { lines.append("Attachment: \(headerValue(attachment))") }

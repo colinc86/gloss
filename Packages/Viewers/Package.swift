@@ -48,6 +48,8 @@ let package = Package(
                 .product(name: "TreeSitterRust", package: "tree-sitter-rust"),
                 .product(name: "TreeSitterGo", package: "tree-sitter-go"),
             ],
+            // Mermaid (MIT, pinned; see MermaidRenderer.version) draws diagrams offline.
+            resources: [.copy("Resources/Mermaid")],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("ExistentialAny"),

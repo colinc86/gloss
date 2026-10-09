@@ -91,6 +91,15 @@ public final class MarkdownViewerController {
     /// source while it is on.
     @ObservationIgnored private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     @ObservationIgnored private var displayOptionsObserver: (any NSObjectProtocol)?
+    /// Mermaid diagrams drawn for the document in the current theme (or refused), by their source.
+    @ObservationIgnored private var diagrams: [String: MermaidRenderer.Result] = [:]
+    @ObservationIgnored private var drawingDiagrams: Set<String> = []
+    /// The Mermaid blocks in the document as of the last render, drawn or not.
+    @ObservationIgnored private var shownDiagrams: Set<String> = []
+    /// Each drawn diagram's source by its occurrence, as of the last render.
+    @ObservationIgnored private var diagramSources: [Int: String] = [:]
+    /// Whether diagrams are drawn in Mermaid's dark theme: the rendered view says when its appearance changes.
+    @ObservationIgnored private var darkDiagrams = NSApp?.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
 
     // MARK: Notes on embedded pictures
 
@@ -160,9 +169,13 @@ public final class MarkdownViewerController {
                       width: (clipped.width * sx).rounded(), height: (clipped.height * sy).rounded())
     }
 
-    /// The picture's bytes, for cropping a region note: fetched from the document's host, or read beside a local
-    /// document.
-    public func imageData(for source: String) -> Data? {
+    /// The picture's bytes, for cropping a region note: fetched from the document's host, read beside a local
+    /// document, or the PNG of a Mermaid diagram (told apart by `occurrence`).
+    public func imageData(for source: String, occurrence: Int = 0) -> Data? {
+        if source == EmbedScanner.mermaidSource {
+            guard let code = diagramSources[occurrence], case .diagram(_, let png)? = diagrams[code] else { return nil }
+            return png
+        }
         if let data = fetchedImageData[source] { return data }
         guard let baseURL else { return nil }
         let decoded = source.removingPercentEncoding ?? source
@@ -216,11 +229,52 @@ public final class MarkdownViewerController {
 
     public func rebuildNow() {
         renderedContentVersion = source.contentVersion
-        let output = MarkdownRenderer.render(source.text, baseURL: baseURL, images: fetchedImages, reduceMotion: reduceMotion)
+        let output = MarkdownRenderer.render(source.text, baseURL: baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion)
         rendered = output.text
         map = output.map
         renderedVersion += 1
+        // Diagrams edited away are forgotten (the renderer keeps its own cache).
+        shownDiagrams = Set(output.diagramSources.values).union(output.unresolvedDiagrams)
+        diagrams = diagrams.filter { shownDiagrams.contains($0.key) }
+        drawingDiagrams.formIntersection(shownDiagrams)
+        diagramSources = output.diagramSources
         fetch(output.unresolvedImages)
+        draw(output.unresolvedDiagrams)
+    }
+
+    /// Draws Mermaid blocks shown as code so far, one after another, rendering again as each arrives. A block edited
+    /// away or a theme left behind meanwhile is skipped; one the renderer couldn't run for is tried again on the next
+    /// render.
+    private func draw(_ codes: [String]) {
+        let wanted = codes.filter { !drawingDiagrams.contains($0) }
+        guard !wanted.isEmpty else { return }
+        drawingDiagrams.formUnion(wanted)
+        let dark = darkDiagrams
+        let id = UUID()
+        fetchTasks[id] = Task { [weak self] in
+            for code in wanted {
+                guard let current = self, current.darkDiagrams == dark, current.shownDiagrams.contains(code) else { continue }
+                let result = await MermaidRenderer.shared.render(code, dark: dark)
+                guard !Task.isCancelled, let self else { return }
+                // Drawn for a theme the view has since left (the change asked for its own), or edited away.
+                guard self.darkDiagrams == dark, self.shownDiagrams.contains(code) else { continue }
+                self.drawingDiagrams.remove(code)
+                if case .unavailable = result { continue }
+                self.diagrams[code] = result
+                self.scheduleRebuild()
+            }
+            self?.fetchTasks[id] = nil
+        }
+    }
+
+    /// The rendered view's appearance: diagrams are drawn again in the matching Mermaid theme, each replacing the
+    /// old drawing when it arrives so the page doesn't flash code.
+    public func setDarkAppearance(_ dark: Bool) {
+        guard dark != darkDiagrams else { return }
+        darkDiagrams = dark
+        let pending = drawingDiagrams
+        drawingDiagrams.removeAll()
+        draw(Array(Set(diagrams.keys).union(pending)))
     }
 
     /// Fetches pictures the render couldn't show, then renders once more with whatever arrived: web pictures from
