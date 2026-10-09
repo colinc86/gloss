@@ -484,28 +484,36 @@ private struct RootRow: View {
             }
             Spacer(minLength: DS.Space.xs)
             CountBadge(count: notes)
+            // Both controls show only under the pointer, each in a slot of its own on every row, so they line up
+            // down the list. A favorite (listed under Favorites) offers to leave them; any other row to join them.
             Button(action: togglePin) {
-                Image(systemName: pinned ? "star.fill" : "star")
-                    .foregroundStyle(pinned ? Color.yellow : Color.secondary)
-                    .symbolEffect(.bounce, value: pinned)
+                Image(systemName: pinned ? "star.slash" : "star")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .opacity(pinned || hovering ? 1 : 0)
+            .opacity(hovering ? 1 : 0)
+            .allowsHitTesting(hovering)
             .help(pinned ? "Remove from Favorites" : "Add to Favorites")
             .accessibilityLabel(pinned ? "Remove \(title) from Favorites" : "Add \(title) to Favorites")
-            if let close {
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16, height: 16)
-                        .background(Color.primary.opacity(hovering ? 0.08 : 0), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .opacity(hovering ? 1 : 0)
-                .help("Close \(title)")
-                .accessibilityLabel("Close \(title)")
+            Button {
+                close?()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .background(Color.primary.opacity(hovering ? 0.08 : 0), in: Circle())
+                    .contentShape(Circle())
             }
+            .buttonStyle(.plain)
+            .opacity(hovering && close != nil ? 1 : 0)
+            .allowsHitTesting(hovering && close != nil)
+            .accessibilityHidden(close == nil)
+            .help("Close \(title)")
+            .accessibilityLabel("Close \(title)")
         }
         .padding(.horizontal, DS.Space.s)
         .padding(.vertical, DS.Space.xs + 1)

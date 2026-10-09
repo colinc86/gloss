@@ -234,10 +234,12 @@ path. Dropping on the Dock icon is not supported yet.
   host dropdown and the title's host chip are gone). Clicking opens a 320 pt popover with sections: **Hosts**
   (every host, `HostMenu`: This Mac, Web, GitHub, Atlassian and the ssh hosts in teal, each with its symbol, an
   ssh host's saying how its connection is and an orange `exclamationmark.triangle` after a failure; the current
-  one tinted with a checkmark), **Open** (the current one tinted; hover shows a star and a close button),
-  **Favorites** (pinned roots, kept even when closed), **Recent** (six more on the picked host), then the Open item
+  one tinted with a checkmark), **Open** (the current one tinted),
+  **Favorites** (pinned roots, kept even when closed, with no star of their own), **Recent** (six more on the picked host), then the Open item
   for the picked host (Open Folder on this Mac…/on an ssh host…, Open Location…, Open Pull Request…, Open Jira
-  Issue or Confluence Page…) and Manage Hosts…. Picking This Mac or a connected ssh host brings a folder already
+  Issue or Confluence Page…) and Manage Hosts…. Under the pointer a folder row shows `star` (add to Favorites) or,
+  under Favorites, `star.slash` (remove), then `xmark` (close) when it is open; each keeps its slot on every row,
+  so they line up. Picking This Mac or a connected ssh host brings a folder already
   open there to the front and keeps the popover open on that host's recent folders (with none open, the row reads
   "No folder open", or "No pull request open"/"No issue or page open", and the tree's place offers Open Folder on
   the host; a folder never shows under another host's name); Web shows the Web section, GitHub and Atlassian open their sheets, and an ssh host
@@ -284,9 +286,9 @@ path. Dropping on the Dock icon is not supported yet.
   (missing ripgrep) is a quiet warning. Each stage is rendered offscreen in `ConnectionNoticeTests` for review.
 - **Follow mode**: shown only where Herdr exists (its binary on this Mac, or a connected host whose probe found
   it), since following needs Herdr's focus events; the Herdr plugin row in Settings → Agents is gated the same way.
-  The crosshair (`FollowToggle`, 2026-10-07) sits at the left of the root switcher, as tall as it, in its rounded
-  shape: the switcher's quiet fill while off (a secondary `scope`, a little stronger on hover); while following,
-  a white `scope` on an accent fill, so it reads as lit at a glance, and it bounces as it turns on or off. A
+  The crosshair (`FollowToggle`) sits in the bar under the tree, after the hidden-files eye and drawn like it
+  (moved there 2026-10-09; it was at the left of the root switcher): a secondary `scope` while off, tinted while
+  following, bouncing as it turns on or off. It isn't there while Web is the host, which has no bar. A
   toolbar toggle's solid "on" disc hid the symbol. Go › Follow Herdr (no shortcut) toggles it with the sidebar closed. While a pane is followed, a card tops the sidebar: "FOLLOWING" with the agent's `StatusDot`, host
   (teal) and agent, pane id, and the pane's folder, plus a stop button; it slides in and out from the top. Follow
   problems (Herdr not running, an unknown machine) stay in the status line.

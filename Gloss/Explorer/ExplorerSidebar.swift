@@ -3,8 +3,8 @@ import Core
 import SwiftUI
 import Viewers
 
-/// The explorer column: a status row, Follow and the folder dropdown (which also picks the host), the tree, and
-/// the filter; the Web section in place of the tree when Web is the host.
+/// The explorer column: a status row, the folder dropdown (which also picks the host), the tree, and the filter
+/// bar with search, hidden files and Follow; the Web section in place of the tree when Web is the host.
 struct ExplorerSidebar: View {
     @FocusState private var searchFocused: Bool
     @FocusState private var filterFocused: Bool
@@ -25,13 +25,7 @@ struct ExplorerSidebar: View {
             if let status = statusRow {
                 status
             }
-            HStack(spacing: DS.Space.s) {
-                // Only where Herdr exists: following needs its focus events. Kept while following, so it can be stopped.
-                if !model.herdrHosts.isEmpty || model.followHerdr {
-                    FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
-                }
-                RootSwitcher(hostName: hostName, openFolder: openFolder)
-            }
+            RootSwitcher(hostName: hostName, openFolder: openFolder)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, DS.Space.s)
             .padding(.vertical, DS.Space.s)
@@ -220,6 +214,10 @@ struct ExplorerSidebar: View {
             .buttonStyle(.borderless)
             .help(explorer.showDotfiles ? "Hide hidden files (⌘⇧.)" : "Show hidden files (⌘⇧.)")
             .accessibilityLabel("Show hidden files")
+            // Only where Herdr exists: following needs its focus events. Kept while following, so it can be stopped.
+            if !model.herdrHosts.isEmpty || model.followHerdr {
+                FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
