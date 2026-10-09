@@ -55,6 +55,7 @@ struct IterationStoreTests {
             #expect(ended.endedAt == Date(timeIntervalSince1970: 5_000) && ended.gitCommit == "abc1234def" && ended.shortCommit == "abc1234")
             #expect(try await store.snapshot(hash: try #require(ended.snapshotHash)) == Data("v0".utf8))
             #expect(iterations.last?.snapshotHash == nil, "the current iteration has no snapshot yet")
+            #expect(iterations.last?.gitCommit == "abc1234def", "the next iteration starts at the commit this one ended on")
 
             // The panel lists each document's current iteration.
             var panel = store.observeDocumentsWithNotes().makeAsyncIterator()

@@ -175,12 +175,16 @@ struct OpenNotesPromptSheet: View {
                 Button("Cancel", role: .cancel) { model.iterations.prompt = nil }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Leave Them Behind") { Task { await model.iterations.answer(prompt, .leave, remember: remember) } }
-                Button("Bring Them Along") { Task { await model.iterations.answer(prompt, .carry, remember: remember) } }
+                Button(Self.leaveTitle(prompt.openCount)) { Task { await model.iterations.answer(prompt, .leave, remember: remember) } }
+                Button(Self.carryTitle(prompt.openCount)) { Task { await model.iterations.answer(prompt, .carry, remember: remember) } }
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(DS.Space.l)
         .frame(width: 420)
     }
+
+    /// "Bring It Along" for one open note, "Bring Them Along" for several.
+    static func carryTitle(_ count: Int) -> String { count == 1 ? "Bring It Along" : "Bring Them Along" }
+    static func leaveTitle(_ count: Int) -> String { count == 1 ? "Leave It Behind" : "Leave Them Behind" }
 }

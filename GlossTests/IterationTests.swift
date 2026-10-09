@@ -72,7 +72,8 @@ struct IterationTests {
         #expect(NotesPanelModel.merged(live, past: past).map(\.document.path) == ["/a.md", "/b.md", "/c.md"], "in path order")
         let pastA = DocumentNotes(document: a, notes: [note(a, 0)])
         #expect(NotesPanelModel.merged(live, past: pastA).first?.notes.map(\.iteration) == [0], "in place of its current notes")
-        #expect(NotesPanelModel.merged(live, past: DocumentNotes(document: a, notes: [])).map(\.document.path) == ["/c.md"])
+        #expect(NotesPanelModel.merged(live, past: DocumentNotes(document: a, notes: [])).map(\.document.path) == ["/a.md", "/c.md"],
+                "an earlier iteration with no notes keeps its header")
         #expect(NotesPanelModel.merged(live, past: nil) == live)
     }
 

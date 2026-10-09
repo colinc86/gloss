@@ -77,6 +77,13 @@ struct NotesPanel: View {
                         }
                         ForEach(run.groups) { group in
                             Section {
+                                if let viewed = panel.viewedIteration, panel.isEmptyViewedIteration(group) {
+                                    Text("No notes in iteration \(viewed.number)")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.vertical, DS.Space.xs)
+                                        .listRowSeparator(.hidden)
+                                }
                                 ForEach(group.notes) { note in
                                     NoteCard(note: note, document: group.document, listActive: listFocused && controlActiveState == .key,
                                              inRun: inRuns.contains(note.id))

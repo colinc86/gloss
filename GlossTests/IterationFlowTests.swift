@@ -159,6 +159,77 @@ struct IterationFlowTests {
         await model.shutDown()
     }
 
+    /// Runs git in `directory` for the test's repository (a throwaway one, with its own identity).
+    @discardableResult
+    func git(_ arguments: [String], in directory: String) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", directory, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false"] + arguments
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        return String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// An iteration started while the commit trigger was off still starts at the file's commit, so the first commit
+    /// after it, with the trigger on, starts the next one (live: it only remembered that commit as its baseline).
+    @Test func theFirstCommitAfterAnIterationStartsTheNext() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else { return }
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = "\(folder)/plan.md"
+        try "one\ntwo\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try git(["init", "-q"], in: folder)
+        try git(["add", "plan.md"], in: folder)
+        try git(["commit", "-q", "-m", "first"], in: folder)
+        let first = try git(["rev-parse", "HEAD"], in: folder)
+
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let settings = SettingsStore(noteStore: store)
+        let model = IterationsModel(noteStore: store, settings: settings)
+        model.fileSystem = { _ in LocalFileSystem() }
+        let session = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(), noteStore: store)
+        await session.open()
+        let document = try #require(session.document)
+        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "open", color: .yellow)
+        await model.recordStartingCommit(document.id)
+        #expect(try await store.iterations(for: document.id).first?.gitCommit == first, "iteration 0 begins at the file's commit")
+
+        settings.iteratesOnCommit = false
+        await model.start(document, openNotes: .carry)
+        #expect(try await store.iterations(for: document.id).last?.gitCommit == first, "iteration 1 begins at it too, whatever the setting")
+
+        settings.iteratesOnCommit = true
+        settings.iterationOpenNotes = .ask
+        try "one\nTWO\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try git(["commit", "-q", "-am", "second"], in: folder)
+        await model.checkCommit(session)
+        #expect(model.prompt?.openCount == 1, "the first commit after it is a change: the open note is asked about")
+        session.close()
+    }
+
+    /// An earlier iteration with no notes (its only note came along) keeps its document's header in the panel.
+    @Test func anEmptyEarlierIterationKeepsItsHeader() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/proj/plan.md", kind: .markdown, fingerprint: Fingerprint())
+        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "only", color: .yellow)
+        try await store.startIteration(documentID: document.id, openNotes: .carry, snapshot: Data("x".utf8))
+        let panel = NotesPanelModel(noteStore: store)
+        panel.start()
+        defer { panel.stop() }
+        panel.showIteration(0, of: try #require(try await store.document(document.id)))
+        await waitUntil { panel.visibleGroups.first?.document.id == document.id && panel.visibleGroups.first?.notes.isEmpty == true }
+        #expect(panel.isEmptyViewedIteration(try #require(panel.visibleGroups.first)))
+        panel.separateResolved = true
+        #expect(panel.visibleGroups.map(\.document.id) == [document.id], "with open and resolved notes apart too")
+        panel.showIteration(nil, of: document)
+        await waitUntil { panel.visibleGroups.first?.notes.count == 1 }
+        #expect(OpenNotesPromptSheet.carryTitle(1) == "Bring It Along" && OpenNotesPromptSheet.leaveTitle(1) == "Leave It Behind")
+        #expect(OpenNotesPromptSheet.carryTitle(2) == "Bring Them Along" && OpenNotesPromptSheet.leaveTitle(2) == "Leave Them Behind")
+    }
+
     /// Opened again under the other spelling (after a relaunch, from the tree), a file keeps the document row its
     /// notes were made on.
     @Test func aFileOpenedUnderItsOtherSpellingKeepsItsNotes() async throws {

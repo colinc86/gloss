@@ -97,6 +97,16 @@ final class IterationsModel {
         await start(document, openNotes: .leave)
     }
 
+    /// The current iteration remembers the commit its file was at when it began (its first note, for iteration 0),
+    /// whatever Settings says, so the first commit after it is noticed as a change. Iterations from before this
+    /// have none, and the commit check takes its first look as their baseline.
+    func recordStartingCommit(_ documentID: DocumentID) async {
+        guard let document = try? await noteStore.document(documentID),
+              let current = try? await noteStore.iterations(for: documentID).last, current.number == document.currentIteration,
+              current.gitCommit == nil, let commit = await gitCommit(of: document) else { return }
+        try? await noteStore.setIterationCommit(documentID: documentID, number: current.number, commit: commit)
+    }
+
     nonisolated static func allResolved(_ notes: [Note]) -> Bool {
         !notes.isEmpty && notes.allSatisfy { $0.state == .resolved }
     }

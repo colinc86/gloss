@@ -588,7 +588,9 @@ public struct NoteStore: Sendable {
                 """, arguments: [date, hash, gitCommit, documentID.rawValue, current])
             let next = current + 1
             try db.execute(sql: "UPDATE document SET current_iteration = ? WHERE id = ?", arguments: [next, documentID.rawValue])
-            try db.execute(sql: "INSERT INTO iteration (document_id, number, started_at) VALUES (?, ?, ?)", arguments: [documentID.rawValue, next, date])
+            // The next iteration starts at the commit this one ends on: the first commit after it is a change.
+            try db.execute(sql: "INSERT INTO iteration (document_id, number, started_at, git_commit) VALUES (?, ?, ?, ?)",
+                           arguments: [documentID.rawValue, next, date, gitCommit])
             if openNotes == .carry {
                 try db.execute(sql: """
                     UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state != 'resolved' AND deleted_at IS NULL
@@ -607,7 +609,8 @@ public struct NoteStore: Sendable {
         }
     }
 
-    /// Notes the document's iteration's git commit when it is still current, so a commit change can be noticed.
+    /// Sets an iteration's git commit: the commit its file was at when it began, so a later commit is noticed as a
+    /// change, until it ends on the commit it ends on.
     public func setIterationCommit(documentID: DocumentID, number: Int, commit: String?) async throws {
         try await queue.write { db in
             try db.execute(sql: "UPDATE iteration SET git_commit = ? WHERE document_id = ? AND number = ?", arguments: [commit, documentID.rawValue, number])

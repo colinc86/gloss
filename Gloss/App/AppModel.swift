@@ -590,7 +590,10 @@ final class AppModel {
             return
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
-        session.onNoteCommitted = { [weak self] note in self?.notesPanel.makeListed(note) }
+        session.onNoteCommitted = { [weak self] note in
+            self?.notesPanel.makeListed(note)
+            Task { await self?.iterations.recordStartingCommit(note.documentID) }
+        }
         session.beforeCreatingNote = { [weak self] documentID in await self?.iterations.startIfAllResolved(documentID) }
         session.onReloaded = { [weak self, weak session] in
             guard let self, let session else { return }
@@ -1784,6 +1787,7 @@ final class AppModel {
             let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: DocumentKindDetector.kind(forPath: path), fingerprint: fingerprint)
             await iterations.startIfAllResolved(document.id)
             _ = try await noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: color)
+            await iterations.recordStartingCommit(document.id)
             showNotesPanel = true
         } catch {
             Log.notes.error("file note for \(path, privacy: .public) failed: \(error, privacy: .public)")

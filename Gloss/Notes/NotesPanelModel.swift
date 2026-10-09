@@ -221,15 +221,19 @@ final class NotesPanelModel {
         groups = Self.merged(liveGroups, past: viewedIteration.map { (DocumentNotes(document: $0.document, notes: pastNotes)) })
     }
 
-    /// `live` with `past`'s document listing `past`'s notes instead (or gone, when it has none), in path order.
+    /// `live` with `past`'s document listing `past`'s notes instead, in path order. Kept when it has none: its header
+    /// names the iteration on screen and says it has no notes.
     nonisolated static func merged(_ live: [DocumentNotes], past: DocumentNotes?) -> [DocumentNotes] {
         guard let past else { return live }
         var groups = live.filter { $0.document.id != past.document.id }
-        if !past.notes.isEmpty {
-            let index = groups.firstIndex { ($0.document.hostID.rawValue, $0.document.path) > (past.document.hostID.rawValue, past.document.path) } ?? groups.endIndex
-            groups.insert(past, at: index)
-        }
+        let index = groups.firstIndex { ($0.document.hostID.rawValue, $0.document.path) > (past.document.hostID.rawValue, past.document.path) } ?? groups.endIndex
+        groups.insert(past, at: index)
         return groups
+    }
+
+    /// The earlier iteration listed has no notes at all: its document's header stays, with a line saying so.
+    func isEmptyViewedIteration(_ group: DocumentNotes) -> Bool {
+        group.notes.isEmpty && viewedIteration?.document.id == group.document.id
     }
 
     /// A note's messages, oldest first.
@@ -304,6 +308,7 @@ final class NotesPanelModel {
         guard separateResolved, showResolved else { return [Run(id: .all, groups: groups)] }
         func run(_ kind: Run.Kind, _ keep: (Note) -> Bool) -> Run {
             Run(id: kind, groups: groups.compactMap { group in
+                if group.notes.isEmpty { return kind == .open ? group : nil }   // an earlier iteration with no notes
                 let notes = group.notes.filter(keep)
                 return notes.isEmpty ? nil : DocumentNotes(document: group.document, notes: notes)
             })
@@ -321,6 +326,7 @@ final class NotesPanelModel {
         let needle = searchText.trimmingCharacters(in: .whitespaces)
         func contains(_ text: String?) -> Bool { Self.contains(text, needle) }
         let filtered = groups.compactMap { group -> DocumentNotes? in
+            if isEmptyViewedIteration(group) { return group }
             let fileMatches = !needle.isEmpty && contains(group.document.fileName)
             let notes = group.notes.filter { note in
                 listed(in: filter, note)
