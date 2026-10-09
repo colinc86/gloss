@@ -44,6 +44,23 @@ struct IterationTests {
         #expect(IterationDiff.lineChanges(from: "a\r\nb\r\n", to: "a\r\nB\r\n") == LineChanges(added: [2...2]))
     }
 
+    /// The header's menu of a document with no notes yet shows "Iteration 0" once its first note is made (it never
+    /// appeared in the live check: its observation only started once there was something to show).
+    @Test func aHeadersMenuAppearsWithTheFirstNote() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/proj/plan.md", kind: .markdown, fingerprint: Fingerprint())
+        let state = DocumentIterations()
+        let observing = Task { await state.observe(document.id, in: store) }
+        defer { observing.cancel() }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(state.label(viewing: nil) == nil, "no note, no menu")
+        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "n", color: .yellow)
+        await waitUntil { state.label(viewing: nil) == "Iteration 0" }
+        try await store.startIteration(documentID: document.id, openNotes: .carry, snapshot: nil)
+        await waitUntil { state.label(viewing: nil) == "Iteration 1" }
+        #expect(state.label(viewing: 0) == "Iteration 0", "an earlier iteration on screen is named")
+    }
+
     @Test func thePanelListsTheViewedIterationInPlaceOfTheCurrentOne() {
         func document(_ path: String) -> Core.Document { Core.Document(id: .new(), hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint()) }
         func note(_ document: Core.Document, _ iteration: Int) -> Note {

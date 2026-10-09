@@ -1,5 +1,7 @@
+import AppKit
 import Core
 import Foundation
+import SwiftUI
 import Testing
 import Viewers
 @testable import Gloss
@@ -124,6 +126,36 @@ struct IterationFlowTests {
         model.showIteration(0, of: document)
         await waitUntil { model.activeSession.map { model.iterations.shownSession(for: $0).pastIteration == 0 } ?? false }
         #expect(model.notesPanel.viewedIteration?.number == 0, "the header names the iteration shown")
+        await model.shutDown()
+    }
+
+    /// A list section header like the notes panel's, hosted: plan.md's header follows its iterations from before
+    /// its first note, so the menu appears with it (in the live check it never did).
+    @Test func aListHeadersMenuFollowsTheFirstNote() async throws {
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        let document = try await model.noteStore.upsertDocument(hostID: .local, path: "/tmp/proj/plan.md", kind: .markdown, fingerprint: Fingerprint())
+        let state = DocumentIterations()
+        let host = NSHostingView(rootView: List {
+            Section {
+                Text("n")
+            } header: {
+                HStack {
+                    Text("plan.md")
+                    Spacer(minLength: 8)
+                    IterationMenu(document: document, state: state)
+                }
+            }
+        }
+        .listStyle(.inset)
+        .environment(model))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 300), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderBack(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(state.label(viewing: nil) == nil, "no note, no menu")
+        _ = try await model.noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: "n", color: .yellow)
+        await waitUntil { state.label(viewing: nil) == "Iteration 0" }
         await model.shutDown()
     }
 

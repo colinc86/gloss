@@ -7,28 +7,33 @@ import SwiftUI
 struct IterationMenu: View {
     @Environment(AppModel.self) private var model
     let document: Core.Document
-    @State private var iterations: [Iteration] = []
+    @State private var state: DocumentIterations
     @State private var renaming: Iteration?
     @State private var newName = ""
 
-    var body: some View {
-        Group {
-            if !iterations.isEmpty, document.kind != .web {
-                menu
-            }
-        }
-        .task(id: document.id) {
-            do {
-                for try await iterations in model.noteStore.observeIterations(for: document.id) { self.iterations = iterations }
-            } catch {}
-        }
+    /// `state` is given only by tests, to see what the header knows.
+    init(document: Core.Document, state: DocumentIterations = DocumentIterations()) {
+        self.document = document
+        _state = State(initialValue: state)
     }
 
-    private var menu: some View {
+    var body: some View {
         let viewed = model.notesPanel.viewedIteration.flatMap { $0.document.id == document.id ? $0.number : nil }
-        // Iterations only grow: the last is the current one.
+        // Never empty: an empty view never starts its task, so a document whose first note came later never showed
+        // the menu. The clear spacer holds the observation until there is something to show.
+        ZStack(alignment: .trailing) {
+            Color.clear.frame(width: 0, height: 0)
+            if document.kind != .web, let shown = state.shown(viewing: viewed) {
+                menu(shown: shown, viewed: viewed)
+            }
+        }
+        .task(id: document.id) { await state.observe(document.id, in: model.noteStore) }
+    }
+
+    private func menu(shown: Iteration, viewed: Int?) -> some View {
+        let iterations = state.iterations
         let current = iterations.last
-        let shown = viewed.flatMap { number in iterations.first { $0.number == number } } ?? current
+        let shown: Iteration? = shown
         let live = model.session(hostID: document.hostID, path: document.path)
         return Menu {
             ForEach(iterations.reversed()) { iteration in
@@ -97,6 +102,32 @@ struct IterationMenu: View {
         if let commit = iteration.shortCommit { parts.append(commit) }
         if !current, iteration.snapshotHash == nil { parts.append("no snapshot") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// One document's iterations for its header's menu, kept current by an observation of the database.
+@MainActor
+@Observable
+final class DocumentIterations {
+    private(set) var iterations: [Iteration] = []
+
+    /// Follows `documentID`'s iterations until the task is cancelled; the first note's insert brings iteration 0.
+    func observe(_ documentID: DocumentID, in store: NoteStore) async {
+        iterations = []
+        do {
+            for try await iterations in store.observeIterations(for: documentID) { self.iterations = iterations }
+        } catch {}
+    }
+
+    /// The iteration the header names: `viewing`, an earlier one on screen, else the current one (iterations only
+    /// grow, so the last). Nil before the document has a note, when the menu isn't shown.
+    func shown(viewing: Int?) -> Iteration? {
+        viewing.flatMap { number in iterations.first { $0.number == number } } ?? iterations.last
+    }
+
+    /// "Iteration 0", the header's words; nil while the menu isn't shown.
+    func label(viewing: Int?) -> String? {
+        shown(viewing: viewing).map { "Iteration \($0.number)" }
     }
 }
 
