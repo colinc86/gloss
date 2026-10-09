@@ -1539,8 +1539,7 @@ final class DocumentSession: Identifiable {
         guard let crop = ImageDecoder.crop(decoded, to: rect), let png = ImageDecoder.pngData(crop) else { return }
         let directory = attachmentDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let base = (anchor.fileName as NSString).deletingPathExtension
-        let url = directory.appendingPathComponent("\(base)-\(anchor.isWholeImage ? "image" : "region")-\(noteID.rawValue.suffix(6)).png")
+        let url = directory.appendingPathComponent("\(anchor.attachmentBaseName)-\(anchor.isWholeImage ? "image" : "region")-\(noteID.rawValue.suffix(6)).png")
         try png.write(to: url, options: .atomic)
         _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
     }

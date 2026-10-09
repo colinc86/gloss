@@ -171,6 +171,13 @@ public struct EmbeddedImageAnchor: Codable, Hashable, Sendable {
         let path = (source.removingPercentEncoding ?? source).split(separator: "?").first.map(String.init) ?? source
         return (path as NSString).lastPathComponent
     }
+
+    /// A base for files made from the picture (a note's crop): its file name without the extension, or
+    /// `mermaid-diagram` for a diagram, whose display name has a space.
+    public var attachmentBaseName: String {
+        if isMermaidDiagram { return "mermaid-diagram" }
+        return (fileName as NSString).deletingPathExtension.replacingOccurrences(of: "/", with: "-")
+    }
 }
 
 /// Bounds in PDF page points (crop box space, origin bottom-left as PDFKit reports it).

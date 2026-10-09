@@ -16,9 +16,15 @@ struct RecentlyDeletedView: View {
                 Button {
                     panel.showsRecentlyDeleted = false
                 } label: {
-                    Label("Notes", systemImage: "chevron.backward")
+                    // One target: the chevron and the word both go back.
+                    HStack(spacing: 2) {
+                        Image(systemName: "chevron.backward")
+                        Text("Notes")
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("Back to Notes")
                 .help("Back to the notes")
                 Spacer(minLength: DS.Space.s)
                 Text("Recently Deleted")

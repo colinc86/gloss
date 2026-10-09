@@ -153,6 +153,8 @@ struct EmbeddedImageAnchorTests {
         let anchor = EmbeddedImageAnchor(source: EmbedScanner.mermaidSource, occurrence: 0, region: ImageAnchor(x: 4, y: 6, w: 80, h: 40, imageW: 400, imageH: 120),
                                          embed: ReAnchorer.make(from: range, in: doc, index: LineIndex(doc), hash: "old"))
         #expect(anchor.isMermaidDiagram && anchor.fileName == "Mermaid diagram")
+        #expect(anchor.attachmentBaseName == "mermaid-diagram", "a crop's file name has no space")
+        #expect(Self.anchor().attachmentBaseName == "chart")
         let note = PacketNote(noteID: NoteID.new(), agentPath: "/repo/flow.md", source: .markdown, anchor: .embeddedImage(anchor),
                               comment: "Swap these", attachmentAgentPath: "/tmp/crop.png")
         let text = PacketBuilder.build([note]).text
