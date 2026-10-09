@@ -111,14 +111,18 @@ struct DocumentNotesTests {
         let controller = try #require(session.textController)
         let document = try #require(session.document)
         let note = try await store.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 4), text: "two", before: "one", after: "three", hash: nil)), body: "b", color: .blue)
-        await waitUntil { controller.highlights.count == 1 }
+        // Drawn before typing, however slowly the notes arrive under load: typing earlier shifts nothing.
+        for _ in 0..<500 where controller.highlights.count != 1 { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(controller.highlights.count == 1)
         let newText = "zero\none\ntwo\nthree\n"
         controller.viewDidProcessEdit(edit: NSRange(location: 0, length: 0), replacementLength: 5, newText: newText)
         controller.viewDidChangeText(newText)
         // The open-time pass, late: it stamps the disk text's hash on the anchor (a hash this anchor doesn't have yet,
-        // so it writes, as it does when the notes arrive after the note was made).
+        // so it writes, as it does when the notes arrive after the note was made). A second pass right behind it puts
+        // two of the session's own writes on the way at once, as under load.
         await session.reanchorAll(in: original, hash: "disk-at-open")
-        // Its write comes back through the session's observation of the notes.
+        await session.reanchorAll(in: original, hash: "disk-again")
+        // Their writes come back through the session's observation of the notes.
         try await Task.sleep(for: .milliseconds(300))
         #expect(controller.highlights.first?.range == NSRange(location: 9, length: 3))
         await session.save()
