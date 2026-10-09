@@ -126,8 +126,6 @@ struct ContentView: View {
         .sheet(item: Binding(get: { model.iterations.prompt }, set: { model.iterations.prompt = $0 })) { prompt in
             OpenNotesPromptSheet(prompt: prompt)
         }
-        // The notes panel's iteration menu follows the document in front.
-        .task(id: model.activeSession?.document?.id) { model.iterations.track(model.activeSession?.document?.id) }
         .sheet(isPresented: Binding(get: { model.pullRequestPicker.isPresented }, set: { if !$0 { model.pullRequestPicker.dismiss() } })) {
             OpenPullRequestSheet()
         }

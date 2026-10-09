@@ -33,10 +33,6 @@ final class IterationsModel {
     /// Tells the notes panel which iteration of a document to list (nil: the current one).
     @ObservationIgnored var onViewedIterationChange: (Core.Document, Int?) -> Void = { _, _ in }
 
-    /// The iterations of the document in front, oldest first, kept current for the notes panel's menu.
-    private(set) var iterations: [Iteration] = []
-    private(set) var trackedDocumentID: DocumentID?
-    @ObservationIgnored private var observation: Task<Void, Never>?
     /// The earlier iteration shown for a live session, by session id.
     private(set) var past: [String: PastView] = [:]
     var prompt: OpenNotesPrompt?
@@ -44,23 +40,6 @@ final class IterationsModel {
     init(noteStore: NoteStore, settings: SettingsStore) {
         self.noteStore = noteStore
         self.settings = settings
-    }
-
-    /// Follows the iterations of `documentID` (the document in front); nil stops.
-    func track(_ documentID: DocumentID?) {
-        guard documentID != trackedDocumentID else { return }
-        observation?.cancel()
-        trackedDocumentID = documentID
-        iterations = []
-        guard let documentID else { return }
-        let stream = noteStore.observeIterations(for: documentID)
-        observation = Task { [weak self] in
-            do {
-                for try await iterations in stream { self?.iterations = iterations }
-            } catch {
-                Log.notes.error("iteration observation failed: \(error, privacy: .public)")
-            }
-        }
     }
 
     /// The session the viewer shows for `session`: an earlier iteration's, while one is shown.
@@ -72,8 +51,6 @@ final class IterationsModel {
 
     /// Ends every observation and closes the snapshots on screen, when the app quits.
     func stop() {
-        observation?.cancel()
-        observation = nil
         for view in past.values { view.session?.close() }
         past = [:]
         viewGeneration += 1

@@ -101,8 +101,29 @@ struct IterationFlowTests {
         await waitUntil { other.textController?.text == "alpha\nbeta\ngamma\n" }
         #expect(other.notes.map(\.id) == [otherNote.id])
         await waitUntil { other.textController?.highlights.count == 1 }
-        model.iterations.track(other.document?.id)
-        await waitUntil { model.iterations.iterations.count == 1 }
+        #expect(try await model.noteStore.iterations(for: otherDocument.id).count == 1, "its header has its iteration menu")
+        await model.shutDown()
+    }
+
+    /// A document's header in the notes panel shows an earlier iteration, opening the document first, and its menu
+    /// starts the next one.
+    @Test func aDocumentsHeaderShowsAndStartsIterations() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = "\(folder)/a.md"
+        try "one\ntwo\n".write(toFile: path, atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        model.notesPanel.start()
+        let document = try await model.noteStore.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        _ = try await model.noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: "n", color: .yellow)
+        model.settings.iterationOpenNotes = .leave
+        model.newIteration(for: document)
+        for _ in 0..<100 where (try? await model.noteStore.document(document.id))?.currentIteration != 1 { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(try await model.noteStore.document(document.id)?.currentIteration == 1, "it ends the iteration in progress")
+
+        model.showIteration(0, of: document)
+        await waitUntil { model.activeSession.map { model.iterations.shownSession(for: $0).pastIteration == 0 } ?? false }
+        #expect(model.notesPanel.viewedIteration?.number == 0, "the header names the iteration shown")
         await model.shutDown()
     }
 

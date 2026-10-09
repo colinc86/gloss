@@ -495,8 +495,10 @@ path. Dropping on the Dock icon is not supported yet.
   folder in front, grouped by file, newest deletion first; each card is read-only (the color rail at 60 %, the
   anchor, the comment, "Deleted 3 days ago") with Restore and Delete Now, also in its context menu. A footer says how
   long notes stay. Deleted notes draw nothing on the page and no paths. With no folder in front it says so.
-- **Iterations** (issue #18): under the color filter strip, a borderless "Iteration 3" menu (stack symbol) for the
-  document in front, once it has a note. It lists the iterations newest first, each a checkable row with its label
+- **Iterations** (issue #18): at the trailing edge of each document's header in the notes panel, a borderless
+  "Iteration 3 ⌄" menu (caption size, secondary) for that document, once it has a note; the file name truncates first.
+  While an earlier iteration is shown it reads that one ("Iteration 0") in the accent color with a clock symbol, and
+  VoiceOver says it is an earlier iteration. Picking from a closed document's menu opens it first. It lists the iterations newest first, each a checkable row with its label
   ("Iteration 2 · Oct 6", or its name) over "Current · 4 notes" or "Oct 8 · 3 notes · a1b2c3d" (and "no snapshot"
   once pruned); then New Iteration, Show Changes Since (a submenu of iterations with a snapshot; text documents), Hide
   Changes while tinted, and Rename… (an alert with a field; empty goes back to the date). Picking an earlier one puts

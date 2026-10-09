@@ -1,67 +1,93 @@
 import Core
 import SwiftUI
 
-/// The notes panel's "Iteration 3" menu for the document in front (issue #18): every iteration with its date and
-/// note count, then New Iteration, Show Changes Since, and Rename.
+/// "Iteration 3" at the trailing edge of a document's header in the notes panel (issue #18): every iteration of that
+/// document with its date and note count, then New Iteration, Show Changes Since, and Rename. Shown once the document
+/// has a note; while an earlier iteration is shown it names that one, in the accent of a mode, not the current one.
 struct IterationMenu: View {
     @Environment(AppModel.self) private var model
+    let document: Core.Document
+    @State private var iterations: [Iteration] = []
     @State private var renaming: Iteration?
     @State private var newName = ""
 
     var body: some View {
-        let iterations = model.iterations
-        if let session = model.activeSession, let document = session.document, !iterations.iterations.isEmpty,
-           document.kind != .web {
-            let viewed = iterations.viewedIteration(for: session)
-            // Iterations only grow: the last is the current one (the session's document row may predate it).
-            let current = iterations.iterations.last
-            let shown = viewed ?? current
-            Menu {
-                ForEach(iterations.iterations.reversed()) { iteration in
-                    Toggle(isOn: Binding(get: { shown?.number == iteration.number },
-                                         set: { if $0 { Task { await iterations.view(iteration.number, for: session) } } })) {
-                        Text(iteration.label)
-                        Text(Self.detail(iteration, current: iteration.number == current?.number))
-                    }
-                }
-                Divider()
-                Button("New Iteration", systemImage: "plus") { model.newIteration() }
-                    .disabled(viewed != nil || current?.noteCount == 0)
-                let earlier = iterations.iterations.filter { $0.snapshotHash != nil }
-                if session.textController != nil, !earlier.isEmpty {
-                    Menu("Show Changes Since") {
-                        ForEach(earlier.reversed()) { iteration in
-                            Button(iteration.label) { Task { await iterations.showChanges(since: iteration.number, in: session) } }
-                        }
-                    }
-                    if session.changesSinceIteration != nil {
-                        Button("Hide Changes") { Task { await iterations.showChanges(since: nil, in: session) } }
-                    }
-                }
-                if let shown {
-                    Button("Rename…") {
-                        newName = shown.name ?? ""
-                        renaming = shown
-                    }
-                }
-            } label: {
-                Label(shown.map { "Iteration \($0.number)" } ?? "Iteration", systemImage: "square.stack.3d.up")
-                    .font(.caption.weight(.medium))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Iterations of \(document.fileName)")
-            .alert("Rename Iteration", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-                TextField("Name", text: $newName)
-                Button("Rename") {
-                    if let renaming { Task { await iterations.rename(renaming, to: newName) } }
-                    renaming = nil
-                }
-                Button("Cancel", role: .cancel) { renaming = nil }
-            } message: {
-                Text("Leave it empty for the date it started.")
+        Group {
+            if !iterations.isEmpty, document.kind != .web {
+                menu
             }
         }
+        .task(id: document.id) {
+            do {
+                for try await iterations in model.noteStore.observeIterations(for: document.id) { self.iterations = iterations }
+            } catch {}
+        }
+    }
+
+    private var menu: some View {
+        let viewed = model.notesPanel.viewedIteration.flatMap { $0.document.id == document.id ? $0.number : nil }
+        // Iterations only grow: the last is the current one.
+        let current = iterations.last
+        let shown = viewed.flatMap { number in iterations.first { $0.number == number } } ?? current
+        let live = model.session(hostID: document.hostID, path: document.path)
+        return Menu {
+            ForEach(iterations.reversed()) { iteration in
+                Toggle(isOn: Binding(get: { shown?.number == iteration.number },
+                                     set: { if $0 { model.showIteration(iteration.number, of: document) } })) {
+                    Text(iteration.label)
+                    Text(Self.detail(iteration, current: iteration.number == current?.number))
+                }
+            }
+            Divider()
+            Button("New Iteration", systemImage: "plus") { model.newIteration(for: document) }
+                .disabled(viewed != nil || current?.noteCount == 0)
+            let earlier = iterations.filter { $0.snapshotHash != nil }
+            if Self.showsChanges(document.kind), !earlier.isEmpty {
+                Menu("Show Changes Since") {
+                    ForEach(earlier.reversed()) { iteration in
+                        Button(iteration.label) { model.showChanges(since: iteration.number, of: document) }
+                    }
+                }
+                if live?.changesSinceIteration != nil {
+                    Button("Hide Changes") { model.showChanges(since: nil, of: document) }
+                }
+            }
+            if let shown {
+                Button("Rename…") {
+                    newName = shown.name ?? ""
+                    renaming = shown
+                }
+            }
+        } label: {
+            HStack(spacing: DS.Space.xxs) {
+                if viewed != nil { Image(systemName: "clock.arrow.circlepath") }
+                Text(shown.map { "Iteration \($0.number)" } ?? "Iteration")
+                    .monospacedDigit()
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(viewed != nil ? Color.accentColor : Color.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
+        .fixedSize()
+        .help(viewed != nil ? "Showing an earlier iteration of \(document.fileName)" : "Iterations of \(document.fileName)")
+        .accessibilityLabel(viewed != nil ? "Iterations of \(document.fileName), showing earlier iteration \(viewed ?? 0)"
+                            : "Iterations of \(document.fileName), iteration \(current?.number ?? 0)")
+        .alert("Rename Iteration", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Rename") {
+                if let renaming { Task { await model.iterations.rename(renaming, to: newName) } }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        } message: {
+            Text("Leave it empty for the date it started.")
+        }
+    }
+
+    /// Text documents tint changed lines; images, PDFs and pages don't.
+    static func showsChanges(_ kind: DocumentKind) -> Bool {
+        kind == .text || kind == .code || kind == .markdown
     }
 
     /// "Current · 4 notes" or "Oct 8 · 3 notes · a1b2c3d".

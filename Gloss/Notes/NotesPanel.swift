@@ -250,9 +250,6 @@ struct NotesPanel: View {
                 sortMenu
             }
             ColorFilterStrip(counts: colorCounts, selection: $panel.colorFilter)
-            // The document in front's rounds of notes (issue #18), once it has a note.
-            IterationMenu()
-                .frame(maxWidth: .infinity, alignment: .leading)
             // Several selected: the bar acts on them all. One selected card carries its own actions, so selecting
             // a note (a click) never pushes the list down.
             if panel.selectedNotes.count > 1 {
@@ -1439,6 +1436,9 @@ private struct DocumentGroupHeader: View {
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
             }
+            // The document's rounds of notes (issue #18), at the trailing edge; the file name gives way first.
+            IterationMenu(document: document)
+                .layoutPriority(2)
         }
         .padding(.vertical, DS.Space.xxs)
         .contentShape(Rectangle())

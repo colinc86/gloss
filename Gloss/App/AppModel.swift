@@ -1081,10 +1081,42 @@ final class AppModel {
         }
     }
 
-    /// New Iteration (the Notes menu, the notes panel's iteration menu) for the document in front.
+    /// New Iteration (the Notes menu) for the document in front.
     func newIteration() {
         guard !isShowingPastIteration, let document = activeSession?.document else { return }
-        Task { await iterations.requestNewIteration(for: document) }
+        newIteration(for: document)
+    }
+
+    /// New Iteration from a document's header in the notes panel, read again so it ends the iteration in progress.
+    func newIteration(for document: Core.Document) {
+        Task {
+            guard let fresh = try? await noteStore.document(document.id) else { return }
+            await iterations.requestNewIteration(for: fresh)
+        }
+    }
+
+    /// Shows iteration `number` of a document from its header in the notes panel, opening the document first.
+    func showIteration(_ number: Int, of document: Core.Document) {
+        Task {
+            guard let session = await openedSession(for: document) else { return }
+            await iterations.view(number, for: session)
+        }
+    }
+
+    /// Show Changes Since (nil: Hide Changes) from a document's header, on the document as it is.
+    func showChanges(since number: Int?, of document: Core.Document) {
+        Task {
+            guard let session = await openedSession(for: document) else { return }
+            await iterations.showChanges(since: number, in: session)
+        }
+    }
+
+    /// Opens a document and waits until its session has read it; nil when it can't be opened.
+    private func openedSession(for document: Core.Document) async -> DocumentSession? {
+        openDocument(hostID: document.hostID, path: document.path)
+        guard let session = session(hostID: document.hostID, path: document.path) else { return nil }
+        for _ in 0..<100 where session.document == nil || !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
+        return session.document == nil ? nil : session
     }
 
     /// The open session of a file. `/tmp/a` and `/private/tmp/a` are one file: the tree names one, a note's document
