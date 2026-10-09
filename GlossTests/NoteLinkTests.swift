@@ -146,4 +146,32 @@ struct NoteLinkTests {
         for point in connector.samples().dropFirst().dropLast() { #expect(ribbon.contains(point)) }
         #expect(abs(ribbon.boundingBoxOfPath.maxX - 905) < 0.01, "flush against the rail, never into it")
     }
+
+    // MARK: Selection outline
+
+    @Test func aRunOfSelectedCardsIsOneOutlineBlendingAtEachCardsMiddle() throws {
+        let list = CGRect(x: 0, y: 50, width: 300, height: 400)
+        let cards = [CGRect(x: 10, y: 100, width: 200, height: 40), CGRect(x: 10, y: 150, width: 200, height: 40),
+                     CGRect(x: 10, y: 200, width: 200, height: 40)]
+        let rect = try #require(SelectionOutline.rect(cards, list: list))
+        #expect(rect == CGRect(x: 6, y: 96, width: 208, height: 148), "around all three, padded as a lone card's")
+        let stops = SelectionOutline.stops(zip(cards, [NoteColor.blue, .blue, .green]).map { (midY: $0.midY, color: $1) }, in: rect)
+        #expect(stops.map(\.color) == [.blue, .blue, .green])
+        let expected: [CGFloat] = [24 / 148, 74 / 148, 124 / 148]
+        for (stop, location) in zip(stops, expected) { #expect(abs(stop.location - location) < 0.0001) }
+        // One color is drawn flat.
+        #expect(SelectionOutline.stops(cards.map { (midY: $0.midY, color: NoteColor.pink) }, in: rect).count == 1)
+    }
+
+    @Test func aRunGoingOnPastTheListIsDrawnPastItsEdge() throws {
+        let list = CGRect(x: 0, y: 50, width: 300, height: 400)
+        let card = CGRect(x: 10, y: 60, width: 200, height: 40)
+        let above = try #require(SelectionOutline.rect([nil, card], list: list))
+        #expect(above.minY < list.minY - SelectionOutline.radius, "open at the top, where the run goes on")
+        #expect(above.maxY == card.maxY + SelectionOutline.padding)
+        let below = try #require(SelectionOutline.rect([card, nil], list: list))
+        #expect(below.minY == card.minY - SelectionOutline.padding)
+        #expect(below.maxY > list.maxY + SelectionOutline.radius)
+        #expect(SelectionOutline.rect([nil, nil], list: list) == nil)
+    }
 }

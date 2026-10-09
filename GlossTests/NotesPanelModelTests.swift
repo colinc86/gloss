@@ -377,6 +377,28 @@ struct NotesPanelModelTests {
         #expect(again.separateResolved, "remembered")
     }
 
+    @Test func selectedCardsNextToEachOtherMakeARun() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        let alpha = try #require(model.groups.first { $0.document.fileName == "alpha.swift" })
+        _ = try await store.createNote(documentID: alpha.document.id, anchor: anchor(line: 15), body: "Third", color: .pink)
+        await waitUntil { model.groups.reduce(0) { $0 + $1.notes.count } == 4 }
+        let ids = Dictionary(uniqueKeysWithValues: model.groups.flatMap(\.notes).map { ($0.body, $0.id) })
+        let cafe = try #require(ids["Check the café import"]), helper = try #require(ids["Rename the helper"])
+        let third = try #require(ids["Third"]), expand = try #require(ids["Expand this section"])
+        func runs() -> [[NoteID]] { model.selectionRuns.map { $0.map(\.id) } }
+        // alpha.swift lists lines 2, 9, 15; beta.md's header comes between it and line 5 of beta.md.
+        model.selection = [cafe, helper, expand]
+        #expect(runs() == [[cafe, helper], [expand]], "a document's header ends a run")
+        model.selection = [cafe, third]
+        #expect(runs() == [[cafe], [third]], "an unselected card ends a run")
+        model.separateResolved = true
+        model.selection = [cafe, helper]
+        #expect(runs() == [[helper], [cafe]], "the rule before resolved notes ends a run")
+        model.selection = []
+        #expect(runs().isEmpty)
+    }
+
     @Test func theAgentsTurnIsHeadedByWhoSpokeAndHow() {
         #expect(AgentMessageBubble.heading(agent: "claude") == "Claude Code", "only who spoke: the words say how")
         #expect(AgentMessageBubble.heading(agent: "codex") == "Codex")

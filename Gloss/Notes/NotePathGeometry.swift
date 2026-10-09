@@ -224,3 +224,36 @@ nonisolated struct NoteConnector: Equatable {
         return path
     }
 }
+
+/// The one outline around a run of selected cards next to each other in the list (issue #19), in window coordinates.
+///
+/// Each card alone draws its own outline; two or more adjacent ones would overlap theirs, so the run is outlined once,
+/// around all of them, and its color blends from each card into the next.
+nonisolated enum SelectionOutline {
+    /// Room between the cards and their outline, as a lone selected card's (`DS.Space.xs`).
+    static let padding: CGFloat = 4
+    /// The card's corner radius (`DS.Radius.m`).
+    static let radius: CGFloat = 8
+
+    /// The rect to outline around `cards`, top to bottom in list order, nil for a card not on screen. A run that goes
+    /// on above or below the list is drawn past its edge, so the clip cuts it open instead of closing it there.
+    static func rect(_ cards: [CGRect?], list: CGRect) -> CGRect? {
+        let shown = cards.compactMap { $0 }
+        guard var box = shown.dropFirst().reduce(shown.first, { $0?.union($1) }) else { return nil }
+        let reach = padding + 2 * radius
+        if cards.first.flatMap({ $0 }) == nil {
+            let top = min(box.minY, list.minY - reach)
+            box = CGRect(x: box.minX, y: top, width: box.width, height: box.maxY - top)
+        }
+        if cards.last.flatMap({ $0 }) == nil { box.size.height = max(box.maxY, list.maxY + reach) - box.minY }
+        return box.insetBy(dx: -padding, dy: -padding)
+    }
+
+    /// The outline's color stops, top to bottom: each card's color at its middle, as a fraction of `box`'s height.
+    /// One color throughout is one stop, drawn flat.
+    static func stops<Color: Equatable>(_ cards: [(midY: CGFloat, color: Color)], in box: CGRect) -> [(location: CGFloat, color: Color)] {
+        guard let first = cards.first else { return [] }
+        if cards.allSatisfy({ $0.color == first.color }) { return [(0, first.color)] }
+        return cards.map { card in (box.height > 0 ? min(max((card.midY - box.minY) / box.height, 0), 1) : 0, card.color) }
+    }
+}

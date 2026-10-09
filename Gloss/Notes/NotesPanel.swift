@@ -20,6 +20,11 @@ struct NotesPanel: View {
         // Worked out once per pass: the runs, and every group in them.
         let runs = panel.sections
         let visible = runs.flatMap(\.groups)
+        // Adjacent selected cards are outlined once, together, over the list (issue #19); each of them draws none.
+        let selectionRuns = NotesPanelModel.selectionRuns(panel.selection, in: visible)
+            .filter { $0.count > 1 }
+            .map { $0.map { NoteLinkModel.SelectedCard(id: $0.id, color: $0.color) } }
+        let inRuns = Set(selectionRuns.joined().map(\.id))
         VStack(spacing: 0) {
             header
             Divider()
@@ -65,7 +70,8 @@ struct NotesPanel: View {
                         ForEach(run.groups) { group in
                             Section {
                                 ForEach(group.notes) { note in
-                                    NoteCard(note: note, document: group.document, listActive: listFocused && controlActiveState == .key)
+                                    NoteCard(note: note, document: group.document, listActive: listFocused && controlActiveState == .key,
+                                             inRun: inRuns.contains(note.id))
                                         .background(NoSystemSelectionHighlight())
                                         // Where the card is, for the path drawn from its note on the page: from AppKit,
                                         // which knows when the table places or re-tiles a row (SwiftUI's first report
@@ -112,6 +118,9 @@ struct NotesPanel: View {
                 .onChange(of: visible.flatMap { $0.notes.map(\.id) }, initial: true) { _, ids in
                     model.noteLink.listedIDs = Set(ids)
                 }
+                .onChange(of: selectionRuns, initial: true) { _, runs in model.noteLink.selectionRuns = runs }
+                .onChange(of: listFocused && controlActiveState == .key, initial: true) { _, active in model.noteLink.listActive = active }
+                .onDisappear { model.noteLink.selectionRuns = [] }
                 .onChange(of: model.noteLink.focusRequest) {
                     guard let id = model.noteLink.focusNoteID else { return }
                     withAnimation(Motion.isReduced ? nil : DS.Motion.smooth) { proxy.scrollTo(id, anchor: .center) }
@@ -452,6 +461,8 @@ struct NoteCard: View {
     /// The list has the keyboard in the key window: a selected card's outline is at full strength, muted otherwise,
     /// as the system's selection greys when a list isn't focused.
     var listActive = true
+    /// One of two or more adjacent selected cards: the list outlines them together, so the card draws no outline.
+    var inRun = false
     @State private var lastSend: SendSummary?
     @State private var thumbnail: NoteThumbnail?
     /// The anchored line in the editor's colours, worked out once per note.
@@ -571,7 +582,7 @@ struct NoteCard: View {
                     .fill(Color.primary.opacity(isInSelection ? 0.06 : 0))
                 RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
                     .strokeBorder(tint, lineWidth: 1.5)
-                    .opacity(isInSelection ? (listActive ? 1 : 0.5) : 0)
+                    .opacity(isInSelection && !inRun ? (listActive ? 1 : 0.5) : 0)
                 RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
                     .fill(tint.opacity(arrived ? 0.2 : 0))
                     .animation(arrived ? DS.Motion.snappy : .easeOut(duration: 0.9), value: arrived)

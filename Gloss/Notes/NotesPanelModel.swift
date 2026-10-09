@@ -414,6 +414,26 @@ final class NotesPanelModel {
         return visibleGroups.flatMap(\.notes).filter { selection.contains($0.id) }
     }
 
+    /// The selected notes in runs of cards next to each other in the list, top to bottom (issue #19). A document's
+    /// header, or the rule before resolved notes, stands between cards, so it ends a run, as an unselected card does.
+    var selectionRuns: [[Note]] { Self.selectionRuns(selection, in: visibleGroups) }
+
+    /// `selectionRuns` over groups already worked out, in the order shown.
+    nonisolated static func selectionRuns(_ selection: Set<NoteID>, in groups: [DocumentNotes]) -> [[Note]] {
+        guard !selection.isEmpty else { return [] }
+        var runs: [[Note]] = []
+        for group in groups {
+            var run: [Note] = []
+            for note in group.notes {
+                if selection.contains(note.id) { run.append(note); continue }
+                if !run.isEmpty { runs.append(run) }
+                run = []
+            }
+            if !run.isEmpty { runs.append(run) }
+        }
+        return runs
+    }
+
     /// What each bulk action would touch among `notes`: only notes the action makes sense for.
     /// Sendable: drafts and sent notes (sent again), and any note with a follow-up waiting, an orphan's too.
     nonisolated static func sendable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .draft || $0.state == .sent || $0.hasUnsentFollowUps } }

@@ -327,6 +327,13 @@ path. Dropping on the Dock icon is not supported yet.
   half otherwise, as a system selection greys, so it still says where typing goes. The list's keyboard focus ring is
   left as the system draws it. A click into a card's own field keeps the keyboard there; a click anywhere else in the
   list, or selecting another card, gives it to the list.
+- **Adjacent selected cards** (issue #19, 2026-10-08): two or more selected cards next to each other in the list are
+  outlined once, around all of them, instead of each drawing its own outline over its neighbor's. The outline is the
+  same 1.5 pt rounded stroke, 4 pt outside the cards, at the same strength (full while the list has the keyboard, half
+  otherwise), drawn by `NotePathLayerView` over the list and clipped to it. Cards of different colors blend: a
+  vertical gradient with a stop at each card's middle in its note's color; one color is drawn flat. A document's
+  header, the rule before resolved notes, or an unselected card ends a run; a lone selected card keeps its own
+  outline. Each card in a run keeps its lifted ground and wide rail.
 - **Note card**: colour rail (3 pt, 4 pt when selected, faded when settled unless selected; hover only lights its glow), anchor label
   with the anchor kind's symbol, the comment, the latest turn of its thread, the delivery line, then the action row
   with Send first and Delete apart at the trailing edge.

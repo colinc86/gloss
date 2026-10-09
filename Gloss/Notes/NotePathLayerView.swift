@@ -1,6 +1,7 @@
 import AppKit
 import Core
 import QuartzCore
+import SwiftUI
 import Viewers
 
 /// Draws the paths from notes on the page to their cards: an outline around each note's highlight and a tapered
@@ -10,6 +11,9 @@ import Viewers
 /// they land in the same Core Animation transaction as the scrolled text and never trail it by a frame. The view sits
 /// in the window's frame view just above the content view, covers it exactly, and is invisible to clicks and
 /// accessibility.
+///
+/// It also draws the one outline around each run of adjacent selected cards (issue #19), which shows whether or not
+/// paths do.
 @MainActor
 final class NotePathLayerView: NSView {
     struct Item {
@@ -23,14 +27,26 @@ final class NotePathLayerView: NSView {
         var strong: Bool
     }
 
+    /// A run of adjacent selected cards: the rect its outline goes around, and its color stops top to bottom.
+    struct Selection {
+        var rect: CGRect
+        var stops: [(location: CGFloat, color: NSColor)]
+    }
+
     /// The rail as `NoteCard` draws it: inset by the card's leading padding (`DS.Space.xs`), running the card's
     /// height inside its vertical padding, so its middle is the card's.
     static let railInset: CGFloat = 4
     /// Ribbons fade out over this distance as their card slides out of the list.
     static let edgeFade: CGFloat = 12
 
+    /// The paths (outlines and ribbons), which fade in and out together.
+    private let paths = CALayer()
     private let outlines = CALayer()
     private let ribbons = CALayer()
+    /// Selection outlines, clipped to the list, in a layer of their own that fades with the notes panel.
+    private let selectionFade = CALayer()
+    private let selections = CALayer()
+    private var selectionLayers: [(gradient: CAGradientLayer, mask: CAShapeLayer)] = []
     private var layers: [NoteID: (outline: CAShapeLayer, ribbon: CALayer, gradient: CAGradientLayer, mask: CAShapeLayer)] = [:]
 
     override init(frame: NSRect) {
@@ -38,9 +54,13 @@ final class NotePathLayerView: NSView {
         wantsLayer = true
         layer?.masksToBounds = false
         outlines.masksToBounds = true
-        layer?.addSublayer(outlines)
-        layer?.addSublayer(ribbons)
-        layer?.opacity = 0
+        paths.addSublayer(outlines)
+        paths.addSublayer(ribbons)
+        paths.opacity = 0
+        layer?.addSublayer(paths)
+        selections.masksToBounds = true
+        selectionFade.addSublayer(selections)
+        layer?.addSublayer(selectionFade)
     }
 
     @available(*, unavailable)
@@ -64,9 +84,27 @@ final class NotePathLayerView: NSView {
 
     /// Shows or hides every path, with a short fade.
     func setShown(_ shown: Bool) {
-        guard let layer else { return }
+        fade(paths, shown)
+    }
+
+    /// Shows or hides the selection outlines with the notes panel, with the same fade.
+    func setSelectionsShown(_ shown: Bool) {
+        fade(selectionFade, shown)
+    }
+
+    /// Called when the window turns light or dark, with that appearance current: colors are resolved again.
+    var onAppearanceChange: () -> Void = {}
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { onAppearanceChange() }
+    }
+
+    private func fade(_ layer: CALayer, _ shown: Bool) {
         let target: Float = shown ? 1 : 0
         guard layer.opacity != target else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = layer.presentation()?.opacity ?? layer.opacity
         fade.toValue = target
@@ -74,6 +112,45 @@ final class NotePathLayerView: NSView {
         fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         layer.add(fade, forKey: "fade")
         layer.opacity = target
+        CATransaction.commit()
+    }
+
+    /// Redraws the selection outlines inside `list`, the part of the notes list cards can be seen in: a 1.5 pt
+    /// rounded stroke around each run, a vertical gradient through its cards' colors, at full strength while the list
+    /// is `active` and half otherwise, as a lone selected card's.
+    func updateSelections(_ runs: [Selection], list: CGRect?, active: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        let runs = list == nil ? [] : runs
+        while selectionLayers.count > runs.count { selectionLayers.removeLast().gradient.removeFromSuperlayer() }
+        guard let list else { return }
+        selections.frame = list
+        selections.sublayerTransform = CATransform3DMakeTranslation(-list.minX, -list.minY, 0)
+        selections.opacity = active ? 1 : 0.5
+        for (index, run) in runs.enumerated() {
+            if index == selectionLayers.count {
+                let gradient = CAGradientLayer(), mask = CAShapeLayer()
+                mask.fillColor = nil
+                mask.strokeColor = NSColor.black.cgColor
+                mask.lineWidth = 1.5
+                gradient.mask = mask
+                selections.addSublayer(gradient)
+                selectionLayers.append((gradient, mask))
+            }
+            let parts = selectionLayers[index]
+            // The stroke sits inside the rect, with continuous corners, as SwiftUI's `strokeBorder` drew it on each card.
+            parts.gradient.frame = run.rect
+            parts.mask.frame = parts.gradient.bounds
+            parts.mask.path = RoundedRectangle(cornerRadius: SelectionOutline.radius, style: .continuous)
+                .path(in: parts.gradient.bounds.insetBy(dx: 0.75, dy: 0.75)).cgPath
+            // One stop is one color, drawn flat.
+            let stops = run.stops.count == 1 ? run.stops + run.stops : run.stops
+            parts.gradient.colors = stops.map(\.color.cgColor)
+            parts.gradient.locations = stops.count == run.stops.count ? stops.map { NSNumber(value: Double($0.location)) } : nil
+            parts.gradient.startPoint = CGPoint(x: 0.5, y: 0)
+            parts.gradient.endPoint = CGPoint(x: 0.5, y: 1)
+        }
     }
 
     /// Redraws every path; window coordinates (top-left) are this view's own, since it covers the content view.

@@ -39,6 +39,8 @@ final class NoteLinkModel {
             // The page may have scrolled while the panel was away: draw where things are now before fading in.
             redraw()
             updateShown()
+            drawSelections()
+            layerView.setSelectionsShown(isPanelShown)
         }
     }
 
@@ -49,12 +51,17 @@ final class NoteLinkModel {
             // The whole list moved (the window resized, the header grew): every card moved with it, though no row did.
             NotificationCenter.default.post(name: Self.panelMoved, object: self)
             redraw()
+            drawSelections()
         }
     }
     /// The toasts at the bottom of the list (Undo, a send's result), when any shows: cards under them are covered,
     /// so their ribbons stop as they would at the list's edge.
     @ObservationIgnored var panelToasts: CGRect? {
-        didSet { if panelToasts != oldValue { redraw() } }
+        didSet {
+            guard panelToasts != oldValue else { return }
+            redraw()
+            drawSelections()
+        }
     }
     /// The part of the list cards can be seen in.
     private var visibleList: CGRect? {
@@ -72,6 +79,25 @@ final class NoteLinkModel {
     /// Notes the list shows (its filters and search applied); others are not followed or drawn.
     @ObservationIgnored var listedIDs: Set<NoteID> = [] {
         didSet { if isLinked, listedIDs != oldValue { refresh() } }
+    }
+    /// A selected card, with its note's color, for the outline around adjacent selected cards.
+    struct SelectedCard: Equatable {
+        var id: NoteID
+        var color: NoteColor
+    }
+    /// The runs of two or more adjacent selected cards, top to bottom in list order: one outline goes around each
+    /// (issue #19), drawn whether or not paths are.
+    @ObservationIgnored var selectionRuns: [[SelectedCard]] = [] {
+        didSet {
+            guard selectionRuns != oldValue else { return }
+            selectedCardIDs = Set(selectionRuns.joined().map(\.id))
+            drawSelections()
+        }
+    }
+    @ObservationIgnored private var selectedCardIDs: Set<NoteID> = []
+    /// The list has the keyboard in the key window: selection outlines are at full strength, half otherwise.
+    @ObservationIgnored var listActive = true {
+        didSet { if listActive != oldValue { drawSelections() } }
     }
     /// Each note's colour and how strongly its state shows (`Theme.strength`), for the active document.
     @ObservationIgnored var noteStyles: () -> [NoteID: (color: NoteColor, strength: CGFloat)] = { [:] }
@@ -103,6 +129,10 @@ final class NoteLinkModel {
 
     init(noteStore: NoteStore) {
         self.noteStore = noteStore
+        layerView.onAppearanceChange = { [weak self] in
+            self?.redraw()
+            self?.drawSelections()
+        }
     }
 
     func start() {
@@ -122,6 +152,7 @@ final class NoteLinkModel {
         layerView.install(in: window)
         updateShown()
         redraw()
+        drawSelections()
     }
 
     /// The viewer now in front, or nil for one without note positions (Quick Look, a folder).
@@ -152,6 +183,7 @@ final class NoteLinkModel {
         }
         guard cardRects[id] != frame else { return }
         cardRects[id] = frame
+        if selectedCardIDs.contains(id) { drawSelections() }
         // Every card on screen reports on every frame of a list scroll: move just this one's ribbon.
         guard drawsPaths, isPanelShown, var item = drawn[id] else { return }
         item.card = frame
@@ -218,6 +250,20 @@ final class NoteLinkModel {
         outlines = outlines.filter { viewerRects[$0.key] != nil }
         drawn = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         layerView.update(items, viewerViewport: viewerViewport, panelViewport: visibleList)
+    }
+
+    /// Outlines each run of adjacent selected cards where its cards are now.
+    private func drawSelections() {
+        // Hidden with the panel, the outlines stay as they were while they fade.
+        guard isPanelShown else { return }
+        guard let list = visibleList else { return layerView.updateSelections([], list: nil, active: listActive) }
+        let runs = selectionRuns.compactMap { run -> NotePathLayerView.Selection? in
+            guard let rect = SelectionOutline.rect(run.map { cardRects[$0.id] }, list: list) else { return nil }
+            let cards = run.compactMap { card in cardRects[card.id].map { (midY: $0.midY, color: card.color) } }
+            let stops = SelectionOutline.stops(cards, in: rect).map { (location: $0.location, color: Theme.color(for: $0.color)) }
+            return NotePathLayerView.Selection(rect: rect, stops: stops)
+        }
+        layerView.updateSelections(runs, list: list, active: listActive)
     }
 
     private func persist(_ key: String, _ value: Bool) {
