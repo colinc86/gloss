@@ -1302,6 +1302,7 @@ final class AppModel {
         }
         let document = try await noteStore.upsertDocument(hostID: hostID, path: question.path, kind: DocumentKindDetector.kind(forPath: question.path), fingerprint: attributes.fingerprint)
         let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent)
+        await iterations.recordStartingCommit(document.id)
         if activeSession?.noteEditor == nil {
             await openRootIfNeeded(hostID: hostID, containing: question.path)
             showNotesPanel = true
