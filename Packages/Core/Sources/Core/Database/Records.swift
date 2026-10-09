@@ -48,6 +48,8 @@ public struct DocumentRecord: SnakeCaseRecord, Identifiable {
     public var lastHash: String?
     public var lastMtime: Date?
     public var lastSize: Int64?
+    /// The iteration new notes go into (issue #18).
+    public var currentIteration: Int = 0
 }
 
 public struct NoteRecord: SnakeCaseRecord, Identifiable {
@@ -77,6 +79,32 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     public var originalAnchorType: String? = nil
     /// When the user deleted the note, which put it in Recently Deleted; nil for a note that isn't deleted.
     public var deletedAt: Date? = nil
+    /// The document's iteration the note was taken in (issue #18).
+    public var iteration: Int = 0
+}
+
+/// One round of notes on a document (issue #18). Keyed by document and number.
+public struct IterationRecord: SnakeCaseRecord {
+    public static let databaseTableName = "iteration"
+    public var documentId: String
+    public var number: Int
+    public var name: String?
+    public var startedAt: Date
+    public var endedAt: Date?
+    /// The content the iteration's notes were taken on, saved when it ended; nil while it is current, and once pruned.
+    public var snapshotHash: String?
+    public var gitCommit: String?
+}
+
+/// File content kept for an ended iteration, shared by every iteration with the same bytes.
+public struct SnapshotRecord: SnakeCaseRecord {
+    public static let databaseTableName = "snapshot"
+    public var hash: String
+    /// zlib-compressed.
+    public var data: Data
+    /// The uncompressed size.
+    public var size: Int64
+    public var createdAt: Date
 }
 
 public struct NoteMessageRecord: SnakeCaseRecord, Identifiable {

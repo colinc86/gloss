@@ -37,8 +37,10 @@ struct ContentView: View {
         } detail: {
             Group {
                 if let session = model.activeSession {
-                    ViewerPane(session: session)
-                        .id(session.id)
+                    // An earlier iteration shows in place of the document, from its snapshot (issue #18).
+                    let shown = model.iterations.shownSession(for: session)
+                    ViewerPane(session: shown)
+                        .id(ObjectIdentifier(shown))
                         .navigationTitle(session.fileName)
                         .navigationSubtitle(Self.subtitle(for: session, hosts: model.hosts))
                 } else if model.explorer.tabs.isEmpty {
@@ -121,6 +123,11 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { model.isReportPresented }, set: { model.isReportPresented = $0 })) {
             ReportSheet()
         }
+        .sheet(item: Binding(get: { model.iterations.prompt }, set: { model.iterations.prompt = $0 })) { prompt in
+            OpenNotesPromptSheet(prompt: prompt)
+        }
+        // The notes panel's iteration menu follows the document in front.
+        .task(id: model.activeSession?.document?.id) { model.iterations.track(model.activeSession?.document?.id) }
         .sheet(isPresented: Binding(get: { model.pullRequestPicker.isPresented }, set: { if !$0 { model.pullRequestPicker.dismiss() } })) {
             OpenPullRequestSheet()
         }

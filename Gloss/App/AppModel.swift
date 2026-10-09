@@ -21,6 +21,7 @@ final class AppModel {
     let noteLink: NoteLinkModel
     let send: SendCoordinator
     let settings: SettingsStore
+    let iterations: IterationsModel
     let hosts: HostsModel
     let hooks = HooksModel()
     let integrations: IntegrationsModel
@@ -77,8 +78,14 @@ final class AppModel {
     /// The Add Note button is showing: a selection waits for a note, so ⌘↩ makes one instead of sending.
     var selectionAwaitsNote: Bool { activeSession?.selectionAffordanceRect != nil }
 
+    /// The session the viewer shows: an earlier iteration's while one is looked at.
+    var shownSession: DocumentSession? { activeSession.map(iterations.shownSession) }
+
+    /// An earlier iteration is in the viewer: new notes and New Iteration wait for the current one.
+    var isShowingPastIteration: Bool { activeSession.map { iterations.viewedIteration(for: $0) != nil } ?? false }
+
     func beginNoteInMainWindow() {
-        guard let session = activeSession else { return }
+        guard !isShowingPastIteration, let session = activeSession else { return }
         if let window = mainWindow, !window.isKeyWindow {
             window.makeKeyAndOrderFront(nil)
             DispatchQueue.main.async { session.beginNote() }
@@ -127,6 +134,8 @@ final class AppModel {
     private(set) var sessions: [String: DocumentSession] = [:]
     private(set) var activeSession: DocumentSession? {
         didSet {
+            // An earlier iteration is looked at in place of one document; another document in front ends it.
+            if let oldValue, oldValue !== activeSession { iterations.backToCurrent(oldValue) }
             explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
             rememberLastDocument()
             if let session = activeSession {
@@ -207,6 +216,7 @@ final class AppModel {
         notesPanel = NotesPanelModel(noteStore: store)
         noteLink = NoteLinkModel(noteStore: store)
         settings = SettingsStore(noteStore: store)
+        iterations = IterationsModel(noteStore: store, settings: settings)
         hosts = HostsModel(noteStore: store)
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
         herdrTransport = HerdrTransport(registry: connectionRegistry)
@@ -340,6 +350,9 @@ final class AppModel {
             explorer?.updateNoteMarks(groups)
             self?.updateDockBadge(groups)
         }
+        iterations.fileSystem = { [weak self] hostID in self?.fileSystems[hostID] }
+        iterations.liveSession = { [weak self] documentID in self?.sessions.values.first { $0.document?.id == documentID } }
+        iterations.onViewedIterationChange = { [weak self] document, number in self?.notesPanel.showIteration(number, of: document) }
         notesPanel.onRestored = { [weak self] restored in
             Task { await self?.reanchorRestored(restored) }
         }
@@ -578,6 +591,11 @@ final class AppModel {
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
         session.onNoteCommitted = { [weak self] note in self?.notesPanel.makeListed(note) }
+        session.beforeCreatingNote = { [weak self] documentID in await self?.iterations.startIfAllResolved(documentID) }
+        session.onReloaded = { [weak self, weak session] in
+            guard let self, let session else { return }
+            Task { await self.iterations.checkCommit(session) }
+        }
         session.openLinkedDocument = { [weak self] target in self?.openDocument(hostID: hostID, path: target) }
         // The deepest open root holding the file bounds what a rendered HTML page may read; looked up per request,
         // since the root can open after the document (launch with --open, a jump from a note).
@@ -601,7 +619,10 @@ final class AppModel {
         }
         sessions[key] = session
         activeSession = session
-        Task { await session.open() }
+        Task { [weak self] in
+            await session.open()
+            await self?.iterations.checkCommit(session)
+        }
         trimSessions()
     }
 
@@ -1060,6 +1081,12 @@ final class AppModel {
         }
     }
 
+    /// New Iteration (the Notes menu, the notes panel's iteration menu) for the document in front.
+    func newIteration() {
+        guard !isShowingPastIteration, let document = activeSession?.document else { return }
+        Task { await iterations.requestNewIteration(for: document) }
+    }
+
     /// Deletes for good the notes in Recently Deleted longer than Settings keeps them (never, when it keeps them all).
     private func purgeTrash() async {
         let days = settings.trashRetentionDays
@@ -1075,7 +1102,14 @@ final class AppModel {
     /// Notes brought back from Recently Deleted are re-anchored by their open documents against the text there now;
     /// a closed document re-anchors them when it next opens.
     func reanchorRestored(_ restored: [Note]) async {
-        for (documentID, notes) in Dictionary(grouping: restored, by: \.documentID) {
+        // Read again, and only the current iteration's: an earlier iteration's note stays where it was taken.
+        var current: [Note] = []
+        for note in restored {
+            guard let fresh = try? await noteStore.note(note.id), let document = try? await noteStore.document(fresh.documentID),
+                  fresh.iteration == document.currentIteration else { continue }
+            current.append(fresh)
+        }
+        for (documentID, notes) in Dictionary(grouping: current, by: \.documentID) {
             for session in sessions.values where session.document?.id == documentID {
                 await session.reanchorRestored(notes)
             }
@@ -1340,6 +1374,7 @@ final class AppModel {
     /// Ends a session; a page it showed stops running in the shared web view, and a tunnel no other open page
     /// uses is closed.
     private func retire(_ session: DocumentSession) {
+        iterations.backToCurrent(session)
         if let html = session.html, browser.current === html || browser.released === html { browser.unload() }
         session.close()
         releaseTunnel(of: session)
@@ -1707,6 +1742,7 @@ final class AppModel {
         do {
             let fingerprint = (try? await fileSystems[hostID]?.stat(path))?.fingerprint ?? Fingerprint()
             let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: DocumentKindDetector.kind(forPath: path), fingerprint: fingerprint)
+            await iterations.startIfAllResolved(document.id)
             _ = try await noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: color)
             showNotesPanel = true
         } catch {
@@ -1805,7 +1841,7 @@ final class AppModel {
     /// so what's shown on the page always has its card.
     func reveal(note: Note, in document: Core.Document, select: Bool = true) {
         notesPanel.makeListed(note)
-        withSession(for: document) { session in
+        withSession(for: document, iteration: note.iteration) { session in
             // The session may still be opening.
             for _ in 0..<50 where !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
             session.reveal(note, select: select)
@@ -1814,7 +1850,8 @@ final class AppModel {
 
     /// Opens a note's document and hands its session to `body`: for a Confluence page, at today's path once it
     /// is known (the note moves there with it).
-    private func withSession(for document: Core.Document, _ body: @escaping @MainActor (DocumentSession) async -> Void) {
+    /// `iteration`, a note's, picks between the document as it is and an earlier iteration on screen.
+    private func withSession(for document: Core.Document, iteration: Int? = nil, _ body: @escaping @MainActor (DocumentSession) async -> Void) {
         Task {
             var path = document.path
             if document.hostID == .atlassian, AtlassianPath(path)?.pageID != nil, !canonicalPages.contains(path) {
@@ -1822,6 +1859,14 @@ final class AppModel {
             }
             openDocument(hostID: document.hostID, path: path)
             guard let session = sessions["\(document.hostID.rawValue):\(path)"] else { return }
+            // While an earlier iteration is shown, its notes are in its snapshot's session; a note of another
+            // iteration goes back to the document as it is.
+            let shown = iterations.shownSession(for: session)
+            guard let iteration, shown !== session, shown.pastIteration != iteration else {
+                await body(shown)
+                return
+            }
+            iterations.backToCurrent(session)
             await body(session)
         }
     }
@@ -1834,24 +1879,24 @@ final class AppModel {
 
     /// Next or Previous Note: the active document's next open note, with its card selected in the notes panel.
     func stepNote(forward: Bool) {
-        guard let note = activeSession?.stepNote(forward: forward) else { return }
+        guard let note = shownSession?.stepNote(forward: forward) else { return }
         notesPanel.selectedNoteID = note.id
     }
 
     /// Notes › Next Change / Previous Change: the hunks of a pull request's file.
     func stepChange(forward: Bool) {
-        activeSession?.stepChange(forward: forward)
+        shownSession?.stepChange(forward: forward)
     }
 
     func reanchor(note: Note, in document: Core.Document) {
-        withSession(for: document) { session in
+        withSession(for: document, iteration: note.iteration) { session in
             for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
             session.beginReanchor(note)
         }
     }
 
     func edit(note: Note, in document: Core.Document) {
-        withSession(for: document) { session in
+        withSession(for: document, iteration: note.iteration) { session in
             for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
             session.editNote(note)
         }
@@ -1876,6 +1921,7 @@ final class AppModel {
         // Quitting while a restore still waits (a host's key agent) keeps the saved workspace whole.
         if !isRestoringWorkspace { _ = await withDeadline(.seconds(1)) { await self.saveWorkspace() } }
         notesPanel.stop()
+        iterations.stop()
         explorer.stopWatching()
         for session in sessions.values { session.close() }
         let hosts = hosts
@@ -1896,6 +1942,7 @@ final class AppModel {
         guard !isShutDown else { return }
         isShutDown = true
         notesPanel.stop()
+        iterations.stop()
         explorer.stopWatching()
         for session in sessions.values { session.close() }
         hosts.killMasters()

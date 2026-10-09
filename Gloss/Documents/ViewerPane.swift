@@ -10,6 +10,10 @@ struct ViewerPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let iteration = model.iterations.viewedIteration(for: session) {
+                IterationBanner(session: session, iteration: iteration)
+                    .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
+            }
             if let banner = session.banner {
                 BannerView(banner: banner, session: session)
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)

@@ -495,6 +495,17 @@ path. Dropping on the Dock icon is not supported yet.
   folder in front, grouped by file, newest deletion first; each card is read-only (the color rail at 60 %, the
   anchor, the comment, "Deleted 3 days ago") with Restore and Delete Now, also in its context menu. A footer says how
   long notes stay. Deleted notes draw nothing on the page and no paths. With no folder in front it says so.
+- **Iterations** (issue #18): under the color filter strip, a borderless "Iteration 3" menu (stack symbol) for the
+  document in front, once it has a note. It lists the iterations newest first, each a checkable row with its label
+  ("Iteration 2 · Oct 6", or its name) over "Current · 4 notes" or "Oct 8 · 3 notes · a1b2c3d" (and "no snapshot"
+  once pruned); then New Iteration, Show Changes Since (a submenu of iterations with a snapshot; text documents), Hide
+  Changes while tinted, and Rename… (an alert with a field; empty goes back to the date). Picking an earlier one puts
+  a `.mode` notice over the viewer: the iteration's label, "Read-only: the file as this iteration left it, with its
+  notes.", Show Changes Since and Back to Current (prominent); the viewer shows the snapshot, locked, with no Add Note
+  button, and the panel lists that iteration's notes. A note of an earlier iteration offers Bring Forward in its
+  menu; the copy's card says "Brought forward from Iteration 2 · Oct 6" under its anchor. New Iteration with open
+  notes asks in a 420 pt sheet: "Start a new iteration of PLAN.md?", how many notes aren't resolved, a "Don't ask
+  again" checkbox, Cancel, Leave Them Behind, and Bring Them Along (default).
 - **Send toast**: a glass card floating over the bottom of the notes panel that slides up with `DS.Motion.bouncy`.
   Sending: a spinner and "Sending 2 notes…" with the agent. Delivered: a green check that bounces, "Sent 2 notes",
   "to claude · task", and a hairline that drains over 4 s (hovering pauses it) before it leaves on its own.
@@ -847,7 +858,8 @@ path. Dropping on the Dock icon is not supported yet.
   Install touches and how to undo it: nothing changes until you press Install, each edited settings file is first
   copied beside itself (`*.gloss-backup-…`, the last three kept), and Remove takes out only what was added.
 - **Settings**: every tab is a `.formStyle(.grouped)` form, 600 pt wide, with its own height so the window
-  resizes to each tab as System Settings does (General 754 with its Updates section, 610 without it, with Keep deleted notes under the first section, Editor 330, Agents 640, Integrations 660, Attachments 380, Hosts 440). Toggles
+  resizes to each tab as System Settings does (General 684 with its Updates section, 540 without it, Editor 330, Notes 470, Agents 640, Integrations 660, Attachments 380, Hosts 440). The Notes tab holds Iterations (open notes, the two
+  automatic starts, snapshots kept) and Recently Deleted's retention. Toggles
   carry a second line saying what they do; words match the rest of the app ("folder", never "root"). A setting
   shows its effect where it can: the editor font slider drives a live code preview, with the size in monospaced
   digits beside it. A setting must do something, at once: Editor's font size, wrapping, and indent guides

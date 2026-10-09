@@ -289,7 +289,7 @@ public struct NoteStore: Sendable {
         try await queue.write { db in
             guard var old = try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == oldPath).fetchOne(db) else { return }
             if let target = try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == newPath).fetchOne(db) {
-                try db.execute(sql: "UPDATE note SET document_id = ? WHERE document_id = ?", arguments: [target.id, old.id])
+                try Self.moveNotes(from: old.id, to: target, db)
                 _ = try old.delete(db)
             } else {
                 old.path = newPath
@@ -316,7 +316,7 @@ public struct NoteStore: Sendable {
                 let archived = prefix + record.path
                 if let existing = try DocumentRecord.filter(Column("host_id") == hostID.rawValue && Column("path") == archived).fetchOne(db) {
                     // Archived before (A → B → A → B): the notes join that row, so none stays on the live path.
-                    try db.execute(sql: "UPDATE note SET document_id = ? WHERE document_id = ?", arguments: [existing.id, record.id])
+                    try Self.moveNotes(from: record.id, to: existing, db)
                     _ = try record.delete(db)
                 } else {
                     record.path = archived
@@ -348,11 +348,20 @@ public struct NoteStore: Sendable {
         try await queue.read { db in try NoteRecord.live.filter(key: id.rawValue).fetchOne(db).map { try Note(record: $0, db) } }
     }
 
-    public func notes(for documentID: DocumentID) async throws -> [Note] {
-        try await queue.read { db in
-            let unsent = try Self.unsentNoteIDs(db)
-            return Self.sorted(try NoteRecord.live.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
+    /// A document's notes in one iteration (issue #18): the current one when `iteration` is nil.
+    public func notes(for documentID: DocumentID, iteration: Int? = nil) async throws -> [Note] {
+        try await queue.read { db in try Self.notes(documentID, iteration: iteration, db) }
+    }
+
+    static func notes(_ documentID: DocumentID, iteration: Int?, _ db: Database) throws -> [Note] {
+        let unsent = try Self.unsentNoteIDs(db)
+        var request = NoteRecord.live.filter(Column("document_id") == documentID.rawValue)
+        if let iteration {
+            request = request.filter(Column("iteration") == iteration)
+        } else {
+            request = request.filter(sql: "iteration = (SELECT current_iteration FROM document WHERE id = ?)", arguments: [documentID.rawValue])
         }
+        return Self.sorted(try request.fetchAll(db).map { try Note(record: $0, unsent: unsent) })
     }
 
     /// Open notes (draft and sent by default), optionally limited to one host and a path prefix (a file or a
@@ -386,12 +395,12 @@ public struct NoteStore: Sendable {
     public func createNote(documentID: DocumentID, anchor: Anchor, body: String, color: NoteColor, at date: Date = Date()) async throws -> Note {
         let date = Self.rounded(date)
         return try await queue.write { db in
-            guard try DocumentRecord.exists(db, key: documentID.rawValue) else { throw NoteStoreError.documentNotFound(documentID) }
+            let iteration = try Self.openIteration(documentID, at: date, db)
             let record = NoteRecord(
                 id: NoteID.new().rawValue, documentId: documentID.rawValue,
                 anchorJson: try anchor.encodedJSON(), anchorType: anchor.type.rawValue,
                 body: body, state: NoteState.draft.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
-                resolveOutcome: nil, resolveMessage: nil
+                resolveOutcome: nil, resolveMessage: nil, iteration: iteration
             )
             try record.insert(db)
             return try Note(record: try Self.refetch(record, db), db)
@@ -428,7 +437,7 @@ public struct NoteStore: Sendable {
     public func askUser(documentID: DocumentID, anchor: Anchor, question: String, author: String, color: NoteColor = .orange, at date: Date = Date()) async throws -> Note {
         let date = Self.rounded(date)
         return try await queue.write { db in
-            guard try DocumentRecord.exists(db, key: documentID.rawValue) else { throw NoteStoreError.documentNotFound(documentID) }
+            let iteration = try Self.openIteration(documentID, at: date, db)
             let open = try NoteRecord
                 .filter(Column("document_id") == documentID.rawValue && Column("author") != nil && Column("waiting_on_user") == true && Column("deleted_at") == nil)
                 .fetchCount(db)
@@ -437,7 +446,7 @@ public struct NoteStore: Sendable {
                 id: NoteID.new().rawValue, documentId: documentID.rawValue,
                 anchorJson: try anchor.encodedJSON(), anchorType: anchor.type.rawValue,
                 body: "", state: NoteState.sent.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
-                resolveOutcome: nil, resolveMessage: nil, author: author, waitingOnUser: true
+                resolveOutcome: nil, resolveMessage: nil, author: author, waitingOnUser: true, iteration: iteration
             )
             try record.insert(db)
             try Self.insertMessage(note: record.id, author: .agent(author), kind: .question, body: question, at: date, sent: true, db)
@@ -515,6 +524,144 @@ public struct NoteStore: Sendable {
             for link in deleted.sends where try SendRecord.exists(db, key: link.sendId) { try link.insert(db) }
             for message in deleted.messages { try message.insert(db) }
         }
+    }
+
+    // MARK: Iterations
+
+    /// Moves a document's notes onto another row (the same thing under a new path) into that row's current iteration:
+    /// the old row's iterations go with it, and notes kept in an iteration the new row doesn't have would be lost.
+    static func moveNotes(from oldID: String, to target: DocumentRecord, _ db: Database) throws {
+        guard try NoteRecord.filter(Column("document_id") == oldID).fetchCount(db) > 0 else { return }
+        _ = try openIteration(DocumentID(rawValue: target.id), at: rounded(Date()), db)
+        try db.execute(sql: "UPDATE note SET document_id = ?, iteration = ? WHERE document_id = ?",
+                       arguments: [target.id, target.currentIteration, oldID])
+    }
+
+    /// The document's current iteration, its row made when the document gets its first note.
+    static func openIteration(_ documentID: DocumentID, at date: Date, _ db: Database) throws -> Int {
+        guard let document = try DocumentRecord.fetchOne(db, key: documentID.rawValue) else { throw NoteStoreError.documentNotFound(documentID) }
+        try db.execute(sql: "INSERT OR IGNORE INTO iteration (document_id, number, started_at) VALUES (?, ?, ?)",
+                       arguments: [documentID.rawValue, document.currentIteration, date])
+        return document.currentIteration
+    }
+
+    /// A document's iterations, oldest first, each with how many notes it holds (Recently Deleted's left out).
+    public func iterations(for documentID: DocumentID) async throws -> [Iteration] {
+        try await queue.read { db in try Self.iterations(documentID, db) }
+    }
+
+    /// The same, observed: the notes panel's iteration menu follows new notes, renames and new iterations.
+    public func observeIterations(for documentID: DocumentID) -> AsyncThrowingStream<[Iteration], any Error> {
+        Self.stream(ValueObservation.tracking { db in try Self.iterations(documentID, db) }, in: queue)
+    }
+
+    static func iterations(_ documentID: DocumentID, _ db: Database) throws -> [Iteration] {
+        let counts = Dictionary(uniqueKeysWithValues: try Row.fetchAll(db, sql: """
+            SELECT iteration, COUNT(*) AS count FROM note WHERE document_id = ? AND deleted_at IS NULL GROUP BY iteration
+            """, arguments: [documentID.rawValue]).map { ($0["iteration"] as Int, $0["count"] as Int) })
+        return try IterationRecord.filter(Column("document_id") == documentID.rawValue).order(Column("number")).fetchAll(db)
+            .map { Iteration(record: $0, noteCount: counts[$0.number] ?? 0) }
+    }
+
+    /// Ends the document's current iteration and opens the next, in one write (issue #18). The iteration that ends
+    /// keeps `snapshot`, the content its notes were taken on, and `gitCommit`, the commit the file was at. Open notes
+    /// (anything not resolved) move to the new iteration with `.carry` and stay with `.leave`; resolved notes always
+    /// stay. Returns the new iteration's number.
+    @discardableResult
+    public func startIteration(documentID: DocumentID, openNotes: OpenNotesChoice, snapshot: Data?, gitCommit: String? = nil, at date: Date = Date()) async throws -> Int {
+        let date = Self.rounded(date)
+        return try await queue.write { db in
+            let current = try Self.openIteration(documentID, at: date, db)
+            let hash = try snapshot.map { try Self.storeSnapshot($0, at: date, db) }
+            try db.execute(sql: """
+                UPDATE iteration SET ended_at = ?, snapshot_hash = ?, git_commit = COALESCE(?, git_commit)
+                WHERE document_id = ? AND number = ?
+                """, arguments: [date, hash, gitCommit, documentID.rawValue, current])
+            let next = current + 1
+            try db.execute(sql: "UPDATE document SET current_iteration = ? WHERE id = ?", arguments: [next, documentID.rawValue])
+            try db.execute(sql: "INSERT INTO iteration (document_id, number, started_at) VALUES (?, ?, ?)", arguments: [documentID.rawValue, next, date])
+            if openNotes == .carry {
+                try db.execute(sql: """
+                    UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state != 'resolved' AND deleted_at IS NULL
+                    """, arguments: [next, documentID.rawValue, current])
+            }
+            return next
+        }
+    }
+
+    /// Names an iteration; nil or blank goes back to the default label.
+    public func renameIteration(documentID: DocumentID, number: Int, name: String?) async throws {
+        let name = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE iteration SET name = ? WHERE document_id = ? AND number = ?",
+                           arguments: [name?.isEmpty == false ? name : nil, documentID.rawValue, number])
+        }
+    }
+
+    /// Notes the document's iteration's git commit when it is still current, so a commit change can be noticed.
+    public func setIterationCommit(documentID: DocumentID, number: Int, commit: String?) async throws {
+        try await queue.write { db in
+            try db.execute(sql: "UPDATE iteration SET git_commit = ? WHERE document_id = ? AND number = ?", arguments: [commit, documentID.rawValue, number])
+        }
+    }
+
+    /// An iteration's snapshot, uncompressed; nil when it has none (current, or pruned).
+    public func snapshot(hash: String) async throws -> Data? {
+        try await queue.read { db in
+            guard let record = try SnapshotRecord.fetchOne(db, key: hash) else { return nil }
+            return try Self.decompress(record.data)
+        }
+    }
+
+    /// Keeps the snapshots of each document's last `count` ended iterations; older ones keep their notes and lose
+    /// their snapshot. A snapshot no iteration uses any more is deleted.
+    public func pruneSnapshots(keepingLast count: Int) async throws {
+        try await queue.write { db in
+            try db.execute(sql: """
+                UPDATE iteration SET snapshot_hash = NULL WHERE snapshot_hash IS NOT NULL AND number < (
+                    SELECT document.current_iteration FROM document WHERE document.id = iteration.document_id) - ?
+                """, arguments: [count])
+            try db.execute(sql: "DELETE FROM snapshot WHERE hash NOT IN (SELECT snapshot_hash FROM iteration WHERE snapshot_hash IS NOT NULL)")
+        }
+    }
+
+    /// Copies a note from an earlier iteration into the current one as a new draft at `anchor` (worked out against
+    /// the content now), with a line in its thread saying where it came from. `found` false makes it an orphan (that
+    /// was a draft): its text isn't in the file any more, and it waits to be placed again.
+    public func bringForward(_ id: NoteID, anchor: Anchor, found: Bool = true, origin: String, at date: Date = Date()) async throws -> Note {
+        let date = Self.rounded(date)
+        return try await queue.write { db in
+            guard let source = try NoteRecord.live.filter(key: id.rawValue).fetchOne(db) else { throw NoteStoreError.noteNotFound(id) }
+            let documentID = DocumentID(rawValue: source.documentId)
+            let iteration = try Self.openIteration(documentID, at: date, db)
+            let body = source.body.isEmpty ? (try Self.messageRecords(id, db).first?.body ?? "") : source.body
+            let record = NoteRecord(
+                id: NoteID.new().rawValue, documentId: source.documentId,
+                anchorJson: try anchor.encodedJSON(), anchorType: anchor.type.rawValue,
+                body: body, state: (found ? NoteState.draft : .orphaned).rawValue, createdAt: date, updatedAt: date, color: source.color,
+                resolveOutcome: nil, resolveMessage: nil, previousState: found ? nil : NoteState.draft.rawValue, iteration: iteration
+            )
+            try record.insert(db)
+            try Self.insertMessage(note: record.id, author: .app, kind: .comment, body: origin, at: date, sent: true, db)
+            return try Note(record: try Self.refetch(record, db), db)
+        }
+    }
+
+    /// Stores content once by its SHA-256, zlib-compressed; returns the hash.
+    static func storeSnapshot(_ data: Data, at date: Date, _ db: Database) throws -> String {
+        let hash = data.sha256Hex
+        if try !SnapshotRecord.exists(db, key: hash) {
+            try SnapshotRecord(hash: hash, data: try compress(data), size: Int64(data.count), createdAt: date).insert(db)
+        }
+        return hash
+    }
+
+    static func compress(_ data: Data) throws -> Data {
+        try (data as NSData).compressed(using: .zlib) as Data
+    }
+
+    static func decompress(_ data: Data) throws -> Data {
+        try (data as NSData).decompressed(using: .zlib) as Data
     }
 
     // MARK: Recently Deleted
@@ -1011,12 +1158,10 @@ public struct NoteStore: Sendable {
         guard allowed else { throw NoteStoreError.illegalTransition(from: from, to: to) }
     }
 
-    /// Observes the notes of one document, emitting the full sorted list on every change.
-    public func observeNotes(for documentID: DocumentID) -> AsyncThrowingStream<[Note], any Error> {
-        Self.stream(ValueObservation.tracking { db in
-            let unsent = try Self.unsentNoteIDs(db)
-            return Self.sorted(try NoteRecord.live.filter(Column("document_id") == documentID.rawValue).fetchAll(db).map { try Note(record: $0, unsent: unsent) })
-        }, in: queue)
+    /// Observes the notes of one document in one iteration (the current one when nil, following it as it changes),
+    /// emitting the full sorted list on every change.
+    public func observeNotes(for documentID: DocumentID, iteration: Int? = nil) -> AsyncThrowingStream<[Note], any Error> {
+        Self.stream(ValueObservation.tracking { db in try Self.notes(documentID, iteration: iteration, db) }, in: queue)
     }
 
     /// Observes one note's messages, oldest first.
@@ -1041,15 +1186,20 @@ public struct NoteStore: Sendable {
     }
 
     /// Observes every document that has notes, for the notes panel.
+    /// Each document's notes in its current iteration (issue #18): earlier iterations are looked at one at a time.
     public func observeDocumentsWithNotes() -> AsyncThrowingStream<[DocumentNotes], any Error> {
         Self.stream(ValueObservation.tracking { db in
             let documents = try DocumentRecord
-                .filter(sql: "EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id AND note.deleted_at IS NULL)")
+                .filter(sql: """
+                    EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id AND note.deleted_at IS NULL
+                            AND note.iteration = document.current_iteration)
+                    """)
                 .order(Column("host_id"), Column("path"))
                 .fetchAll(db)
             let unsent = try Self.unsentNoteIDs(db)
             return try documents.map { record in
-                let notes = try NoteRecord.live.filter(Column("document_id") == record.id).fetchAll(db).map { try Note(record: $0, unsent: unsent) }
+                let notes = try NoteRecord.live.filter(Column("document_id") == record.id && Column("iteration") == record.currentIteration)
+                    .fetchAll(db).map { try Note(record: $0, unsent: unsent) }
                 return DocumentNotes(document: Document(record: record), notes: Self.sorted(notes))
             }
         }, in: queue)
@@ -1300,6 +1450,22 @@ public struct NoteStore: Sendable {
     }
 }
 
+/// What happens to a document's open notes when it starts a new iteration (issue #18).
+public enum OpenNotesChoice: String, Sendable, CaseIterable {
+    /// They move to the new iteration.
+    case carry
+    /// They stay in the iteration that ends.
+    case leave
+}
+
+extension Iteration {
+    init(record: IterationRecord, noteCount: Int) {
+        self.init(documentID: DocumentID(rawValue: record.documentId), number: record.number, name: record.name,
+                  startedAt: record.startedAt, endedAt: record.endedAt, snapshotHash: record.snapshotHash,
+                  gitCommit: record.gitCommit, noteCount: noteCount)
+    }
+}
+
 /// A note in Recently Deleted, with its document and when it was deleted.
 public struct TrashedNote: Hashable, Sendable, Identifiable {
     public var note: Note
@@ -1382,7 +1548,8 @@ extension Document {
         self.init(
             id: DocumentID(rawValue: record.id), hostID: HostID(rawValue: record.hostId), path: record.path,
             kind: DocumentKind(rawValue: record.kind) ?? .file,
-            fingerprint: Fingerprint(mtime: record.lastMtime, size: record.lastSize, hash: record.lastHash)
+            fingerprint: Fingerprint(mtime: record.lastMtime, size: record.lastSize, hash: record.lastHash),
+            currentIteration: record.currentIteration
         )
     }
 }
@@ -1402,7 +1569,7 @@ extension Note {
             createdAt: record.createdAt, updatedAt: record.updatedAt,
             resolveOutcome: record.resolveOutcome.flatMap(ResolveOutcome.init(rawValue:)), resolveMessage: record.resolveMessage,
             author: record.author, resolveAgent: record.resolveAgent, waitingOnUser: record.waitingOnUser,
-            hasUnsentFollowUps: unsent.contains(record.id), originalAnchor: original
+            hasUnsentFollowUps: unsent.contains(record.id), originalAnchor: original, iteration: record.iteration
         )
     }
 

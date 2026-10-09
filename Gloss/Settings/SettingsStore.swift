@@ -4,6 +4,19 @@ import Observation
 import OSLog
 import Viewers
 
+/// Settings › Notes › When starting an iteration with open notes.
+enum IterationOpenNotes: String, CaseIterable, Identifiable {
+    case ask, carry, leave
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .ask: "Ask Each Time"
+        case .carry: "Bring Them Along"
+        case .leave: "Leave Them Behind"
+        }
+    }
+}
+
 /// Typed preferences backed by the `setting` table, cached in memory for the UI.
 @MainActor
 @Observable
@@ -62,6 +75,15 @@ final class SettingsStore {
     /// A shorter retention deletes what is now past it at once, not at the next daily purge.
     @ObservationIgnored var onTrashRetentionChange: () -> Void = {}
     static let trashRetentionChoices = [7, 30, 90, 0]
+    /// What starting an iteration does with notes still open (issue #18): ask each time, or the remembered choice.
+    var iterationOpenNotes = IterationOpenNotes.ask { didSet { persist("iterations.openNotes", iterationOpenNotes.rawValue) } }
+    /// Starts an iteration on the first note added after every note of the iteration was resolved.
+    var iteratesAfterResolved = false { didSet { persist("iterations.afterResolved", iteratesAfterResolved ? "1" : "0") } }
+    /// Starts an iteration when a local file's git commit changed, checked when it opens or reloads.
+    var iteratesOnCommit = false { didSet { persist("iterations.onCommit", iteratesOnCommit ? "1" : "0") } }
+    /// How many ended iterations of a document keep their snapshot; 0 keeps them all.
+    var snapshotsKept = 10 { didSet { persist("iterations.snapshotsKept", String(snapshotsKept)) } }
+    static let snapshotsKeptChoices = [10, 0]
     var mcpPort = 47831 { didSet { persist("mcp.port", String(mcpPort)) } }
     private(set) var loaded = false
 
@@ -85,6 +107,10 @@ final class SettingsStore {
         if let value = await read("editor.guides") { showIndentGuides = value == "1" }
         if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = days }
         if let value = await read("notes.trashDays"), let days = Int(value), Self.trashRetentionChoices.contains(days) { trashRetentionDays = days }
+        if let value = await read("iterations.openNotes"), let choice = IterationOpenNotes(rawValue: value) { iterationOpenNotes = choice }
+        if let value = await read("iterations.afterResolved") { iteratesAfterResolved = value == "1" }
+        if let value = await read("iterations.onCommit") { iteratesOnCommit = value == "1" }
+        if let value = await read("iterations.snapshotsKept"), let count = Int(value), Self.snapshotsKeptChoices.contains(count) { snapshotsKept = count }
         if let value = await read("mcp.port"), let port = Int(value) { mcpPort = port }
         loaded = true
     }

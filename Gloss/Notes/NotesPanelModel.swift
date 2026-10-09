@@ -160,7 +160,8 @@ final class NotesPanelModel {
                             self?.arrivedIDs = []
                         }
                     }
-                    self.groups = groups
+                    self.liveGroups = groups
+                    self.applyGroups()
                     self.onGroupsChange(groups)
                 }
             } catch {
@@ -172,6 +173,57 @@ final class NotesPanelModel {
     func stop() {
         observation?.cancel()
         messageObservation?.cancel()
+        pastObservation?.cancel()
+    }
+
+    // MARK: Iterations
+
+    /// Each document's notes in its current iteration, as observed; `groups` is this with an earlier iteration's
+    /// notes in place of its document's while one is looked at (issue #18).
+    @ObservationIgnored private var liveGroups: [DocumentNotes] = []
+    /// The earlier iteration listed for one document, while the viewer shows it.
+    private(set) var viewedIteration: (document: Document, number: Int)?
+    @ObservationIgnored private var pastNotes: [Note] = []
+    @ObservationIgnored private var pastObservation: Task<Void, Never>?
+
+    /// Lists iteration `number` of `document` in place of its current notes; nil goes back to them.
+    func showIteration(_ number: Int?, of document: Document) {
+        pastObservation?.cancel()
+        pastObservation = nil
+        pastNotes = []
+        guard let number else {
+            viewedIteration = nil
+            applyGroups()
+            return
+        }
+        viewedIteration = (document, number)
+        let stream = noteStore.observeNotes(for: document.id, iteration: number)
+        pastObservation = Task { [weak self] in
+            do {
+                for try await notes in stream {
+                    self?.pastNotes = notes
+                    self?.applyGroups()
+                }
+            } catch {
+                Log.notes.error("iteration notes observation failed: \(error, privacy: .public)")
+            }
+        }
+        applyGroups()
+    }
+
+    private func applyGroups() {
+        groups = Self.merged(liveGroups, past: viewedIteration.map { (DocumentNotes(document: $0.document, notes: pastNotes)) })
+    }
+
+    /// `live` with `past`'s document listing `past`'s notes instead (or gone, when it has none), in path order.
+    nonisolated static func merged(_ live: [DocumentNotes], past: DocumentNotes?) -> [DocumentNotes] {
+        guard let past else { return live }
+        var groups = live.filter { $0.document.id != past.document.id }
+        if !past.notes.isEmpty {
+            let index = groups.firstIndex { ($0.document.hostID.rawValue, $0.document.path) > (past.document.hostID.rawValue, past.document.path) } ?? groups.endIndex
+            groups.insert(past, at: index)
+        }
+        return groups
     }
 
     /// A note's messages, oldest first.

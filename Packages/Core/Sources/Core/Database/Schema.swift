@@ -5,6 +5,7 @@ import GRDB
 public enum Schema {
     public static let tableNames = [
         "host", "root", "document", "note", "attachment", "send", "send_note", "staged_file", "target", "setting", "web_page", "note_message",
+        "iteration", "snapshot",
     ]
 
     public static var migrator: DatabaseMigrator {
@@ -256,6 +257,34 @@ public enum Schema {
             // sends, until it is restored, deleted for good, or purged after the retention the user picked.
             try db.execute(sql: "ALTER TABLE note ADD COLUMN deleted_at DATETIME")
             try db.execute(sql: "CREATE INDEX note_deleted_at ON note(deleted_at)")
+        }
+        migrator.registerMigration("v13-iterations") { db in
+            // Iterations (issue #18): numbered rounds of notes on one document, from 0. Ending one keeps the content
+            // its notes were taken on as a snapshot, de-duplicated by hash and zlib-compressed, so an unchanged file
+            // costs nothing. Every note so far is in iteration 0, which starts with the document's first note.
+            try db.execute(sql: """
+                ALTER TABLE document ADD COLUMN current_iteration INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE note ADD COLUMN iteration INTEGER NOT NULL DEFAULT 0;
+                CREATE INDEX note_document_iteration ON note(document_id, iteration);
+                CREATE TABLE snapshot (
+                    hash TEXT PRIMARY KEY NOT NULL,
+                    data BLOB NOT NULL,
+                    size INTEGER NOT NULL,
+                    created_at DATETIME NOT NULL
+                );
+                CREATE TABLE iteration (
+                    document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+                    number INTEGER NOT NULL,
+                    name TEXT,
+                    started_at DATETIME NOT NULL,
+                    ended_at DATETIME,
+                    snapshot_hash TEXT,
+                    git_commit TEXT,
+                    PRIMARY KEY (document_id, number)
+                );
+                INSERT INTO iteration (document_id, number, started_at)
+                    SELECT document_id, 0, MIN(created_at) FROM note GROUP BY document_id;
+                """)
         }
         return migrator
     }

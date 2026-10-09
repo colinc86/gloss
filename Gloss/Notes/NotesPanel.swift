@@ -249,6 +249,9 @@ struct NotesPanel: View {
                 sortMenu
             }
             ColorFilterStrip(counts: colorCounts, selection: $panel.colorFilter)
+            // The document in front's rounds of notes (issue #18), once it has a note.
+            IterationMenu()
+                .frame(maxWidth: .infinity, alignment: .leading)
             // Several selected: the bar acts on them all. One selected card carries its own actions, so selecting
             // a note (a click) never pushes the list down.
             if panel.selectedNotes.count > 1 {
@@ -540,6 +543,13 @@ struct NoteCard: View {
                     Spacer(minLength: DS.Space.xs)
                     stateBadge
                 }
+                // Brought forward from an earlier iteration: Gloss's own line in the thread says from where.
+                if let origin = model.notesPanel.messages(for: note.id).first(where: { $0.author == .app && $0.kind == .comment })?.body {
+                    Label(origin, systemImage: "arrow.uturn.forward")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 if !isCompact { excerptWell }
                 // An agent's own question (ask_user) has no comment of the user's above it: the bubble is the note.
                 if editing {
@@ -647,6 +657,10 @@ struct NoteCard: View {
         }
         if note.originalAnchor != nil {
             Button("Restore Original") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
+        }
+        // A note of an earlier iteration (issue #18): a copy goes into the current one, found again in the file as it is.
+        if note.iteration < document.currentIteration {
+            Button("Bring Forward") { Task { await model.iterations.bringForward(note, in: document) } }
         }
         if dividers { Divider() }
         if NotesPanelModel.sendable([note]).count == 1, let target = model.send.lastTarget {

@@ -7,7 +7,7 @@ import Viewers
 
 /// The Settings tabs, so a part of the app can open Settings on one.
 enum SettingsTab: Hashable {
-    case general, editor, agents, hosts, integrations, attachments
+    case general, editor, notes, agents, hosts, integrations, attachments
 }
 
 struct SettingsView: View {
@@ -36,23 +36,13 @@ struct SettingsView: View {
                         Text("Dotfiles appear in the file tree from the start; the eye under the tree switches them until you quit.")
                     }
                 }
-                Section {
-                    Picker(selection: $settings.trashRetentionDays) {
-                        ForEach(SettingsStore.trashRetentionChoices, id: \.self) { days in
-                            Text(days == 0 ? "Until I empty it" : "\(days) days").tag(days)
-                        }
-                    } label: {
-                        Text("Keep deleted notes")
-                        Text("Deleted notes wait in Recently Deleted, at the bottom of the notes panel's filter menu, until then.")
-                    }
-                }
                 AppIconSection(selection: $settings.appIcon)
                 if model.updates.isAvailable {
                     UpdatesSection()
                 }
             }
             .formStyle(.grouped)
-            .frame(height: model.updates.isAvailable ? 754 : 610)
+            .frame(height: model.updates.isAvailable ? 684 : 540)
             .tabItem { Label("General", systemImage: "gear") }
             .tag(SettingsTab.general)
 
@@ -88,6 +78,11 @@ struct SettingsView: View {
             .tabItem { Label("Editor", systemImage: "text.alignleft") }
             .tag(SettingsTab.editor)
 
+            NotesSettings(settings: settings)
+                .frame(height: 470)
+                .tabItem { Label("Notes", systemImage: "note.text") }
+            .tag(SettingsTab.notes)
+
             AgentsSettings(settings: settings)
                 .frame(height: 640)
                 .tabItem { Label("Agents", systemImage: "paperplane") }
@@ -110,6 +105,56 @@ struct SettingsView: View {
         }
         // Each tab sets its own height and the window resizes to it, as System Settings does.
         .frame(width: 600)
+    }
+}
+
+/// Iterations and Recently Deleted: everything about a note's life after it is written (issues #15 and #18).
+private struct NotesSettings: View {
+    @Bindable var settings: SettingsStore
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(selection: $settings.iterationOpenNotes) {
+                    ForEach(IterationOpenNotes.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    Text("Open notes in a new iteration")
+                    Text("Notes not yet resolved when an iteration starts come along to the new one, or stay with the one that ends.")
+                }
+                Toggle(isOn: $settings.iteratesAfterResolved) {
+                    Text("Start an iteration after every note is resolved")
+                    Text("The first note you add once all are resolved starts the next iteration. Resolving alone never empties the panel.")
+                }
+                Toggle(isOn: $settings.iteratesOnCommit) {
+                    Text("Start an iteration when the file's git commit changes")
+                    Text("Local files in a git repository, checked when the file opens or reloads.")
+                }
+                Picker(selection: $settings.snapshotsKept) {
+                    Text("The last 10 iterations").tag(10)
+                    Text("Every iteration").tag(0)
+                } label: {
+                    Text("Keep snapshots for")
+                    Text("An older iteration keeps its notes, listed without the file as it was.")
+                }
+            } header: {
+                Text("Iterations")
+            } footer: {
+                Text("An iteration is a round of notes on one document. Gloss keeps the file as it was when each one ended, in its own database; nothing is written to the repository.")
+            }
+            Section {
+                Picker(selection: $settings.trashRetentionDays) {
+                    ForEach(SettingsStore.trashRetentionChoices, id: \.self) { days in
+                        Text(days == 0 ? "Until I empty it" : "\(days) days").tag(days)
+                    }
+                } label: {
+                    Text("Keep deleted notes")
+                    Text("Deleted notes wait in Recently Deleted, at the bottom of the notes panel's sort menu.")
+                }
+            } header: {
+                Text("Recently Deleted")
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

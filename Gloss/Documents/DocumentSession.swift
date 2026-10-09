@@ -55,6 +55,9 @@ final class DocumentSession: Identifiable {
     private(set) var kind: DocumentKind
     private let fileSystem: any FileSystemProvider
     private let noteStore: NoteStore
+    /// An earlier iteration this session shows read-only from its snapshot (issue #18), with that iteration's notes;
+    /// nil for the document as it is.
+    let pastIteration: Int?
 
     private(set) var document: Document?
     private(set) var state: State = .loading
@@ -92,6 +95,10 @@ final class DocumentSession: Identifiable {
     /// A note made or changed here, so the notes panel can bring it into its list: the page draws what the list
     /// shows, and a note just written must not vanish under a tab, colour or search.
     @ObservationIgnored var onNoteCommitted: (Note) -> Void = { _ in }
+    /// Runs before a new note is written: the first note after every note was resolved may start an iteration.
+    @ObservationIgnored var beforeCreatingNote: (DocumentID) async -> Void = { _ in }
+    /// After the text was read again from disk: a git commit change may start an iteration.
+    @ObservationIgnored var onReloaded: () -> Void = {}
     /// Whether the notes observation has delivered once; a page change before that waits for it.
     @ObservationIgnored private var notesDelivered = false
     @ObservationIgnored private var pendingPageReanchor = false
@@ -131,7 +138,8 @@ final class DocumentSession: Identifiable {
     private(set) var resourceUpdateSummary: String?
     @ObservationIgnored private var resourceUpdateGeneration = 0
 
-    init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot) {
+    init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot,
+         pastIteration: Int? = nil) {
         self.id = "\(hostID.rawValue):\(path)"
         self.hostID = hostID
         self.path = path
@@ -139,6 +147,15 @@ final class DocumentSession: Identifiable {
         self.fileSystem = fileSystem
         self.noteStore = noteStore
         self.attachmentDirectory = attachmentDirectory
+        self.pastIteration = pastIteration
+    }
+
+    /// The document row: made or refreshed for the file as it is, only read for an earlier iteration's snapshot, whose
+    /// bytes must not become the document's fingerprint.
+    private func adoptDocument(kind: DocumentKind, fingerprint: Fingerprint) async throws -> Document {
+        guard pastIteration != nil else { return try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint) }
+        guard let document = try await noteStore.document(hostID: hostID, path: path) else { throw FileSystemError.notFound(path) }
+        return document
     }
 
     var isLoaded: Bool {
@@ -149,7 +166,8 @@ final class DocumentSession: Identifiable {
     var fileName: String { Core.Document.displayName(of: path) }
     /// Why the document cannot be edited here, for the status bar's lock.
     var readOnlyReason: String {
-        switch hostID {
+        if let pastIteration { return "Read-only: the file as iteration \(pastIteration) left it" }
+        return switch hostID {
         case .github: "Read-only: a pull request's file at its head commit. Ask your agent for changes."
         case .atlassian: "Read-only: the live ticket or page. Ask your agent for changes."
         case .web: "Read-only: the page's current DOM"
@@ -246,7 +264,7 @@ final class DocumentSession: Identifiable {
                 let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
                 let decoded = try await Self.decodeImage(data, fileName: fileName)
                 fingerprintAtOpen = fingerprint
-                document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
+                document = try await adoptDocument(kind: kind, fingerprint: fingerprint)
                 let controller = ImageViewerController(image: decoded)
                 controller.onNoteClick = { [weak self] id in
                     guard let self, let note = self.notes.first(where: { $0.id == id }) else { return }
@@ -272,7 +290,7 @@ final class DocumentSession: Identifiable {
                 // PDFKit opens an encrypted file without complaint and draws blank pages.
                 guard !pdf.isLocked else { throw FileSystemError.io("it's password-protected. Open it in Preview to read it.") }
                 fingerprintAtOpen = fingerprint
-                document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
+                document = try await adoptDocument(kind: kind, fingerprint: fingerprint)
                 let controller = PDFViewerController(document: pdf)
                 controller.onNoteClick = { [weak self] id in
                     guard let self, let note = self.notes.first(where: { $0.id == id }) else { return }
@@ -303,9 +321,10 @@ final class DocumentSession: Identifiable {
                 }
             }
             guard kind == .text || kind == .code || kind == .markdown || kind == .csv else {
-                document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: attributes.fingerprint)
+                document = try await adoptDocument(kind: kind, fingerprint: attributes.fingerprint)
                 fingerprintAtOpen = attributes.fingerprint
-                state = hostID == .local ? .quickLook(URL(fileURLWithPath: path)) : .unsupported(kind)
+                // Quick Look reads the file on disk, not an earlier iteration's snapshot.
+                state = hostID == .local && pastIteration == nil ? .quickLook(URL(fileURLWithPath: path)) : .unsupported(kind)
                 startWatching()
                 observeNotes()
                 return
@@ -320,7 +339,7 @@ final class DocumentSession: Identifiable {
                 } else {
                     fingerprintAtOpen = fingerprint
                     baseText = adopt(data)
-                    document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
+                    document = try await adoptDocument(kind: kind, fingerprint: fingerprint)
                     state = .csv(controller)
                     // Grid anchors hash the text itself (see `CSVGridController.selectionAnchor`). The text is read
                     // when the notes arrive, so a reload in between is what they are checked against.
@@ -348,9 +367,9 @@ final class DocumentSession: Identifiable {
             fingerprintAtOpen = fingerprint
             baseText = text
             let tooLarge = attributes.size > Self.readOnlyThreshold
-            isReadOnly = tooLarge || hostID.isVirtual
+            isReadOnly = tooLarge || hostID.isVirtual || pastIteration != nil
             if tooLarge { banner = .readOnlyLargeFile } else if !textEncoding.isUnicode { banner = .decodedAsLatin1 }
-            document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
+            document = try await adoptDocument(kind: kind, fingerprint: fingerprint)
             // Highlighting stays on for a small read-only file (a pull request's); only size turns it off.
             let controller = TextEditorController(text: text, languageName: tooLarge ? nil : GrammarCatalog.languageName(forPath: path))
             controller.isEditable = !isReadOnly
@@ -415,7 +434,7 @@ final class DocumentSession: Identifiable {
             return
         }
         do {
-            document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: .web, fingerprint: Fingerprint())
+            document = try await adoptDocument(kind: .web, fingerprint: Fingerprint())
             let viewer = HTMLViewerController(livePage: url, proxy: proxy)
             viewer.hostID = hostID
             viewer.onPick = { [weak self] pick in self?.beginNote(element: pick) }
@@ -432,7 +451,8 @@ final class DocumentSession: Identifiable {
     /// The page's text changed (it loaded, a script ran, a route changed): its notes follow the new page. A live
     /// page's text is also its source, so that is refreshed too; a served file's source is the file.
     private func pageChanged() {
-        guard let controller = textController else { return }
+        // An earlier iteration's notes stay where they were taken; nothing here writes to the store.
+        guard pastIteration == nil, let controller = textController else { return }
         guard notesDelivered else {
             pendingPageReanchor = true
             return
@@ -464,7 +484,7 @@ final class DocumentSession: Identifiable {
 
     /// Asks the page where each element note's element is now and moves, flags or orphans the notes accordingly.
     private func reanchorElements(hash: String) async {
-        guard let html, let resolve = html.resolveElements else { return }
+        guard pastIteration == nil, let html, let resolve = html.resolveElements else { return }
         let items: [(id: NoteID, anchor: ElementAnchor)] = notes.compactMap { note in
             if case .element(let anchor) = note.anchor { (note.id, anchor) } else { nil }
         }
@@ -571,6 +591,7 @@ final class DocumentSession: Identifiable {
             await reanchorAll(in: text, hash: fingerprint.hash ?? "")
             refreshLineChanges()
             if hostID.isVirtual, !discardingEdits { showResourceUpdated() }
+            onReloaded()
         } catch {
             lastError = "Reload failed: \(error)"
         }
@@ -791,6 +812,8 @@ final class DocumentSession: Identifiable {
     // MARK: Watching
 
     private func startWatching() {
+        // A snapshot never changes.
+        guard pastIteration == nil else { return }
         watcher?.cancel()
         let stream = fileSystem.watch(path)
         watcher = Task { [weak self] in
@@ -947,7 +970,9 @@ final class DocumentSession: Identifiable {
     private func observeNotes() {
         guard let document else { return }
         notesObservation?.cancel()
-        let stream = noteStore.observeNotes(for: document.id)
+        // An earlier iteration's notes were taken on its snapshot: shown where they were, never re-anchored.
+        if pastIteration != nil { pendingOpenReanchor = nil }
+        let stream = noteStore.observeNotes(for: document.id, iteration: pastIteration)
         notesObservation = Task { [weak self] in
             do {
                 for try await notes in stream {
@@ -1139,6 +1164,7 @@ final class DocumentSession: Identifiable {
     /// state it had before (`recoverOrphan`); one whose text was removed becomes a point where it was, said in its
     /// thread as Gloss's own finding; a lost one is orphaned, which leaves a resolved note as it is.
     private func apply(_ result: ReAnchorResult, to note: Note, unchanged anchor: Anchor) async throws {
+        guard pastIteration == nil else { return }
         switch result {
         case .unchanged:
             // Exactly what it was when the note was made: an orphan's place is back.
@@ -1196,6 +1222,7 @@ final class DocumentSession: Identifiable {
     }
 
     private func reanchor(_ notes: [Note], in text: String, hash: String) async {
+        guard pastIteration == nil else { return }
         for note in notes {
             if Task.isCancelled { return }
             do {
@@ -1218,7 +1245,7 @@ final class DocumentSession: Identifiable {
     /// coordinates, or nil when nothing is selected or an editor is already open. Reads the controllers'
     /// observable selection state, so SwiftUI re-evaluates it as the selection changes.
     var selectionAffordanceRect: CGRect? {
-        guard noteEditor == nil, reanchoringNoteID == nil, html?.isNoteMode != true else { return nil }
+        guard pastIteration == nil, noteEditor == nil, reanchoringNoteID == nil, html?.isNoteMode != true else { return nil }
         if let csv = csvController {
             guard csv.hasSelection else { return nil }
             return csv.rectProvider(csv.selection)
@@ -1252,6 +1279,8 @@ final class DocumentSession: Identifiable {
 
     /// Starts a note for the current selection (or the whole file when there is no text viewer).
     func beginNote() {
+        // Notes are added to the iteration in progress, on the file as it is.
+        guard pastIteration == nil else { return }
         if let reanchoring = reanchoringNoteID {
             placeOrphan(reanchoring)
             return
@@ -1406,6 +1435,7 @@ final class DocumentSession: Identifiable {
                     // A crop is a bonus: a page that moved on, or a view that is gone, must not lose the note.
                     elementCrop = try? await snapshot(state.pageCrop ?? anchor.rect)
                 }
+                await beforeCreatingNote(document.id)
                 let note = try await noteStore.createNote(documentID: document.id, anchor: state.anchor, body: state.body, color: state.color)
                 onNoteCommitted(note)
                 if case .embeddedImage(let anchor) = state.anchor, let data = markdown?.imageData(for: anchor.source, occurrence: anchor.occurrence) {
@@ -1613,6 +1643,30 @@ final class DocumentSession: Identifiable {
     }
 
     // MARK: Changed lines (a pull request's file)
+
+    /// The iteration whose snapshot the tinted lines compare against, while Show Changes Since is on (issue #18).
+    private(set) var changesSinceIteration: Int?
+    /// The provider in place before Show Changes Since (a pull request's), put back when it is turned off.
+    @ObservationIgnored private var providerBeforeIterationChanges: ((String) async -> LineChanges?)??
+
+    /// Tints the lines changed since `iteration`, whose content was `snapshot`, as a pull request's changes are
+    /// tinted; nil puts back what was tinted before. Text documents only.
+    func showChanges(since iteration: Int?, snapshot: String?) {
+        if let iteration, let snapshot {
+            if providerBeforeIterationChanges == nil { providerBeforeIterationChanges = .some(lineChangesProvider) }
+            changesSinceIteration = iteration
+            lineChangesProvider = { [weak self] _ in
+                guard let text = await self?.textController?.text else { return nil }
+                return await IterationDiff.computed(from: snapshot, to: text)
+            }
+        } else {
+            changesSinceIteration = nil
+            if let previous = providerBeforeIterationChanges { lineChangesProvider = previous }
+            providerBeforeIterationChanges = nil
+            if lineChangesProvider == nil { textController?.lineChanges = nil }
+        }
+        refreshLineChanges()
+    }
 
     /// Asks the provider, when there is one, which lines a change touched; the editor tints and steps through them.
     private func refreshLineChanges() {

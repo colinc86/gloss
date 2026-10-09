@@ -153,13 +153,16 @@ public struct Document: Identifiable, Hashable, Codable, Sendable {
     public var path: String
     public var kind: DocumentKind
     public var fingerprint: Fingerprint
+    /// The iteration new notes go into (issue #18).
+    public var currentIteration: Int
 
-    public init(id: DocumentID, hostID: HostID, path: String, kind: DocumentKind, fingerprint: Fingerprint) {
+    public init(id: DocumentID, hostID: HostID, path: String, kind: DocumentKind, fingerprint: Fingerprint, currentIteration: Int = 0) {
         self.id = id
         self.hostID = hostID
         self.path = path
         self.kind = kind
         self.fingerprint = fingerprint
+        self.currentIteration = currentIteration
     }
 
     public var fileName: String { Self.displayName(of: path) }
@@ -212,12 +215,14 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var hasUnsentFollowUps: Bool
     /// Where the note was before it first moved, for Restore Original; nil for a note that never moved.
     public var originalAnchor: Anchor?
+    /// The document's iteration the note was taken in (issue #18).
+    public var iteration: Int
 
     public init(
         id: NoteID, documentID: DocumentID, anchor: Anchor, body: String, state: NoteState,
         color: NoteColor, createdAt: Date, updatedAt: Date, resolveOutcome: ResolveOutcome? = nil, resolveMessage: String? = nil,
         author: String? = nil, resolveAgent: String? = nil, waitingOnUser: Bool = false, hasUnsentFollowUps: Bool = false,
-        originalAnchor: Anchor? = nil
+        originalAnchor: Anchor? = nil, iteration: Int = 0
     ) {
         self.id = id
         self.documentID = documentID
@@ -234,6 +239,7 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
         self.waitingOnUser = waitingOnUser
         self.hasUnsentFollowUps = hasUnsentFollowUps
         self.originalAnchor = originalAnchor
+        self.iteration = iteration
     }
 
     /// Notes an agent still has to act on.
@@ -241,6 +247,42 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
 
     /// The user has to look: an agent asked something, or the note lost its place.
     public var needsAttention: Bool { waitingOnUser || state == .orphaned }
+}
+
+/// A numbered round of notes on one document (issue #18), from 0. An ended iteration keeps the content its notes
+/// were taken on (`snapshotHash`) until it is pruned.
+public struct Iteration: Hashable, Sendable, Identifiable {
+    public var documentID: DocumentID
+    public var number: Int
+    public var name: String?
+    public var startedAt: Date
+    public var endedAt: Date?
+    public var snapshotHash: String?
+    public var gitCommit: String?
+    /// Notes taken in it, Recently Deleted's left out.
+    public var noteCount: Int
+    public var id: Int { number }
+
+    public init(documentID: DocumentID, number: Int, name: String? = nil, startedAt: Date, endedAt: Date? = nil,
+                snapshotHash: String? = nil, gitCommit: String? = nil, noteCount: Int = 0) {
+        self.documentID = documentID
+        self.number = number
+        self.name = name
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.snapshotHash = snapshotHash
+        self.gitCommit = gitCommit
+        self.noteCount = noteCount
+    }
+
+    /// Its name, or "Iteration 2 · Oct 6" from the day it started.
+    public var label: String {
+        if let name, !name.isEmpty { return name }
+        return "Iteration \(number) · \(startedAt.formatted(.dateTime.month(.abbreviated).day()))"
+    }
+
+    /// The commit's short form, for the menu.
+    public var shortCommit: String? { gitCommit.map { String($0.prefix(7)) } }
 }
 
 /// One turn of a note's thread, after the comment in `Note.body`.

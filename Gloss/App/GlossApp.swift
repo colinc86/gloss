@@ -108,7 +108,7 @@ struct AppCommands: Commands {
             // ⌘↩ belongs to whatever the window offers: the Add Note button while a selection shows it, Send otherwise.
             Button { model.beginNoteInMainWindow() } label: { Label("New Note from Selection", systemImage: "note.text.badge.plus") }
                 .keyboardShortcut(model.selectionAwaitsNote ? KeyboardShortcut(.return, modifiers: .command) : KeyboardShortcut("n", modifiers: [.command, .shift]))
-                .disabled(model.activeSession == nil)
+                .disabled(model.activeSession == nil || model.isShowingPastIteration)
             // The rendered page's pick mode, for any element; pictures need no mode.
             let page = model.activeSession?.html
             Toggle(isOn: Binding(get: { page?.isNoteMode ?? false }, set: { page?.isNoteMode = $0 })) {
@@ -146,13 +146,17 @@ struct AppCommands: Commands {
             .keyboardShortcut("d", modifiers: [.command, .shift])
             .disabled(resolvable.isEmpty)
             Divider()
+            // A new round of notes on the document in front (issue #18); open notes are asked about, as Settings says.
+            Button { model.newIteration() } label: { Label("New Iteration", systemImage: "square.stack.3d.up") }
+                .disabled(model.activeSession?.document == nil || model.activeSession?.kind == .web || model.isShowingPastIteration)
+            Divider()
             // ⌘' and ⇧⌘', as Xcode steps through issues.
             Button { model.stepNote(forward: true) } label: { Label("Next Note", systemImage: "chevron.down") }
                 .keyboardShortcut("'", modifiers: [.command])
-                .disabled(model.activeSession?.steppableNotes.isEmpty ?? true)
+                .disabled(model.shownSession?.steppableNotes.isEmpty ?? true)
             Button { model.stepNote(forward: false) } label: { Label("Previous Note", systemImage: "chevron.up") }
                 .keyboardShortcut("'", modifiers: [.command, .shift])
-                .disabled(model.activeSession?.steppableNotes.isEmpty ?? true)
+                .disabled(model.shownSession?.steppableNotes.isEmpty ?? true)
             // ⌥⌘↓ and ⌥⌘↑: the hunks of a pull request's file.
             Button { model.stepChange(forward: true) } label: { Label("Next Change", systemImage: "chevron.down.2") }
                 .keyboardShortcut(.downArrow, modifiers: [.command, .option])
@@ -225,9 +229,9 @@ struct AppCommands: Commands {
             Button { model.revealActiveDocumentInExplorer() } label: { Label("Reveal in Explorer", systemImage: "scope") }
                 .keyboardShortcut("j", modifiers: [.command, .shift])
                 .disabled(model.activeSession == nil)
-            Button { model.activeSession?.isGoToLinePresented = true } label: { Label("Go to Line…", systemImage: "arrow.right.to.line") }
+            Button { model.shownSession?.isGoToLinePresented = true } label: { Label("Go to Line…", systemImage: "arrow.right.to.line") }
                 .keyboardShortcut("l", modifiers: [.command])
-                .disabled(model.activeSession?.textController == nil)
+                .disabled(model.shownSession?.textController == nil)
             Button { model.activeSession?.toggleMarkdownMode() } label: { Label("Toggle Rendered / Source", systemImage: "chevron.left.forwardslash.chevron.right") }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
                 .disabled(model.activeSession?.rendered == nil)
