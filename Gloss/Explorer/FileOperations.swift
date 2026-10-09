@@ -5,28 +5,29 @@ import OSLog
 /// New, rename, duplicate, delete, reveal, copy path. Each goes through the host's file system provider.
 extension ExplorerModel {
     func newFile(in directory: FileNode) {
-        guard let name = prompt(title: "New File", message: "Name for the new file in \(directory.name):", defaultValue: "untitled.txt") else { return }
-        perform("create file") { fileSystem in
+        guard let fileSystem = fileSystemProvider(directory.hostID) else { return }
+        fileNameRequest = FileNameRequest(title: "New File", actionTitle: "Create", name: "untitled.txt", directory: directory.path) { [weak self] name in
             let path = PathUtilities.join(directory.path, name)
-            _ = try await fileSystem.writeAtomically(Data(), to: path, preservingModeFrom: nil)
-            await self.loadChildren(of: directory)
-            self.onSelectFile(directory.hostID, path)
+            _ = try await fileSystem.createFile(at: path)
+            await self?.loadChildren(of: directory)
+            self?.onSelectFile(directory.hostID, path)
         }
     }
 
     func newFolder(in directory: FileNode) {
-        guard let name = prompt(title: "New Folder", message: "Name for the new folder in \(directory.name):", defaultValue: "untitled folder") else { return }
-        perform("create folder") { fileSystem in
-            try await fileSystem.makeDirectory(PathUtilities.join(directory.path, name))
-            await self.loadChildren(of: directory)
+        guard let fileSystem = fileSystemProvider(directory.hostID) else { return }
+        fileNameRequest = FileNameRequest(title: "New Folder", actionTitle: "Create", name: "untitled folder", directory: directory.path) { [weak self] name in
+            let path = PathUtilities.join(directory.path, name)
+            try await fileSystem.createDirectory(at: path)
+            await self?.loadChildren(of: directory)
         }
     }
 
     func rename(_ node: FileNode) {
-        guard let parent = node.parent,
-              let name = prompt(title: "Rename", message: "New name for \(node.name):", defaultValue: node.name), name != node.name else { return }
-        perform("rename") { fileSystem in
-            try await fileSystem.rename(node.path, to: PathUtilities.join(parent.path, name))
+        guard let parent = node.parent else { return }
+        fileNameRequest = FileNameRequest(title: "Rename", actionTitle: "Rename", name: node.name, directory: parent.path) { [weak self] name in
+            guard let self, name != node.name else { return }
+            try await self.onRename(node.hostID, node.path, PathUtilities.join(parent.path, name), node.isDirectory)
             await self.loadChildren(of: parent)
         }
     }
@@ -85,22 +86,6 @@ extension ExplorerModel {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         onCopied(relative ? "Relative path copied" : "Path copied")
-    }
-
-    private func prompt(title: String, message: String, defaultValue: String) -> String? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.stringValue = defaultValue
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !name.contains("/") else { return nil }
-        return name
     }
 
     private func perform(_ what: String, _ body: @escaping @MainActor (any FileSystemProvider) async throws -> Void) {

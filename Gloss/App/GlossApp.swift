@@ -117,14 +117,14 @@ struct AppCommands: Commands {
                 .keyboardShortcut("e", modifiers: [.command, .shift])
                 .disabled(page?.mode != .rendered)
             Button { Task { await model.sendVisibleDrafts() } } label: {
-                Label(model.draftsAreFiltered ? "Send Shown Drafts" : "Send Drafts in Document", systemImage: "paperplane")
+                Label("Send Shown Notes — \(model.sendScope.rawValue)", systemImage: "paperplane")
             }
                 .keyboardShortcut(model.selectionAwaitsNote ? nil : KeyboardShortcut(.return, modifiers: .command))
-                .disabled(model.send.lastTarget == nil || model.visibleDrafts.isEmpty)
-            Button { Task { await model.sendAllDrafts(scope: .all) } } label: { Label("Send All Drafts", systemImage: "paperplane.fill") }
+                .disabled(!model.send.isTargetAvailable || model.visibleDrafts.isEmpty)
+            Button { Task { await model.sendAllDrafts(scope: .all) } } label: { Label("Send Shown Drafts in This Location (\(model.sendSelection(scope: .all).notes.count))", systemImage: "paperplane.fill") }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
-                .disabled(model.send.lastTarget == nil)
-            Button { Task { await model.copyVisibleDrafts() } } label: { Label(model.draftsAreFiltered ? "Copy Shown Drafts as Packet" : "Copy Packet for Document", systemImage: "doc.on.doc") }
+                .disabled(!model.send.isTargetAvailable)
+            Button { Task { await model.copyVisibleDrafts() } } label: { Label("Copy Shown Notes as Packet", systemImage: "doc.on.doc") }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(model.visibleDrafts.isEmpty)
             Divider()
@@ -135,7 +135,7 @@ struct AppCommands: Commands {
             Button {
                 Task { await model.send(noteIDs: sendable.map(\.id)) }
             } label: { Label(plural ? "Send Selected Notes" : "Send Selected Note", systemImage: "paperplane") }
-            .disabled(sendable.isEmpty || model.send.lastTarget == nil)
+            .disabled(sendable.isEmpty || !model.send.isTargetAvailable)
             Button {
                 Task { await model.copyPacket(noteIDs: selected.map(\.id)) }
             } label: { Label(plural ? "Copy Selected Notes as Packet" : "Copy Selected Note as Packet", systemImage: "doc.on.clipboard") }

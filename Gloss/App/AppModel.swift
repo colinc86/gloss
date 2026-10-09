@@ -50,7 +50,11 @@ final class AppModel {
     private(set) var connections: [HostID: SSHConnection] = [:]
     /// The host the explorer browses and the host menu shows: whichever was picked or connected last, so a connect
     /// started from a launch flag or a URL is visible in the status row too.
-    var pickedHost: HostID = .local
+    private var webNotesLocation: NotesLocation?
+    var pickedHost: HostID = .local { didSet {
+        if pickedHost != oldValue { webNotesLocation = nil }
+        syncNotesLocation()
+    } }
     /// The ssh host whose folder the Open Folder sheet asks for, while it shows.
     var remotePathPrompt: RemotePathPrompt?
     /// The same connections, readable by the transports without touching the main actor.
@@ -132,11 +136,18 @@ final class AppModel {
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
     private(set) var sessions: [String: DocumentSession] = [:]
+    /// The host a rename is under way on; recovery there waits for it, so it never sees the move half done.
+    private var renamingHost: HostID?
+    @ObservationIgnored private var renameWaiters: [CheckedContinuation<Void, Never>] = []
+    @ObservationIgnored private var renameRecoveries: [HostID: Task<Void, Never>] = [:]
+    private(set) var renameRecovery: DocumentRelocation?
+    private var blockedRenames: [HostID: DocumentRelocation] = [:]
     private(set) var activeSession: DocumentSession? {
         didSet {
             // An earlier iteration is looked at in place of one document; another document in front ends it.
             if let oldValue, oldValue !== activeSession { iterations.backToCurrent(oldValue) }
             explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
+            syncNotesLocation()
             rememberLastDocument()
             if let session = activeSession {
                 let entry = DocumentHistory.Entry(hostID: session.hostID, path: session.path)
@@ -256,6 +267,7 @@ final class AppModel {
             }
             let firstRegistration = self.fileSystems[hostID] == nil
             self.fileSystems[hostID] = fileSystem
+            Task { [weak self] in await self?.recoverRename(hostID: hostID) }
             self.connections[hostID] = connection
             let alias = self.hosts.entry(for: hostID)?.alias ?? hostID.rawValue
             Task {
@@ -339,8 +351,21 @@ final class AppModel {
             guard let self else { throw CancellationError() }
             return try await tunnel(hostID: hostID, port: port)
         }
+        explorer.onRename = { [weak self] host, from, to, directory in
+            guard let self else { throw FileSystemError.io("The workspace closed.") }
+            try await self.renameFile(DocumentRelocation(hostID: host, from: from, to: to, directory: directory))
+        }
+        explorer.onLocationSelected = { [weak self] in
+            guard let self else { return }
+            webNotesLocation = nil
+            if let tab = explorer.selectedTab { pickedHost = tab.hostID }
+            syncNotesLocation()
+        }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
-        explorer.onTabsChange = { [weak self] in self?.scheduleWorkspaceSave() }
+        explorer.onTabsChange = { [weak self] in
+            self?.scheduleWorkspaceSave()
+            self?.syncNotesLocation()
+        }
         // The host shown follows the folder in front, however it got there.
         explorer.onSelect = { [weak self] in
             guard let self, let tab = explorer.selectedTab else { return }
@@ -510,50 +535,52 @@ final class AppModel {
         }
     }
 
-    /// The user picked a target: remember it, and show the agent's working directory when the target has one. The
-    /// folder that ends up in front remembers the choice, so coming back to it comes back to this agent.
+    /// Choosing a recipient keeps the location being reviewed in front.
     func choose(target: AgentTarget) {
         send.rememberTarget(target)
-        guard target.transport == .herdr || target.transport == .tmux, let path = target.detail, path.hasPrefix("/") else {
-            Task { await rememberForCurrentFolder(target) }
-            return
-        }
-        // Opening the agent's folder switches tabs; that switch must not hand the folder's older agent back.
-        choosingTargetID = target.id
-        Task {
-            defer { if choosingTargetID == target.id { choosingTargetID = nil } }
-            guard await ensureConnected(target.hostID) else { return }
-            pickedHost = target.hostID
-            await explorer.openRoot(hostID: target.hostID, path: path)
-            await rememberForCurrentFolder(target)
-        }
-    }
-
-    /// A choice being carried out by `choose(target:)`, while it opens the agent's folder.
-    @ObservationIgnored private var choosingTargetID: String?
-
-    private func rememberForCurrentFolder(_ target: AgentTarget) async {
-        guard let tab = explorer.selectedTab else { return }
-        await send.remember(target, forFolder: SendCoordinator.folderKey(hostID: tab.hostID, path: tab.path))
+        guard let location = notesPanel.location, !location.exactDocument else { return }
+        let key = SendCoordinator.folderKey(hostID: location.hostID, path: location.path)
+        Task { await send.remember(target, forFolder: key) }
     }
 
     /// The folder whose agent sends go to: the one in front, except while following Herdr (which pairs folders and
-    /// panes itself) or while `choose(target:)` opens the folder of the agent just picked.
+    /// panes itself). A manual recipient choice never navigates to a different folder.
     private var agentFolder: (hostID: HostID, path: String)? {
-        guard !followHerdr, choosingTargetID == nil, let tab = explorer.selectedTab else { return nil }
+        guard !followHerdr, let tab = shownTab else { return nil }
         return (tab.hostID, tab.path)
     }
 
     /// A folder came to the front: switch to the agent last chosen there, or the one working in it.
     func folderBecameCurrent() async {
+        syncNotesLocation()
+        guard !followHerdr else { return }
         await send.folderBecameCurrent()
     }
 
+    func syncNotesLocation() {
+        let location: NotesLocation?
+        if let page = webNotesLocation, activeSession?.hostID == page.hostID, activeSession?.path == page.path {
+            location = page
+        } else if let tab = shownTab {
+            location = NotesLocation(hostID: tab.hostID, path: tab.path)
+        } else if let session = activeSession, DocumentKindDetector.isWebURL(session.path), pickedHost == .web || pickedHost == session.hostID {
+            location = NotesLocation(hostID: session.hostID, path: session.path, exactDocument: true)
+        } else { location = nil }
+        if location != notesPanel.location, let session = activeSession { iterations.backToCurrent(session) }
+        notesPanel.setLocation(location)
+    }
+
     func openDocument(hostID: HostID, path: String) {
+        if let move = blockedRenames[hostID], move.destination(for: path) != nil || path == move.to || path.hasPrefix(move.to + "/") {
+            renameRecovery = move
+            explorer.lastError = "Finish recovering the rename before opening this file."
+            return
+        }
         if DocumentKindDetector.isWebURL(path), let url = URL(string: path) {
             openWebPage(url, via: hostID == .local || hostID == .web ? nil : hostID)
             return
         }
+        webNotesLocation = nil
         let key = "\(hostID.rawValue):\(path)"
         if let existing = session(hostID: hostID, path: path) {
             activeSession = existing
@@ -864,6 +891,7 @@ final class AppModel {
     func openWebPage(_ url: URL, via: HostID? = nil) {
         let hostID = via ?? .web
         let path = WebDocumentKey.normalize(url)
+        webNotesLocation = NotesLocation(hostID: hostID, path: path, exactDocument: true)
         let key = "\(hostID.rawValue):\(path)"
         if let existing = sessions[key] {
             activeSession = existing
@@ -1065,8 +1093,9 @@ final class AppModel {
 
     /// Connects a remote host when its file system is not registered yet.
     func ensureConnected(_ hostID: HostID) async -> Bool {
-        if fileSystems[hostID] != nil { return true }
-        return await hosts.connect(hostID) != nil
+        if fileSystems[hostID] == nil, await hosts.connect(hostID) == nil { return false }
+        await recoverRename(hostID: hostID)
+        return blockedRenames[hostID] == nil
     }
 
     /// Clears attachment files nothing references, off the main actor. Only with the real database: a throwaway
@@ -1498,6 +1527,7 @@ final class AppModel {
                 try? await Task.sleep(for: .seconds(24 * 3600))
             }
         }
+        await recoverRename(hostID: .local)
         await hosts.load()
         await webPages.load()
         // The token note links must carry exists before the Herdr plugin first reads it.
@@ -1549,7 +1579,7 @@ final class AppModel {
     /// Questions back from agents, on the Dock icon: the app often sits behind the agent's terminal, and a note
     /// waiting on an answer should be visible from there, as unread mail is.
     func updateDockBadge(_ groups: [DocumentNotes]? = nil) {
-        let groups = groups ?? notesPanel.groups
+        let groups = groups ?? notesPanel.allGroups
         let waiting = settings.showsQuestionsOnDock
             ? groups.reduce(0) { $0 + $1.notes.filter(\.waitingOnUser).count }
             : 0
@@ -1813,27 +1843,78 @@ final class AppModel {
         return try await store.createNote(documentID: document.id, anchor: .wholeFile, body: text, color: .yellow).id
     }
 
-    enum SendScope {
-        case activeDocument
-        case all
+    enum SendScope: String, CaseIterable, Identifiable {
+        case activeDocument = "This File"
+        case all = "This Location"
+        var id: String { rawValue }
+    }
+    var sendScope: SendScope = .activeDocument
+
+    struct SendSelection {
+        let location: NotesLocation?
+        let notes: [Note]
+        var ids: [NoteID] { notes.map(\.id) }
+        var documentCount: Int { Set(notes.map(\.documentID)).count }
     }
 
+    func sendSelection(scope: SendScope) -> SendSelection {
+        let notes = notesPanel.visibleGroups.flatMap { group -> [Note] in
+            guard scope == .all || (group.document.id == activeSession?.document?.id && !isShowingPastIteration) else { return [] }
+            return group.notes.filter { $0.isSendable && $0.iteration == group.document.currentIteration && !notesPanel.isPast($0) }
+        }
+        return SendSelection(location: notesPanel.location, notes: notes)
+    }
+
+    var visibleDrafts: [Note] { sendSelection(scope: sendScope).notes }
+    /// Every UI send, including card and selection actions, stays in this location and current iteration.
     func send(noteIDs: [NoteID]) async {
         guard let target = send.lastTarget else { return }
-        await send.send(noteIDs: noteIDs, to: target)
+        guard send.isTargetAvailable else {
+            send.showCancelled(noteIDs: noteIDs, target: target, reason: "\(target.label) is unavailable. Choose another agent or refresh.")
+            return
+        }
+        let location = notesPanel.location
+        if let problem = await selectionProblem(noteIDs, location: location, sendable: true) {
+            send.showCancelled(noteIDs: noteIDs, target: target, reason: problem)
+            return
+        }
+        await send.send(noteIDs: noteIDs, to: target) { [weak self] in
+            guard let self else { return "Gloss is closing." }
+            guard self.notesPanel.location == location else { return "The location changed while the packet was being prepared." }
+            guard self.send.lastTarget?.id == target.id, self.send.isTargetAvailable else { return "The recipient changed while the packet was being prepared." }
+            return await self.selectionProblem(noteIDs, location: location, sendable: true)
+        }
     }
 
-    /// The open document's drafts you can see (notes with an unsent follow-up count as drafts): all of them, or
-    /// only the colours the notes panel is filtered to. What the Send button and ⌘↩ send, so nothing hidden from
-    /// view goes to the agent.
-    var visibleDrafts: [Note] {
-        guard let session = activeSession else { return [] }
-        let drafts = session.notes.filter(\.isSendable)
-        // With the panel closed nothing is filtered on screen, so nothing is filtered here either.
-        guard showNotesPanel, let documentID = session.document?.id else { return drafts }
-        // Exactly the cards the panel shows for this document: state tab, colours, and search all apply.
-        let shown = notesPanel.listedIDs(for: documentID)
-        return drafts.filter { shown.contains($0.id) }
+    /// Whether Send and Copy can take this note: in the location in front, in its document's current iteration,
+    /// and listed by the panel. Controls outside the panel (the page's peek) offer Send only then.
+    func isInSendScope(_ note: Note) -> Bool {
+        guard let group = notesPanel.visibleGroups.first(where: { $0.document.id == note.documentID }),
+              notesPanel.location?.contains(group.document) == true else { return false }
+        return note.iteration == group.document.currentIteration && group.notes.contains { $0.id == note.id }
+    }
+
+    /// Why these notes can't be sent or copied from the location in front, or nil when they can.
+    private func selectionProblem(_ ids: [NoteID], location: NotesLocation?, sendable: Bool) async -> String? {
+        guard !ids.isEmpty else { return "There are no notes to send." }
+        guard let location else { return "Choose a location first." }
+        for id in ids {
+            guard let note = try? await noteStore.note(id), let document = try? await noteStore.document(note.documentID) else {
+                return "A note was deleted while the packet was being prepared."
+            }
+            let problem: String? = if !location.contains(document) {
+                "\(document.fileName) isn't in \(location.title). Open its folder to send its notes."
+            } else if sendable, note.iteration != document.currentIteration {
+                "A note belongs to an earlier iteration. Bring it forward to send it."
+            } else if !notesPanel.listedIDs(for: document.id).contains(id) {
+                "A note is hidden by the notes panel's filters. Show it to send it."
+            } else if sendable, NotesPanelModel.sendable([note]).isEmpty {
+                "A note has nothing new to send."
+            } else { nil }
+            if let problem { return problem }
+        }
+        guard location == notesPanel.location else { return "The location changed while the packet was being prepared." }
+        return nil
     }
 
     /// The page draws what the panel lists: each open document is told which of its notes to leave off, now and
@@ -1854,7 +1935,7 @@ final class AppModel {
 
     /// Whether the panel is narrowing what Send takes (for wording: "the 2 shown drafts").
     var draftsAreFiltered: Bool {
-        showNotesPanel && (notesPanel.filter != .all || !notesPanel.colorFilter.isEmpty || !notesPanel.searchText.trimmingCharacters(in: .whitespaces).isEmpty)
+        notesPanel.isFiltering
     }
 
     /// Opens the main window when it was closed (the app keeps running), for the Dock menu.
@@ -1872,13 +1953,26 @@ final class AppModel {
     }
 
     func sendAllDrafts(scope: SendScope) async {
-        let ids = await send.draftNoteIDs(documentID: scope == .all ? nil : activeSession?.document?.id)
+        let ids = sendSelection(scope: scope).ids
         guard !ids.isEmpty else { return }
         await send(noteIDs: ids)
     }
 
     /// Copies these notes as one packet. They stay drafts: only Send marks a note sent.
+    func retrySend() async {
+        guard let result = send.lastResult, result.target.id == send.lastTarget?.id else {
+            send.showCancelled(noteIDs: send.lastResult?.noteIDs ?? [], target: send.lastResult?.target ?? ClipboardTransport.target,
+                               reason: "Choose the original recipient again to retry.")
+            return
+        }
+        await self.send(noteIDs: result.noteIDs)
+    }
+
     func copyPacket(noteIDs: [NoteID]) async {
+        if let problem = await selectionProblem(noteIDs, location: notesPanel.location, sendable: false) {
+            send.showCancelled(noteIDs: noteIDs, target: ClipboardTransport.target, reason: problem, copying: true)
+            return
+        }
         await send.copy(noteIDs: noteIDs)
     }
 
@@ -1999,6 +2093,178 @@ final class AppModel {
             try database.close()
         } catch {
             Log.database.error("Database close failed: \(error, privacy: .public)")
+        }
+    }
+}
+
+
+extension AppModel {
+    func renameFile(_ requested: DocumentRelocation) async throws {
+        var move = requested
+        guard renamingHost == nil, let fileSystem = fileSystems[move.hostID] else { throw FileSystemError.io("A rename is already in progress, or the host is disconnected.") }
+        renamingHost = move.hostID
+        defer {
+            renamingHost = nil
+            let waiters = renameWaiters
+            renameWaiters = []
+            for waiter in waiters { waiter.resume() }
+        }
+        let affected = sessions.values.filter { $0.hostID == move.hostID && move.destination(for: $0.path) != nil }
+        do {
+            for session in affected { try await session.suspendForRelocation() }
+            let source = try await fileSystem.stat(move.from)
+            if try await fileSystem.list(PathUtilities.parent(of: move.to)).contains(where: { $0.name == PathUtilities.name(of: move.to) }) {
+                throw FileSystemError.alreadyExists(move.to)
+            }
+            move.expectedFingerprint = source.fingerprint
+            if source.kind == .file, source.size <= 16 * 1024 * 1024 {
+                let hash = try await fileSystem.read(move.from).sha256Hex
+                move.expectedFingerprint?.hash = hash
+            }
+            try await noteStore.prepareRelocation(move)
+        } catch {
+            for session in affected { session.resumeAfterRelocation() }
+            throw error
+        }
+        blockedRenames[move.hostID] = move
+        do {
+            try await fileSystem.rename(move.from, to: move.to)
+        } catch let error as FileSystemError {
+            // A reported filesystem rejection is definitive; a pre-existing destination is not our renamed file.
+            do {
+                try await noteStore.finishRelocation(move)
+                blockedRenames[move.hostID] = nil
+                for session in affected { session.resumeAfterRelocation() }
+            } catch { renameRecovery = move }
+            throw error
+        } catch {
+            // A dropped connection may mean the server moved the file before the reply was lost.
+            await recoverRename(hostID: move.hostID, duringRename: true)
+            if blockedRenames[move.hostID] == nil {
+                for session in affected { session.resumeAfterRelocation() }
+            }
+            throw error
+        }
+        do {
+            try await noteStore.applyRelocation(move)
+        } catch {
+            do {
+                try await fileSystem.rename(move.to, to: move.from)
+                try await noteStore.finishRelocation(move)
+                blockedRenames[move.hostID] = nil
+                for session in affected { session.resumeAfterRelocation() }
+            } catch {
+                renameRecovery = move
+            }
+            throw FileSystemError.io("The file moved, but its review history could not be updated. \(blockedRenames[move.hostID] == nil ? "The rename was rolled back." : "Use Retry Rename Recovery before saving. Old path: \(move.from). New path: \(move.to).")")
+        }
+        do { try await finishRename(move) }
+        catch { renameRecovery = move; throw error }
+    }
+
+    private func finishRename(_ move: DocumentRelocation) async throws {
+        for (key, session) in Array(sessions) where session.hostID == move.hostID {
+            guard let path = move.destination(for: session.path) else { continue }
+            try await session.retarget(to: path)
+            sessions[key] = nil
+            sessions[session.id] = session
+            activationOrder = activationOrder.map { $0 == key ? session.id : $0 }
+        }
+        try await iterations.relocate(move)
+        history.relocate(move)
+        if let entry = historyTarget, entry.hostID == move.hostID, let path = move.destination(for: entry.path) {
+            historyTarget = .init(hostID: entry.hostID, path: path)
+        }
+        try await send.relocateFolders(move)
+        if let value = try await noteStore.setting(Workspace.key), var workspace = Workspace.decoded(value) {
+            workspace.relocate(move)
+            if let value = workspace.encoded() { try await noteStore.setSetting(Workspace.key, value) }
+        }
+        notesPanel.relocate(move)
+        await explorer.applyRelocation(move)
+        explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
+        syncNotesLocation()
+        if started, !isRestoringWorkspace { await saveWorkspace() }
+        try await noteStore.finishRelocation(move)
+        blockedRenames[move.hostID] = nil
+        if renameRecovery?.hostID == move.hostID { renameRecovery = nil }
+        for session in sessions.values where session.hostID == move.hostID && session.isRelocating { session.resumeAfterRelocation() }
+    }
+
+    func retryRenameRecovery() async {
+        guard let move = renameRecovery else { return }
+        if fileSystems[move.hostID] == nil { _ = await hosts.connect(move.hostID) }
+        await recoverRename(hostID: move.hostID)
+    }
+
+    /// `duringRename` is the rename itself asking, which must not wait for its own end.
+    func recoverRename(hostID: HostID, duringRename: Bool = false) async {
+        while !duringRename, renamingHost == hostID {
+            await withCheckedContinuation { renameWaiters.append($0) }
+        }
+        if let task = renameRecoveries[hostID] { await task.value; return }
+        let recovery = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            await self.performRenameRecovery(hostID: hostID)
+        }
+        renameRecoveries[hostID] = recovery
+        await recovery.value
+        renameRecoveries[hostID] = nil
+    }
+
+    private func performRenameRecovery(hostID: HostID) async {
+        do {
+            guard let move = try await noteStore.pendingRelocation(hostID: hostID) else { return }
+            blockedRenames[hostID] = move
+            guard let fileSystem = fileSystems[hostID] else { renameRecovery = move; return }
+            let destination = DocumentRelocation(hostID: hostID, from: move.to, to: move.to, directory: move.directory)
+            for session in sessions.values where session.hostID == hostID && (move.destination(for: session.path) != nil || destination.destination(for: session.path) != nil) {
+                try await session.suspendForRelocation()
+            }
+            // Directory listings see dangling symlinks and distinguish absence from failed stat/connection.
+            func exists(_ path: String) async throws -> Bool {
+                try await fileSystem.list(PathUtilities.parent(of: path)).contains { $0.name == PathUtilities.name(of: path) }
+            }
+            let oldExists = try await exists(move.from), newExists = try await exists(move.to)
+            if oldExists && !newExists && move.metadataApplied != true {
+                try await noteStore.finishRelocation(move)
+                blockedRenames[hostID] = nil
+                renameRecovery = nil
+                for session in sessions.values where session.hostID == hostID && session.isRelocating { session.resumeAfterRelocation() }
+            } else if !oldExists && newExists, move.metadataApplied == true {
+                // The database already names the new path: it is the truth now, whatever has changed there since.
+                try await finishRename(move)
+            } else if !oldExists && newExists, move.directory {
+                // A folder's size and mtime change with its contents, so there is nothing to compare: the old path
+                // is gone and the new one is there, which is what the rename was.
+                try await noteStore.applyRelocation(move)
+                try await finishRename(move)
+            } else if !oldExists && newExists {
+                guard let expected = move.expectedFingerprint else {
+                    renameRecovery = move
+                    throw FileSystemError.io("The renamed file cannot be verified. Restore it to \(move.from), then retry recovery.")
+                }
+                let actual = try await fileSystem.stat(move.to)
+                let hashMatches: Bool
+                if let hash = expected.hash { hashMatches = try await fileSystem.read(move.to).sha256Hex == hash }
+                else { hashMatches = true }
+                guard actual.size == expected.size, actual.mtime == expected.mtime, hashMatches else {
+                    renameRecovery = move
+                    throw FileSystemError.io("The destination changed since the rename began. Restore the original at \(move.from), then retry recovery.")
+                }
+                try await noteStore.applyRelocation(move)
+                try await finishRename(move)
+            } else {
+                renameRecovery = move
+                explorer.lastError = move.metadataApplied == true
+                    ? (oldExists && !newExists
+                        ? "The rename could not be finished because the file is back at \(move.from). Move it to \(move.to), then retry."
+                        : "The rename could not be finished because \(oldExists ? "both paths exist" : "neither path exists"). Keep the file at \(move.to) only, then retry. Old: \(move.from).")
+                    : "The rename could not be reconciled because \(oldExists ? "both paths exist" : "neither path exists"). Keep the file at one of them only, then retry. Old: \(move.from). New: \(move.to)."
+            }
+        } catch {
+            renameRecovery = blockedRenames[hostID]
+            explorer.lastError = "Rename recovery failed: \(error.localizedDescription)"
         }
     }
 }

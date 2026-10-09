@@ -101,6 +101,17 @@ public struct LocalFileSystem: FileSystemProvider {
         return attributes
     }
 
+    public func createFile(at path: String) async throws -> FileAttributes {
+        let descriptor = Darwin.open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode_t(0o644))
+        guard descriptor >= 0 else { throw Self.map(errno: errno, path: path) }
+        guard Darwin.close(descriptor) == 0 else { throw Self.map(errno: errno, path: path) }
+        return try await stat(path)
+    }
+
+    public func createDirectory(at path: String) async throws {
+        guard Darwin.mkdir(path, mode_t(0o755)) == 0 else { throw Self.map(errno: errno, path: path) }
+    }
+
     public func makeDirectory(_ path: String) async throws {
         do {
             try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)

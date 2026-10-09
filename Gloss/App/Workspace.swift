@@ -48,6 +48,15 @@ nonisolated struct Workspace: Codable, Equatable {
         return workspace
     }
 
+    mutating func relocate(_ move: DocumentRelocation) {
+        func mapped(_ place: Place) -> Place {
+            guard place.hostID == move.hostID, let path = move.destination(for: place.path) else { return place }
+            return Place(host: place.host, path: path)
+        }
+        folders = folders.map(mapped); back = back.map(mapped); forward = forward.map(mapped)
+        if let current = document { document?.place = mapped(current.place) }
+    }
+
     func encoded() -> String? {
         (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) }
     }

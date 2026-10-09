@@ -33,6 +33,7 @@ struct NotesPanelModelTests {
         try await store.resolve(second.id, message: "Moved to Utilities", at: start.addingTimeInterval(90))
         _ = try await store.createNote(documentID: beta.id, anchor: anchor(line: 5), body: "Expand this section", color: .green, at: start.addingTimeInterval(120))
         let model = NotesPanelModel(noteStore: store)
+        model.setLocation(NotesLocation(hostID: .local, path: "/"))
         model.start()
         await waitUntil { model.groups.reduce(0) { $0 + $1.notes.count } == 3 }
         return (model, store)
@@ -371,6 +372,7 @@ struct NotesPanelModelTests {
         model.showResolved = true
         for _ in 0..<100 where (try? await store.setting("notes.separateResolved")) != "1" { try? await Task.sleep(for: .milliseconds(20)) }
         let again = NotesPanelModel(noteStore: store)
+        again.setLocation(NotesLocation(hostID: .local, path: "/"))
         again.start()
         defer { again.stop() }
         await waitUntil { again.separateResolved }
@@ -471,6 +473,7 @@ struct NotesPanelModelTests {
         model.stop()
         for _ in 0..<100 where (try? await store.setting("notes.sort")) != "oldest" { try? await Task.sleep(for: .milliseconds(20)) }
         let again = NotesPanelModel(noteStore: store)
+        again.setLocation(NotesLocation(hostID: .local, path: "/"))
         again.start()
         await waitUntil { again.sort == .oldest }
         #expect(again.sort == .oldest)
@@ -485,6 +488,7 @@ struct NoteDeleteUndoTests {
         let document = try await store.upsertDocument(hostID: .local, path: "/tmp/undo-panel.md", kind: .markdown, fingerprint: Fingerprint())
         let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "come back", color: .yellow)
         let panel = NotesPanelModel(noteStore: store)
+        panel.setLocation(NotesLocation(hostID: .local, path: "/"))
 
         await panel.delete(note.id)
         let deleted = try #require(panel.lastDeleted.first)
@@ -505,6 +509,7 @@ struct NoteDeleteUndoTests {
         var ids: [NoteID] = []
         for body in ["one", "two", "three"] { ids.append(try await store.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: .yellow).id) }
         let panel = NotesPanelModel(noteStore: store)
+        panel.setLocation(NotesLocation(hostID: .local, path: "/"))
         panel.selection = Set(ids)
         #expect(panel.selectedNoteID == nil, "several selected: no single note")
 
@@ -537,6 +542,7 @@ struct RecentlyDeletedTests {
         let gone = try await store.createNote(documentID: inside.id, anchor: .wholeFile, body: "gone", color: .pink)
         let elsewhere = try await store.createNote(documentID: outside.id, anchor: .wholeFile, body: "elsewhere", color: .blue)
         let panel = NotesPanelModel(noteStore: store)
+        panel.setLocation(NotesLocation(hostID: .local, path: "/"))
         var restored: [NoteID] = []
         panel.onRestored = { restored += $0.map(\.id) }
         await panel.delete([kept.id, gone.id, elsewhere.id])
@@ -585,6 +591,7 @@ struct NoteBulkActionTests {
         #expect(NotesPanelModel.reopenable(notes).map(\.id) == [sent.id, done.id], "sent notes go back to drafts too (#13)")
 
         let panel = NotesPanelModel(noteStore: store)
+        panel.setLocation(NotesLocation(hostID: .local, path: "/"))
         panel.start()
         defer { panel.stop() }
         for _ in 0..<100 where panel.groups.flatMap(\.notes).count < 3 { try? await Task.sleep(for: .milliseconds(20)) }
@@ -609,6 +616,7 @@ struct OpenWorkLeadsTests {
         try await store.resolve(finished.id)
         _ = try await store.createNote(documentID: open.id, anchor: .wholeFile, body: "todo", color: .yellow)
         let panel = NotesPanelModel(noteStore: store)
+        panel.setLocation(NotesLocation(hostID: .local, path: "/"))
         panel.start()
         for _ in 0..<50 where panel.groups.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
         #expect(panel.visibleGroups.map(\.document.fileName) == ["open.md", "done.md"])
@@ -623,6 +631,7 @@ struct NoteInlineEditTests {
         let document = try await store.upsertDocument(hostID: .local, path: "/tmp/edit.md", kind: .markdown, fingerprint: Fingerprint())
         let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "first words", color: .yellow)
         let panel = NotesPanelModel(noteStore: store)
+        panel.setLocation(NotesLocation(hostID: .local, path: "/"))
 
         #expect(await panel.update(note.id, body: "better words", color: .green, editedFrom: "first words") == nil)
         let saved = try #require(try await store.note(note.id))

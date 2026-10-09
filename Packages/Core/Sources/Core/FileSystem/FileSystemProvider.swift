@@ -72,6 +72,19 @@ public enum FileSystemError: Error, Sendable, Equatable {
     case conflict(current: Data, fingerprint: Fingerprint)
 }
 
+extension FileSystemError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .notFound(let path): "The file or folder is missing: \(path)"
+        case .permissionDenied(let path): "Permission denied: \(path)"
+        case .alreadyExists(let path): "A file or folder already exists: \(path)"
+        case .notADirectory(let path): "Not a folder: \(path)"
+        case .io(let message): message
+        case .conflict: "The file changed on disk. Review the changes before saving."
+        }
+    }
+}
+
 /// Everything the explorer, viewers, and stager need from a host's files. `LocalFileSystem` now, SFTP later.
 public protocol FileSystemProvider: Sendable {
     var hostID: HostID { get }
@@ -81,7 +94,11 @@ public protocol FileSystemProvider: Sendable {
     /// Writes to a temporary file in the same directory and renames it over `path`, keeping `original`'s mode
     /// (or the existing file's mode, or 0644). Returns the attributes of the written file.
     func writeAtomically(_ data: Data, to path: String, preservingModeFrom original: FileAttributes?) async throws -> FileAttributes
+    /// Creates an empty file exclusively; never replaces a file, directory, or symlink.
+    func createFile(at path: String) async throws -> FileAttributes
     func makeDirectory(_ path: String) async throws
+    /// Creates one folder, failing with `alreadyExists` when anything is at the path (New Folder never adopts one).
+    func createDirectory(at path: String) async throws
     func rename(_ path: String, to newPath: String) async throws
     func delete(_ path: String) async throws
     /// Change events for a directory tree or a single file. Stops when the consumer cancels.
@@ -95,6 +112,15 @@ public enum ConflictCheck: Sendable, Equatable {
 }
 
 extension FileSystemProvider {
+    /// Read-only providers and test doubles must opt in to exclusive creation.
+    public func createFile(at path: String) async throws -> FileAttributes {
+        throw FileSystemError.permissionDenied(path)
+    }
+
+    public func createDirectory(at path: String) async throws {
+        throw FileSystemError.permissionDenied(path)
+    }
+
     /// Reads and hashes the file whenever a hash is known: mtime has one-second granularity on SFTP v3 and an agent
     /// can rewrite a file to the same length within that second, so size and mtime alone cannot prove it unchanged.
     /// Without a stored hash, size and mtime (at millisecond precision) are all there is.

@@ -108,9 +108,9 @@ public final class HTMLViewerController: RenderedDocumentController {
         didSet { if mode != oldValue { isNoteMode = false; selectedPicture = nil } }
     }
     /// What the view shows: a served file or a live page.
-    public let page: BrowserPage
+    public private(set) var page: BrowserPage
     /// The served file's path, or a live page's document key (its normalised URL).
-    public let documentPath: String
+    public private(set) var documentPath: String
     /// The tunnels of the page's remote host, for pages opened "via" an ssh host; nil on this Mac and on the web.
     public var proxy: WebProxyMap?
     /// The only folder the page may read from (the explorer root holding the document, else its folder). Scripts
@@ -175,6 +175,13 @@ public final class HTMLViewerController: RenderedDocumentController {
 
     @ObservationIgnored private var renderedContentVersion = -1
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
+
+    public func retargetFile(to path: String) {
+        guard case .file = page else { return }
+        documentPath = path
+        page = .file(path: path)
+        renderedVersion += 1
+    }
 
     public init(source: TextEditorController, documentPath: String, resourceRoot: @escaping () -> String? = { nil }, loadResource: @escaping @Sendable (String) async throws -> Data) {
         self.source = source

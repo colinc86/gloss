@@ -29,8 +29,8 @@ struct NoteMark: Equatable {
 final class RootTab: Identifiable {
     let id: RootID
     let hostID: HostID
-    let path: String
-    let node: FileNode
+    var path: String
+    var node: FileNode
     var watcher: Task<Void, Never>?
 
     init(id: RootID, hostID: HostID, path: String, node: FileNode) {
@@ -69,6 +69,7 @@ final class ExplorerModel {
     var selectedTabID: RootID? {
         didSet {
             treeDelegate?.treeDidReplaceRoot()
+            onLocationSelected()
             if selectedTabID != oldValue {
                 onTabsChange()
                 if !selectingQuietly { onSelect() }
@@ -77,6 +78,7 @@ final class ExplorerModel {
     }
     /// Another folder came to the front (or none): the app shows its host.
     @ObservationIgnored var onSelect: () -> Void = {}
+    @ObservationIgnored var onLocationSelected: () -> Void = {}
     /// Set while a close moves the selection within the closed folder's host, which changes no host.
     @ObservationIgnored private var selectingQuietly = false
     /// A folder opened or closed, or another came to the front: the app saves what's open (#9).
@@ -101,6 +103,10 @@ final class ExplorerModel {
         didSet { treeDelegate?.treeDidChangeFilters() }
     }
     var lastError: String?
+    var fileNameRequest: FileNameRequest?
+    @ObservationIgnored var onRename: (HostID, String, String, Bool) async throws -> Void = { _, _, _, _ in
+        throw FileSystemError.io("Rename is unavailable")
+    }
     let contentSearch = ContentSearchModel()
 
     @ObservationIgnored private var pendingReloads: Set<String> = []
@@ -437,6 +443,20 @@ final class ExplorerModel {
                 }
             }
         }
+    }
+
+    func applyRelocation(_ move: DocumentRelocation) async {
+        for tab in tabs where tab.hostID == move.hostID {
+            guard let path = move.destination(for: tab.path) else { continue }
+            tab.watcher?.cancel()
+            tab.path = path
+            tab.node = FileNode(hostID: tab.hostID, entry: DirectoryEntry(name: PathUtilities.name(of: path), path: path, kind: .directory), parent: nil)
+            if let fileSystem = fileSystemProvider(tab.hostID) { startWatching(tab, fileSystem: fileSystem) }
+            await loadChildren(of: tab.node)
+        }
+        await loadRecents(hostID: move.hostID)
+        treeDelegate?.treeDidReplaceRoot()
+        onTabsChange()
     }
 
     func stopWatching() {

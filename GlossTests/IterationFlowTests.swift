@@ -55,6 +55,7 @@ struct IterationFlowTests {
         try "one\ntwo\nthree\n".write(toFile: plan, atomically: true, encoding: .utf8)
         try "alpha\nbeta\n".write(toFile: diagrams, atomically: true, encoding: .utf8)
         let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.explorer.openRoot(hostID: .local, path: folder)
         model.notesPanel.start()
 
         // diagrams.md is first opened the way an agent names it, with its note made there.
@@ -115,6 +116,7 @@ struct IterationFlowTests {
         let path = "\(folder)/a.md"
         try "one\ntwo\n".write(toFile: path, atomically: true, encoding: .utf8)
         let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.explorer.openRoot(hostID: .local, path: folder)
         model.notesPanel.start()
         let document = try await model.noteStore.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
         _ = try await model.noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: "n", color: .yellow)
@@ -217,6 +219,7 @@ struct IterationFlowTests {
         _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "only", color: .yellow)
         try await store.startIteration(documentID: document.id, openNotes: .carry, snapshot: Data("x".utf8))
         let panel = NotesPanelModel(noteStore: store)
+        panel.setLocation(NotesLocation(hostID: .local, path: "/"))
         panel.start()
         defer { panel.stop() }
         panel.showIteration(0, of: try #require(try await store.document(document.id)))

@@ -203,3 +203,22 @@ struct FolderTargetTests {
         #expect(try JSONDecoder().decode([String: AgentTarget].self, from: saved).keys.sorted() == ["h_local:/work/p"])
     }
 }
+
+@MainActor struct RecipientSafetyTests {
+    @Test func unrelatedAgentsNeverBecomeTheDefaultAndExplicitClipboardIsRemembered() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let elsewhere = AgentTarget(transport: .tmux, hostID: .local, label: "elsewhere", detail: "/other", identityJSON: "{}")
+        let send = SendCoordinator(noteStore: store, transports: [ListedTransport(.tmux, [elsewhere])], stagers: [:])
+        var folder = "/review"
+        send.currentFolder = { (.local, folder) }
+        await send.folderBecameCurrent()
+        await send.refreshTargets()
+        #expect(send.lastTarget == nil && !send.isTargetAvailable)
+        await send.remember(ClipboardTransport.target, forFolder: SendCoordinator.folderKey(hostID: .local, path: folder))
+        await send.folderBecameCurrent()
+        #expect(send.lastTarget?.transport == .clipboard && send.isTargetAvailable)
+        folder = "/another"
+        await send.folderBecameCurrent()
+        #expect(send.lastTarget == nil)
+    }
+}

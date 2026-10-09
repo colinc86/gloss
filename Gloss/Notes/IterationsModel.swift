@@ -187,6 +187,17 @@ final class IterationsModel {
     /// Bumped by every change of view, so a view still reading its snapshot gives way to a later one.
     @ObservationIgnored private var viewGeneration = 0
 
+    func relocate(_ move: DocumentRelocation) async throws {
+        viewGeneration += 1
+        let prefix = move.hostID.rawValue + ":"
+        for (key, view) in Array(past) {
+            guard key.hasPrefix(prefix), let path = move.destination(for: String(key.dropFirst(prefix.count))) else { continue }
+            if let snapshot = view.session { try await snapshot.retarget(to: path) }
+            past[key] = nil
+            past[prefix + path] = view
+        }
+    }
+
     func backToCurrent(_ session: DocumentSession) {
         viewGeneration += 1
         guard let shown = past.removeValue(forKey: session.id) else { return }

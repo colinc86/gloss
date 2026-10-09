@@ -126,4 +126,10 @@ public struct StagingResult: Sendable, Equatable {
 /// Puts attachments where the target's machine can read them and returns the paths to print in the packet.
 public protocol AttachmentStager: Sendable {
     func stage(_ files: [LocalAttachment], for target: AgentTarget, sendID: SendID) async throws -> StagingResult
+    /// Removes directories `stage` made for a send that was then called off, so nothing is left on the host.
+    func discard(_ remoteDirectories: [String]) async
+}
+
+extension AttachmentStager {
+    public func discard(_ remoteDirectories: [String]) async {}
 }

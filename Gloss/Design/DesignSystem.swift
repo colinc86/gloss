@@ -110,7 +110,7 @@ extension NotesPanelModel.Sort {
 struct FilterBar<Option: Hashable & Identifiable>: View {
     /// How much each chip shows, widest first.
     enum Density {
-        case titled, counted, symbols
+        case allTitles, titled, counted, symbols
     }
 
     let options: [Option]
@@ -126,6 +126,7 @@ struct FilterBar<Option: Hashable & Identifiable>: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
+            row(.allTitles)
             row(.titled)
             row(.counted)
             row(.symbols)
@@ -161,7 +162,7 @@ struct FilterBar<Option: Hashable & Identifiable>: View {
                             Circle().fill(Color.orange).frame(width: 5, height: 5).offset(x: 3, y: -2)
                         }
                     }
-                if selected, density == .titled {
+                if density == .allTitles || (selected && density == .titled) {
                     Text(title(option))
                         .fontWeight(.semibold)
                         .lineLimit(1)
@@ -243,7 +244,7 @@ struct InlineIconButton: View {
         Button(role: role, action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .semibold))
-                .frame(width: 22, height: 20)
+                .frame(width: 28, height: 28)
                 .foregroundStyle(foreground)
                 .background(background, in: RoundedRectangle(cornerRadius: DS.Radius.s + 1, style: .continuous))
                 .contentShape(Rectangle())
@@ -258,7 +259,7 @@ struct InlineIconButton: View {
     private var foreground: Color {
         if role == .destructive, hovering { return .red }
         if prominent { return emphasized || hovering ? .white : .accentColor }
-        return hovering ? .primary : (emphasized ? .secondary : Color.secondary.opacity(0.55))
+        return hovering ? .primary : .secondary
     }
 
     private var background: Color {

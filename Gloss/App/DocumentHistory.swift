@@ -69,6 +69,14 @@ nonisolated struct DocumentHistory: Equatable {
         if current == entry { current = nil }
     }
 
+    mutating func relocate(_ move: DocumentRelocation) {
+        func mapped(_ entry: Entry) -> Entry {
+            guard entry.hostID == move.hostID, let path = move.destination(for: entry.path) else { return entry }
+            return Entry(hostID: entry.hostID, path: path)
+        }
+        back = back.map(mapped); forward = forward.map(mapped); current = current.map(mapped)
+    }
+
     /// The most recent places in each direction, nearest first, for the toolbar menus.
     func recentBack(_ count: Int = 10) -> [Entry] { Array(back.reversed().prefix(count)) }
     func recentForward(_ count: Int = 10) -> [Entry] { Array(forward.reversed().prefix(count)) }

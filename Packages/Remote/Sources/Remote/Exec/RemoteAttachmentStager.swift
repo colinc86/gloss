@@ -53,6 +53,15 @@ public struct RemoteAttachmentStager: AttachmentStager {
     }
 
     /// Removes expired staging directories recorded for this host, plus any week-old leftovers from a lost database.
+    public func discard(_ remoteDirectories: [String]) async {
+        guard !remoteDirectories.isEmpty else { return }
+        do {
+            _ = try await connection.exec("rm -rf -- \(remoteDirectories.map(ShellQuote.single).joined(separator: " "))")
+        } catch {
+            Self.log.error("discarding staged files failed: \(error, privacy: .public)")
+        }
+    }
+
     public func cleanupExpired(now: Date = Date()) async {
         do {
             let expired = try await noteStore.expiredStagedFiles(now: now).filter { $0.hostID == hostID }

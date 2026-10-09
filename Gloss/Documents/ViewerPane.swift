@@ -10,6 +10,14 @@ struct ViewerPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let document = session.document, model.notesPanel.allGroups.contains(where: { $0.document.id == document.id }) {
+                HStack {
+                    Text(session.fileName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer()
+                    IterationMenu(document: document)
+                }
+                .padding(.horizontal, 12).padding(.vertical, 4)
+            }
             if let iteration = model.iterations.viewedIteration(for: session) {
                 IterationBanner(session: session, iteration: iteration)
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
@@ -860,7 +868,7 @@ private struct NotePeekCard: View {
                 }
                 HStack(spacing: DS.Space.xxs) {
                     // A draft's next step is sending it, so Send leads, as on the panel's cards.
-                    if note.state == .draft || note.state == .sent, let target = model.send.lastTarget {
+                    if note.state == .draft || note.state == .sent, let target = model.send.lastTarget, model.send.isTargetAvailable, model.isInSendScope(note) {
                         InlineIconButton(title: "Send to \(target.label)", symbol: "paperplane.fill", prominent: true, emphasized: true) {
                             session.textController?.dismissPeek()
                             Task { await model.send(noteIDs: [note.id]) }

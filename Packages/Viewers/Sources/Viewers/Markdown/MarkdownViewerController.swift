@@ -66,7 +66,7 @@ public final class MarkdownViewerController {
     @ObservationIgnored private var renderedContentVersion = -1
 
     /// The document's folder on this Mac, for relative images; nil for remote documents.
-    public let baseURL: URL?
+    public var baseURL: URL?
     /// The document's folder on its own host, for relative links; nil where links to files mean nothing (a pull
     /// request's or a ticket's Markdown).
     @ObservationIgnored public var documentDirectory: String?

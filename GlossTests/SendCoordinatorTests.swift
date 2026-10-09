@@ -317,7 +317,7 @@ struct SendCoordinatorTests {
         await coordinator.remember(FakeTransport.target, forFolder: project)
         await coordinator.remember(gone, forFolder: SendCoordinator.folderKey(hostID: .local, path: "/work/other"))
         #expect(await coordinator.preferredTarget(hostID: .local, path: "/work/project")?.id == FakeTransport.target.id)
-        #expect(await coordinator.preferredTarget(hostID: .local, path: "/work/other") == nil, "its session is gone")
+        #expect(await coordinator.preferredTarget(hostID: .local, path: "/work/other")?.id == gone.id, "an explicit remembered choice remains identifiable as unavailable")
         #expect(await coordinator.preferredTarget(hostID: .local, path: "/elsewhere") == nil)
 
         let relaunched = SendCoordinator(noteStore: store, transports: [FakeTransport()], stagers: [:])

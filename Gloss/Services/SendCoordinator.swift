@@ -38,6 +38,11 @@ final class SendCoordinator {
     private(set) var lastOutcome: String?
     private(set) var lastError: String?
     private(set) var lastTarget: AgentTarget?
+    var isTargetAvailable: Bool {
+        guard let target = lastTarget else { return false }
+        return target.transport == .clipboard || targets.contains { $0.id == target.id }
+    }
+
     /// The send in flight (how many notes, to whom), for the panel's progress toast.
     private(set) var inFlight: (count: Int, target: AgentTarget)?
     /// The last send's outcome, for the panel's toast; cleared when the toast goes away.
@@ -51,11 +56,18 @@ final class SendCoordinator {
         let failure: String?
         /// Copied as a packet rather than sent: the notes are still drafts.
         var copied = false
+        /// Stopped before delivery because what was chosen changed: nothing went, and nothing is recorded.
+        var cancelled = false
 
         static func == (lhs: SendResult, rhs: SendResult) -> Bool { lhs.id == rhs.id }
     }
 
     func clearResult() { lastResult = nil }
+
+    /// Says why a send or copy didn't happen, without recording a failed delivery.
+    func showCancelled(noteIDs: [NoteID], target: AgentTarget, reason: String, copying: Bool = false) {
+        lastResult = SendResult(noteIDs: noteIDs, target: target, failure: reason, copied: copying, cancelled: true)
+    }
 
     /// Sends the last result's notes to the same target again.
     func retry() async {
@@ -139,16 +151,14 @@ final class SendCoordinator {
         targets = found.sorted { (Self.priority($0.transport), $0.label) < (Self.priority($1.transport), $1.label) }
         // The folder in front beats the target used last, which may belong to another folder.
         await selectFolderTarget()
-        if lastTarget == nil {
-            let restored = await restoreLastTarget()
-            if lastTarget == nil { lastTarget = restored }
-        }
     }
 
     /// The folder in front changed (or opened at launch): pick its agent now if agents have been found, and again
     /// when a discovery under way finishes.
     func folderBecameCurrent() async {
-        guard currentFolder() != nil else { return }
+        targetGeneration += 1
+        lastTarget = nil
+        guard currentFolder() != nil else { folderPickOwed = false; return }
         folderPickOwed = true
         guard discoveredAt != nil else { return }
         await selectFolderTarget(settles: discovery == nil)
@@ -164,11 +174,10 @@ final class SendCoordinator {
         }
         if settles { folderPickOwed = false }
         let generation = targetGeneration
-        guard let preferred = await preferredTarget(hostID: folder.hostID, path: folder.path),
-              preferred.id != lastTarget?.id,
-              // A target set, or another folder brought forward, while the memory loaded wins.
-              generation == targetGeneration, let now = currentFolder(), now == folder else { return }
-        setTarget(preferred)
+        let preferred = await preferredTarget(hostID: folder.hostID, path: folder.path)
+        // A target set, or another folder brought forward, while the memory loaded wins.
+        guard generation == targetGeneration, let now = currentFolder(), now == folder else { return }
+        if let preferred { setTarget(preferred) } else { lastTarget = nil }
     }
 
     /// The agent sends from the folder `path` should go to, among the live targets:
@@ -188,27 +197,16 @@ final class SendCoordinator {
                 ?? candidates.first
         }
         if let remembered = await loadFolderTargets()[key] {
+            if remembered.transport == .clipboard { return remembered }
             if let live = targets.first(where: { $0.id == remembered.id }) { return live }
             if let same = best(working.filter { $0.transport == remembered.transport }) { return same }
+            return remembered
         }
         return best(working)
     }
 
     private static func priority(_ kind: TransportKind) -> Int {
         TransportKind.allCases.firstIndex(of: kind) ?? TransportKind.allCases.count
-    }
-
-    /// The target used last time when it is still around, else the first agent found; the clipboard only when
-    /// nothing else is, so the picker never shows "Clipboard" beside a list of live agents.
-    private func restoreLastTarget() async -> AgentTarget? {
-        let fallback = targets.first { $0.transport != .clipboard } ?? targets.first
-        guard let stored = try? await noteStore.setting("send.lastTarget"), let data = stored.data(using: .utf8),
-              let target = try? JSONDecoder().decode(AgentTarget.self, from: data) else { return fallback }
-        if let live = targets.first(where: { $0.id == target.id }) { return live }
-        // A remote agent whose host is not connected yet becomes live after connecting; anything else that
-        // discovery no longer sees is gone, and a live agent is a better default than a dead one.
-        let awaitingHost = target.hostID != .local && fileSystemProvider(target.hostID) == nil
-        return awaitingHost && target.transport != .clipboard ? target : fallback
     }
 
     /// The agent last chosen in each folder, keyed by `folderKey`, so returning to a folder returns to its agent.
@@ -239,6 +237,19 @@ final class SendCoordinator {
         if let data = try? JSONEncoder().encode(map), let json = String(data: data, encoding: .utf8) {
             try? await noteStore.setSetting("send.folderTargets", json)
         }
+    }
+
+    func relocateFolders(_ move: DocumentRelocation) async throws {
+        var map = await loadFolderTargets()
+        for (key, target) in Array(map) {
+            let prefix = move.hostID.rawValue + ":"
+            guard key.hasPrefix(prefix), let path = move.destination(for: String(key.dropFirst(prefix.count))) else { continue }
+            map[key] = nil
+            map[Self.folderKey(hostID: move.hostID, path: path)] = target
+        }
+        let json = String(decoding: try JSONEncoder().encode(map), as: UTF8.self)
+        try await noteStore.setSetting("send.folderTargets", json)
+        folderTargets = map
     }
 
     private func loadFolderTargets() async -> [String: AgentTarget] {
@@ -278,9 +289,6 @@ final class SendCoordinator {
         targetGeneration += 1
         lastTarget = target
         Task {
-            if let data = try? JSONEncoder().encode(target), let json = String(data: data, encoding: .utf8) {
-                try? await noteStore.setSetting("send.lastTarget", json)
-            }
             _ = try? await noteStore.upsertTarget(hostID: target.hostID, transport: target.transport.rawValue, identityJSON: target.identityJSON, label: target.label, usedAt: Date())
         }
     }
@@ -288,7 +296,7 @@ final class SendCoordinator {
     // MARK: Sending
 
     /// Delivers one packet with these notes to `target`, recording the send and flipping drafts to sent.
-    func send(noteIDs: [NoteID], to target: AgentTarget) async {
+    func send(noteIDs: [NoteID], to target: AgentTarget, validate: @MainActor () async -> String? = { nil }) async {
         guard !noteIDs.isEmpty, !isSending else { return }
         guard let transport = transports.first(where: { $0.kind == target.transport }) else {
             lastError = "No transport for \(target.transport.displayName)"
@@ -305,12 +313,24 @@ final class SendCoordinator {
         }
         lastError = nil
         let sendID = SendID.new()
+        let generation = targetGeneration
+        // Checked before anything is staged on a remote host, and again just before delivery.
+        if let problem = await validate() {
+            showCancelled(noteIDs: noteIDs, target: target, reason: problem)
+            return
+        }
         do {
             let (notes, attachments) = try await collect(noteIDs: noteIDs)
             let staging = try await stagers[target.hostID]?.stage(attachments, for: target, sendID: sendID) ?? .empty
             let packetNotes = try await packetNotes(for: notes, target: target, staged: staging.attachments)
             let packet = PacketBuilder.build(packetNotes)
             let expiresAt = Date().addingTimeInterval(TimeInterval(stagedFileExpiryDays) * 24 * 3600)
+            if let problem = await validate() {
+                // Nothing left the app: no failed send is recorded, and the toast offers no Retry.
+                await stagers[target.hostID]?.discard(staging.remoteDirectories)
+                showCancelled(noteIDs: noteIDs, target: target, reason: problem)
+                return
+            }
             do {
                 let receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
                 let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs,
@@ -320,7 +340,7 @@ final class SendCoordinator {
                 }
                 lastOutcome = "Sent \(packet.noteIDs.count) note\(packet.noteIDs.count == 1 ? "" : "s") to \(target.label)" + (receipt.detail.map { " (\($0))" } ?? "")
                 lastResult = SendResult(noteIDs: packet.noteIDs, target: target, failure: nil)
-                rememberTarget(target)
+                if generation == targetGeneration { rememberTarget(target) }
             } catch {
                 let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error)"))
                 if !staging.remoteDirectories.isEmpty {
@@ -368,7 +388,7 @@ final class SendCoordinator {
     /// What Send All sends: drafts, and notes with a follow-up the user hasn't sent.
     func draftNoteIDs(documentID: DocumentID?) async -> [NoteID] {
         // An orphan that was sent can carry an answer too; Send takes it, so Send All does.
-        let pending = (try? await noteStore.pendingNotes(states: [.draft, .sent, .orphaned])) ?? []
+        let pending = (try? await noteStore.pendingNotes(states: [.draft, .sent, .orphaned], currentIterationOnly: true)) ?? []
         return pending.filter { $0.note.isSendable && (documentID == nil || $0.document.id == documentID) }.map(\.note.id)
     }
 

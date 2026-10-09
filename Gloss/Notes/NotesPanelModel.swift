@@ -36,6 +36,26 @@ final class NotesPanelModel {
 
     private let noteStore: NoteStore
     private(set) var groups: [DocumentNotes] = []
+    private(set) var location: NotesLocation?
+    private(set) var locationGeneration = 0
+    /// Global data stays available to explorer markers and the dock badge.
+    var allGroups: [DocumentNotes] { liveGroups }
+
+    func setLocation(_ location: NotesLocation?) {
+        guard self.location != location else { return }
+        self.location = location
+        locationGeneration += 1
+        pastGeneration += 1
+        pastObservation?.cancel()
+        pastObservation = nil
+        viewedIteration = nil
+        pastNotes = []
+        selection = []
+        arrivedIDs = []
+        arrivalReset?.cancel()
+        applyGroups()
+    }
+
     /// Every note's thread after its comment, by note, kept current by one observation for all the cards.
     private(set) var messages: [NoteID: [NoteMessage]] = [:]
     /// What is typed in each card's follow-up field and not yet added, kept here so a recycled row doesn't lose it.
@@ -44,6 +64,21 @@ final class NotesPanelModel {
     private(set) var arrivedIDs: Set<NoteID> = []
     @ObservationIgnored private var hasLoaded = false
     @ObservationIgnored private var arrivalReset: Task<Void, Never>?
+
+    /// A rename changes a location's path without changing what the person is reviewing.
+    func relocate(_ move: DocumentRelocation) {
+        if let old = location, old.hostID == move.hostID, let path = move.destination(for: old.path) {
+            location = NotesLocation(hostID: old.hostID, path: path, exactDocument: old.exactDocument)
+        }
+        func mapped(_ document: Document) -> Document {
+            var document = document
+            if document.hostID == move.hostID, let path = move.destination(for: document.path) { document.path = path }
+            return document
+        }
+        liveGroups = liveGroups.map { DocumentNotes(document: mapped($0.document), notes: $0.notes) }
+        if let viewed = viewedIteration { viewedIteration = (mapped(viewed.document), viewed.number) }
+        applyGroups()
+    }
 
     /// The notes in `new` that `old` did not have. Nothing on the first load: everything is new then, nothing arrived.
     nonisolated static func arrivals(from old: [DocumentNotes], to new: [DocumentNotes], loaded: Bool) -> Set<NoteID> {
@@ -149,7 +184,7 @@ final class NotesPanelModel {
             do {
                 for try await groups in stream {
                     guard let self else { return }
-                    let arrived = Self.arrivals(from: self.groups, to: groups, loaded: self.hasLoaded)
+                    let arrived = Self.arrivals(from: self.liveGroups, to: groups, loaded: self.hasLoaded).intersection(Set(groups.filter { self.location?.contains($0.document) == true }.flatMap { $0.notes.map(\.id) }))
                     self.hasLoaded = true
                     if !arrived.isEmpty {
                         self.arrivedIDs.formUnion(arrived)
@@ -180,11 +215,12 @@ final class NotesPanelModel {
 
     /// Each document's notes in its current iteration, as observed; `groups` is this with an earlier iteration's
     /// notes in place of its document's while one is looked at (issue #18).
-    @ObservationIgnored private var liveGroups: [DocumentNotes] = []
+    private var liveGroups: [DocumentNotes] = []
     /// The earlier iteration listed for one document, while the viewer shows it.
     private(set) var viewedIteration: (document: Document, number: Int)?
     @ObservationIgnored private var pastNotes: [Note] = []
     @ObservationIgnored private var pastObservation: Task<Void, Never>?
+    @ObservationIgnored private var pastGeneration = 0
 
     /// A note of the earlier iteration listed: read-only in the panel.
     func isPast(_ note: Note) -> Bool {
@@ -194,10 +230,12 @@ final class NotesPanelModel {
 
     /// Lists iteration `number` of `document` in place of its current notes; nil goes back to them.
     func showIteration(_ number: Int?, of document: Document) {
+        pastGeneration += 1
+        let generation = pastGeneration
         pastObservation?.cancel()
         pastObservation = nil
         pastNotes = []
-        guard let number else {
+        guard let number, location?.contains(document) == true else {
             viewedIteration = nil
             applyGroups()
             return
@@ -207,8 +245,9 @@ final class NotesPanelModel {
         pastObservation = Task { [weak self] in
             do {
                 for try await notes in stream {
-                    self?.pastNotes = notes
-                    self?.applyGroups()
+                    guard let self, !Task.isCancelled, generation == self.pastGeneration else { return }
+                    self.pastNotes = notes
+                    self.applyGroups()
                 }
             } catch {
                 Log.notes.error("iteration notes observation failed: \(error, privacy: .public)")
@@ -218,7 +257,7 @@ final class NotesPanelModel {
     }
 
     private func applyGroups() {
-        groups = Self.merged(liveGroups, past: viewedIteration.map { (DocumentNotes(document: $0.document, notes: pastNotes)) })
+        groups = Self.merged(liveGroups, past: viewedIteration.map { (DocumentNotes(document: $0.document, notes: pastNotes)) }).filter { location?.contains($0.document) == true }
     }
 
     /// `live` with `past`'s document listing `past`'s notes instead, in path order. Kept when it has none: its header
@@ -326,7 +365,7 @@ final class NotesPanelModel {
         let needle = searchText.trimmingCharacters(in: .whitespaces)
         func contains(_ text: String?) -> Bool { Self.contains(text, needle) }
         let filtered = groups.compactMap { group -> DocumentNotes? in
-            if isEmptyViewedIteration(group) { return group }
+            if isEmptyViewedIteration(group) || (group.notes.isEmpty && filter == .all && colorFilter.isEmpty && needle.isEmpty) { return group }
             let fileMatches = !needle.isEmpty && contains(group.document.fileName)
             let notes = group.notes.filter { note in
                 listed(in: filter, note)

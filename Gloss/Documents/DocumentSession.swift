@@ -48,9 +48,9 @@ final class DocumentSession: Identifiable {
     /// Images and PDFs are decoded whole; past this they are refused rather than read into memory.
     static let mediaThreshold: Int64 = 200 * 1024 * 1024
 
-    let id: String
+    var id: String { "\(hostID.rawValue):\(path)" }
     let hostID: HostID
-    let path: String
+    private(set) var path: String
     /// From the file name at first, then `.text` when an unknown extension turned out to hold text.
     private(set) var kind: DocumentKind
     private let fileSystem: any FileSystemProvider
@@ -78,6 +78,8 @@ final class DocumentSession: Identifiable {
     var banner: Banner?
     var conflict: ConflictState?
     private(set) var isSaving = false
+    private(set) var isRelocating = false
+    private var externalChangesInFlight = 0
     var lastError: String?
 
     @ObservationIgnored private var watcher: Task<Void, Never>?
@@ -141,7 +143,6 @@ final class DocumentSession: Identifiable {
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot,
          pastIteration: Int? = nil) {
-        self.id = "\(hostID.rawValue):\(path)"
         self.hostID = hostID
         self.path = path
         self.kind = DocumentKindDetector.kind(forPath: path)
@@ -673,7 +674,7 @@ final class DocumentSession: Identifiable {
         // A save already in flight (⌘S on a slow remote file, then Save All) is waited for, not skipped: skipping
         // left the document dirty and made Save All report it as unsaved a moment before it was.
         for _ in 0..<600 where isSaving { try? await Task.sleep(for: .milliseconds(50)) }
-        guard let controller = textController, !isReadOnly, !isSaving else { return }
+        guard let controller = textController, !isReadOnly, !isSaving, !isRelocating else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -810,6 +811,7 @@ final class DocumentSession: Identifiable {
     }
 
     private func write(_ text: String) async throws {
+        guard !isRelocating || isSaving else { throw FileSystemError.io("Finish recovering the rename before saving.") }
         // Written back in the encoding it was read in. A character that encoding can't hold refuses the save rather
         // than switching the whole file to UTF-8, which would garble every non-ASCII byte already in it.
         guard let data = textEncoding.encode(text) else { throw EncodingRefusal(encoding: textEncoding) }
@@ -855,6 +857,9 @@ final class DocumentSession: Identifiable {
     }
 
     func handleExternalChange() async {
+        guard !isRelocating, !Task.isCancelled else { return }
+        externalChangesInFlight += 1
+        defer { externalChangesInFlight -= 1 }
         // A file that vanished says so instead of quietly showing what it held. Editors that save by writing a new
         // file and renaming it over the old one leave the path empty for a moment, so look twice before saying it.
         if await isMissingOnDisk() {
@@ -923,6 +928,51 @@ final class DocumentSession: Identifiable {
         } catch {
             lastError = "Could not save \(fileName): \(error.localizedDescription)"
         }
+    }
+
+    /// Stop writes and drain existing IO before the filesystem moves. The editor itself stays intact.
+    func suspendForRelocation() async throws {
+        isRelocating = true
+        watcher?.cancel()
+        for _ in 0..<600 {
+            if !isSaving && externalChangesInFlight == 0 && isLoaded { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        throw FileSystemError.io("The document is still busy. Try renaming again after it finishes loading or saving.")
+    }
+
+    func resumeAfterRelocation() {
+        isRelocating = false
+        startWatching()
+    }
+
+    func retarget(to newPath: String) async throws {
+        guard newPath != path else { return }
+        // A tab that never got a record (too large to show, or failed to load) has no review history to follow.
+        if document != nil {
+            guard let relocated = try await noteStore.document(hostID: hostID, path: newPath) else {
+                throw FileSystemError.io("The renamed document’s review record is unavailable.")
+            }
+            document = relocated
+        }
+        path = newPath
+        if banner == .deletedOnDisk { banner = nil }
+        if let markdown {
+            markdown.baseURL = hostID == .local ? URL(fileURLWithPath: PathUtilities.parent(of: path), isDirectory: true) : nil
+            markdown.documentDirectory = PathUtilities.parent(of: path)
+            if hostID != .local {
+                let fileSystem = fileSystem, directory = PathUtilities.parent(of: path), threshold = Self.mediaThreshold
+                markdown.loadImage = { source in
+                    let decoded = source.removingPercentEncoding ?? source
+                    let target = decoded.hasPrefix("/") ? decoded : (PathUtilities.join(directory, decoded) as NSString).standardizingPath
+                    guard let attrs = try? await fileSystem.stat(target), attrs.kind == .file, attrs.size <= threshold else { return nil }
+                    return try? await fileSystem.read(target)
+                }
+            }
+            markdown.rebuildNow()
+        }
+        html?.retargetFile(to: newPath)
+        if case .quickLook = state { state = .quickLook(URL(fileURLWithPath: newPath)) }
     }
 
     func close() {

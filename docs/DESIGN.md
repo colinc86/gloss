@@ -147,7 +147,7 @@ platform there rather than forcing icons on). AppKit menus
 macOS 27 decides when menu images show and typically hides them, and the app follows the platform there rather
 than forcing icons on. Replacing a
 standard group must keep its standard items (replacing the save group took Close with it; Close Window is back on
-⌘W). Menu items are title case and say how much they touch: "Send All Drafts (5)", "Copy This Document's
+⌘W). Menu items are title case and say how much they touch: "Send Shown Drafts in This Location (5)", "Copy This Document's
 Drafts as Packet (2)", disabled when there is nothing to act on or no agent to send to. Window tabbing is off (`NSWindow.allowsAutomaticWindowTabbing`), since the folder switcher does that job.
 Every text field has a way in from the keyboard: View › Filter Files (⌥⌘J, as Xcode's navigator filter) and
 Notes › Search Notes (menu only: ⌥⌘F is Find and Replace in most Mac apps) put the caret in their fields, as Find
@@ -194,8 +194,7 @@ path. Dropping on the Dock icon is not supported yet.
   secondary when its card is hovered or selected; primary with a soft fill under the pointer. `prominent` makes the
   one primary action accent-filled; destructive turns red only under the pointer.
 - **PressableStyle**: buttons shrink to 90% while pressed.
-- **FilterBar**: a capsule track of options, each with its symbol and count; only the selected option shows its
-  name. The selection is one capsule that slides between options (`matchedGeometryEffect`), counts roll with
+- **FilterBar**: a capsule track of options, each with its symbol and count; all names show when they fit, falling back to the selected name and then icons at narrow widths. The selection is one capsule that slides between options (`matchedGeometryEffect`), counts roll with
   `numericText`, empty options dim. Counts show how much work exists, ignoring search and color filters.
   The notes filters are All, Drafts, Sent, Resolved, and Attention (orange ▲): notes that lost their place plus
   questions back from agents, the same "needs attention" the tree's markers and the Dock badge use. Its count turns
@@ -473,12 +472,20 @@ path. Dropping on the Dock icon is not supported yet.
   to clear the selection. Each action counts only the notes it applies to (Send takes drafts and sent notes, Reopen
   resolved ones) and is absent when none apply. Right-clicking a selected card offers the same, worded for the
   selection ("Send 3 Notes to claude"). With none or one selected, the row beside the agent chip holds the panel's own
-  Send (this document's drafts as the panel shows them, the same as ⌘↩, with the count and any color filter's dots)
-  and a ⋯ menu (Send All Drafts, Copy Packet for Document); selecting several hides them, since the bar above then says
-  what goes (2026-10-06: sending every draft had come to need ⌘A first). That Send is as tall as the agent chip,
-  one line or two, in the chip's shape: an accent rounded rectangle (`DS.Radius.m`) with a white label, a secondary
-  fill while it can't send, and a small press. `.glassProminent` is a fixed-height capsule, half the chip's height
-  once the chip wraps.
+  Send (the drafts in its scope as the panel shows them, the same as ⌘↩, with the count and any color filter's dots),
+  split by a hairline into Send and a chevron; selecting several hides it, since the bar above then says what goes.
+  The chevron's menu picks what Send sends, This File or This Location (This File at launch), each with its count,
+  and copies the same notes as a packet. Counts and packets share the same location, current iteration and filters,
+  which apply even while the panel is closed. Send is as tall as the agent chip, in the chip's shape: an accent
+  rounded rectangle (`DS.Radius.m`) with white labels, a secondary fill while it can't send. A missing recipient
+  says Choose an Agent; an unavailable one keeps its name with an orange warning mark and can't receive sends.
+  Choosing a recipient does not navigate away from the reviewed location.
+- **Location boundary**: the panel shows only the selected location’s files and subfolders on the same host. Switching locations
+  clears card selection, historical overrides, and scroll position immediately, preserving notes and unfinished follow-ups.
+  Search, state/color counts, and bulk actions share this scope. With no location the panel asks for one. Explorer badges stay global.
+- **Available actions** use secondary contrast without extra dimming and at least 28 × 28 pt hit areas; hover and destructive styling remain.
+- **File naming** uses a sheet with Create/Rename, a focused name field, and inline errors that retain the name. Rename recovery
+  shows both paths and a Retry Rename Recovery action; affected files cannot be saved until the operation is reconciled.
 - **Delete is undoable, not confirmed**: deleting a note (trash button, context menu, or the Delete key) happens at
   once, and several selected go as one ("3 notes deleted", one Undo brings them all back); a glass toast ("Note deleted", the note's first line, Undo) rises over the bottom of the panel for 6 s
   (held while the pointer is on it), and Edit › Undo (⌘Z) does the same. A deleted note goes to Recently Deleted
@@ -496,7 +503,8 @@ path. Dropping on the Dock icon is not supported yet.
   anchor, the comment, "Deleted 3 days ago") with Restore and Delete Now, also in its context menu. A footer says how
   long notes stay. Deleted notes draw nothing on the page and no paths. With no folder in front it says so.
 - **Iterations** (issue #18): at the trailing edge of each document's header in the notes panel, a borderless
-  "Iteration 3 ⌄" menu (caption size, secondary) for that document, once it has a note; the file name truncates first.
+  "Iteration 3 ⌄" menu (caption size, secondary) for that document once it has review history; the file name truncates first.
+  The same menu is available in the viewer header. An empty current iteration keeps its document header within the location.
   While an earlier iteration is shown it reads that one ("Iteration 0") in the accent color with a clock symbol, and
   VoiceOver says it is an earlier iteration. Picking from a closed document's menu opens it first. It lists the iterations newest first, each a checkable row with its label
   ("Iteration 2 · Oct 6", or its name) over "Current · 4 notes" or "Oct 8 · 3 notes · a1b2c3d" (and "no snapshot"
@@ -505,7 +513,7 @@ path. Dropping on the Dock icon is not supported yet.
   a `.mode` notice over the viewer: the iteration's label, "Read-only: the file as this iteration left it, with its
   notes.", Show Changes Since and Back to Current (prominent); the viewer shows the snapshot, locked, with no Add Note
   button, and the panel lists that iteration's notes (an iteration with none keeps its document's header, with "No
-  notes in iteration 0" under it), read-only: their cards offer only Reveal, Bring Forward and
+  notes in this iteration" under it), read-only: their cards offer only Reveal, Bring Forward and
   the Copy items (no follow-up field, edit, resolve, reopen or delete). The copy's card says "Brought forward from Iteration 2 · Oct 6" under its anchor. New Iteration with open
   notes asks in a 420 pt sheet: "Start a new iteration of PLAN.md?", how many notes aren't resolved, a "Don't ask
   again" checkbox, Cancel, Leave Them Behind, and Bring Them Along (default); with one note, Leave It Behind and Bring It
@@ -579,13 +587,6 @@ path. Dropping on the Dock icon is not supported yet.
   `<picture>` draws the `<source>` whose `media` is `(prefers-reduced-motion: reduce)`, as a browser would. Every
   `<source srcset>` counts as an embed in `EmbedScanner`, drawn or not, so a picture's number never depends on the
   setting.
-- **PDF page thumbnails** (`PDFThumbnailColumn`): for documents with more than one page, a sidebar toggle at the start
-  of the PDF toolbar slides in a 120 pt column that maps the document and its notes, as Preview's sidebar maps pages.
-  Each page is a small sheet with a soft shadow, lifting a little under the pointer; the current page is ringed in the
-  accent colour with its number in accent, and the column keeps it in view. A page with open notes carries a badge in
-  its corner: up to three of the notes' colours as overlapping dots and their count, popping in on the bouncy curve
-  as notes are added. A click goes to the page. Thumbnails render lazily as they scroll in. Off until asked for; the
-  toggle draws filled while the column shows.
 - **Mermaid diagrams in rendered Markdown** (issue #16, 2026-10-08): a fence whose language is `mermaid` is drawn by
   the Mermaid release bundled in `Viewers/Resources/Mermaid` (MIT, pinned, see `MermaidRenderer.version`), in one
   offscreen web view shared by every document that draws a diagram at a time and closes after 30 s idle. Every
@@ -600,6 +601,13 @@ path. Dropping on the Dock icon is not supported yet.
   `EmbedScanner` counts Mermaid fences as embeds of `mermaid:`, ending a fence with the quote or list item that holds
   it, so notes, crops and occurrences work as on any picture, and the packet says `Image: Mermaid diagram (WxH)`. A
   diagram the scanner doesn't see where it is drawn takes no notes, rather than another diagram's number.
+- **PDF page thumbnails** (`PDFThumbnailColumn`): for documents with more than one page, a sidebar toggle at the start
+  of the PDF toolbar slides in a 120 pt column that maps the document and its notes, as Preview's sidebar maps pages.
+  Each page is a small sheet with a soft shadow, lifting a little under the pointer; the current page is ringed in the
+  accent colour with its number in accent, and the column keeps it in view. A page with open notes carries a badge in
+  its corner: up to three of the notes' colours as overlapping dots and their count, popping in on the bouncy curve
+  as notes are added. A click goes to the page. Thumbnails render lazily as they scroll in. Off until asked for; the
+  toggle draws filled while the column shows.
 - **Image viewer canvas**: the picture lies on the under-page grey like a sheet, with a soft shadow (10 pt blur, 2 pt
   drop, 24% black) that stays the same on screen at any zoom. A picture with transparency sits on a quiet
   checkerboard (8-point squares at any zoom; white and 93% grey in light, 20% and 25% in dark), clipped to the

@@ -375,12 +375,13 @@ public struct NoteStore: Sendable {
 
     /// Open notes (draft and sent by default), optionally limited to one host and a path prefix (a file or a
     /// directory). What agents see through MCP passes `[.sent]`: a draft stays the user's until they press Send.
-    public func pendingNotes(hostID: HostID? = nil, pathPrefix: String? = nil, states: Set<NoteState> = [.draft, .sent]) async throws -> [(note: Note, document: Document)] {
+    public func pendingNotes(hostID: HostID? = nil, pathPrefix: String? = nil, states: Set<NoteState> = [.draft, .sent], currentIterationOnly: Bool = false) async throws -> [(note: Note, document: Document)] {
         let stateValues = states.map(\.rawValue)
         return try await queue.read { db in
             var request = NoteRecord.live
                 .filter(stateValues.contains(Column("state")))
                 .including(required: NoteRecord.document)
+            if currentIterationOnly { request = request.filter(sql: "note.iteration = document.current_iteration") }
             if let hostID {
                 request = request.filter(sql: "document.host_id = ?", arguments: [hostID.rawValue])
             }
@@ -654,6 +655,11 @@ public struct NoteStore: Sendable {
                 resolveOutcome: nil, resolveMessage: nil, previousState: found ? nil : NoteState.draft.rawValue, iteration: iteration
             )
             try record.insert(db)
+            for var attachment in try AttachmentRecord.filter(Column("note_id") == source.id).fetchAll(db) {
+                attachment.id = AttachmentID.new().rawValue
+                attachment.noteId = record.id
+                try attachment.insert(db)
+            }
             try Self.insertMessage(note: record.id, author: .app, kind: .comment, body: origin, at: date, sent: true, db)
             return try Note(record: try Self.refetch(record, db), db)
         }
@@ -1197,14 +1203,15 @@ public struct NoteStore: Sendable {
         return Dictionary(grouping: records.map(NoteMessage.init(record:)), by: \.noteID)
     }
 
-    /// Observes every document that has notes, for the notes panel.
+    /// Observes every document with review history, for the notes panel: a note not deleted, in any iteration, or
+    /// an iteration past the first, so an emptied current iteration keeps its header (and its menu of earlier ones).
     /// Each document's notes in its current iteration (issue #18): earlier iterations are looked at one at a time.
     public func observeDocumentsWithNotes() -> AsyncThrowingStream<[DocumentNotes], any Error> {
         Self.stream(ValueObservation.tracking { db in
             let documents = try DocumentRecord
                 .filter(sql: """
-                    EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id AND note.deleted_at IS NULL
-                            AND note.iteration = document.current_iteration)
+                    EXISTS (SELECT 1 FROM note WHERE note.document_id = document.id AND note.deleted_at IS NULL)
+                    OR EXISTS (SELECT 1 FROM iteration WHERE iteration.document_id = document.id AND iteration.number > 0)
                     """)
                 .order(Column("host_id"), Column("path"))
                 .fetchAll(db)

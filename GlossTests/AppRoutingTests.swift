@@ -106,11 +106,13 @@ struct VisibleDraftsTests {
         try "one\ntwo\n".write(toFile: "\(root)/a.txt", atomically: true, encoding: .utf8)
         let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
         let path = "\(root)/a.txt".addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
+        await model.explorer.openRoot(hostID: .local, path: root)
         model.openDocument(hostID: .local, path: "\(root)/a.txt")
         for (line, color) in [(1, "blue"), (2, "pink")] {
             await URLRouter.handle(URL(string: "gloss://note?host=local&path=\(path)&line=\(line)&text=n\(line)&color=\(color)&token=\(URLRouter.token() ?? "")")!, model: model)
         }
         for _ in 0..<100 where (model.activeSession?.notes.count ?? 0) < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        for _ in 0..<100 where model.notesPanel.groups.flatMap(\.notes).count < 2 { try await Task.sleep(for: .milliseconds(20)) }
         #expect(model.visibleDrafts.count == 2)
         model.notesPanel.colorFilter = [.blue]
         #expect(model.visibleDrafts.map(\.body) == ["n1"])
@@ -121,6 +123,9 @@ struct VisibleDraftsTests {
         model.notesPanel.filter = .sent
         #expect(model.visibleDrafts.isEmpty, "a tab that shows no drafts sends none")
         model.showNotesPanel = false
-        #expect(model.visibleDrafts.count == 2, "with the panel closed, nothing is filtered")
+        #expect(model.visibleDrafts.isEmpty, "the chosen send filters remain effective when the panel is closed")
+        model.notesPanel.filter = .all
+        #expect(model.visibleDrafts.count == 2)
+        await model.shutDown()
     }
 }

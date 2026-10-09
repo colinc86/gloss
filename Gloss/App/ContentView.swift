@@ -77,6 +77,21 @@ struct ContentView: View {
                     }
                 }
             }
+            .sheet(item: Binding(get: { model.explorer.fileNameRequest }, set: { model.explorer.fileNameRequest = $0 })) { request in
+                FileOperationSheet(request: request) { model.explorer.fileNameRequest = nil }
+            }
+            .alert("Couldn’t Complete the Action", isPresented: Binding(get: { model.explorer.lastError != nil }, set: { if !$0 { model.explorer.lastError = nil } })) {
+                Button("OK", role: .cancel) { model.explorer.lastError = nil }
+            } message: { Text(model.explorer.lastError ?? "") }
+            .safeAreaInset(edge: .bottom) {
+                if let move = model.renameRecovery {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Rename needs recovery").font(.headline)
+                        Text("\(move.from) → \(move.to)").font(.caption).textSelection(.enabled)
+                        Button("Retry Rename Recovery") { Task { await model.retryRenameRecovery() } }
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
             .toolbar(removing: .title)
             // A page's title, once it has loaded, names it in the explorer's Web section and in Open Quickly.
             .onChange(of: model.activeSession?.html?.pageTitle) { _, title in

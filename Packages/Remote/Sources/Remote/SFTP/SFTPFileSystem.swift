@@ -131,6 +131,21 @@ public struct SFTPFileSystem: FileSystemProvider {
         }
     }
 
+    public func createFile(at path: String) async throws -> FileAttributes {
+        let client = try await channel.client()
+        let handle: Data
+        do {
+            handle = try await client.open(path, flags: [.write, .create, .exclusive], attributes: SFTPAttributes(permissions: 0o644))
+        } catch let status as SFTPStatus {
+            // v3 reports collisions as generic FAILURE. lstat also sees dangling symlinks.
+            if (try? await client.lstat(path)) != nil { throw FileSystemError.alreadyExists(path) }
+            throw Self.map(status, path: path)
+        }
+        do { try await client.close(handle: handle) }
+        catch { throw FileSystemError.io("The file was created, but closing it failed: \(error). Refresh the folder before trying again.") }
+        return try await stat(path)
+    }
+
     public func writeAtomically(_ data: Data, to path: String, preservingModeFrom original: FileAttributes?) async throws -> FileAttributes {
         let client = try await channel.client()
         // Saving through a symlink replaces the target, not the link; dotfiles checkouts depend on that.
@@ -170,6 +185,17 @@ public struct SFTPFileSystem: FileSystemProvider {
             // Once the original is gone the temp file is the only copy of the new bytes: leave it and name it.
             if originalRemoved { throw Self.map(status, path: temporary) }
             try? await client.remove(temporary)
+            throw Self.map(status, path: path)
+        }
+    }
+
+    public func createDirectory(at path: String) async throws {
+        let client = try await channel.client()
+        do {
+            try await client.mkdir(path, attributes: SFTPAttributes(permissions: 0o755))
+        } catch let status as SFTPStatus {
+            // v3 reports collisions as generic FAILURE. lstat also sees dangling symlinks.
+            if (try? await client.lstat(path)) != nil { throw FileSystemError.alreadyExists(path) }
             throw Self.map(status, path: path)
         }
     }

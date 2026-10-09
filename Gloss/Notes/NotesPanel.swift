@@ -36,7 +36,9 @@ struct NotesPanel: View {
         VStack(spacing: 0) {
             header
             Divider()
-            if visible.isEmpty, panel.isFiltering {
+            if panel.location == nil {
+                EmptyState(symbol: "folder", title: "Choose a location", message: "Open a folder or page to see its notes.")
+            } else if visible.isEmpty, panel.isFiltering {
                 let copy = NotesPanelModel.emptyCopy(filter: panel.filter, colors: panel.colorFilter, search: panel.searchText,
                                                      hidingResolved: panel.isHidingResolved)
                 EmptyState(symbol: copy.symbol, title: copy.title, message: copy.message,
@@ -54,7 +56,7 @@ struct NotesPanel: View {
             } else if visible.isEmpty {
                 EmptyState(
                     symbol: "note.text",
-                    title: "No notes yet",
+                    title: "No notes in this location",
                     message: "Mark up any file, then hand your notes to an agent in one go.",
                     steps: [
                         .init(symbol: "text.cursor", text: "Select text, a region, or cells in a file"),
@@ -77,8 +79,8 @@ struct NotesPanel: View {
                         }
                         ForEach(run.groups) { group in
                             Section {
-                                if let viewed = panel.viewedIteration, panel.isEmptyViewedIteration(group) {
-                                    Text("No notes in iteration \(viewed.number)")
+                                if group.notes.isEmpty {
+                                    Text("No notes in this iteration")
                                         .font(.callout)
                                         .foregroundStyle(.secondary)
                                         .padding(.vertical, DS.Space.xs)
@@ -107,6 +109,7 @@ struct NotesPanel: View {
                         }
                     }
                 }
+                .id(panel.locationGeneration)
                 .listStyle(.inset)
                 .focused($listFocused)
                 // Clicking the card that is already selected changes no selection, so it would leave the keyboard
@@ -275,13 +278,11 @@ struct NotesPanel: View {
                         colors: panel.colorFilter,
                         filtered: model.draftsAreFiltered,
                         isSending: model.send.isSending,
-                        hasTarget: model.send.lastTarget != nil
-                    ) {
-                        Task { await model.sendVisibleDrafts() }
-                    }
+                        hasTarget: model.send.isTargetAvailable,
+                        action: { Task { await model.sendVisibleDrafts() } },
+                        menu: { sendMenuItems }
+                    )
                     .transition(.opacity.calmed)
-                    sendMenu
-                        .transition(.opacity.calmed)
                 }
             }
             // As tall as the chip, which wraps to two lines when the agent has a task: Send fills that height.
@@ -292,23 +293,22 @@ struct NotesPanel: View {
     }
 
     /// Sends beyond this document's drafts, titled like the Notes menu, with how many notes each touches.
-    private var sendMenu: some View {
-        let allDrafts = model.notesPanel.draftCount
-        let documentDrafts = model.visibleDrafts.count
-        return Menu {
-            Button("Send All Drafts\(allDrafts > 0 ? " (\(allDrafts))" : "")") { Task { await model.sendAllDrafts(scope: .all) } }
-                .disabled(allDrafts == 0 || model.send.lastTarget == nil)
-            Button("\(model.draftsAreFiltered ? "Copy Shown Drafts as Packet" : "Copy Packet for Document")\(documentDrafts > 0 ? " (\(documentDrafts))" : "")") {
+    private var sendMenuItems: some View {
+        let fileDrafts = model.sendSelection(scope: .activeDocument).notes.count
+        let locationDrafts = model.sendSelection(scope: .all).notes.count
+        let shown = model.visibleDrafts.count
+        return Group {
+            Picker("Send", selection: Binding(get: { model.sendScope }, set: { model.sendScope = $0 })) {
+                Text("This File\(fileDrafts > 0 ? " (\(fileDrafts))" : "")").tag(AppModel.SendScope.activeDocument)
+                Text("This Location\(locationDrafts > 0 ? " (\(locationDrafts))" : "")").tag(AppModel.SendScope.all)
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Copy Shown Notes as Packet\(shown > 0 ? " (\(shown))" : "")") {
                 Task { await model.copyVisibleDrafts() }
             }
-            .disabled(documentDrafts == 0)
-        } label: {
-            Image(systemName: "ellipsis.circle")
+            .disabled(shown == 0)
         }
-        .menuStyle(.borderlessButton)
-        .frame(width: 28)
-        .help("More send options")
-        .accessibilityLabel("More send options")
     }
 
     /// Notes per colour across every document (before search and filters, like the state counts).
@@ -440,7 +440,8 @@ struct TargetPicker: View {
                 isDiscovering: model.send.isDiscovering,
                 inFolder: model.send.lastTarget.map { target in
                     model.explorer.selectedTab.map { target.runs(inHost: $0.hostID, path: $0.path) } ?? false
-                } ?? false
+                } ?? false,
+                isAvailable: model.send.lastTarget == nil || model.send.isTargetAvailable
             )
         }
         .menuStyle(.button)
@@ -483,6 +484,7 @@ struct NoteCard: View {
     var inRun = false
     @State private var lastSend: SendSummary?
     @State private var thumbnail: NoteThumbnail?
+    @State private var attachmentUnavailable = false
     /// The anchored line in the editor's colours, worked out once per note.
     @State private var colouredExcerpt: AttributedString?
     @State private var hovering = false
@@ -645,7 +647,9 @@ struct NoteCard: View {
         }
         // Image and PDF region notes keep a PNG of the region; show it so the card says what was marked.
         .task(id: note.updatedAt) {
-            guard note.anchor.type == .image || note.anchor.type == .pdf, let attachment = try? await model.noteStore.attachments(for: note.id).first else {
+            let attachments = (try? await model.noteStore.attachments(for: note.id)) ?? []
+            attachmentUnavailable = attachments.contains { !FileManager.default.fileExists(atPath: $0.localPath) }
+            guard note.anchor.type == .image || note.anchor.type == .pdf, let attachment = attachments.first else {
                 thumbnail = nil
                 return
             }
@@ -818,6 +822,10 @@ struct NoteCard: View {
     @ViewBuilder
     private var threadView: some View {
         let thread = thread
+        if attachmentUnavailable {
+            Label("Original attachment unavailable", systemImage: "exclamationmark.triangle")
+                .font(.caption).foregroundStyle(.orange)
+        }
         if !thread.comment.isEmpty || thumbnail != nil {
             HStack(alignment: .top, spacing: DS.Space.m) {
                 TruncatingText(text: Text(Self.styledBody(thread.comment)).font(.callout).foregroundStyle(isSettled ? .secondary : .primary),
@@ -1173,7 +1181,7 @@ struct NoteCard: View {
                              symbol: "paperplane.fill", prominent: true, emphasized: lit || note.hasUnsentFollowUps) {
                 Task { await model.send(noteIDs: [note.id]) }
             }
-            .disabled(model.send.lastTarget == nil)
+            .disabled(!model.send.isTargetAvailable)
         }
         if canFollowUp(thread) {
             InlineIconButton(title: note.waitingOnUser ? "Answer the agent" : "Follow up", symbol: "arrowshape.turn.up.left.fill",
@@ -1493,6 +1501,8 @@ struct AgentChip: View {
     let symbol: String
     let isDiscovering: Bool
     let inFolder: Bool
+    /// False when the chosen agent has gone away: the chip keeps its name, marked, rather than swapping in another.
+    var isAvailable = true
     @State private var hovering = false
 
     var body: some View {
@@ -1528,6 +1538,11 @@ struct AgentChip: View {
             Spacer(minLength: DS.Space.xs)
             if isDiscovering {
                 ProgressView().controlSize(.mini)
+            } else if !isAvailable {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel("Unavailable")
             }
             Image(systemName: "chevron.up.chevron.down")
                 .font(.caption2.weight(.semibold))
@@ -1540,7 +1555,8 @@ struct AgentChip: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(DS.Motion.snappy, value: hovering)
-        .help(target.map { "Notes go to \($0.label)\($0.status.map { " (\($0))" } ?? ""). Click to choose another agent." } ?? "Choose where notes are sent")
+        .help(!isAvailable ? "\(target?.label ?? "This agent") is unavailable. Click to choose another agent or refresh."
+              : target.map { "Notes go to \($0.label)\($0.status.map { " (\($0))" } ?? ""). Click to choose another agent." } ?? "Choose where notes are sent")
     }
 
     private func agentLine(_ parts: (agent: String, title: String?, pane: String?)) -> some View {
@@ -1615,26 +1631,24 @@ struct StatusDot: View {
 /// A prominent button as tall as the row it sits in, in the agent chip's shape: an accent rounded rectangle with a
 /// white label, a secondary fill while disabled, and a small press. `.glassProminent` is a fixed-height capsule, half
 /// the chip's height once the chip wraps.
-private struct FillingProminentButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-
+private struct SendHalfButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(isEnabled ? Color.white : Color.secondary)
-            .padding(.horizontal, DS.Space.m)
+            .padding(.leading, DS.Space.m)
+            .padding(.trailing, DS.Space.s)
             .padding(.vertical, DS.Space.s)
             .frame(maxHeight: .infinity)
-            .background(isEnabled ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.secondary),
-                        in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
-            .opacity(configuration.isPressed ? 0.85 : 1)
+            .background(Color.black.opacity(configuration.isPressed ? 0.12 : 0))
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(DS.Motion.snappy, value: configuration.isPressed)
-            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+            .contentShape(Rectangle())
     }
 }
 
-/// The panel's primary action: send this document's drafts. Says how many will go, and why it is unavailable.
-private struct SendDraftsButton: View {
+/// The panel's primary action: send the drafts in the chosen scope. Says how many will go, and why it is unavailable.
+/// One accent shape split by a hairline: Send on the left, and a chevron on the right whose menu picks the scope
+/// (This File or This Location) and copies the packet instead.
+private struct SendDraftsButton<MenuItems: View>: View {
     let count: Int
     /// The notes panel's colour filter; the button sends only those colours while it is set.
     var colors: Set<NoteColor> = []
@@ -1650,8 +1664,45 @@ private struct SendDraftsButton: View {
     let isSending: Bool
     let hasTarget: Bool
     let action: () -> Void
+    @ViewBuilder let menu: () -> MenuItems
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hoveringChevron = false
+
+    private var canSend: Bool { isEnabled && hasTarget && count > 0 && !isSending }
 
     var body: some View {
+        HStack(spacing: 0) {
+            sendButton
+            Rectangle()
+                .fill((canSend ? Color.white : Color.secondary).opacity(0.35))
+                .frame(width: 1)
+                .padding(.vertical, DS.Space.s)
+            Menu {
+                menu()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, DS.Space.s)
+                    .frame(maxHeight: .infinity)
+                    .background(Color.white.opacity(hoveringChevron && canSend ? 0.12 : 0))
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize(horizontal: true, vertical: false)
+            .onHover { hoveringChevron = $0 }
+            .help("Choose what Send sends, or copy it as a packet")
+            .accessibilityLabel("Send options")
+        }
+        .foregroundStyle(canSend ? Color.white : Color.secondary)
+        .background(canSend ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.fill.secondary),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .animation(DS.Motion.snappy, value: canSend)
+    }
+
+    private var sendButton: some View {
         Button(action: action) {
             HStack(spacing: DS.Space.xs) {
                 LaunchingPlane(isSending: isSending)
@@ -1683,14 +1734,11 @@ private struct SendDraftsButton: View {
             .lineLimit(1)
             .fixedSize()
         }
-        .buttonStyle(FillingProminentButtonStyle())
+        .buttonStyle(SendHalfButtonStyle())
         .disabled(!hasTarget || count == 0 || isSending)
         .animation(DS.Motion.smooth, value: count)
         .animation(DS.Motion.bouncy, value: colors)
-        .help(!hasTarget ? "Choose an agent first"
-              : count == 0 ? (filtered ? "No drafts shown for this document" : "No drafts in this document")
-              : filtered ? "Send the \(count) \(colorWords)draft\(count == 1 ? "" : "s") shown for this document (⌘↩)"
-              : "Send this document's \(count) draft\(count == 1 ? "" : "s") (⌘↩)")
+        .help(!hasTarget ? "Choose an available agent first" : count == 0 ? "No eligible notes in this scope" : "Send the \(count) shown notes in the selected scope (⌘↩)")
     }
 }
 
@@ -1772,9 +1820,16 @@ private struct SendToast: View {
                     .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
                     .id("sending")
             } else if let result = model.send.lastResult {
-                if let failure = result.failure {
+                if let reason = result.failure, result.cancelled {
+                    card(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                         title: result.copied ? "Didn't copy \(noun(result.noteIDs.count))" : "Didn't send \(noun(result.noteIDs.count))", detail: reason) {
+                        dismissButton
+                    }
+                    .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
+                    .id(result.id)
+                } else if let failure = result.failure {
                     card(symbol: "exclamationmark.circle.fill", tint: .red, title: "Couldn't send \(noun(result.noteIDs.count))", detail: failure) {
-                        Button("Retry") { Task { await model.send.retry() } }
+                        Button("Retry") { Task { await model.retrySend() } }
                             .buttonStyle(.glassProminent)
                             .controlSize(.small)
                         dismissButton
@@ -2070,7 +2125,7 @@ private struct BulkActionBar: View {
                     }
                 }
                 .buttonStyle(.glassProminent)
-                .disabled(model.send.lastTarget == nil || model.send.isSending)
+                .disabled(!model.send.isTargetAvailable || model.send.isSending)
                 .help(model.send.lastTarget.map { "Send the \(sendable.count) drafts and sent notes to \($0.label)" } ?? "Choose an agent above first")
             }
             if !resolvable.isEmpty {
