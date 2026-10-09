@@ -502,8 +502,8 @@ path. Dropping on the Dock icon is not supported yet.
   Changes while tinted, and Rename… (an alert with a field; empty goes back to the date). Picking an earlier one puts
   a `.mode` notice over the viewer: the iteration's label, "Read-only: the file as this iteration left it, with its
   notes.", Show Changes Since and Back to Current (prominent); the viewer shows the snapshot, locked, with no Add Note
-  button, and the panel lists that iteration's notes. A note of an earlier iteration offers Bring Forward in its
-  menu; the copy's card says "Brought forward from Iteration 2 · Oct 6" under its anchor. New Iteration with open
+  button, and the panel lists that iteration's notes, read-only: their cards offer only Reveal, Bring Forward and
+  the Copy items (no follow-up field, edit, resolve, reopen or delete). The copy's card says "Brought forward from Iteration 2 · Oct 6" under its anchor. New Iteration with open
   notes asks in a 420 pt sheet: "Start a new iteration of PLAN.md?", how many notes aren't resolved, a "Don't ask
   again" checkbox, Cancel, Leave Them Behind, and Bring Them Along (default).
 - **Send toast**: a glass card floating over the bottom of the notes panel that slides up with `DS.Motion.bouncy`.

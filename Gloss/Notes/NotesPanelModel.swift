@@ -186,6 +186,12 @@ final class NotesPanelModel {
     @ObservationIgnored private var pastNotes: [Note] = []
     @ObservationIgnored private var pastObservation: Task<Void, Never>?
 
+    /// A note of the earlier iteration listed: read-only in the panel.
+    func isPast(_ note: Note) -> Bool {
+        guard let viewed = viewedIteration else { return false }
+        return note.documentID == viewed.document.id && note.iteration == viewed.number
+    }
+
     /// Lists iteration `number` of `document` in place of its current notes; nil goes back to them.
     func showIteration(_ number: Int?, of document: Document) {
         pastObservation?.cancel()

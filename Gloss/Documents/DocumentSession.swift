@@ -154,9 +154,28 @@ final class DocumentSession: Identifiable {
     /// The document row: made or refreshed for the file as it is, only read for an earlier iteration's snapshot, whose
     /// bytes must not become the document's fingerprint.
     private func adoptDocument(kind: DocumentKind, fingerprint: Fingerprint) async throws -> Document {
+        let path = await documentPath()
         guard pastIteration != nil else { return try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint) }
         guard let document = try await noteStore.document(hostID: hostID, path: path) else { throw FileSystemError.notFound(path) }
         return document
+    }
+
+    /// The path the file's document row has: on this Mac `/tmp/a` and `/private/tmp/a` are one file, and the
+    /// spelling its notes were first made under is kept, so opening it under the other never starts a second row
+    /// without them.
+    private func documentPath() async -> String {
+        guard hostID == .local else { return path }
+        for spelling in Self.spellings(of: path) where spelling != path {
+            if (try? await noteStore.document(hostID: hostID, path: spelling)) != nil { return spelling }
+        }
+        return path
+    }
+
+    /// `path` and its other spelling through `/private` (`/tmp`, `/var`, `/etc`).
+    nonisolated static func spellings(of path: String) -> [String] {
+        let aliasFree = ExplorerModel.aliasFree(path)
+        guard ["/tmp", "/var", "/etc"].contains(where: { aliasFree == $0 || aliasFree.hasPrefix($0 + "/") }) else { return [path] }
+        return [path, aliasFree, "/private" + aliasFree]
     }
 
     var isLoaded: Bool {
@@ -822,8 +841,11 @@ final class DocumentSession: Identifiable {
                 guard let self else { return }
                 switch event {
                 case .changed(let paths):
+                    // FSEvents names `/private/tmp/a` for a file opened as `/tmp/a` (the tree's spelling), and Foundation's
+                    // symlink resolving drops `/private` again, so the two spellings are compared without it.
                     let resolved = URL(fileURLWithPath: self.path).resolvingSymlinksInPath().path
-                    guard paths.contains(where: { $0 == self.path || $0 == resolved }) else { continue }
+                    let aliasFree = self.hostID == .local ? ExplorerModel.aliasFree(self.path) : self.path
+                    guard paths.contains(where: { $0 == self.path || $0 == resolved || (self.hostID == .local && ExplorerModel.aliasFree($0) == aliasFree) }) else { continue }
                     await self.handleExternalChange()
                 case .rescan:
                     await self.handleExternalChange()

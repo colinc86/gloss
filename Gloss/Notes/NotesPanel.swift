@@ -116,7 +116,8 @@ struct NotesPanel: View {
                 }
                 .onDeleteCommand {
                     guard !Self.isTypingInCard(NSApp.keyWindow?.firstResponder) else { return }
-                    let ids = panel.selectedNotes.map(\.id)
+                    // An earlier iteration's cards are read-only.
+                    let ids = panel.selectedNotes.filter { !panel.isPast($0) }.map(\.id)
                     guard !ids.isEmpty else { return }
                     Task { await model.notesPanel.delete(ids) }
                 }
@@ -519,9 +520,13 @@ struct NoteCard: View {
     /// The comment and its thread, from the panel's one observation of every note's messages.
     private var thread: NoteThread { NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id)) }
 
+    /// A note of an earlier iteration (issue #18): read-only, offering only Reveal, Bring Forward and the copies.
+    private var isPast: Bool { note.iteration < document.currentIteration }
+
     /// A follow-up needs someone to follow: every note but a draft never sent, whose comment is edited instead.
     private func canFollowUp(_ thread: NoteThread) -> Bool {
-        note.state != .draft || lastSend != nil || note.author != nil || !thread.entries.isEmpty
+        guard !isPast else { return false }
+        return note.state != .draft || lastSend != nil || note.author != nil || !thread.entries.isEmpty
     }
 
     var body: some View {
@@ -646,6 +651,33 @@ struct NoteCard: View {
 
     @ViewBuilder
     private func commands(dividers: Bool) -> some View {
+        if isPast {
+            Button("Reveal in Viewer") { model.reveal(note: note, in: document) }
+            Button("Bring Forward") { Task { await model.iterations.bringForward(note, in: document) } }
+            if dividers { Divider() }
+            copyCommands
+        } else {
+            currentCommands(dividers: dividers)
+        }
+    }
+
+    @ViewBuilder
+    private var copyCommands: some View {
+        Button("Copy as Packet") { Task { await model.copyPacket(noteIDs: [note.id]) } }
+        Button("Copy Comment") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(note.body, forType: .string)
+            model.flashCopied("Comment copied")
+        }
+        Button("Copy Path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(document.path, forType: .string)
+            model.flashCopied("Path copied")
+        }
+    }
+
+    @ViewBuilder
+    private func currentCommands(dividers: Bool) -> some View {
         if canFollowUp(thread) {
             Button("Follow Up…", action: startFollowUp)
             if dividers { Divider() }
@@ -658,25 +690,11 @@ struct NoteCard: View {
         if note.originalAnchor != nil {
             Button("Restore Original") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
         }
-        // A note of an earlier iteration (issue #18): a copy goes into the current one, found again in the file as it is.
-        if note.iteration < document.currentIteration {
-            Button("Bring Forward") { Task { await model.iterations.bringForward(note, in: document) } }
-        }
         if dividers { Divider() }
         if NotesPanelModel.sendable([note]).count == 1, let target = model.send.lastTarget {
             Button("Send to \(target.label)") { Task { await model.send(noteIDs: [note.id]) } }
         }
-        Button("Copy as Packet") { Task { await model.copyPacket(noteIDs: [note.id]) } }
-        Button("Copy Comment") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(note.body, forType: .string)
-            model.flashCopied("Comment copied")
-        }
-        Button("Copy Path") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(document.path, forType: .string)
-            model.flashCopied("Path copied")
-        }
+        copyCommands
         if dividers { Divider() }
         if note.state == .sent {
             Button("Back to Draft") { Task { await model.notesPanel.unsend(note.id) } }
@@ -877,7 +895,7 @@ struct NoteCard: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                if turn.unsent, let id = turn.id, editingMessageID != id {
+                if turn.unsent, !isPast, let id = turn.id, editingMessageID != id {
                     InlineIconButton(title: "Edit this follow-up", symbol: "pencil", emphasized: hovering || isSelected) {
                         messageEditText = turn.text
                         editingMessageID = id
@@ -1131,37 +1149,50 @@ struct NoteCard: View {
     private var actions: some View {
         let lit = hovering || isSelected
         return HStack(spacing: DS.Space.xxs) {
-            if !NotesPanelModel.sendable([note]).isEmpty {
-                InlineIconButton(title: model.send.lastTarget.map { "Send to \($0.label)" } ?? "Choose an agent to send to",
-                                 symbol: "paperplane.fill", prominent: true, emphasized: lit || note.hasUnsentFollowUps) {
-                    Task { await model.send(noteIDs: [note.id]) }
+            if isPast {
+                InlineIconButton(title: "Reveal in viewer", symbol: "scope", emphasized: lit) { model.reveal(note: note, in: document) }
+                InlineIconButton(title: "Bring forward to the current iteration", symbol: "arrow.uturn.forward", emphasized: lit) {
+                    Task { await model.iterations.bringForward(note, in: document) }
                 }
-                .disabled(model.send.lastTarget == nil)
-            }
-            if canFollowUp(thread) {
-                InlineIconButton(title: note.waitingOnUser ? "Answer the agent" : "Follow up", symbol: "arrowshape.turn.up.left.fill",
-                                 prominent: note.waitingOnUser, emphasized: lit, action: startFollowUp)
-            }
-            InlineIconButton(title: "Reveal in viewer", symbol: "scope", emphasized: lit) { model.reveal(note: note, in: document) }
-            if note.state == .orphaned {
-                InlineIconButton(title: "Re-anchor to a new selection", symbol: "link", emphasized: lit) { model.reanchor(note: note, in: document) }
-                InlineIconButton(title: "Restore as draft", symbol: "arrow.uturn.backward", emphasized: lit) { Task { await model.notesPanel.restoreDraft(note) } }
-            }
-            InlineIconButton(title: "Edit the comment", symbol: "pencil", emphasized: lit, action: startEdit)
-            if note.state == .sent {
-                InlineIconButton(title: "Back to draft (the agent may already have read it)", symbol: "arrow.uturn.backward", emphasized: lit) {
-                    Task { await model.notesPanel.unsend(note.id) }
-                }
-            }
-            if note.state == .resolved {
-                InlineIconButton(title: "Reopen as draft", symbol: "arrow.counterclockwise", emphasized: lit) { Task { await model.notesPanel.reopen(note.id) } }
+                Spacer(minLength: 0)
             } else {
-                InlineIconButton(title: "Resolve", symbol: "checkmark", emphasized: lit) { Task { await model.notesPanel.resolve(note.id) } }
+                currentActions(lit: lit)
             }
-            Spacer(minLength: 0)
-            InlineIconButton(title: "Delete", symbol: "trash", role: .destructive, emphasized: lit) { Task { await model.notesPanel.delete(note.id) } }
         }
         .padding(.top, DS.Space.xxs)
+    }
+
+    @ViewBuilder
+    private func currentActions(lit: Bool) -> some View {
+        if !NotesPanelModel.sendable([note]).isEmpty {
+            InlineIconButton(title: model.send.lastTarget.map { "Send to \($0.label)" } ?? "Choose an agent to send to",
+                             symbol: "paperplane.fill", prominent: true, emphasized: lit || note.hasUnsentFollowUps) {
+                Task { await model.send(noteIDs: [note.id]) }
+            }
+            .disabled(model.send.lastTarget == nil)
+        }
+        if canFollowUp(thread) {
+            InlineIconButton(title: note.waitingOnUser ? "Answer the agent" : "Follow up", symbol: "arrowshape.turn.up.left.fill",
+                             prominent: note.waitingOnUser, emphasized: lit, action: startFollowUp)
+        }
+        InlineIconButton(title: "Reveal in viewer", symbol: "scope", emphasized: lit) { model.reveal(note: note, in: document) }
+        if note.state == .orphaned {
+            InlineIconButton(title: "Re-anchor to a new selection", symbol: "link", emphasized: lit) { model.reanchor(note: note, in: document) }
+            InlineIconButton(title: "Restore as draft", symbol: "arrow.uturn.backward", emphasized: lit) { Task { await model.notesPanel.restoreDraft(note) } }
+        }
+        InlineIconButton(title: "Edit the comment", symbol: "pencil", emphasized: lit, action: startEdit)
+        if note.state == .sent {
+            InlineIconButton(title: "Back to draft (the agent may already have read it)", symbol: "arrow.uturn.backward", emphasized: lit) {
+                Task { await model.notesPanel.unsend(note.id) }
+            }
+        }
+        if note.state == .resolved {
+            InlineIconButton(title: "Reopen as draft", symbol: "arrow.counterclockwise", emphasized: lit) { Task { await model.notesPanel.reopen(note.id) } }
+        } else {
+            InlineIconButton(title: "Resolve", symbol: "checkmark", emphasized: lit) { Task { await model.notesPanel.resolve(note.id) } }
+        }
+        Spacer(minLength: 0)
+        InlineIconButton(title: "Delete", symbol: "trash", role: .destructive, emphasized: lit) { Task { await model.notesPanel.delete(note.id) } }
     }
 }
 

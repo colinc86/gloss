@@ -223,7 +223,7 @@ final class AppModel {
         fileSystems[.local] = LocalFileSystem()
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
-        send.openTextProvider = { [weak self] hostID, path in self?.sessions["\(hostID.rawValue):\(path)"]?.baseText }
+        send.openTextProvider = { [weak self] hostID, path in self?.session(hostID: hostID, path: path)?.baseText }
         send.currentFolder = { [weak self] in self?.agentFolder }
         send.packetResourceProvider = { [weak self] hostID, path, line in
             switch hostID {
@@ -555,7 +555,7 @@ final class AppModel {
             return
         }
         let key = "\(hostID.rawValue):\(path)"
-        if let existing = sessions[key] {
+        if let existing = session(hostID: hostID, path: path) {
             activeSession = existing
             trimSessions()
             return
@@ -1041,7 +1041,7 @@ final class AppModel {
             return
         }
         openDocument(hostID: hostID, path: path)
-        guard let session = sessions["\(hostID.rawValue):\(path)"] else { return }
+        guard let session = self.session(hostID: hostID, path: path) else { return }
         Task {
             for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
             guard let controller = session.textController else { return }
@@ -1085,6 +1085,15 @@ final class AppModel {
     func newIteration() {
         guard !isShowingPastIteration, let document = activeSession?.document else { return }
         Task { await iterations.requestNewIteration(for: document) }
+    }
+
+    /// The open session of a file. `/tmp/a` and `/private/tmp/a` are one file: the tree names one, a note's document
+    /// or an agent the other, and both must reach the same session.
+    func session(hostID: HostID, path: String) -> DocumentSession? {
+        if let exact = sessions["\(hostID.rawValue):\(path)"] { return exact }
+        guard hostID == .local else { return nil }
+        let file = ExplorerModel.aliasFree(path)
+        return sessions.values.first { $0.hostID == .local && ExplorerModel.aliasFree($0.path) == file }
     }
 
     /// Deletes for good the notes in Recently Deleted longer than Settings keeps them (never, when it keeps them all).
@@ -1284,9 +1293,8 @@ final class AppModel {
         guard readsText else {
             return try AnchorRelocator.relocate(note.anchor, to: target, content: "", hash: nil)
         }
-        let key = "\(document.hostID.rawValue):\(document.path)"
         let editing = DeliveryError.failed("the user is editing this file; try again once they save it")
-        let session = sessions[key]
+        let session = self.session(hostID: document.hostID, path: document.path)
         if session?.isDirty == true { throw editing }
         if document.kind == .web {
             guard let text = session?.textController?.text ?? session?.baseText else {
@@ -1302,7 +1310,7 @@ final class AppModel {
         }
         let relocation = try Self.relocation(of: note.anchor, to: target, data: try await fileSystem.read(document.path))
         // The user may have started typing while the file was read: their edit would carry the old place to disk.
-        if sessions[key]?.isDirty == true { throw editing }
+        if self.session(hostID: document.hostID, path: document.path)?.isDirty == true { throw editing }
         return relocation
     }
 
@@ -1858,7 +1866,7 @@ final class AppModel {
                 path = await canonicalConfluencePath(path)
             }
             openDocument(hostID: document.hostID, path: path)
-            guard let session = sessions["\(document.hostID.rawValue):\(path)"] else { return }
+            guard let session = self.session(hostID: document.hostID, path: path) else { return }
             // While an earlier iteration is shown, its notes are in its snapshot's session; a note of another
             // iteration goes back to the document as it is.
             let shown = iterations.shownSession(for: session)
