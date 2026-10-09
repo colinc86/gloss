@@ -87,10 +87,11 @@ struct ExplorerSidebar: View {
         .alert("Unknown host key", isPresented: Binding(get: { model.hosts.pendingHostKey != nil }, set: { _ in })) {
             Button("Accept and Connect") {
                 if let pending = model.hosts.pendingHostKey {
-                    Task { _ = await model.hosts.acceptNewHostKey(pending.hostID); await model.openRemoteRoot(hostID: pending.hostID) }
+                    let path = model.explorer.takePathAwaitingHostKey(pending.hostID)
+                    Task { _ = await model.hosts.acceptNewHostKey(pending.hostID); await model.openRemoteRoot(hostID: pending.hostID, path: path) }
                 }
             }
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) { model.explorer.pathAwaitingHostKey = nil }
         } message: {
             Text("This host's key is not in known_hosts yet.\n\(model.hosts.pendingHostKey?.fingerprint ?? "")\nAccept it for this host only?")
         }

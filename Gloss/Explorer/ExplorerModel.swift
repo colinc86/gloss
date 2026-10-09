@@ -83,6 +83,10 @@ final class ExplorerModel {
     @ObservationIgnored var onTabsChange: () -> Void = {}
     /// Recently opened roots per host, pinned first; one entry per folder.
     private(set) var recentsByHost: [HostID: [Root]] = [:]
+    /// Pinned roots on every host, one per folder: the switcher's Favorites, whichever host is picked.
+    private(set) var favorites: [Root] = []
+    /// A folder picked on an ssh host whose key isn't known yet: it opens once the key is accepted.
+    @ObservationIgnored var pathAwaitingHostKey: (hostID: HostID, path: String)?
     /// The recents of the host loaded last (the reopen-on-launch path reads it right after loading).
     private(set) var recentRoots: [Root] = []
     var showDotfiles = false {
@@ -241,6 +245,7 @@ final class ExplorerModel {
             await loadChildren(of: tab.node)
             startWatching(tab, fileSystem: fileSystem)
             await loadRecents(hostID: hostID)
+            await loadFavorites()
         } catch {
             lastError = "Couldn't open \(PathUtilities.name(of: normalized)): " + Self.folderFailure(error, virtual: hostID.isVirtual)
             Log.explorer.error("openRoot failed: \(error, privacy: .public)")
@@ -265,13 +270,13 @@ final class ExplorerModel {
     /// recents list keeps only one of them.
     func isPinned(hostID: HostID, path: String) -> Bool {
         let key = Self.markKey(hostID, path)
-        return recentsByHost[hostID]?.contains { $0.pinned && Self.markKey(hostID, $0.path) == key } ?? false
+        return favorites.contains { Self.markKey($0.hostID, $0.path) == key }
     }
 
     /// Pins or unpins the folder: the given record and any other record of the same folder.
     func setPinned(_ id: RootID, hostID: HostID, path: String, _ pinned: Bool) async {
         let key = Self.markKey(hostID, path)
-        let ids = Set([id] + (recentsByHost[hostID] ?? []).filter { Self.markKey(hostID, $0.path) == key }.map(\.id))
+        let ids = Set([id] + ((recentsByHost[hostID] ?? []) + favorites).filter { Self.markKey($0.hostID, $0.path) == key }.map(\.id))
         for root in ids {
             do {
                 try await noteStore.setRootPinned(root, pinned)
@@ -280,11 +285,21 @@ final class ExplorerModel {
             }
         }
         await loadRecents(hostID: hostID)
+        await loadFavorites()
     }
 
-    /// Recent roots again for each host given (the switcher loads the picked host and every host with a tab).
+    /// The folder waiting for `hostID`'s key to be accepted, if any; taken once.
+    func takePathAwaitingHostKey(_ hostID: HostID) -> String? {
+        guard let pending = pathAwaitingHostKey, pending.hostID == hostID else { return nil }
+        pathAwaitingHostKey = nil
+        return pending.path
+    }
+
+    /// Recent roots again for each host given (the switcher loads the picked host and every host with a tab), and
+    /// the favorites.
     func refreshRecents(hostIDs: Set<HostID>) async {
         for hostID in hostIDs { await loadRecents(hostID: hostID) }
+        await loadFavorites()
     }
 
     func chooseRootWithPanel(hostID: HostID) {
@@ -305,6 +320,15 @@ final class ExplorerModel {
             recentsByHost[hostID] = recentRoots
         } catch {
             Log.explorer.error("roots query failed: \(error, privacy: .public)")
+        }
+    }
+
+    private func loadFavorites() async {
+        do {
+            var seen: Set<String> = []
+            favorites = try await noteStore.pinnedRoots().filter { seen.insert(Self.markKey($0.hostID, $0.path)).inserted }
+        } catch {
+            Log.explorer.error("favorites query failed: \(error, privacy: .public)")
         }
     }
 

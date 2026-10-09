@@ -161,6 +161,15 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// Every pinned root on every host, the most recently opened first: the switcher's Favorites.
+    public func pinnedRoots() async throws -> [Root] {
+        try await queue.read { db in
+            try RootRecord.filter(Column("pinned") == true)
+                .order(Column("last_opened_at").desc)
+                .fetchAll(db).map(Root.init(record:))
+        }
+    }
+
     public func recordRootOpened(hostID: HostID, path: String, at date: Date = Date()) async throws -> Root {
         let date = Self.rounded(date)
         return try await queue.write { db in

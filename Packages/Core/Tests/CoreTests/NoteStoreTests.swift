@@ -304,6 +304,11 @@ struct NoteStoreTests {
         #expect(root.id == again.id)
         try await store.setRootPinned(root.id, true)
         #expect(try await store.roots(for: .local).first?.pinned == true)
+        let box = try await store.saveHost(id: nil, name: "box", options: HostOptions(hostName: "box.example"))
+        let remote = try await store.recordRootOpened(hostID: box.id, path: "/srv/app", at: Date(timeIntervalSince1970: 7))
+        _ = try await store.recordRootOpened(hostID: box.id, path: "/srv/other", at: Date(timeIntervalSince1970: 8))
+        try await store.setRootPinned(remote.id, true)
+        #expect(try await store.pinnedRoots().map(\.path) == ["/tmp/proj", "/srv/app"], "every host's favorites, the most recently opened first")
 
         let target = try await store.upsertTarget(hostID: .local, transport: "herdr", identityJSON: #"{"pane_id":"w1:p1"}"#, label: "claude w1:p1")
         let sameTarget = try await store.upsertTarget(hostID: .local, transport: "herdr", identityJSON: #"{"pane_id":"w1:p1"}"#, label: "claude · w1:p1", usedAt: Date())

@@ -4,25 +4,51 @@ import Testing
 @testable import Gloss
 
 struct RootSwitcherTests {
-    private func root(_ path: String, pinned: Bool = false) -> Root {
-        Root(id: .new(), hostID: .local, path: path, lastOpenedAt: Date(), pinned: pinned)
+    private static let box = HostID(rawValue: "h_box")
+
+    private func root(_ path: String, on hostID: HostID = .local, pinned: Bool = false) -> Root {
+        Root(id: .new(), hostID: hostID, path: path, lastOpenedAt: Date(), pinned: pinned)
     }
 
     @Test func sectionsOrderOpenFavoritesRecentAndSkipOpenSpellings() {
-        let tabs = [(id: RootID.new(), hostID: HostID.local, path: "/private/tmp/play", pinned: false)]
-        let recents = [root("/tmp/play"), root("/Users/c/app", pinned: true)] + (0..<8).map { root("/Users/c/r\($0)") }
-        let sections = SwitcherEntry.sections(tabs: tabs, recents: recents, query: "")
+        let tabs = [(id: RootID.new(), hostID: HostID.local, path: "/private/tmp/play")]
+        let favorites = [root("/Users/c/app", pinned: true)]
+        let recents = [root("/tmp/play")] + favorites + (0..<8).map { root("/Users/c/r\($0)") }
+        let sections = SwitcherEntry.sections(tabs: tabs, favorites: favorites, recents: recents, query: "")
         #expect(sections.map(\.section) == [.open, .favorites, .recent])
         #expect(sections[0].entries.map(\.title) == ["play"])
         #expect(sections[1].entries.map(\.title) == ["app"])
         #expect(sections[2].entries.count == 6)
+        #expect(!sections[2].entries.contains { $0.title == "play" || $0.title == "app" })
+    }
+
+    @Test func favoritesListEveryHostOnceAndMarkTheOpenOnes() throws {
+        let app = root("/Users/c/app", pinned: true)
+        let remote = root("/srv/api", on: Self.box, pinned: true)
+        let tab = (id: RootID.new(), hostID: HostID.local, path: "/Users/c/app")
+        let other = (id: RootID.new(), hostID: HostID.local, path: "/Users/c/scratch")
+        // Local is picked: its recents only, while the favorite on box is listed too.
+        let recents = [app, root("/Users/c/scratch"), root("/Users/c/old")]
+        let sections = SwitcherEntry.sections(tabs: [tab, other], favorites: [remote, app], recents: recents, query: "")
+        #expect(sections.map(\.section) == [.open, .favorites, .recent])
+        #expect(sections[0].entries.map(\.title) == ["scratch"], "open, and not a favorite")
+        let favorites = sections[1].entries
+        #expect(favorites.map(\.title) == ["api", "app"], "by name, whichever host")
+        #expect(favorites.map(\.hostID) == [Self.box, .local])
+        let open = try #require(favorites.last)
+        #expect(open.isOpen && open.id == tab.id && open.pinned, "the open favorite is the tab, listed once")
+        #expect(!favorites[0].isOpen && favorites[0].id == remote.id)
+        #expect(sections[2].entries.map(\.title) == ["old"], "Recent leaves out open folders and favorites")
+        #expect(sections.flatMap(\.entries).filter { $0.path == "/Users/c/app" }.count == 1)
+        #expect(SwitcherEntry.sections(tabs: [tab, other], favorites: [remote, app], recents: recents, query: "api").flatMap(\.entries).map(\.id) == [remote.id],
+                "the filter applies to Favorites too")
     }
 
     @Test func filteringPrefersNamesThenPaths() {
         let recents = [root("/Users/c/docs/notes"), root("/Users/c/docs"), root("/Users/c/web")]
-        let sections = SwitcherEntry.sections(tabs: [], recents: recents, query: "Docs")
+        let sections = SwitcherEntry.sections(tabs: [], favorites: [], recents: recents, query: "Docs")
         #expect(sections.flatMap(\.entries).map(\.title) == ["docs", "notes"])
-        #expect(SwitcherEntry.sections(tabs: [], recents: recents, query: "zzz").isEmpty)
+        #expect(SwitcherEntry.sections(tabs: [], favorites: [], recents: recents, query: "zzz").isEmpty)
     }
 
     @Test @MainActor func aHostPickedInTheDropdownGoesWhereItShould() async {
@@ -67,8 +93,8 @@ struct RootSwitcherTests {
     }
 
     @Test func theHighlightStartsWhereReturnShouldGo() {
-        let here = SwitcherEntry(id: .new(), hostID: .local, path: "/a/github-notes", pinned: false, section: .open)
-        let other = SwitcherEntry(id: .new(), hostID: .local, path: "/a/b", pinned: false, section: .recent)
+        let here = SwitcherEntry(id: .new(), hostID: .local, path: "/a/github-notes", pinned: false, section: .open, isOpen: true)
+        let other = SwitcherEntry(id: .new(), hostID: .local, path: "/a/b", pinned: false, section: .recent, isOpen: false)
         let items: [SwitcherItem] = [.host(.local), .host(.web), .host(.github), .folder(here), .folder(other)]
         #expect(SwitcherItem.start(in: items, query: "", selectedTabID: here.id, pickedHost: .local) == 3, "the folder in front")
         #expect(SwitcherItem.start(in: items, query: "", selectedTabID: nil, pickedHost: .web) == 1, "the host, when no folder of it is in front")
@@ -92,6 +118,37 @@ struct RootSwitcherTests {
         model.explorer.selectedTabID = tab.id
         #expect(model.pickedHost == .local, "however the folder came to the front")
         await model.shutDown()
+    }
+
+    /// A favorite on a host that isn't connected connects first, its host picked meanwhile, instead of failing
+    /// with "Not connected".
+    @Test @MainActor func choosingAFavoriteOnAnotherHostConnectsThenOpens() async throws {
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.start()
+        // Nothing listens on port 1 of the loopback: ssh is refused at once.
+        let host = try await model.noteStore.saveHost(id: nil, name: "gloss-test-refused", options: HostOptions(hostName: "127.0.0.1", port: 1))
+        await model.hosts.refresh()
+        let root = try await model.noteStore.recordRootOpened(hostID: host.id, path: "/srv/app")
+        await model.explorer.setPinned(root.id, hostID: host.id, path: "/srv/app", true)
+        #expect(model.explorer.favorites.map(\.id) == [root.id] && model.explorer.isPinned(hostID: host.id, path: "/srv/app"))
+        #expect(model.pickedHost == .local)
+        let entry = try #require(SwitcherEntry.sections(tabs: [], favorites: model.explorer.favorites, recents: [], query: "").first?.entries.first)
+        model.explorer.lastError = nil
+        await model.choose(entry)
+        #expect(model.pickedHost == host.id)
+        let tried = if case .failed = model.hosts.status(for: host.id) { true } else { false }
+        #expect(tried, "it tried to connect")
+        #expect(model.explorer.lastError == nil, "not “Not connected”")
+        #expect(model.explorer.tabs.isEmpty)
+        await model.shutDown()
+    }
+
+    @Test @MainActor func aFolderWaitingForAHostKeyIsTakenOnceByItsHost() throws {
+        let explorer = ExplorerModel(noteStore: NoteStore(database: try AppDatabase.inMemory()))
+        explorer.pathAwaitingHostKey = (Self.box, "/srv/app")
+        #expect(explorer.takePathAwaitingHostKey(.local) == nil, "another host's key opens its home, not this folder")
+        #expect(explorer.takePathAwaitingHostKey(Self.box) == "/srv/app")
+        #expect(explorer.takePathAwaitingHostKey(Self.box) == nil)
     }
 
     @Test @MainActor func closingAFolderStaysOnItsHost() async throws {

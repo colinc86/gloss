@@ -4,8 +4,8 @@ import SwiftUI
 import Viewers
 
 /// The folder above the tree, and the way to every other: one row naming the open root (or the host, when none is
-/// open or Web is picked), which opens a switcher of hosts, then open folders, favorites (pinned), and recent ones
-/// on the picked host. Replaces a strip of chips that scrolled out of sight once a few folders were open, and
+/// open or Web is picked), which opens a switcher of hosts, then open folders, favorites (pinned, on every host),
+/// and recent ones on the picked host. Replaces a strip of chips that scrolled out of sight once a few folders were open, and
 /// gives folders you come back to a place that survives closing them.
 struct RootSwitcher: View {
     @Environment(AppModel.self) private var model
@@ -120,7 +120,8 @@ private struct CountBadge: View {
     }
 }
 
-/// One folder in the switcher: open (a tab) or closed (a favorite or recent root).
+/// One folder in the switcher: open (a tab) or closed (a favorite or recent root). A favorite that is open is
+/// listed once, under Favorites, with its tab's id.
 nonisolated struct SwitcherEntry: Identifiable, Equatable {
     enum Section: String { case open = "Open", favorites = "Favorites", recent = "Recent" }
     let id: RootID
@@ -128,6 +129,7 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
     let path: String
     let pinned: Bool
     let section: Section
+    let isOpen: Bool
     var title: String {
         if hostID == .github, let pull = PullRequestPath(path) { return "\(pull.repository) #\(pull.number)" }
         if hostID == .atlassian, let label = Self.atlassianLabel(path) { return label }
@@ -164,14 +166,28 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
     }
 
     /// The sections in order, filtered by `query` (name first, then anywhere in the path; case-insensitive).
-    /// Closed roots already open under another spelling are left out; at most `recentLimit` recents without a query.
-    static func sections(tabs: [(id: RootID, hostID: HostID, path: String, pinned: Bool)], recents: [Root], query: String,
+    /// Favorites (from every host) always list every favorite, by name, open ones marked; Open lists the open
+    /// folders that aren't favorites; Recent (the picked host's) leaves out both, at most `recentLimit` of them
+    /// without a query. Folders are matched by `ExplorerModel.markKey`, so two spellings of one are one folder.
+    static func sections(tabs: [(id: RootID, hostID: HostID, path: String)], favorites: [Root], recents: [Root], query: String,
                          recentLimit: Int = 6) -> [(section: Section, entries: [SwitcherEntry])] {
-        let open = tabs.map { SwitcherEntry(id: $0.id, hostID: $0.hostID, path: $0.path, pinned: $0.pinned, section: .open) }
-        let openKeys = Set(tabs.map { ExplorerModel.markKey($0.hostID, $0.path) })
-        let closed = recents.filter { !openKeys.contains(ExplorerModel.markKey($0.hostID, $0.path)) }
-        let favorites = closed.filter(\.pinned).map { SwitcherEntry(id: $0.id, hostID: $0.hostID, path: $0.path, pinned: true, section: .favorites) }
-        let others = closed.filter { !$0.pinned }.map { SwitcherEntry(id: $0.id, hostID: $0.hostID, path: $0.path, pinned: false, section: .recent) }
+        func key(_ hostID: HostID, _ path: String) -> String { ExplorerModel.markKey(hostID, path) }
+        var tabsByKey: [String: (id: RootID, hostID: HostID, path: String)] = [:]
+        for tab in tabs where tabsByKey[key(tab.hostID, tab.path)] == nil { tabsByKey[key(tab.hostID, tab.path)] = tab }
+        let favoriteKeys = Set(favorites.map { key($0.hostID, $0.path) })
+        let pinned = favorites.map { root in
+            let tab = tabsByKey[key(root.hostID, root.path)]
+            return SwitcherEntry(id: tab?.id ?? root.id, hostID: root.hostID, path: tab?.path ?? root.path, pinned: true, section: .favorites, isOpen: tab != nil)
+        }
+        .sorted {
+            let order = $0.title.localizedStandardCompare($1.title)
+            guard order == .orderedSame else { return order == .orderedAscending }
+            return ($0.hostID.rawValue, $0.path) < ($1.hostID.rawValue, $1.path)
+        }
+        let open = tabs.filter { !favoriteKeys.contains(key($0.hostID, $0.path)) }
+            .map { SwitcherEntry(id: $0.id, hostID: $0.hostID, path: $0.path, pinned: false, section: .open, isOpen: true) }
+        let others = recents.filter { !favoriteKeys.contains(key($0.hostID, $0.path)) && tabsByKey[key($0.hostID, $0.path)] == nil }
+            .map { SwitcherEntry(id: $0.id, hostID: $0.hostID, path: $0.path, pinned: false, section: .recent, isOpen: false) }
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         func filtered(_ entries: [SwitcherEntry]) -> [SwitcherEntry] {
             guard !needle.isEmpty else { return entries }
@@ -180,7 +196,7 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
             return byName + byPath
         }
         let recent = filtered(others)
-        return [(.open, filtered(open)), (.favorites, filtered(favorites)), (.recent, needle.isEmpty ? Array(recent.prefix(recentLimit)) : recent)]
+        return [(.open, filtered(open)), (.favorites, filtered(pinned)), (.recent, needle.isEmpty ? Array(recent.prefix(recentLimit)) : recent)]
             .filter { !$0.entries.isEmpty }
     }
 }
@@ -218,9 +234,10 @@ private struct RootSwitcherList: View {
     /// The hosts matching the filter, the folder sections, and every row in order for the highlight.
     private func lists() -> (hosts: [HostsModel.Entry], sections: [(section: SwitcherEntry.Section, entries: [SwitcherEntry])], flat: [SwitcherItem]) {
         let explorer = model.explorer
-        let sections = SwitcherEntry.sections(
-            tabs: explorer.tabs.map { (id: $0.id, hostID: $0.hostID, path: $0.path, pinned: explorer.isPinned(hostID: $0.hostID, path: $0.path)) },
-            recents: explorer.recentsByHost[model.pickedHost] ?? [], query: query)
+        // A favorite on a host no longer listed (an ssh config alias turned off) has nowhere to open.
+        let favorites = explorer.favorites.filter { $0.hostID == .local || $0.hostID.isVirtual || model.hosts.entry(for: $0.hostID) != nil }
+        let sections = SwitcherEntry.sections(tabs: explorer.tabs.map { (id: $0.id, hostID: $0.hostID, path: $0.path) }, favorites: favorites,
+                                              recents: explorer.recentsByHost[model.pickedHost] ?? [], query: query)
         let hosts = HostMenu.matching(model.hosts.entries, query: query)
         return (hosts, sections, hosts.map { SwitcherItem.host($0.id) } + sections.flatMap(\.entries).map(SwitcherItem.folder))
     }
@@ -295,7 +312,7 @@ private struct RootSwitcherList: View {
         }
         // Closing or re-pinning a row can shorten the list under the highlight.
         .onChange(of: flat) { _, items in highlight = min(highlight, max(0, items.count - 1)) }
-        .animation(DS.Motion.smooth, value: (explorer.recentsByHost[model.pickedHost] ?? []).map(\.pinned))
+        .animation(DS.Motion.smooth, value: explorer.favorites.map(\.id))
         .animation(DS.Motion.smooth, value: explorer.tabs.map(\.id))
         .animation(DS.Motion.snappy, value: highlight)
         .animation(DS.Motion.smooth, value: flat)
@@ -323,15 +340,8 @@ private struct RootSwitcherList: View {
     }
 
     private func choose(_ entry: SwitcherEntry) {
-        let explorer = model.explorer
         dismiss()
-        // The folder in front may already be this one while Web or another host is picked.
-        model.pickedHost = entry.hostID
-        if entry.section == .open {
-            explorer.selectedTabID = entry.id
-        } else {
-            Task { await explorer.openRoot(hostID: entry.hostID, path: entry.path) }
-        }
+        Task { await model.choose(entry) }
     }
 
     private func section(_ title: String) -> some View {
@@ -344,12 +354,17 @@ private struct RootSwitcherList: View {
 
     private func row(_ entry: SwitcherEntry, highlighted: Bool) -> some View {
         let explorer = model.explorer
-        let isOpen = entry.section == .open
+        let isOpen = entry.isOpen
         let tab = explorer.tabs.first { $0.id == entry.id }
+        // A closed folder on an ssh host says how its connection is: picking it connects first.
+        let status = model.hosts.status(for: entry.hostID)
+        let symbol = isOpen || status == .connected ? SwitcherEntry.symbol(hostID: entry.hostID, path: entry.path, open: isOpen)
+            : HostMenu.symbol(entry.hostID, status: status)
         return RootRow(title: entry.title, subtitle: SwitcherEntry.subtitle(hostID: entry.hostID, path: entry.path),
-                       symbol: SwitcherEntry.symbol(hostID: entry.hostID, path: entry.path, open: isOpen),
+                       symbol: symbol, failed: SwitcherHostRow.failed(status),
                        host: entry.hostID == .local ? nil : entry.hostID == .github ? "GitHub" : entry.hostID == .atlassian ? "Atlassian" : hostName(entry.hostID),
-                       isCurrent: isOpen && explorer.selectedTabID == entry.id && entry.hostID == model.pickedHost, isOpen: isOpen, isHighlighted: highlighted,
+                       isCurrent: isOpen && explorer.selectedTabID == entry.id && entry.hostID == model.pickedHost, isOpen: isOpen,
+                       marksOpen: isOpen && entry.section == .favorites, isHighlighted: highlighted,
                        pinned: entry.pinned, notes: tab.map { explorer.folderCountForRoot($0) } ?? 0,
                        choose: { choose(entry) },
                        togglePin: { Task { await explorer.setPinned(entry.id, hostID: entry.hostID, path: entry.path, !entry.pinned) } },
@@ -422,9 +437,13 @@ private struct RootRow: View {
     let title: String
     let subtitle: String
     let symbol: String
+    /// The folder's host failed to connect.
+    let failed: Bool
     let host: String?
     let isCurrent: Bool
     let isOpen: Bool
+    /// A favorite that is open gets a dot under its symbol, as an open app does in the Dock.
+    let marksOpen: Bool
     var isHighlighted = false
     let pinned: Bool
     let notes: Int
@@ -436,8 +455,18 @@ private struct RootRow: View {
     var body: some View {
         HStack(spacing: DS.Space.s) {
             Image(systemName: symbol)
-                .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
+                .foregroundStyle(failed ? Color.orange : isCurrent ? Color.accentColor : .secondary)
+                .contentTransition(.symbolEffect(.replace))
                 .frame(width: 18)
+                .overlay(alignment: .bottom) {
+                    if marksOpen {
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 4, height: 4)
+                            .offset(y: 7)
+                            .transition(.opacity)
+                    }
+                }
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DS.Space.xs) {
                     if let host {
@@ -500,6 +529,32 @@ private struct RootRow: View {
         .animation(DS.Motion.snappy, value: hovering)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
+        .accessibilityValue(marksOpen ? "Open" : "")
         .accessibilityAction(named: isOpen ? "Switch to \(title)" : "Open \(title)", choose)
+    }
+}
+
+extension AppModel {
+    /// A folder picked in the switcher: an open one comes to the front; a closed one opens, on an ssh host that
+    /// isn't connected after connecting to it (rather than failing with "Not connected"). Its host is picked
+    /// first, so the explorer shows the connection while it comes up. A host whose key isn't known yet asks
+    /// first; the folder opens once the key is accepted.
+    func choose(_ entry: SwitcherEntry) async {
+        // The folder in front may already be this one while Web or another host is picked.
+        pickedHost = entry.hostID
+        if entry.isOpen {
+            explorer.selectedTabID = entry.id
+        } else if hosts.entry(for: entry.hostID)?.kind == .ssh, explorer.fileSystemProvider(entry.hostID) == nil {
+            explorer.pathAwaitingHostKey = nil
+            // The file system is what opening needs; the home directory `connect` returns is not.
+            _ = await hosts.connect(entry.hostID)
+            if explorer.fileSystemProvider(entry.hostID) != nil {
+                await explorer.openRoot(hostID: entry.hostID, path: entry.path)
+            } else if hosts.pendingHostKey?.hostID == entry.hostID {
+                explorer.pathAwaitingHostKey = (entry.hostID, entry.path)
+            }
+        } else {
+            await explorer.openRoot(hostID: entry.hostID, path: entry.path)
+        }
     }
 }
