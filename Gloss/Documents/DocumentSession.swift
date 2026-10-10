@@ -394,7 +394,10 @@ final class DocumentSession: Identifiable {
             // Highlighting stays on for a small read-only file (a pull request's); only size turns it off.
             let controller = TextEditorController(text: text, languageName: tooLarge ? nil : GrammarCatalog.languageName(forPath: path))
             controller.isEditable = !isReadOnly
-            controller.onTextChange = { [weak self] in self?.isDirty = true }
+            controller.onTextChange = { [weak self] in
+                self?.isDirty = true
+                self?.textChangedUnderChanges()
+            }
             controller.onEdit = { [weak self] _, _ in self?.liveRangesDidShift() }
             controller.onGutterClick = { [weak self] line, noteID in self?.gutterClicked(line: line, noteID: noteID) }
             if kind == .markdown {
@@ -1726,7 +1729,7 @@ final class DocumentSession: Identifiable {
         return ordered.firstIndex { $0.id == id }.map { ($0 + 1, ordered.count) }
     }
 
-    // MARK: Changed lines (a pull request's file)
+    // MARK: Changed lines (a pull request's file, or an iteration's changes)
 
     /// The iteration whose snapshot the tinted lines compare against, while Show Changes Since is on (issue #18).
     private(set) var changesSinceIteration: Int?
@@ -1752,14 +1755,33 @@ final class DocumentSession: Identifiable {
         refreshLineChanges()
     }
 
+    /// Typing while Show Changes Since is on: the snapshot is compared with the text again once typing pauses, so
+    /// the tints stay on the lines that changed rather than on the line numbers they had (a pull request's file is
+    /// never edited, so its tints need no such pass).
+    private func textChangedUnderChanges() {
+        guard changesSinceIteration != nil else { return }
+        changesRefreshTask?.cancel()
+        changesRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.changesRefreshDelay)
+            guard !Task.isCancelled else { return }
+            self?.refreshLineChanges()
+        }
+    }
+    @ObservationIgnored private var changesRefreshTask: Task<Void, Never>?
+    nonisolated static let changesRefreshDelay: Duration = .milliseconds(300)
+    /// Bumped by each refresh; a slower, older diff finishing after a newer one is dropped.
+    @ObservationIgnored private var lineChangesGeneration = 0
+
     /// Asks the provider, when there is one, which lines a change touched; the editor tints and steps through them.
     private func refreshLineChanges() {
         guard let provider = lineChangesProvider, let controller = textController else { return }
         let path = path
+        lineChangesGeneration += 1
+        let generation = lineChangesGeneration
         Task { [weak self] in
             let changes = await provider(path).map { Self.editorLines(of: $0, in: controller.text, lineIndex: controller.lineIndex) }
             let omitted = changes == nil ? await self?.patchOmittedProvider?(path) ?? false : false
-            guard let self, self.textController === controller else { return }
+            guard let self, self.textController === controller, generation == self.lineChangesGeneration else { return }
             self.changesUnknown = omitted
             if changes != controller.lineChanges { self.steppedHunk = nil }
             controller.lineChanges = changes

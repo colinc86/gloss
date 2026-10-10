@@ -138,6 +138,25 @@ struct IterationTests {
         #expect(IterationsModel.allResolved([]) == false)
     }
 
+    /// Show Changes Since on a file being edited: the tints follow the edit instead of keeping their line numbers.
+    @Test func changesFollowTypingWhileShown() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (_, store, _) = try makeModel()
+        let session = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store)
+        await session.open()
+        let controller = try #require(session.textController)
+        session.showChanges(since: 0, snapshot: "one\ntwo\nthree\n")
+        controller.viewDidChangeText("one\ntwo\nTHREE\n")
+        await waitUntil { controller.lineChanges == LineChanges(added: [3...3]) }
+        #expect(controller.lineChanges == LineChanges(added: [3...3]))
+        // A line typed above the change moves its tint down with it.
+        controller.viewDidChangeText("zero\none\ntwo\nTHREE\n")
+        await waitUntil { controller.lineChanges == LineChanges(added: [1...1, 4...4]) }
+        #expect(controller.lineChanges == LineChanges(added: [1...1, 4...4]))
+        session.close()
+    }
+
     @Test func anEarlierIterationOpensFromItsSnapshotWithItsNotes() async throws {
         let (directory, path) = try makeFile("one\ntwo\nthree\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }

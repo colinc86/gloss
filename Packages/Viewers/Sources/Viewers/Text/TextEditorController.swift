@@ -36,8 +36,9 @@ public final class TextEditorController {
 
     /// In focus: the selected card's note, or the one under the pointer.
     public func isFocused(_ id: NoteID) -> Bool { id == focusedNoteID || id == peek?.id }
-    /// Lines a change touched (a pull request's file at its head): tinted, marked and stepped through. Static: such
-    /// files are never editable, so nothing shifts them.
+    /// Lines a change touched (a pull request's file at its head, or an iteration's changes): tinted, marked and
+    /// stepped through. Not shifted by edits: whoever sets them works them out again (`DocumentSession` re-diffs an
+    /// iteration's changes once typing pauses).
     public var lineChanges: LineChanges? {
         didSet {
             guard lineChanges != oldValue else { return }
