@@ -3,7 +3,9 @@ import OSLog
 import SwiftTreeSitter
 import TreeSitterBash
 import TreeSitterC
+import TreeSitterCSS
 import TreeSitterGo
+import TreeSitterHTML
 import TreeSitterJavaScript
 import TreeSitterJSON
 import TreeSitterMarkdown
@@ -43,6 +45,8 @@ public nonisolated enum GrammarCatalog {
         "toml": Grammar(name: "TOML", bundleName: "TreeSitterTOML_TreeSitterTOML", language: { tree_sitter_toml() }),
         "rust": Grammar(name: "Rust", bundleName: "TreeSitterRust_TreeSitterRust", language: { tree_sitter_rust() }),
         "go": Grammar(name: "Go", bundleName: "TreeSitterGo_TreeSitterGo", language: { tree_sitter_go() }),
+        "html": Grammar(name: "HTML", bundleName: "TreeSitterHTML_TreeSitterHTML", language: { tree_sitter_html() }),
+        "css": Grammar(name: "CSS", bundleName: "TreeSitterCSS_TreeSitterCSS", language: { tree_sitter_css() }),
     ]
 
     nonisolated private static let extensions: [String: String] = [
@@ -59,6 +63,7 @@ public nonisolated enum GrammarCatalog {
         "toml": "toml",
         "rs": "rust",
         "go": "go",
+        "html": "html", "htm": "html", "css": "css",
         // No grammar: `Highlighter` colours a diff by its lines' first characters.
         "diff": "diff", "patch": "diff",
     ]

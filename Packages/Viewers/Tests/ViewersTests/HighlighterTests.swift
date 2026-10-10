@@ -33,6 +33,26 @@ struct HighlighterTests {
         }
     }
 
+    /// HTML and CSS are coloured: tags, attributes and comments, the JavaScript in a <script> and the CSS in a
+    /// <style> through the HTML grammar's injections, and a .css file's selectors, properties and values.
+    @Test func htmlAndCSSAreColoured() throws {
+        #expect(GrammarCatalog.languageName(forPath: "/p/index.html") == "html" && GrammarCatalog.languageName(forPath: "/p/a.htm") == "html")
+        #expect(GrammarCatalog.languageName(forPath: "/p/site.css") == "css")
+        let html = "<!-- c -->\n<div class=\"a\">x</div>\n<script>const n = 1; function f() { return n }</script>\n<style>.a { color: red; }</style>\n"
+        let text = html as NSString
+        let captures = try #require(Highlighter(languageName: "html", text: html)).captures
+        func names(in needle: String) -> Set<String> {
+            let range = text.range(of: needle)
+            return Set(captures.filter { NSIntersectionRange($0.range, range).length > 0 }.map(\.name))
+        }
+        #expect(names(in: "div").contains("tag") && names(in: "class").contains("attribute") && names(in: "<!-- c -->").contains("comment"))
+        #expect(names(in: "function").contains("keyword"), "the script is JavaScript: \(names(in: "function"))")
+        #expect(names(in: "color").contains("property"), "the style is CSS: \(names(in: "color"))")
+        let css = ".card > a:hover { color: #fff; margin: 4px; } /* c */\n@media (min-width: 600px) { }\n"
+        let cssNames = Set(try #require(Highlighter(languageName: "css", text: css)).captures.map(\.name))
+        #expect(cssNames.isSuperset(of: ["property", "attribute", "number", "keyword", "comment", "string.special"]), "\(cssNames.sorted())")
+    }
+
     /// JSX tags and attributes are coloured in .jsx (the JavaScript grammar) and .tsx files.
     @Test func jsxTagsAndAttributesAreColoured() throws {
         let code = "const x = <div className=\"a\">{y}</div>\n"
@@ -55,7 +75,7 @@ struct HighlighterTests {
     }
 
     @Test func grammarsLoadUnderSwiftTest() {
-        #expect(GrammarCatalog.supportedLanguageNames().count == 14)
+        #expect(GrammarCatalog.supportedLanguageNames().count == 16)
         for name in GrammarCatalog.supportedLanguageNames() {
             #expect(GrammarCatalog.configuration(forLanguage: name) != nil, "\(name) queries should be found")
         }

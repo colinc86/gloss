@@ -26,6 +26,8 @@ let package = Package(
         .package(url: "https://github.com/tree-sitter-grammars/tree-sitter-toml", from: "0.7.0"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-rust", from: "0.24.2"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-go", from: "0.25.0"),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-html", exact: "0.23.2"),
+        .package(url: "https://github.com/tree-sitter/tree-sitter-css", exact: "0.23.2"),
     ],
     targets: [
         .target(
@@ -47,6 +49,8 @@ let package = Package(
                 .product(name: "TreeSitterTOML", package: "tree-sitter-toml"),
                 .product(name: "TreeSitterRust", package: "tree-sitter-rust"),
                 .product(name: "TreeSitterGo", package: "tree-sitter-go"),
+                .product(name: "TreeSitterHTML", package: "tree-sitter-html"),
+                .product(name: "TreeSitterCSS", package: "tree-sitter-css"),
             ],
             // Mermaid (MIT, pinned; see MermaidRenderer.version) draws diagrams offline.
             resources: [.copy("Resources/Mermaid")],
