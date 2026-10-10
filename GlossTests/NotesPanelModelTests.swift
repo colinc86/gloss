@@ -307,6 +307,17 @@ struct NotesPanelModelTests {
         #expect(model.messages(for: note.id).map(\.body) == ["Which platform, Mac or Linux?"] && model.draftCount == 1)
     }
 
+    /// An edit begun in a card lives in the model, so a card the list recycles (scrolled away and back) still has it.
+    @Test func editsInCardsOutliveTheCard() async throws {
+        let (model, _) = try await makeModel()
+        defer { model.stop() }
+        let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Rename the helper" })
+        model.commentEdits[note.id] = .init(body: "Rename the helper to fetch", color: .green, original: note.body)
+        #expect(model.commentEdits[note.id]?.body == "Rename the helper to fetch")
+        #expect(await model.update(note.id, body: "Rename the helper to fetch", color: .green, editedFrom: note.body) == nil)
+        await waitUntil { model.groups.flatMap(\.notes).contains { $0.body == "Rename the helper to fetch" } }
+    }
+
     /// Return pressed twice while the first follow-up is still being written adds it once; an orphan with a follow-up
     /// waiting can be sent like any other.
     @Test func aFollowUpIsAddedOnceAndAnOrphanWithOneIsSendable() async throws {

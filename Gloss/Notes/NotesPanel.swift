@@ -497,17 +497,22 @@ struct NoteCard: View {
     @State private var followUpFocusRequest = 0
     @State private var followUpFailed = false
     /// Changing a follow-up not yet sent, in place.
-    @State private var editingMessageID: MessageID?
-    @State private var messageEditText = ""
     /// Moves whose old text is shown, struck through.
     @State private var openMoves: Set<MessageID> = []
-    /// Editing the comment in place (#14): what is typed, the colour picked, and the comment as it was when editing
-    /// began, so a change made meanwhile isn't overwritten.
-    @State private var editing = false
-    @State private var editBody = ""
-    @State private var editColor = NoteColor.yellow
-    @State private var editOriginal = ""
-    @State private var editRefusal: NotesPanelModel.EditRefusal?
+    /// Editing the comment in place (#14), kept in the panel model (`commentEdits`) so a recycled row keeps it.
+    private var edit: NotesPanelModel.CommentEdit? { model.notesPanel.commentEdits[note.id] }
+    private var editing: Bool { edit != nil }
+    private var editRefusal: NotesPanelModel.EditRefusal? { edit?.refusal }
+    private var editBody: Binding<String> {
+        Binding(get: { model.notesPanel.commentEdits[note.id]?.body ?? "" }, set: { model.notesPanel.commentEdits[note.id]?.body = $0 })
+    }
+    private var editColor: Binding<NoteColor> {
+        Binding(get: { model.notesPanel.commentEdits[note.id]?.color ?? note.color }, set: { model.notesPanel.commentEdits[note.id]?.color = $0 })
+    }
+    /// The follow-up of this card being changed in place, if any (`followUpEdits`, also in the model).
+    private var editingMessageID: MessageID? {
+        model.notesPanel.messages(for: note.id).first { model.notesPanel.followUpEdits[$0.id] != nil }?.id
+    }
 
     private var arrived: Bool { model.notesPanel.arrivedIDs.contains(note.id) }
 
@@ -909,8 +914,7 @@ struct NoteCard: View {
                 Spacer(minLength: 0)
                 if turn.unsent, !isPast, let id = turn.id, editingMessageID != id {
                     InlineIconButton(title: "Edit this follow-up", symbol: "pencil", emphasized: hovering || isSelected) {
-                        messageEditText = turn.text
-                        editingMessageID = id
+                        model.notesPanel.followUpEdits[id] = turn.text
                     }
                     InlineIconButton(title: "Delete this follow-up", symbol: "trash", role: .destructive, emphasized: hovering || isSelected) {
                         Task { await model.notesPanel.deleteFollowUp(id) }
@@ -945,13 +949,15 @@ struct NoteCard: View {
 
     /// A follow-up not yet sent, changed in place: Return saves (empty deletes it), Escape cancels.
     private func messageEditor(_ id: MessageID) -> some View {
+        let panel = model.notesPanel
         let save = {
-            let text = messageEditText
+            let text = panel.followUpEdits[id] ?? ""
             Task {
-                if await model.notesPanel.updateFollowUp(id, text) { editingMessageID = nil }
+                if await panel.updateFollowUp(id, text) { panel.followUpEdits[id] = nil }
             }
         }
-        return NoteBodyEditor(text: $messageEditText, onSubmit: save, onCancel: { editingMessageID = nil }, owner: note.id)
+        let text = Binding(get: { panel.followUpEdits[id] ?? "" }, set: { panel.followUpEdits[id] = $0 })
+        return NoteBodyEditor(text: text, onSubmit: save, onCancel: { panel.followUpEdits[id] = nil }, owner: note.id)
             .frame(minHeight: 28, maxHeight: 120)
             .padding(DS.Space.xs)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
@@ -1101,20 +1107,20 @@ struct NoteCard: View {
     /// not the note is on screen in the viewer. Only the comment: the thread's turns are their own messages.
     private var editField: some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
-            NoteBodyEditor(text: $editBody, onSubmit: commitEdit, onCancel: cancelEdit, owner: note.id)
+            NoteBodyEditor(text: editBody, onSubmit: commitEdit, onCancel: cancelEdit, owner: note.id)
                 .frame(minHeight: 44, maxHeight: 160)
                 .padding(DS.Space.xs)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color(nsColor: Theme.color(for: editColor)).opacity(0.6)))
+                .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color(nsColor: Theme.color(for: editColor.wrappedValue)).opacity(0.6)))
             HStack(spacing: DS.Space.s) {
-                ColorSwatches(selection: $editColor)
+                ColorSwatches(selection: editColor)
                 Spacer(minLength: DS.Space.xs)
                 Button("Cancel", action: cancelEdit)
                     .controlSize(.small)
                 Button("Save", action: commitEdit)
                     .buttonStyle(.glassProminent)
                     .controlSize(.small)
-                    .disabled(editBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(editBody.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             // Said in place, with the typing kept: the note changed meanwhile, or the write failed.
             if let editRefusal {
@@ -1128,30 +1134,28 @@ struct NoteCard: View {
     }
 
     private func startEdit() {
-        editBody = note.body
-        editOriginal = note.body
-        editColor = note.color
-        editRefusal = nil
-        editing = true
+        model.notesPanel.commentEdits[note.id] = .init(body: note.body, color: note.color, original: note.body)
     }
 
     private func cancelEdit() {
-        editing = false
-        editRefusal = nil
+        model.notesPanel.commentEdits[note.id] = nil
     }
 
     private func commitEdit() {
-        let body = editBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        let panel = model.notesPanel
+        let id = note.id
+        guard let edit = panel.commentEdits[id] else { return }
+        let body = edit.body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         Task {
-            if let refusal = await model.notesPanel.update(note.id, body: body, color: editColor, editedFrom: editOriginal) {
-                editRefusal = refusal
+            if let refusal = await panel.update(id, body: body, color: edit.color, editedFrom: edit.original) {
+                panel.commentEdits[id]?.refusal = refusal
                 // Changed meanwhile: what's there now becomes the base, so a second Save is a decision made seeing it.
-                if refusal == .changedMeanwhile, let current = model.notesPanel.groups.flatMap(\.notes).first(where: { $0.id == note.id }) {
-                    editOriginal = current.body
+                if refusal == .changedMeanwhile, let current = panel.groups.flatMap(\.notes).first(where: { $0.id == id }) {
+                    panel.commentEdits[id]?.original = current.body
                 }
             } else {
-                editing = false
+                panel.commentEdits[id] = nil
             }
         }
     }

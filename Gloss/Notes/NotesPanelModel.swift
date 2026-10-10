@@ -60,6 +60,18 @@ final class NotesPanelModel {
     private(set) var messages: [NoteID: [NoteMessage]] = [:]
     /// What is typed in each card's follow-up field and not yet added, kept here so a recycled row doesn't lose it.
     var followUpText: [NoteID: String] = [:]
+    /// A comment being edited in its card (#14): what is typed, the color picked, the comment as it was when editing
+    /// began (so a change made meanwhile isn't overwritten), and why a save was refused. Kept here, like the follow-up
+    /// field, so a card scrolled out of the list and back still has it.
+    struct CommentEdit: Equatable {
+        var body: String
+        var color: NoteColor
+        var original: String
+        var refusal: EditRefusal?
+    }
+    var commentEdits: [NoteID: CommentEdit] = [:]
+    /// Unsent follow-ups being changed in place, by message: what is typed.
+    var followUpEdits: [MessageID: String] = [:]
     /// Notes that just appeared (made, or brought back by Undo); their cards glow briefly so the eye finds them.
     private(set) var arrivedIDs: Set<NoteID> = []
     @ObservationIgnored private var hasLoaded = false
