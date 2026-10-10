@@ -29,4 +29,23 @@ struct ZoomShortcutTests {
         window.orderOut(nil)
         #expect(commands == [.zoomIn, .zoomIn, .zoomIn], "each press zooms once")
     }
+
+    /// ⌘0 fits a picture or a PDF, and on a web page (nothing to fit) is actual size, as in a browser.
+    @Test func commandZeroFitsOrResets() async throws {
+        for (fitHelp, expected) in [("Fit", ImageViewerController.ZoomCommand.fit), (nil, .actualSize)] as [(String?, ImageViewerController.ZoomCommand)] {
+            var commands: [ImageViewerController.ZoomCommand] = []
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 80), styleMask: [.titled], backing: .buffered, defer: false)
+            let hosting = NSHostingView(rootView: HStack { ZoomControls(magnification: 2, fitHelp: fitHelp, zoom: { commands.append($0) }) })
+            hosting.frame = window.contentLayoutRect
+            window.contentView = hosting
+            window.makeKeyAndOrderFront(nil)
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(200))
+            _ = press("0", unmodified: "0", flags: .command, in: window)
+            _ = press("1", unmodified: "1", flags: .command, in: window)
+            try await Task.sleep(for: .milliseconds(100))
+            window.orderOut(nil)
+            #expect(commands == [expected, .actualSize], "fit help \(fitHelp ?? "none")")
+        }
+    }
 }

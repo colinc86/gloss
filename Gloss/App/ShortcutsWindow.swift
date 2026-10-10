@@ -26,6 +26,7 @@ nonisolated struct ShortcutGroup: Identifiable {
             ("Put the Add Note button away", ["esc"]),
             ("Zoom in / out (images, PDFs, pages)", ["⌘", "+", "/", "⌘", "−"]),
             ("Actual size / fit (images, PDFs)", ["⌘", "1", "/", "⌘", "0"]),
+            ("Actual size (pages)", ["⌘", "1", "/", "⌘", "0"]),
             ("Move between cells (spreadsheets)", ["←", "→", "↑", "↓"]),
             ("Extend the cell selection", ["⇧", "←", "→", "↑", "↓"]),
             ("Clear the selection", ["esc"]),

@@ -428,6 +428,16 @@ struct ZoomControls: View {
                 }
         }
         .animation(Motion.snappy, value: magnification)
+        .background {
+            // A web page has nothing to fit: ⌘0 is actual size there, as in every browser.
+            if fitHelp == nil {
+                Button("") { zoom(.actualSize) }
+                    .keyboardShortcut("0", modifiers: [.command])
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
+        }
         if let fitHelp {
             ToolGroup {
                 Button { zoom(.fit) } label: {
