@@ -132,11 +132,16 @@ final class ContentSearchModel {
         return (hits, rejected)
     }
 
-    nonisolated private static func runGrep(pattern: String, root: String, regex: Bool, hidden: Bool) async -> ([SearchHit], Bool) {
-        let arguments = ["-rnIs"] + RemoteSearch.grepOutputFlags + ["--exclude-dir=.git"] + RemoteSearch.grepHiddenFlags(hidden, root: root)
-            + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "--", root]
-        guard let (hits, status) = await hits(of: "/usr/bin/grep", arguments: arguments, ripgrep: false) else { return ([], false) }
-        let rejected = status == 2 ? await self.hits(of: "/usr/bin/grep", arguments: ["-s"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "/dev/null"], ripgrep: false)?.1 == 2 : false
+    /// Without rg: the script a host without rg runs (grep over the files git lists in a work tree, ignored ones left
+    /// out as rg leaves them; grep over the folder elsewhere), so a build folder's matches don't bury the sources'.
+    /// Through xargs a bad pattern has no exit status of its own, so a regex that finds nothing is checked alone.
+    nonisolated static func runGrep(pattern: String, root: String, regex: Bool, hidden: Bool) async -> ([SearchHit], Bool) {
+        var tools = RemoteTools()
+        tools.git = FileListing.localGit != nil
+        let script = RemoteSearch.script(pattern: pattern, root: root, tools: tools, regex: regex, hidden: hidden)
+        guard let (hits, status) = await hits(of: "/bin/sh", arguments: ["-c", script], ripgrep: false) else { return ([], false) }
+        let check = ["-s"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "/dev/null"]
+        let rejected = status == 2 || (regex && hits.isEmpty) ? await self.hits(of: "/usr/bin/grep", arguments: check, ripgrep: false)?.1 == 2 : false
         return (hits, rejected)
     }
 

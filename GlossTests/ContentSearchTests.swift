@@ -1,4 +1,5 @@
 import Core
+import Remote
 import Foundation
 import Testing
 @testable import Gloss
@@ -69,6 +70,27 @@ struct ContentSearchTests {
         #expect(model.truncated)
         #expect(model.errorMessage == nil, "a stopped search is not a failed one")
         #expect(model.hits == ContentSearchModel.ordered(model.hits))
+    }
+
+    /// Without rg, a git work tree is searched through the files git lists: an ignored build folder's matches are left
+    /// out, as rg leaves them; outside a work tree grep walks the folder; a bad regular expression still says so.
+    @Test func withoutRipgrepIgnoredFilesAreLeftOut() async throws {
+        let git = try #require(FileListing.localGit)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-search-git-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(directory)/build", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        try "build/\n".write(toFile: "\(directory)/.gitignore", atomically: true, encoding: .utf8)
+        try "needle in source\n".write(toFile: "\(directory)/main.swift", atomically: true, encoding: .utf8)
+        try "needle generated\n".write(toFile: "\(directory)/build/gen.swift", atomically: true, encoding: .utf8)
+        func names() async -> [String] {
+            await ContentSearchModel.runGrep(pattern: "needle", root: directory, regex: false, hidden: false).0.map { ($0.path as NSString).lastPathComponent }.sorted()
+        }
+        #expect(await names() == ["gen.swift", "main.swift"], "not a repository yet: every file")
+        let initialise = try ChildProcess.launch(ChildProcessSpec(executable: git, arguments: ["-C", directory, "init", "-q"]))
+        #expect(try await initialise.exitCode == 0)
+        #expect(await names() == ["main.swift"], "the ignored build folder is left out")
+        #expect(await ContentSearchModel.runGrep(pattern: "foo(", root: directory, regex: true, hidden: false).1, "a bad pattern says so")
+        #expect(await ContentSearchModel.runGrep(pattern: "nothing.here", root: directory, regex: true, hidden: false).1 == false)
     }
 
     /// A match in a file that isn't UTF-8 (Latin-1, as old Windows projects have) is listed, read as the viewer reads it.
