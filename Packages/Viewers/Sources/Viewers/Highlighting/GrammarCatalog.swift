@@ -127,12 +127,13 @@ public nonisolated enum GrammarCatalog {
     /// Looks in the main bundle, then beside every loaded bundle (where SwiftPM puts resource bundles for tests).
     /// Highlight files a grammar's own configuration joins to its `highlights.scm` (grammar, file): TypeScript's
     /// queries name the types and leave keywords, strings and functions to JavaScript's, and JSX tags and
-    /// attributes are in JavaScript's `highlights-jsx.scm`. Alone, a .ts file showed only its types coloured and a
+    /// attributes are in JavaScript's `highlights-jsx.scm` (its parameters in `highlights-params.scm`). Alone, a .ts file showed only its types coloured and a
     /// .jsx or .tsx file its tags not at all. Plain TypeScript has no JSX nodes, so it takes no JSX queries.
     nonisolated private static let joinedHighlights: [String: [(grammar: String, file: String)]] = [
+        // In the order the grammars' tree-sitter.json lists them, which decides which colour wins where two match.
         "typescript": [("javascript", "highlights.scm")],
-        "tsx": [("javascript", "highlights.scm"), ("javascript", "highlights-jsx.scm")],
-        "javascript": [("javascript", "highlights-jsx.scm")],
+        "tsx": [("javascript", "highlights-jsx.scm"), ("javascript", "highlights.scm")],
+        "javascript": [("javascript", "highlights-jsx.scm"), ("javascript", "highlights-params.scm")],
     ]
 
     /// `configuration` with its highlights followed by the joined files', as one query; unchanged when there are none

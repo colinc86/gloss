@@ -22,6 +22,17 @@ struct HighlighterTests {
         }
     }
 
+    /// A JavaScript function's parameters are coloured, as TypeScript's are.
+    @Test func javaScriptParametersAreColoured() throws {
+        let code = "function f(a, { b }, [c]) { return a }\n"
+        let text = code as NSString
+        let captures = try #require(Highlighter(languageName: "javascript", text: code)).captures
+        for name in ["a", "b", "c"] {
+            let at = text.range(of: name, range: NSRange(location: 10, length: 15)).location   // in the parameter list
+            #expect(captures.contains { $0.range.location == at && $0.name == "variable.parameter" }, "\(name)")
+        }
+    }
+
     /// JSX tags and attributes are coloured in .jsx (the JavaScript grammar) and .tsx files.
     @Test func jsxTagsAndAttributesAreColoured() throws {
         let code = "const x = <div className=\"a\">{y}</div>\n"
