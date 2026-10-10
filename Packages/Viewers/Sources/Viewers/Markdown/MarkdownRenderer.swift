@@ -163,13 +163,7 @@ public struct MarkdownRenderer {
     }
 
     /// Fenced-code info string to a grammar name: `swift`, `sh`, `ts`, `py` and friends.
-    nonisolated static func grammarName(forFence info: String?) -> String? {
-        guard let word = info?.split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first?.lowercased(), !word.isEmpty else { return nil }
-        let aliases = ["shell": "bash", "console": "bash", "shellsession": "bash", "golang": "go", "md": "markdown"]
-        if let alias = aliases[word] { return alias }
-        if GrammarCatalog.supportedLanguageNames().contains(word) { return word }
-        return GrammarCatalog.languageName(forPath: "x.\(word)")
-    }
+    nonisolated static func grammarName(forFence info: String?) -> String? { GrammarCatalog.grammarName(forFence: info) }
 
     // MARK: Walker
 

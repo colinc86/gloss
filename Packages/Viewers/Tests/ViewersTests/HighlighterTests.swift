@@ -4,6 +4,18 @@ import Testing
 @testable import Viewers
 
 struct HighlighterTests {
+    /// A code block in Markdown source is coloured under the short names fences use (`py`, `sh`, `ts`, `js`), as the
+    /// rendered view colours it; only the full names were.
+    @Test func markdownCodeBlocksUnderShortFenceNamesAreColoured() throws {
+        for (fence, code) in [("py", "def f():\n    return 1\n"), ("sh", "if true; then echo x; fi\n"), ("ts", "const x: number = 1\n"), ("js", "function f() { return 1 }\n")] {
+            let text = "# T\n\n```\(fence)\n\(code)```\n"
+            let highlighter = try #require(Highlighter(languageName: "markdown", text: text))
+            let start = (text as NSString).range(of: code).location
+            let inside = highlighter.captures.filter { $0.range.location >= start && $0.range.location < start + code.utf16.count && $0.name != "none" }
+            #expect(!inside.isEmpty, "\(fence): coloured")
+        }
+    }
+
     @Test func grammarsLoadUnderSwiftTest() {
         #expect(GrammarCatalog.supportedLanguageNames().count == 14)
         for name in GrammarCatalog.supportedLanguageNames() {

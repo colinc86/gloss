@@ -87,6 +87,16 @@ public nonisolated enum GrammarCatalog {
     }
 
     /// Cached per language; nil when the grammar or its queries cannot be found.
+    /// Fenced-code info string to a grammar name: `swift`, `sh`, `ts`, `py` and friends. The rendered view and a
+    /// Markdown source's embedded code blocks both ask it, so a ```py block is coloured in either.
+    public nonisolated static func grammarName(forFence info: String?) -> String? {
+        guard let word = info?.split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first?.lowercased(), !word.isEmpty else { return nil }
+        let aliases = ["shell": "bash", "console": "bash", "shellsession": "bash", "golang": "go", "md": "markdown"]
+        if let alias = aliases[word] { return alias }
+        if supportedLanguageNames().contains(word) { return word }
+        return languageName(forPath: "x.\(word)")
+    }
+
     public nonisolated static func configuration(forLanguage name: String) -> LanguageConfiguration? {
         cache.withLock { cache in
             if let cached = cache[name] { return cached.value }

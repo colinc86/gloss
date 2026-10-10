@@ -93,7 +93,7 @@ public final class Highlighter {
     nonisolated private static func makeLayer(_ configuration: LanguageConfiguration, depth: Int = 3) throws -> LanguageLayer {
         try LanguageLayer(
             languageConfig: configuration,
-            configuration: .init(maximumLanguageDepth: depth, languageProvider: { GrammarCatalog.configuration(forLanguage: $0) })
+            configuration: .init(maximumLanguageDepth: depth, languageProvider: { GrammarCatalog.configuration(forLanguage: GrammarCatalog.grammarName(forFence: $0) ?? $0) })
         )
     }
 
