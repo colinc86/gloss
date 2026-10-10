@@ -5,26 +5,29 @@ import UniformTypeIdentifiers
 import Viewers
 
 /// Files and folders dragged from Finder onto the window: a folder opens as a root, a file opens (its folder too,
-/// when no open root holds it). While a drag hovers, the window says what dropping will do.
+/// when no open root holds it). A link dragged from a browser opens as a page, as typing its address would. While a
+/// drag hovers, the window says what dropping will do.
 struct DropToOpen: ViewModifier {
     @Environment(AppModel.self) private var model
     @State private var targeted = false
-    @State private var hoveringFolder = false
+    @State private var hovering = DropHint.Kind.file
 
     func body(content: Content) -> some View {
         content
             .dropDestination(for: URL.self) { urls, _ in
                 let local = urls.filter(\.isFileURL)
-                guard !local.isEmpty else { return false }
+                let pages = Self.webPages(in: urls)
+                guard !local.isEmpty || !pages.isEmpty else { return false }
                 Task { await open(local) }
+                for page in pages { model.openWebPage(page, via: model.via(for: page, on: model.addressHost, chosen: false)) }
                 return true
             } isTargeted: { isTargeted in
                 targeted = isTargeted
-                if isTargeted { hoveringFolder = Self.pasteboardHoldsFolder() }
+                if isTargeted { hovering = Self.pasteboardKind() }
             }
             .overlay {
                 if targeted {
-                    DropHint(isFolder: hoveringFolder)
+                    DropHint(kind: hovering)
                         .transition((AnyTransition.opacity.combined(with: .scale(scale: 0.98))).calmed)
                         .allowsHitTesting(false)
                 }
@@ -46,17 +49,25 @@ struct DropToOpen: ViewModifier {
         }
     }
 
-    /// Whether the drag in flight carries a folder (the hint names it before the drop).
-    private static func pasteboardHoldsFolder() -> Bool {
+    /// The web pages among dropped URLs: http and https links, as a browser drags them.
+    nonisolated static func webPages(in urls: [URL]) -> [URL] {
+        urls.filter { !$0.isFileURL && ["http", "https"].contains($0.scheme?.lowercased() ?? "") }
+    }
+
+    /// What the drag in flight carries, so the hint names it before the drop.
+    private static func pasteboardKind() -> DropHint.Kind {
         let pasteboard = NSPasteboard(name: .drag)
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        return urls.contains { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []
+        if urls.contains(where: { $0.isFileURL && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }) { return .folder }
+        if !urls.contains(where: \.isFileURL), !webPages(in: urls).isEmpty { return .page }
+        return .file
     }
 }
 
 /// The overlay during a drag: an accent outline around the window's content and a small glass card in the middle.
-private struct DropHint: View {
-    let isFolder: Bool
+struct DropHint: View {
+    enum Kind { case file, folder, page }
+    let kind: Kind
 
     var body: some View {
         ZStack {
@@ -65,11 +76,11 @@ private struct DropHint: View {
                 .background(Color.accentColor.opacity(0.05), in: RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
                 .padding(DS.Space.s)
             VStack(spacing: DS.Space.s) {
-                Image(systemName: isFolder ? "folder.badge.plus" : "doc.badge.plus")
+                Image(systemName: kind == .folder ? "folder.badge.plus" : kind == .page ? "globe" : "doc.badge.plus")
                     .font(.system(size: 34, weight: .light))
                     .foregroundStyle(Color.accentColor)
-                    .symbolEffect(.bounce, value: isFolder)
-                Text(isFolder ? "Open folder" : "Open file")
+                    .symbolEffect(.bounce, value: kind)
+                Text(kind == .folder ? "Open folder" : kind == .page ? "Open page" : "Open file")
                     .font(.headline)
             }
             .padding(.horizontal, DS.Space.xl)
