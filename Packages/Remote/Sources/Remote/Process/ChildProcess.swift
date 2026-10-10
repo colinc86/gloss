@@ -334,3 +334,13 @@ extension Data {
         self = out
     }
 }
+
+extension ChildProcessError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .launchFailed(let detail): "A helper program couldn't start: \(detail)"
+        case .stdinClosed: "A helper program stopped reading its input"
+        case .writeFailed(let code): "Writing to a helper program failed: \(String(cString: strerror(code)))"
+        }
+    }
+}

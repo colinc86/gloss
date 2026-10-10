@@ -414,3 +414,13 @@ extension SFTPStatus: LocalizedError {
         }
     }
 }
+
+extension SFTPCodecError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .truncated: "The host's file service sent a reply that was cut short"
+        case .unknownType(let type): "The host's file service sent a reply Gloss doesn't know (type \(type))"
+        case .oversizedPacket(let size): "The host's file service sent a reply too large to read (\(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)))"
+        }
+    }
+}
