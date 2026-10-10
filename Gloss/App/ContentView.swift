@@ -158,6 +158,11 @@ struct ContentView: View {
                 Task { await model.openRemoteRoot(hostID: prompt.hostID, path: path) }
             }
         }
+        // A note or iteration action that failed (resolve, delete, New Iteration…). On the window, not the notes
+        // panel: New Iteration is in the menu bar too, and with the panel hidden its alert waited for the panel.
+        .alert("Couldn't Complete the Action", isPresented: Binding(get: { model.notesPanel.lastError != nil }, set: { if !$0 { model.notesPanel.lastError = nil } })) {
+            Button("OK", role: .cancel) { model.notesPanel.lastError = nil }
+        } message: { Text(model.notesPanel.lastError ?? "") }
         .alert("Notes Are Temporary This Session", isPresented: Binding(get: { model.databaseFailure != nil }, set: { if !$0 { model.databaseFailure = nil } })) {
             Button("OK", role: .cancel) {}
             Button("Show Database in Finder") {
