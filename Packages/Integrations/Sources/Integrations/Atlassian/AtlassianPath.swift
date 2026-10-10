@@ -153,8 +153,10 @@ public enum AtlassianPath: Equatable, Sendable {
         if let key = selected, isIssueKey(key) {
             return .jiraIssue(project: String(key.split(separator: "-")[0]), key: key)
         }
-        if let spaces = parts.firstIndex(of: "spaces"), parts.count > spaces + 3, parts[spaces + 2] == "pages", parts[spaces + 3].allSatisfy(\.isNumber) {
-            return .confluencePageFolder(space: parts[spaces + 1], id: parts[spaces + 3])
+        if let spaces = parts.firstIndex(of: "spaces"), parts.count > spaces + 3, parts[spaces + 2] == "pages" {
+            // A page being edited is `…/pages/edit-v2/<id>` (`edit` in the older editor): the address copied mid-edit.
+            let id = ["edit-v2", "edit"].contains(parts[spaces + 3]) && parts.count > spaces + 4 ? parts[spaces + 4] : parts[spaces + 3]
+            if !id.isEmpty, id.allSatisfy(\.isNumber) { return .confluencePageFolder(space: parts[spaces + 1], id: id) }
         }
         return nil
     }
