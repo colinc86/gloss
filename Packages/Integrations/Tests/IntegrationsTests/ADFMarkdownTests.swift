@@ -41,7 +41,7 @@ struct ADFMarkdownTests {
 
     @Test func everyLineOfAParagraphStaysText() {
         let adf = ##"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"},{"type":"hardBreak"},{"type":"text","text":"# also not a heading"},{"type":"hardBreak"},{"type":"text","text":"---"}]},{"type":"paragraph","content":[{"type":"text","text":"~~~"}]},{"type":"paragraph","content":[{"type":"text","text":"    four spaces"}]},{"type":"paragraph","content":[{"type":"status","attrs":{"text":"x"}},{"type":"text","text":"(javascript:alert(1)) & more"}]},{"type":"paragraph","content":[{"type":"inlineCard","attrs":{"url":"file:///etc/passwd"}}]}]}"##
-        #expect(render(adf) == "first  \n\\# also not a heading  \n\\---\n\n\\~~~\n\nfour spaces\n\n\\[x\\](javascript:alert(1)) \\& more\n", Comment(rawValue: render(adf)))
+        #expect(render(adf) == "first  \n\\# also not a heading  \n\\---\n\n\\~\\~\\~\n\nfour spaces\n\n\\[x\\](javascript:alert(1)) \\& more\n", Comment(rawValue: render(adf)))
         // A code block as a list item's first part stays inside the item.
         let list = #"{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"codeBlock","content":[{"type":"text","text":"a\nb"}]}]}]}]}"#
         #expect(render(list) == "- ```\n  a\n  b\n  ```\n")
@@ -57,6 +57,12 @@ struct ADFMarkdownTests {
     @Test func headingsKeepTheirWholeText() {
         let adf = #"{"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Plan"},{"type":"hardBreak"},{"type":"text","text":"for Q4"}]},{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Fix issue #"}]}]}"#
         #expect(render(adf) == "## Plan for Q4\n\n### Fix issue \\#\n")
+    }
+
+    /// A tilde in text stays one: Markdown would strike `~3h~ish` through.
+    @Test func tildesInTextAreNotStrikethrough() {
+        let adf = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"about ~3h~ish"}]},{"type":"paragraph","content":[{"type":"text","text":"~~~ not a fence"}]}]}"#
+        #expect(render(adf) == "about \\~3h\\~ish\n\n\\~\\~\\~ not a fence\n")
     }
 
     @Test func renderingIsDeterministic() {

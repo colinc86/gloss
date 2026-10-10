@@ -282,11 +282,12 @@ public enum ADFMarkdown {
         return trimmed.replacingOccurrences(of: " ", with: "%20").replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
     }
 
-    /// Characters that would turn plain text into emphasis, code, links or HTML.
+    /// Characters that would turn plain text into emphasis, strikethrough (one `~` is enough: `~3h~ish`), code,
+    /// links or HTML.
     static func escapeInline(_ text: String) -> String {
         var result = ""
         for character in text {
-            if "\\*_`[]<&".contains(character) { result.append("\\") }
+            if "\\*_`[]<&~".contains(character) { result.append("\\") }
             result.append(character)
         }
         return result
