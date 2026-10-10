@@ -55,17 +55,29 @@ extension ExplorerModel {
     func delete(_ node: FileNode) {
         guard let parent = node.parent else { return }
         let local = node.hostID == .local
+        let text = Self.deleteConfirmation(name: node.name, isDirectory: node.isDirectory, hostName: local ? nil : hostName(node.hostID))
         let alert = NSAlert()
-        alert.messageText = local ? "Move \"\(node.name)\" to the Trash?" : "Delete \"\(node.name)\" on the remote host?"
-        alert.informativeText = local ? "You can restore it from the Trash." : "Remote deletes cannot be undone."
+        alert.messageText = text.message
+        alert.informativeText = text.information
         alert.alertStyle = local ? .informational : .warning
-        alert.addButton(withTitle: local ? "Move to Trash" : "Delete")
+        alert.addButton(withTitle: text.button)
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         perform("delete") { fileSystem in
             try await fileSystem.delete(node.path)
             await self.loadChildren(of: parent)
         }
+    }
+
+    /// What Delete asks: a local item goes to the Trash; a remote one is gone for good, a folder with everything in
+    /// it, on the host it names.
+    nonisolated static func deleteConfirmation(name: String, isDirectory: Bool, hostName: String?) -> (message: String, information: String, button: String) {
+        guard let hostName else {
+            return (isDirectory ? "Move the folder \"\(name)\" and its contents to the Trash?" : "Move \"\(name)\" to the Trash?",
+                    "You can restore it from the Trash.", "Move to Trash")
+        }
+        return (isDirectory ? "Delete the folder \"\(name)\" and everything in it on \(hostName)?" : "Delete \"\(name)\" on \(hostName)?",
+                "Deleting on a remote host can't be undone.", "Delete")
     }
 
     func revealInFinder(_ node: FileNode) {

@@ -295,3 +295,19 @@ struct ExplorerSlowRevealTests {
         #expect(found, "the reveal reached the file once the folder had listed")
     }
 }
+
+struct DeleteConfirmationTests {
+    @Test func aRemoteFolderSaysItsContentsGoForGoodAndWhere() {
+        let folder = ExplorerModel.deleteConfirmation(name: "build", isDirectory: true, hostName: "devbox")
+        #expect(folder.message == "Delete the folder \"build\" and everything in it on devbox?")
+        #expect(folder.information.contains("can't be undone") && folder.button == "Delete")
+        #expect(ExplorerModel.deleteConfirmation(name: "a.txt", isDirectory: false, hostName: "devbox").message == "Delete \"a.txt\" on devbox?")
+    }
+
+    @Test func aLocalItemGoesToTheTrash() {
+        let folder = ExplorerModel.deleteConfirmation(name: "build", isDirectory: true, hostName: nil)
+        #expect(folder.message == "Move the folder \"build\" and its contents to the Trash?")
+        #expect(folder.button == "Move to Trash")
+        #expect(ExplorerModel.deleteConfirmation(name: "a.txt", isDirectory: false, hostName: nil).message == "Move \"a.txt\" to the Trash?")
+    }
+}

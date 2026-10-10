@@ -336,6 +336,7 @@ final class AppModel {
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in PollGate.shared.isPaused = false }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.webURL = { [weak self] hostID, path in self?.webURL(hostID: hostID, path: path) }
+        explorer.hostName = { [weak self] hostID in self?.hostName(hostID) ?? hostID.rawValue }
         fileSystems[.web] = UnavailableFileSystem(hostID: .web)
         // A page moves the viewer only while it is what the viewer shows: one left running behind another document
         // (a redirect, a refresh, a script) never pulls the reader away.

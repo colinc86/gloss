@@ -101,6 +101,8 @@ final class ExplorerModel {
     @ObservationIgnored var onShowDotfilesChange: () -> Void = {}
     /// The web address of a node on an integration host (a pull request, issue or page); set by the app.
     @ObservationIgnored var webURL: (HostID, String) -> URL? = { _, _ in nil }
+    /// The host's name as the sidebar shows it, for confirmations that say where they act.
+    @ObservationIgnored var hostName: (HostID) -> String = { $0.rawValue }
 
     /// Bumped by View › Filter Files to put the caret in the tree's filter field.
     var filterFocusRequest = 0
