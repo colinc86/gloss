@@ -66,7 +66,7 @@ public struct CSVGridView: NSViewRepresentable {
         scroll.borderType = .noBorder
         controller.onHighlightsChange = { [weak coordinator = context.coordinator] in coordinator?.refreshAppearance() }
         controller.onSelectionChange = { [weak coordinator = context.coordinator] in coordinator?.refreshAppearance() }
-        controller.onFound = { [weak table] cell in
+        controller.onScroll = { [weak table] cell in
             table?.scrollRowToVisible(cell.row)
             table?.scrollColumnToVisible(cell.column + 1)
         }

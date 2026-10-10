@@ -1487,6 +1487,9 @@ final class DocumentSession: Identifiable {
         if let html, case .element = note.anchor, let found = html.elementRects[note.id] ?? html.pageRect {
             rect = found
         }
+        if let csv = csvController, case .text = note.anchor, let place = csv.place(of: note.id), let found = csv.rectProvider(place) {
+            rect = found
+        }
         if case .embeddedImage(let anchor) = note.anchor {
             let region = anchor.region
             let image = MarkdownViewerController.EmbeddedImageRef(source: anchor.source, occurrence: anchor.occurrence)
@@ -1651,6 +1654,11 @@ final class DocumentSession: Identifiable {
             }
             return
         }
+        if let csv = csvController, case .text = note.anchor {
+            // Its cells, columns or records in the grid, which shows no text to select.
+            csv.show(note.id)
+            return
+        }
         guard let controller = textController, let range = controller.highlights.first(where: { $0.id == note.id })?.range else { return }
         switch note.anchor {
         case .text:
@@ -1681,6 +1689,11 @@ final class DocumentSession: Identifiable {
         let keyed: [(id: NoteID, key: Double)] = open.enumerated().compactMap { index, note in
             switch note.anchor {
             case .text:
+                if let csv = csvController {
+                    // A spreadsheet's notes by their first cell, row then column.
+                    guard let cell = csv.firstCell(of: note.id) else { return nil }
+                    return (note.id, Double(cell.row) * 10_000 + Double(cell.column))
+                }
                 guard let range = textController?.highlights.first(where: { $0.id == note.id })?.range else { return nil }
                 return (note.id, Double(range.location))
             case .pdf(let anchor):

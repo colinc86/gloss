@@ -82,6 +82,17 @@ struct CSVGridSelectionTests {
         #expect(grid.highlight(row: 2, column: 3) == nil)
         #expect(grid.highlight(row: 1, column: 0)?.id == columnNote)
         #expect(grid.rowHighlight(0)?.id == rowNote && grid.rowHighlight(1) == nil, "only the row note tints a whole row")
+
+        // Where each sits, for revealing it, stepping to it, and opening its editor over it.
+        #expect(grid.place(of: cellNote) == .cells([GridCell(row: 2, column: 2)]))
+        #expect(grid.place(of: columnNote) == .columns([0]))
+        #expect(grid.place(of: rowNote) == .rows(0...0))
+        #expect(grid.place(of: NoteID.new()) == nil)
+        #expect(grid.firstCell(of: columnNote) == GridCell(row: 0, column: 0))
+        var scrolled: [GridCell] = []
+        grid.onScroll = { scrolled.append($0) }
+        grid.show(cellNote)
+        #expect(scrolled == [GridCell(row: 2, column: 2)])
     }
 
     @Test func rowDragsPivotOnWhereTheyStarted() {

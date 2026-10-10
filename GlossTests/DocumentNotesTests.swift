@@ -203,6 +203,36 @@ struct DocumentNotesTests {
         session.close()
     }
 
+    /// A spreadsheet's notes have places in the grid, not in text: Next Note steps through them in reading order,
+    /// and revealing one scrolls to its first cell.
+    @Test func aSpreadsheetsNotesCanBeSteppedToAndRevealed() async throws {
+        let (directory, _) = try makeFile("")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = "\(directory)/people.csv"
+        let csv = "name,city\nAda,London\nBob,Paris\nCy,Rome\n"
+        try csv.write(toFile: path, atomically: true, encoding: .utf8)
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let grid = try #require(session.csvController)
+        let document = try #require(session.document)
+        func line(_ number: Int, _ text: String, cells: CellSelection? = nil) -> Anchor {
+            var anchor = TextAnchor(start: .init(line: number, col: 1), end: .init(line: number, col: text.utf16.count + 1), text: text, before: "", after: "", hash: nil)
+            anchor.cells = cells
+            return .text(anchor)
+        }
+        let later = try await store.createNote(documentID: document.id, anchor: line(4, "Cy,Rome"), body: "row", color: .yellow)
+        let earlier = try await store.createNote(documentID: document.id, anchor: line(2, "Ada,London", cells: CellSelection(cells: [CellRef(lineOffset: 0, column: 1)])),
+                                                 body: "cell", color: .blue)
+        await waitUntil { grid.highlights.count == 2 }
+        #expect(session.steppableNotes.map(\.id) == [earlier.id, later.id], "the cell on the first record, then the third record")
+        var scrolled: [GridCell] = []
+        grid.onScroll = { scrolled.append($0) }
+        let stepped = session.stepNote(forward: true)
+        #expect(stepped?.id == earlier.id)
+        #expect(scrolled == [GridCell(row: 0, column: 1)], "the step scrolls the grid to the note")
+        session.close()
+    }
+
     @Test func aHiddenNoteIsNotDrawnButStillMovesWithEdits() async throws {
         let (directory, path) = try makeFile("one\ntwo\nthree\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }

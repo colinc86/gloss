@@ -121,8 +121,8 @@ public final class CSVGridController {
     public private(set) var findMissed = false
     /// The cell found last; the next search starts after it.
     @ObservationIgnored public private(set) var foundCell: GridCell?
-    /// Set by the view: scroll a found cell into sight.
-    @ObservationIgnored public var onFound: (GridCell) -> Void = { _ in }
+    /// Set by the view: scroll a cell into sight (a match found, a note revealed).
+    @ObservationIgnored public var onScroll: (GridCell) -> Void = { _ in }
 
     func perform(_ action: NSTextFinder.Action) {
         switch action {
@@ -154,7 +154,7 @@ public final class CSVGridController {
             findMissed = false
             foundCell = cell
             click(cell, extend: false, toggle: false)
-            onFound(cell)
+            onScroll(cell)
             return
         }
         findMissed = true
@@ -366,6 +366,32 @@ public final class CSVGridController {
 
     /// Record indexes covered by row notes (notes without cells), for whole-row tinting.
     public func rowHighlight(_ row: Int) -> TextHighlight? { rowHighlights[row] }
+
+    /// Where a note sits in the grid: its cells, its columns, or its records; nil when it isn't drawn.
+    public func place(of id: NoteID) -> GridSelection? {
+        let cells = Set(cellHighlights.filter { $0.value.id == id }.keys)
+        if !cells.isEmpty { return .cells(cells) }
+        let columns = IndexSet(columnHighlights.filter { $0.value.id == id }.keys)
+        if !columns.isEmpty { return .columns(columns) }
+        let rows = rowHighlights.filter { $0.value.id == id }.keys
+        guard let first = rows.min(), let last = rows.max() else { return nil }
+        return .rows(first...last)
+    }
+
+    /// The first cell of a note's place, row then column: where reading reaches it.
+    public func firstCell(of id: NoteID) -> GridCell? {
+        switch place(of: id) {
+        case .cells(let cells)?: cells.min { ($0.row, $0.column) < ($1.row, $1.column) }
+        case .columns(let columns)?: columns.first.map { GridCell(row: 0, column: $0) }
+        case .rows(let rows)?: GridCell(row: rows.lowerBound, column: 0)
+        case .none?, nil: nil
+        }
+    }
+
+    /// Scrolls a note's first cell into sight (its card was clicked, or Next Note reached it).
+    public func show(_ id: NoteID) {
+        if let cell = firstCell(of: id) { onScroll(cell) }
+    }
 
     private func rebuildHighlightMaps() {
         rowHighlights = [:]
