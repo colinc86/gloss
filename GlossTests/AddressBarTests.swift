@@ -267,4 +267,17 @@ struct AddressBarTests {
         #expect(model.session(hostID: .local, path: "\(root)/guide.md")?.markdown?.pendingRenderedScrollAtTop == true)
         await model.shutDown()
     }
+
+    /// A Markdown link to a folder (`[docs](docs/)`) opens the folder in the explorer, not a tab that can't show it.
+    @Test func aLinkToAFolderOpensItInTheExplorer() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-link-folder-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(root)/docs", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        model.openDocument(hostID: .local, path: "\(root)/docs", heading: nil)
+        await waitUntil { model.explorer.selectedTab?.path == "\(root)/docs" }
+        #expect(model.session(hostID: .local, path: "\(root)/docs") == nil, "no document tab for a folder")
+        await model.shutDown()
+    }
 }

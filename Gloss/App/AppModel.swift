@@ -1130,16 +1130,25 @@ final class AppModel {
     /// at the top once the file has loaded, as a browser does; without a fragment, or one no heading has, it opens
     /// as it would.
     func openDocument(hostID: HostID, path: String, heading: String?) {
+        Task { await openLinked(hostID: hostID, path: path, heading: heading) }
+    }
+
+    /// A link to a folder (`[docs](docs/)`, common in a README) opens it in the explorer, as typing it in the address
+    /// field does; the viewer could only say it can't show a folder.
+    private func openLinked(hostID: HostID, path: String, heading: String?) async {
+        if !hostID.isVirtual, await ensureConnected(hostID), let attributes = try? await fileSystems[hostID]?.stat(path), attributes.kind == .directory {
+            pickedHost = hostID
+            await explorer.openRoot(hostID: hostID, path: path)
+            return
+        }
         openDocument(hostID: hostID, path: path)
         guard let heading, let session = session(hostID: hostID, path: path) else { return }
-        Task {
-            await Self.untilLoaded(session)
-            // The heading's whole line, as a click on an anchor in the same file scrolls: an empty range at its
-            // start has no rendered text to land on.
-            guard let markdown = session.markdown, let source = session.textController,
-                  let line = MarkdownAnchors.line(of: heading, in: source.text) else { return }
-            markdown.scroll(toSource: source.lineIndex.contentRange(ofLine: line), select: false, atTop: true)
-        }
+        await Self.untilLoaded(session)
+        // The heading's whole line, as a click on an anchor in the same file scrolls: an empty range at its start
+        // has no rendered text to land on.
+        guard let markdown = session.markdown, let source = session.textController,
+              let line = MarkdownAnchors.line(of: heading, in: source.text) else { return }
+        markdown.scroll(toSource: source.lineIndex.contentRange(ofLine: line), select: false, atTop: true)
     }
 
     /// Waits until a document has its record and its viewer, however long its host takes to send it (a fixed few
