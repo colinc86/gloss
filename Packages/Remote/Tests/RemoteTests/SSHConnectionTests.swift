@@ -222,6 +222,14 @@ struct SSHConnectionTests {
         if case .hostKeyChanged = connection.classify(stderr: "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @", status: 255) {} else { Issue.record("expected hostKeyChanged") }
         if case .authenticationFailed = connection.classify(stderr: "colin@x: Permission denied (publickey).", status: 255) {} else { Issue.record("expected auth") }
         if case .unreachable = connection.classify(stderr: "ssh: Could not resolve hostname x: nodename nor servname provided", status: 255) {} else { Issue.record("expected unreachable") }
+        // As macOS's ssh says them; an auth failure is never retried on its own.
+        let tooMany = connection.classify(stderr: "Received disconnect from 10.0.0.2 port 22:2: Too many authentication failures", status: 255)
+        if case .authenticationFailed = tooMany {} else { Issue.record("expected auth, got \(tooMany)") }
+        #expect(!tooMany.isTransient)
+        for message in ["ssh: connect to host box port 22: Operation timed out", "ssh: connect to host box port 22: Network is unreachable",
+                        "ssh: connect to host box port 22: Host is down"] {
+            if case .unreachable = connection.classify(stderr: message, status: 255) {} else { Issue.record("expected unreachable: \(message)") }
+        }
         #expect(connection.classify(stderr: "", status: 1) == .other("ssh exited with status 1"))
         let args = connection.masterArguments(acceptNew: false)
         #expect(args.contains("ControlMaster=yes") && args.contains("-N") && !args.joined(separator: " ").contains("BatchMode"))

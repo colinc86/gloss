@@ -328,10 +328,15 @@ public actor SSHConnection {
             let fingerprint = text.components(separatedBy: .newlines).first { $0.contains("SHA256:") }
             return .hostKeyProblem(fingerprint: fingerprint, offerAcceptNew: true)
         }
-        if text.contains("Permission denied") || text.contains("communication with agent failed") { return .authenticationFailed(text) }
-        if text.contains("Could not resolve hostname") || text.contains("Connection timed out") || text.contains("Connection refused") || text.contains("No route to host") {
-            return .unreachable(text)
+        // "Too many authentication failures": every key offered was refused. Read as anything else it was retried,
+        // offering them all again each time, which a server's brute-force guard can answer by banning the address.
+        if text.contains("Permission denied") || text.contains("communication with agent failed") || text.contains("Too many authentication failures") {
+            return .authenticationFailed(text)
         }
+        // macOS says "Operation timed out" where Linux says "Connection timed out".
+        let unreachable = ["Could not resolve hostname", "Connection timed out", "Operation timed out", "Connection refused", "No route to host",
+                           "Network is unreachable", "Host is down"]
+        if unreachable.contains(where: text.contains) { return .unreachable(text) }
         return .other(text.isEmpty ? "ssh exited with status \(status)" : text)
     }
 
