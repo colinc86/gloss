@@ -35,4 +35,17 @@ struct AgentControlTests {
         #expect(AppModel.takesLineAnchors(.file, text), "an unlisted extension holding text opens as text")
         #expect(!AppModel.takesLineAnchors(.file, binary))
     }
+
+    /// `open_in_viewer` given a folder opens it in the explorer rather than failing in the viewer.
+    @Test @MainActor func anAgentOpeningAFolderOpensItInTheExplorer() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-agent-folder-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(root)/docs", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.start()
+        await model.showForAgent(hostID: .local, path: "\(root)/docs", line: nil, endLine: nil)
+        #expect(model.explorer.selectedTab?.path == "\(root)/docs")
+        #expect(model.session(hostID: .local, path: "\(root)/docs") == nil, "no document tab trying to read a folder")
+        await model.shutDown()
+    }
 }

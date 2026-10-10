@@ -1034,6 +1034,19 @@ final class AppModel {
     }
 
     /// A typed path: a directory opens as a root, anything else as a document with its folder in the explorer.
+    /// What `open_in_viewer` shows: a folder opens in the explorer, as typing it in the address field does (the viewer
+    /// would only say it can't open a folder); anything else opens as a document, at its lines when given.
+    func showForAgent(hostID: HostID, path: String, line: Int?, endLine: Int?) async {
+        if !hostID.isVirtual, !DocumentKindDetector.isWebURL(path), await ensureConnected(hostID),
+           let attributes = try? await fileSystems[hostID]?.stat(path), attributes.kind == .directory {
+            pickedHost = hostID
+            await explorer.openRoot(hostID: hostID, path: path)
+            return
+        }
+        await openRootIfNeeded(hostID: hostID, containing: path)
+        if let line { openDocument(hostID: hostID, path: path, line: line, endLine: endLine) } else { openDocument(hostID: hostID, path: path) }
+    }
+
     /// `path:line` (as agents print a location) opens the file at that line when no file is named so: a name that
     /// really ends in `:30` still opens as it is.
     private func openPath(_ typed: String, on hostID: HostID) async {
@@ -1826,8 +1839,7 @@ final class AppModel {
             await MainActor.run {
                 guard let self else { return }
                 Task {
-                    await self.openRootIfNeeded(hostID: hostID, containing: path)
-                    if let line { self.openDocument(hostID: hostID, path: path, line: line, endLine: endLine) } else { self.openDocument(hostID: hostID, path: path) }
+                    await self.showForAgent(hostID: hostID, path: path, line: line, endLine: endLine)
                     self.bringForwardForAgent()
                 }
             }
