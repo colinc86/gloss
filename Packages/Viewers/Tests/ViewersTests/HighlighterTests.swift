@@ -4,6 +4,16 @@ import Testing
 @testable import Viewers
 
 struct HighlighterTests {
+    /// TypeScript's highlights only add types to JavaScript's: with JavaScript's joined in, a .ts or .tsx file has its
+    /// keywords, strings and functions coloured, not just its types.
+    @Test func typeScriptIsColouredLikeJavaScriptAndMore() throws {
+        let code = "import x from 'y'\nconst a: number = 1\nfunction f(b: string) { return \"s\" + b }\n"
+        for language in ["typescript", "tsx"] {
+            let names = Set(try #require(Highlighter(languageName: language, text: code)).captures.map(\.name))
+            #expect(names.isSuperset(of: ["keyword", "string", "function", "type.builtin"]), "\(language): \(names.sorted())")
+        }
+    }
+
     /// A code block in Markdown source is coloured under the short names fences use (`py`, `sh`, `ts`, `js`), as the
     /// rendered view colours it; only the full names were.
     @Test func markdownCodeBlocksUnderShortFenceNamesAreColoured() throws {

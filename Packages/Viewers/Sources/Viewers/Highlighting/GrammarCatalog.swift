@@ -116,7 +116,8 @@ public nonisolated enum GrammarCatalog {
             return nil
         }
         do {
-            return try LanguageConfiguration(grammar.language(), name: grammar.name, queriesURL: queries)
+            let configuration = try LanguageConfiguration(grammar.language(), name: grammar.name, queriesURL: queries)
+            return withInheritedHighlights(configuration, name: name, grammar: grammar, queries: queries)
         } catch {
             log.error("Loading queries for \(name, privacy: .public) failed: \(error, privacy: .public)")
             return nil
@@ -124,6 +125,28 @@ public nonisolated enum GrammarCatalog {
     }
 
     /// Looks in the main bundle, then beside every loaded bundle (where SwiftPM puts resource bundles for tests).
+    /// Grammars whose highlights only add to another's, as their own configuration lists them: TypeScript's queries
+    /// name the types and leave keywords, strings and functions to JavaScript's. Alone, a .ts file showed its types
+    /// coloured and nothing else.
+    nonisolated private static let inheritedHighlights: [String: String] = ["typescript": "javascript", "tsx": "javascript"]
+
+    /// `configuration` with its highlights followed by the inherited grammar's, as one query; unchanged when there
+    /// is none or the joined query does not load.
+    nonisolated private static func withInheritedHighlights(_ configuration: LanguageConfiguration, name: String, grammar: Grammar, queries: URL) -> LanguageConfiguration {
+        guard let base = inheritedHighlights[name], let baseGrammar = grammars[base], let baseQueries = queriesURL(bundleName: baseGrammar.bundleName),
+              let own = try? Data(contentsOf: queries.appendingPathComponent("highlights.scm")),
+              let inherited = try? Data(contentsOf: baseQueries.appendingPathComponent("highlights.scm")) else { return configuration }
+        let language = Language(grammar.language())
+        do {
+            var joined = configuration.queries
+            joined[.highlights] = try Query(language: language, data: own + Data("\n".utf8) + inherited)
+            return LanguageConfiguration(language, name: configuration.name, queries: joined)
+        } catch {
+            log.error("Joining \(base, privacy: .public) highlights into \(name, privacy: .public) failed: \(error, privacy: .public)")
+            return configuration
+        }
+    }
+
     nonisolated static func queriesURL(bundleName: String) -> URL? {
         var candidates: [URL] = []
         if let url = Bundle.main.url(forResource: bundleName, withExtension: "bundle") { candidates.append(url) }
