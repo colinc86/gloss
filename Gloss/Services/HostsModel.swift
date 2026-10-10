@@ -161,6 +161,12 @@ final class HostsModel {
         await refresh()
     }
 
+    /// The notes removing `hostID` deletes, from every document's notes: the panel's own list holds only the
+    /// location in front, so a host's notes elsewhere went uncounted and the warning said nothing of them.
+    nonisolated static func notesOnHost(_ hostID: HostID, in groups: [DocumentNotes]) -> Int {
+        groups.filter { $0.document.hostID == hostID }.reduce(0) { $0 + $1.notes.count }
+    }
+
     /// Removes an app-managed host, its notes included, after disconnecting it.
     func remove(_ hostID: HostID) async throws {
         await disconnect(hostID)

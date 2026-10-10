@@ -565,7 +565,7 @@ private struct HostsSettings: View {
             }
         } message: {
             // Removing a host deletes its row, and the database cascades to its folders, documents, and notes.
-            let notes = removing.map { entry in model.notesPanel.groups.filter { $0.document.hostID == entry.id }.reduce(0) { $0 + $1.notes.count } } ?? 0
+            let notes = removing.map { HostsModel.notesOnHost($0.id, in: model.notesPanel.allGroups) } ?? 0
             Text(notes == 0
                  ? "Its settings and recent folders are deleted from the app. Your ssh config is not touched."
                  : "Its settings, recent folders, and \(notes) note\(notes == 1 ? "" : "s") on its files are deleted from the app. This can't be undone. Your ssh config is not touched.")

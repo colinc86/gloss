@@ -1,3 +1,5 @@
+import Core
+import Foundation
 import Testing
 @testable import Gloss
 
@@ -19,5 +21,24 @@ struct HostFormTests {
         #expect(HostForm.problem(name: "buildbox", port: "", taken: taken, identityFile: "/k/My Keys/id") == nil, "a space in a path is quoted for ssh")
         #expect(HostForm.problem(name: "buildbox", port: "", taken: taken, identityFile: "/k/\"id") != nil)
         #expect(HostForm.problem(name: "", port: "", taken: taken) == nil, "an empty name only leaves Save off")
+    }
+}
+
+/// Removing a host warns of every note it deletes, not only those under the folder the notes panel shows.
+@MainActor
+struct HostRemovalWarningTests {
+    @Test func aHostsNotesAreCountedWhereverThePanelIs() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-host-notes-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        let host = try await model.noteStore.upsertHost(name: "devbox", kind: .ssh)
+        let document = try await model.noteStore.upsertDocument(hostID: host.id, path: "/srv/app/main.py", kind: .code, fingerprint: Fingerprint())
+        for body in ["one", "two"] { _ = try await model.noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: .blue) }
+        for _ in 0..<100 where HostsModel.notesOnHost(host.id, in: model.notesPanel.allGroups) < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(HostsModel.notesOnHost(host.id, in: model.notesPanel.allGroups) == 2)
+        #expect(HostsModel.notesOnHost(host.id, in: model.notesPanel.groups) == 0, "the panel shows this Mac's folder: counting its list missed them")
+        await model.shutDown()
     }
 }
