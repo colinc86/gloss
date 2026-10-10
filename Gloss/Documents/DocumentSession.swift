@@ -1106,7 +1106,8 @@ final class DocumentSession: Identifiable {
         if let pdf = pdfController {
             pdf.highlights = drawn.compactMap { note in
                 guard case .pdf(let anchor) = note.anchor else { return nil }
-                return PDFHighlight(id: note.id, page: anchor.page, bounds: anchor.bounds?.cgRect, text: anchor.text, color: note.color, state: note.displayState)
+                return PDFHighlight(id: note.id, page: anchor.page, bounds: anchor.bounds?.cgRect, text: anchor.text, occurrence: anchor.occurrence ?? 0,
+                                    color: note.color, state: note.displayState)
             }
             return
         }
@@ -1367,7 +1368,7 @@ final class DocumentSession: Identifiable {
             return
         }
         if let pdf = pdfController {
-            guard let anchor = pdf.selectionAnchor else { return }
+            guard let anchor = pdf.noteAnchor else { return }
             let bounds = anchor.bounds?.cgRect ?? pdf.textSelection?.bounds ?? .zero
             let rect = pdf.rect(forPage: anchor.page, bounds: bounds) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
             noteEditor = NoteEditorState(anchor: .pdf(anchor), body: "", color: lastUsedColor, anchorRect: rect)
@@ -1441,7 +1442,7 @@ final class DocumentSession: Identifiable {
             }
         } else if let image = imageController, let anchor = image.selectionAnchor {
             newAnchor = .image(anchor)
-        } else if let pdf = pdfController, let anchor = pdf.selectionAnchor {
+        } else if let pdf = pdfController, let anchor = pdf.noteAnchor {
             newAnchor = .pdf(anchor)
         } else if let csv = csvController, let anchor = csv.selectionAnchor() {
             newAnchor = .text(anchor)
@@ -1458,9 +1459,16 @@ final class DocumentSession: Identifiable {
         }
     }
 
+    /// A PDF note's place on its page: its region, or the match of its text it was made on.
+    static func bounds(of anchor: PDFAnchor, in pdf: PDFViewerController) -> CGRect? {
+        if let bounds = anchor.bounds { return bounds.cgRect }
+        guard let text = anchor.text, !text.isEmpty else { return nil }
+        return pdf.textBounds(page: anchor.page, text: text, occurrence: anchor.occurrence ?? 0)
+    }
+
     func editNote(_ note: Note) {
         var rect = CGRect(x: 40, y: 40, width: 1, height: 1)
-        if let pdf = pdfController, case .pdf(let anchor) = note.anchor, let bounds = anchor.bounds?.cgRect,
+        if let pdf = pdfController, case .pdf(let anchor) = note.anchor, let bounds = Self.bounds(of: anchor, in: pdf),
            let found = pdf.rect(forPage: anchor.page, bounds: bounds) {
             rect = found
         }
@@ -1625,7 +1633,7 @@ final class DocumentSession: Identifiable {
     func reveal(_ note: Note, select: Bool = true) {
         if let pdf = pdfController, case .pdf(let anchor) = note.anchor {
             pdf.selectedNoteID = note.id
-            pdf.scroll(toPage: anchor.page, bounds: anchor.bounds?.cgRect)
+            pdf.scroll(toPage: anchor.page, bounds: Self.bounds(of: anchor, in: pdf))
             return
         }
         if let image = imageController, case .image = note.anchor {
@@ -1673,7 +1681,9 @@ final class DocumentSession: Identifiable {
                 guard let range = textController?.highlights.first(where: { $0.id == note.id })?.range else { return nil }
                 return (note.id, Double(range.location))
             case .pdf(let anchor):
-                return (note.id, Double(anchor.page) * 1_000_000 - (anchor.bounds?.cgRect.maxY ?? 999_999))
+                // Page space runs up the page, so a higher top comes first; text notes by the match they are on.
+                let top = pdfController.flatMap { Self.bounds(of: anchor, in: $0) }?.maxY ?? anchor.bounds?.cgRect.maxY ?? 999_999
+                return (note.id, Double(anchor.page) * 1_000_000 - top)
             case .image:
                 return (note.id, Double(index))
             case .element(let anchor):

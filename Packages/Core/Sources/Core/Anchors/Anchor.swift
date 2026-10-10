@@ -203,12 +203,16 @@ public struct PDFAnchor: Codable, Hashable, Sendable {
     /// Selected text, when any.
     public var text: String?
     public var pageCount: Int
+    /// For a text selection (no bounds), which match of `text` on the page it was, 0-based in the order the
+    /// document finds them; nil for the first, as notes made before it was kept.
+    public var occurrence: Int?
 
-    public init(page: Int, bounds: PDFBounds?, text: String?, pageCount: Int) {
+    public init(page: Int, bounds: PDFBounds?, text: String?, pageCount: Int, occurrence: Int? = nil) {
         self.page = page
         self.bounds = bounds
         self.text = text
         self.pageCount = pageCount
+        self.occurrence = occurrence.flatMap { $0 > 0 ? $0 : nil }
     }
 }
 

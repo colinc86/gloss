@@ -17,6 +17,16 @@ struct AnchorJSONTests {
         #expect(try anchor.encodedJSON() == #"{"h":220,"imageH":1800,"imageW":2880,"w":640,"x":1204,"y":312}"#)
     }
 
+    @Test func aPDFTextNotesMatchIsStoredOnlyWhenItIsNotTheFirst() throws {
+        let first = Anchor.pdf(PDFAnchor(page: 0, bounds: nil, text: "Revenue", pageCount: 2))
+        #expect(!(try first.encodedJSON()).contains("occurrence"), "notes on the first match keep their old JSON")
+        let second = Anchor.pdf(PDFAnchor(page: 0, bounds: nil, text: "Revenue", pageCount: 2, occurrence: 1))
+        let json = try second.encodedJSON()
+        #expect(json.contains("\"occurrence\":1"))
+        #expect(try Anchor(type: .pdf, json: json) == second)
+        #expect(try Anchor(type: .pdf, json: #"{"page":0,"text":"Revenue","pageCount":2}"#) == first)
+    }
+
     @Test func pdfAnchorMatchesTheDocShape() throws {
         let anchor = Anchor.pdf(PDFAnchor(page: 2, bounds: PDFBounds(x: 10, y: 20, w: 30, h: 40), text: "hello", pageCount: 9))
         #expect(try anchor.encodedJSON() == #"{"bounds":{"h":40,"w":30,"x":10,"y":20},"page":2,"pageCount":9,"text":"hello"}"#)

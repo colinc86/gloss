@@ -239,7 +239,7 @@ public struct PDFViewerView: NSViewRepresentable {
             var selections: [PDFSelection] = []
             for highlight in controller.highlights where highlight.bounds == nil {
                 guard let text = highlight.text else { continue }
-                if let selection = controller.selections(matching: text, onPage: highlight.page).first {
+                if let selection = controller.selection(matching: text, onPage: highlight.page, occurrence: highlight.occurrence) {
                     selection.color = Theme.color(for: highlight.color).withAlphaComponent(0.35)
                     selections.append(selection)
                 }
@@ -279,7 +279,7 @@ public struct PDFViewerView: NSViewRepresentable {
                     guard let page = controller.document.page(at: highlight.page) else { continue }
                     if let bounds = highlight.bounds {
                         notePageRects[highlight.id] = (highlight.page, [bounds])
-                    } else if let text = highlight.text, let selection = controller.selections(matching: text, onPage: highlight.page).first {
+                    } else if let text = highlight.text, let selection = controller.selection(matching: text, onPage: highlight.page, occurrence: highlight.occurrence) {
                         notePageRects[highlight.id] = (highlight.page, selection.selectionsByLine().map { $0.bounds(for: page) })
                     }
                 }

@@ -168,6 +168,43 @@ struct ReAnchorerTests {
         #expect(ReAnchorer.pdf(regionOnly, in: FakePDF(pages: Array(repeating: "", count: 6))) == .unchanged)
     }
 
+    /// Pages as lists of words; `find` reports every match, in page order, as PDFKit does.
+    struct WordsPDF: PDFTextSource {
+        var pages: [[String]]
+        var pageCount: Int { pages.count }
+        func text(ofPage page: Int) -> String? { pages.indices.contains(page) ? pages[page].joined(separator: " ") : nil }
+        func find(_ text: String) -> [(page: Int, bounds: PDFBounds)] {
+            pages.indices.flatMap { page in
+                pages[page].indices.filter { pages[page][$0] == text }.map { (page, PDFBounds(x: Double($0), y: 0, w: 1, h: 1)) }
+            }
+        }
+    }
+
+    @Test func aPDFTextNoteKeepsWhichMatchItIsOn() throws {
+        let second = PDFAnchor(page: 0, bounds: nil, text: "Revenue", pageCount: 2, occurrence: 1)
+        #expect(ReAnchorer.pdf(second, in: WordsPDF(pages: [["Revenue", "up", "Revenue", "down"], ["x"]])) == .unchanged)
+        guard case .movedNeedsReview(.pdf(let fewer)) = ReAnchorer.pdf(second, in: WordsPDF(pages: [["Revenue", "up"], ["x"]])) else {
+            Issue.record("one match left: the note falls back to it and asks for a look"); return
+        }
+        #expect(fewer.page == 0 && fewer.occurrence == nil)
+        guard case .movedNeedsReview(.pdf(let moved)) = ReAnchorer.pdf(second, in: WordsPDF(pages: [["x"], ["a", "Revenue", "b", "Revenue"], ["Revenue"]])) else {
+            Issue.record("expected a move to the nearest page"); return
+        }
+        #expect(moved.page == 1 && moved.occurrence == nil, "the first match on the page it moved to")
+        let third = PDFAnchor(page: 0, bounds: nil, text: "Revenue", pageCount: 1)
+        guard case .moved(.pdf(let only)) = ReAnchorer.pdf(third, in: WordsPDF(pages: [["x"], ["Revenue"]])) else { Issue.record("expected moved"); return }
+        #expect(only.occurrence == nil)
+        #expect(PDFAnchor(page: 0, bounds: nil, text: "a", pageCount: 1, occurrence: 0).occurrence == nil, "the first match is stored as before")
+        let shouting = WordsPDF(pages: [["REVENUE", "up", "REVENUE", "down"], ["x"]])
+        struct CaseBlind: PDFTextSource {
+            var base: WordsPDF
+            var pageCount: Int { base.pageCount }
+            func text(ofPage page: Int) -> String? { base.text(ofPage: page) }
+            func find(_ text: String) -> [(page: Int, bounds: PDFBounds)] { base.find(text.uppercased()) }
+        }
+        #expect(ReAnchorer.pdf(second, in: CaseBlind(base: shouting)) == .unchanged, "a change of case keeps the note on its match, as PDFKit's search ignores case")
+    }
+
     @Test func pictureRegionsFollowThePicturesSize() {
         let region = ImageAnchor(x: 100, y: 50, w: 200, h: 100, imageW: 800, imageH: 400)
         let anchor = ElementAnchor(selector: "#hero", tag: "img", text: "", html: "<img>", rect: .init(x: 0, y: 0, w: 400, h: 200), hash: "old", region: region)

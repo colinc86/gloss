@@ -10,14 +10,17 @@ public struct PDFHighlight: Identifiable, Equatable, Sendable {
     public var page: Int
     public var bounds: CGRect?
     public var text: String?
+    /// Which match of `text` on the page a text note is on (`PDFAnchor.occurrence`).
+    public var occurrence: Int
     public var color: NoteColor
     public var state: NoteState
 
-    public init(id: NoteID, page: Int, bounds: CGRect?, text: String?, color: NoteColor, state: NoteState) {
+    public init(id: NoteID, page: Int, bounds: CGRect?, text: String?, occurrence: Int = 0, color: NoteColor, state: NoteState) {
         self.id = id
         self.page = page
         self.bounds = bounds
         self.text = text
+        self.occurrence = occurrence
         self.color = color
         self.state = state
     }
@@ -76,10 +79,39 @@ public final class PDFViewerController {
             cached = hit
         } else {
             guard let pdfPage = document.page(at: page) else { return [] }
-            cached = document.findString(text, withOptions: [.caseInsensitive]).filter { $0.pages.contains(pdfPage) }
+            // Counted on the page a match starts on, as `PDFDocumentTextSource.find` (and so re-anchoring) counts them.
+            cached = document.findString(text, withOptions: [.caseInsensitive]).filter { $0.pages.first == pdfPage }
             selectionCache[key] = cached
         }
         return cached.compactMap { $0.copy() as? PDFSelection }
+    }
+
+    /// The match a text note is on: its `occurrence`, or the first when the page has fewer (as re-anchoring decides).
+    public func selection(matching text: String, onPage page: Int, occurrence: Int) -> PDFSelection? {
+        let matches = selections(matching: text, onPage: page)
+        return matches.indices.contains(occurrence) ? matches[occurrence] : matches.first
+    }
+
+    /// Where a text note's match is, in page space.
+    public func textBounds(page: Int, text: String, occurrence: Int) -> CGRect? {
+        guard let pdfPage = document.page(at: page) else { return nil }
+        return selection(matching: text, onPage: page, occurrence: occurrence)?.bounds(for: pdfPage)
+    }
+
+    /// Which of the page's matches of `text` the selection at `bounds` is: the one overlapping it most, else the nearest.
+    func occurrence(of text: String, onPage page: Int, at bounds: CGRect) -> Int {
+        guard let pdfPage = document.page(at: page) else { return 0 }
+        let rects = selections(matching: text, onPage: page).map { $0.bounds(for: pdfPage) }
+        guard rects.count > 1 else { return 0 }
+        func overlap(_ rect: CGRect) -> CGFloat {
+            let shared = rect.intersection(bounds)
+            return shared.isNull ? 0 : shared.width * shared.height
+        }
+        func distance(_ rect: CGRect) -> CGFloat { hypot(rect.midX - bounds.midX, rect.midY - bounds.midY) }
+        return rects.indices.max { lhs, rhs in
+            let l = overlap(rects[lhs]), r = overlap(rects[rhs])
+            return l != r ? l < r : distance(rects[lhs]) > distance(rects[rhs])
+        } ?? 0
     }
 
     /// The anchor for whatever is selected: a drawn region first, else a text selection.
@@ -92,6 +124,17 @@ public final class PDFViewerController {
             return PDFAnchor(page: textSelection.page, bounds: nil, text: textSelection.text, pageCount: pageCount)
         }
         return nil
+    }
+
+    /// `selectionAnchor` with, for a text selection, which match of its text on the page it is. That takes a search of
+    /// the whole document, so it is asked for only when a note is made, never while the selection is being dragged.
+    public var noteAnchor: PDFAnchor? {
+        guard var anchor = selectionAnchor else { return nil }
+        if anchor.bounds == nil, let text = anchor.text, let textSelection {
+            anchor.occurrence = occurrence(of: text, onPage: anchor.page, at: textSelection.bounds)
+            if anchor.occurrence == 0 { anchor.occurrence = nil }
+        }
+        return anchor
     }
 
     public func clearSelection() {
@@ -144,6 +187,9 @@ extension PDFBounds {
 /// Core's re-anchoring sees the PDF through this.
 public struct PDFDocumentTextSource: PDFTextSource {
     public let document: PDFDocument
+    /// `findString` walks every page; one re-anchoring pass asks for the same text once per note on it.
+    private final class Found { var byText: [String: [(page: Int, bounds: PDFBounds)]] = [:] }
+    private let found = Found()
 
     public init(document: PDFDocument) {
         self.document = document
@@ -156,9 +202,12 @@ public struct PDFDocumentTextSource: PDFTextSource {
     }
 
     public func find(_ text: String) -> [(page: Int, bounds: PDFBounds)] {
-        document.findString(text, withOptions: [.caseInsensitive]).compactMap { selection in
+        if let hit = found.byText[text] { return hit }
+        let hits = document.findString(text, withOptions: [.caseInsensitive]).compactMap { selection -> (page: Int, bounds: PDFBounds)? in
             guard let page = selection.pages.first else { return nil }
             return (document.index(for: page), PDFBounds(selection.bounds(for: page)))
         }
+        found.byText[text] = hits
+        return hits
     }
 }

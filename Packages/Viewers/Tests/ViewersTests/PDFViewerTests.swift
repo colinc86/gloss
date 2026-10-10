@@ -24,6 +24,34 @@ struct PDFViewerTests {
         return PDFDocument(data: data as Data)!
     }
 
+    @Test func aTextNoteIsOnTheMatchItWasMadeOn() throws {
+        let data = NSMutableData()
+        var box = CGRect(x: 0, y: 0, width: 400, height: 200)
+        let context = CGContext(consumer: CGDataConsumer(data: data)!, mediaBox: &box, nil)!
+        context.beginPDFPage(nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Revenue rose, then Revenue fell",
+                                                                       attributes: [.font: NSFont.systemFont(ofSize: 18), .foregroundColor: NSColor.black]))
+        context.textPosition = CGPoint(x: 20, y: 100)
+        CTLineDraw(line, context)
+        context.endPDFPage()
+        context.closePDF()
+        let controller = PDFViewerController(document: try #require(PDFDocument(data: data as Data)))
+        let first = try #require(controller.textBounds(page: 0, text: "Revenue", occurrence: 0))
+        let second = try #require(controller.textBounds(page: 0, text: "Revenue", occurrence: 1))
+        #expect(second.minX > first.maxX, "the second match is further along the line")
+        #expect(controller.textBounds(page: 0, text: "Revenue", occurrence: 5) == first, "past the last match, the first, as re-anchoring falls back")
+
+        controller.textSelection = (0, second, "Revenue")
+        #expect(controller.noteAnchor?.occurrence == 1, "noting the second match notes that one")
+        #expect(controller.selectionAnchor?.occurrence == nil, "the selection itself is not searched for while it is dragged")
+        controller.textSelection = (0, first, "Revenue")
+        #expect(controller.noteAnchor?.occurrence == nil, "the first is stored as notes always were")
+
+        let highlight = PDFHighlight(id: NoteID(rawValue: "n_1"), page: 0, bounds: nil, text: "Revenue", occurrence: 1, color: .blue, state: .draft)
+        let page = try #require(controller.document.page(at: 0))
+        #expect(controller.selection(matching: "Revenue", onPage: 0, occurrence: highlight.occurrence)?.bounds(for: page) == second)
+    }
+
     @Test func textSourceFindsTextAcrossPages() {
         let source = PDFDocumentTextSource(document: makePDF())
         #expect(source.pageCount == 2)

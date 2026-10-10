@@ -540,23 +540,34 @@ public enum ReAnchorer {
 
     // MARK: PDF
 
+    /// A text selection's later match on its page (`occurrence`) is kept while the page still has that many;
+    /// fewer, and the note falls back to the first and is flagged. A match found on another page is counted
+    /// among that page's matches.
     public static func pdf(_ anchor: PDFAnchor, in source: some PDFTextSource) -> ReAnchorResult {
         let pageCount = source.pageCount
         if anchor.page < pageCount {
             let pageText = source.text(ofPage: anchor.page) ?? ""
-            let textPresent = anchor.text.map { $0.isEmpty || pageText.contains($0) } ?? true
+            // Case aside, as PDFKit's search (and so `find`) matches.
+            let textPresent = anchor.text.map { $0.isEmpty || pageText.range(of: $0, options: .caseInsensitive) != nil } ?? true
             if textPresent {
-                if pageCount == anchor.pageCount { return .unchanged }
                 var updated = anchor
                 updated.pageCount = pageCount
+                if let occurrence = anchor.occurrence, let text = anchor.text,
+                   source.find(text).filter({ $0.page == anchor.page }).count <= occurrence {
+                    updated.occurrence = nil
+                    return .movedNeedsReview(.pdf(updated))
+                }
+                if pageCount == anchor.pageCount { return .unchanged }
                 return .movedNeedsReview(.pdf(updated))
             }
         }
         guard let text = anchor.text, !text.isEmpty else { return .orphaned }
-        let hits = source.find(text).sorted { abs($0.page - anchor.page) < abs($1.page - anchor.page) }
-        guard let hit = hits.first else { return .orphaned }
-        let moved = PDFAnchor(page: hit.page, bounds: anchor.bounds == nil ? nil : hit.bounds, text: text, pageCount: pageCount)
-        return hits.count == 1 ? .moved(.pdf(moved)) : .movedNeedsReview(.pdf(moved))
+        let found = source.find(text)
+        guard let nearest = found.indices.min(by: { abs(found[$0].page - anchor.page) < abs(found[$1].page - anchor.page) }) else { return .orphaned }
+        let hit = found[nearest]
+        let occurrence = anchor.bounds == nil ? found[..<nearest].filter { $0.page == hit.page }.count : nil
+        let moved = PDFAnchor(page: hit.page, bounds: anchor.bounds == nil ? nil : hit.bounds, text: text, pageCount: pageCount, occurrence: occurrence)
+        return found.count == 1 ? .moved(.pdf(moved)) : .movedNeedsReview(.pdf(moved))
     }
 
     // MARK: Element
