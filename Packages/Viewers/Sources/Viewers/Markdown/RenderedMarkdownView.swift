@@ -20,6 +20,9 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         textView.onAttachedToWindow = { [weak coordinator = context.coordinator] in coordinator?.sync() }
         textView.isEditable = false
         textView.isSelectable = true
+        // Edit › Find (⌘F) searches the page as read, as it searches the source.
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         textView.isRichText = true
         textView.drawsBackground = true
         textView.backgroundColor = .textBackgroundColor
