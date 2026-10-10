@@ -448,7 +448,7 @@ public final class WebBrowserController {
                 shownProxy = updated
                 if let proxied = updated.proxied(url) { webView.load(URLRequest(url: proxied)) }
             } catch {
-                refusal = "Couldn't reach port \(port) on the host: \(error.localizedDescription)"
+                refusal = "Couldn't reach port \(port) on the host: \(error.userMessage)"
             }
         }
     }

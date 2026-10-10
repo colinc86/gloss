@@ -54,7 +54,7 @@ final class PullRequestPickerModel {
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 isLoading = false
-                errorMessage = (error as? IntegrationError)?.message ?? error.localizedDescription
+                errorMessage = (error as? IntegrationError)?.message ?? error.userMessage
             }
         }
     }

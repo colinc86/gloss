@@ -174,7 +174,7 @@ public actor OpenCodeTransport: Transport {
         } catch let error as DeliveryError {
             throw error
         } catch {
-            throw DeliveryError.targetUnavailable("\(request.url?.host ?? "server"): \(error.localizedDescription)")
+            throw DeliveryError.targetUnavailable("\(request.url?.host ?? "server"): \(error.userMessage)")
         }
     }
 

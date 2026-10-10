@@ -516,7 +516,7 @@ public actor MCPServer {
             } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
                 return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
             } catch {
-                return CallTool.Result(content: [text(error.localizedDescription)], isError: true)
+                return CallTool.Result(content: [text(error.userMessage)], isError: true)
             }
             // needs_input, from agents with older instructions, asks the user; the note stays open.
             let done = outcome == .needsInput ? "asked the user (note \(raw)); the answer comes back when they send it" : "resolved \(raw)"
@@ -545,7 +545,7 @@ public actor MCPServer {
             } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
                 return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
             } catch {
-                return CallTool.Result(content: [text(error.localizedDescription)], isError: true)
+                return CallTool.Result(content: [text(error.userMessage)], isError: true)
             }
             let done = asks ? "asked the user on note \(raw); the answer comes back when they send it" : "replied on note \(raw)"
             return CallTool.Result(content: [text(done + moved(relocation))])

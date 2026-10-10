@@ -390,7 +390,7 @@ final class ExplorerModel {
         case .io(let detail): return detail
         default:
             if error is SFTPClientError || error is SSHError { return "the connection to its host was lost or refused (\(error.userMessage))." }
-            return error.localizedDescription
+            return error.userMessage
         }
     }
 

@@ -95,7 +95,7 @@ final class AtlassianPickerModel {
     }
 
     nonisolated static func explain(_ product: String, _ error: any Error) -> String {
-        let reason = (error as? IntegrationError)?.message ?? error.localizedDescription
+        let reason = (error as? IntegrationError)?.message ?? error.userMessage
         return "\(product) didn't answer: \(reason). Check the key in Settings → Integrations; an issue key or a URL still opens."
     }
 

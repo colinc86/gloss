@@ -169,7 +169,7 @@ final class IntegrationsModel {
     }
 
     nonisolated static func message(_ error: any Error) -> String {
-        (error as? IntegrationError)?.message ?? error.localizedDescription
+        (error as? IntegrationError)?.message ?? error.userMessage
     }
 
     nonisolated static func describe(_ viewer: GitHubViewer) -> String {

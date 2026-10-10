@@ -268,7 +268,7 @@ final class DocumentSession: Identifiable {
         case .permissionDenied: "You don't have permission to read this file."
         case .notADirectory: "Part of this path isn't a folder."
         case .io(let detail): "The file couldn't be read: \(detail)"
-        default: error.localizedDescription
+        default: error.userMessage
         }
     }
 
@@ -947,7 +947,7 @@ final class DocumentSession: Identifiable {
         do {
             try await write(controller.text)
         } catch {
-            lastError = "Could not save \(fileName): \(error.localizedDescription)"
+            lastError = "Could not save \(fileName): \(error.userMessage)"
         }
     }
 

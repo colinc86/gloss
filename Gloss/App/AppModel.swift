@@ -215,7 +215,7 @@ final class AppModel {
         } catch {
             Log.database.fault("Could not open the database: \(error, privacy: .public). Using a temporary one.")
             // Said out loud, not only logged: notes made this session would otherwise vanish at quit unnoticed.
-            databaseFailure = "Your notes couldn't be opened (\(error.localizedDescription)). This session keeps notes in a temporary store that is discarded when you quit. The notes database is at \(AppDatabase.defaultURL.path); any backup made before an update is beside it."
+            databaseFailure = "Your notes couldn't be opened (\(error.userMessage)). This session keeps notes in a temporary store that is discarded when you quit. The notes database is at \(AppDatabase.defaultURL.path); any backup made before an update is beside it."
             // swiftlint:disable:next force_try
             database = try! AppDatabase.temporary()
         }
@@ -2318,7 +2318,7 @@ extension AppModel {
             }
         } catch {
             renameRecovery = blockedRenames[hostID]
-            explorer.lastError = "Rename recovery failed: \(error.localizedDescription)"
+            explorer.lastError = "Rename recovery failed: \(error.userMessage)"
         }
     }
 }
