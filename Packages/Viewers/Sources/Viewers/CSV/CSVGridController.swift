@@ -314,11 +314,11 @@ public final class CSVGridController {
     /// The selection as tab-separated text, the form spreadsheets paste into cells: whole records for rows, the
     /// header and values for columns, and for scattered cells the block that holds them with the gaps left empty.
     public func copyText() -> String? {
+        // A tab or newline inside a value (or a header) would split it into the next cell or row.
+        func flat(_ value: String) -> String { String(value.map { $0.isNewline || $0 == "\t" ? " " : $0 }) }
         func field(_ row: Int, _ column: Int) -> String {
             let fields = table.rows[row].fields
-            guard column < fields.count else { return "" }
-            // A tab or newline inside a value would split it into the next cell or row.
-            return String(fields[column].map { $0.isNewline || $0 == "\t" ? " " : $0 })
+            return column < fields.count ? flat(fields[column]) : ""
         }
         switch selection {
         case .none:
@@ -326,7 +326,7 @@ public final class CSVGridController {
         case .rows(let rows):
             return rows.map { row in (0..<table.columnCount).map { field(row, $0) }.joined(separator: "\t") }.joined(separator: "\n")
         case .columns(let columns):
-            let header = columns.map { $0 < table.header.count ? table.header[$0] : "" }.joined(separator: "\t")
+            let header = columns.map { $0 < table.header.count ? flat(table.header[$0]) : "" }.joined(separator: "\t")
             let body = table.rows.indices.map { row in columns.map { field(row, $0) }.joined(separator: "\t") }
             return ([header] + body).joined(separator: "\n")
         case .cells(let cells):

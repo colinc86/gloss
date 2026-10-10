@@ -162,6 +162,12 @@ struct CSVCopyTests {
         #expect(crlf.copyText() == "x y\tz")
     }
 
+    @Test func aHeaderWithALineBreakStaysOneCell() {
+        let grid = CSVGridController(text: "a,\"distance\nkm\"\n1,2\n", fileName: "t.csv")
+        grid.clickColumn(1, extend: false, toggle: false)
+        #expect(grid.copyText() == "distance km\n2", "the header is flattened as values are, not split into a row")
+    }
+
     @Test func scatteredCellsKeepTheirPlaces() {
         grid.click(GridCell(row: 0, column: 0), extend: false, toggle: false)
         grid.click(GridCell(row: 2, column: 2), extend: false, toggle: true)
