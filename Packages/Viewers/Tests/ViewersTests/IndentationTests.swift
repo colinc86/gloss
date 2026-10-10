@@ -27,14 +27,28 @@ struct IndentationTests {
         view.setSelectedRange(NSRange(location: 18, length: 0))   // after "    b()"
         view.insertNewline(nil)
         #expect(view.string == "func a() {\n    b()\n    \n}\n")
+        view.insertNewline(nil)
+        #expect(view.string == "func a() {\n    b()\n\n    \n}\n", "a line of only indent is left empty")
         view.insertTab(nil)
-        #expect(view.string == "func a() {\n    b()\n        \n}\n", "spaces to the next stop, not a tab")
+        #expect(view.string == "func a() {\n    b()\n\n        \n}\n", "spaces to the next stop, not a tab")
         view.undoManager?.undo()
         view.isEditable = false
         let before = view.string
         view.insertTab(nil)
         view.insertNewline(nil)
         #expect(view.string == before, "a read-only view gains nothing")
+    }
+
+    @Test func returnInsideAnIndentKeepsTheTextAfterIt() {
+        let view = SourceTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        view.isEditable = true
+        view.string = "  \r\n    x\n"
+        view.setSelectedRange(NSRange(location: 2, length: 0))
+        view.insertNewline(nil)
+        #expect(view.string == "\n  \r\n    x\n", "a CRLF line of only spaces is cleared, its ending kept")
+        view.setSelectedRange(NSRange(location: 7, length: 0))   // two spaces into "    x"
+        view.insertNewline(nil)
+        #expect(view.string == "\n  \r\n  \n    x\n", "a line with text after the caret is not cleared")
     }
 
     @Test func linesShiftByOneIndent() {

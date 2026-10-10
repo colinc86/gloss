@@ -37,8 +37,19 @@ public final class SourceTextView: NSTextView {
     override public func insertNewline(_ sender: Any?) {
         guard isEditable else { return super.insertNewline(sender) }
         let text = string as NSString
-        let indent = Self.leadingWhitespace(ofLineAt: selectedRange().location, in: text)
-        insertText("\n" + indent, replacementRange: selectedRange())
+        let selection = selectedRange()
+        let indent = Self.leadingWhitespace(ofLineAt: selection.location, in: text)
+        // A line of nothing but indent is left empty, so pressing Return twice leaves no trailing whitespace.
+        let line = text.lineRange(for: NSRange(location: selection.location, length: 0))
+        let content = NSRange(location: line.location, length: line.length - Self.newlineLength(endingLine: line, in: text))
+        let blank = selection.location + selection.length <= NSMaxRange(content)
+            && text.substring(with: content).allSatisfy { $0 == " " || $0 == "\t" }
+        insertText("\n" + indent, replacementRange: blank ? content : selection)
+    }
+
+    nonisolated static func newlineLength(endingLine line: NSRange, in text: NSString) -> Int {
+        let ending = text.substring(with: line).reversed().prefix { $0.isNewline }
+        return ending.reduce(0) { $0 + $1.utf16.count }
     }
 
     /// Tab indents as the file does: a tab in a tab-indented file, else spaces to the next stop of its width, so a
