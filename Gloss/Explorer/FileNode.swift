@@ -52,10 +52,13 @@ final class FileNode: NSObject {
     }
 
     /// Children after the dotfile toggle and the name filter.
+    /// The filter matches the name as the row shows it (a Jira issue's summary too), ignoring case and accents as
+    /// Open Quickly does.
     func visibleChildren(showDotfiles: Bool, filter: String) -> [FileNode] {
-        (children ?? []).filter { child in
+        let needle = filter.trimmingCharacters(in: .whitespaces)
+        return (children ?? []).filter { child in
             if !showDotfiles && child.entry.isHidden { return false }
-            if !filter.isEmpty, !child.isDirectory, !child.name.localizedCaseInsensitiveContains(filter) { return false }
+            if !needle.isEmpty, !child.isDirectory, !FileCellView.displayName(child.entry).localizedStandardContains(needle) { return false }
             return true
         }
     }

@@ -30,6 +30,10 @@ struct FileNodeTests {
         #expect(root.visibleChildren(showDotfiles: false, filter: "").map(\.name) == ["src", "notes.txt", "Readme.md"], "folders first, then names")
         #expect(root.visibleChildren(showDotfiles: true, filter: "").count == 4)
         #expect(root.visibleChildren(showDotfiles: false, filter: "read").map(\.name) == ["src", "Readme.md"], "directories stay visible under a filter")
+        #expect(root.visibleChildren(showDotfiles: false, filter: " notes ").map(\.name) == ["src", "notes.txt"], "spaces around it aside")
+        _ = root.merge(entries: [entry("src", directory: true), entry("Résumé.md"), DirectoryEntry(name: "CP-7.md", path: "/root/CP-7.md", kind: .file, title: "Move the legend")])
+        #expect(root.visibleChildren(showDotfiles: false, filter: "resume").map(\.name) == ["src", "Résumé.md"], "accents aside, as Open Quickly")
+        #expect(root.visibleChildren(showDotfiles: false, filter: "legend").map(\.name) == ["src", "CP-7.md"], "an issue by the summary its row shows")
     }
 
     @Test func descendantLookup() {
