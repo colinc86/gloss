@@ -1423,9 +1423,15 @@ final class AppModel {
     /// `ask_user`: an agent's question about a place in a file becomes a note asking for the user, on the exact
     /// text when it is found (nearest the given line), else on the lines, else on the whole file. The document
     /// opens to it unless the user is in the middle of writing a note; either way it waits under Attention.
-    func ask(_ question: AgentQuestion) async throws -> NoteID {
+    func ask(_ asked: AgentQuestion) async throws -> NoteID {
+        var question = asked
         let hostID = try await hostID(named: question.host)
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { throw DeliveryError.failed("couldn't connect to \(question.host)") }
+        // `path:line`, as agents print a location and open_in_viewer reads it.
+        if question.line == nil {
+            let location = await Self.splitLocation(question.path, on: fileSystem)
+            if let line = location.line { (question.path, question.line) = (location.path, line) }
+        }
         let attributes = try await fileSystem.stat(question.path)
         guard attributes.kind == .file else { throw DeliveryError.failed("\(question.path) is not a file") }
         var anchor = Anchor.wholeFile

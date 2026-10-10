@@ -1,6 +1,7 @@
 import Core
 import Foundation
 import Testing
+import Transports
 @testable import Gloss
 
 /// Issue #4: where an agent's question lands in the file it names.
@@ -46,6 +47,22 @@ struct AgentControlTests {
         await model.showForAgent(hostID: .local, path: "\(root)/docs", line: nil, endLine: nil)
         #expect(model.explorer.selectedTab?.path == "\(root)/docs")
         #expect(model.session(hostID: .local, path: "\(root)/docs") == nil, "no document tab trying to read a folder")
+        await model.shutDown()
+    }
+
+    /// `ask_user` given `path:line` (as agents print a location) asks about that line of that file.
+    @Test @MainActor func anAgentsQuestionOnAPathAndLineLandsOnTheLine() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-ask-line-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "one\ntwo\nthree\nfour\n".write(toFile: "\(root)/a.swift", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.start()
+        let id = try await model.ask(AgentQuestion(host: "local", path: "\(root)/a.swift:3", question: "Why three?", agent: "claude"))
+        let note = try #require(try await model.noteStore.note(id))
+        let document = try #require(try await model.noteStore.document(note.documentID))
+        #expect(document.path == "\(root)/a.swift")
+        #expect(note.anchor.summary == "Line 3")
         await model.shutDown()
     }
 }
