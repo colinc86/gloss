@@ -15,10 +15,14 @@ public struct WebProxyMap: Equatable, Hashable, Sendable {
 
     nonisolated public static let loopbackHosts: Set<String> = ["localhost", "localhost.", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]
 
-    /// Whether a host name is this machine's loopback: the names above and all of 127.0.0.0/8.
+    /// Whether a host name is this machine's loopback: the names above, all of 127.0.0.0/8, and any name under
+    /// `.localhost` (`app.localhost`, as dev servers serve several sites), which RFC 6761 keeps for loopback and
+    /// browsers resolve there. Missed, a link to one on a remote host's page reached this Mac's port instead.
     nonisolated public static func isLoopback(host: String) -> Bool {
         let host = host.lowercased()
         if loopbackHosts.contains(host) { return true }
+        let name = host.hasSuffix(".") ? String(host.dropLast()) : host
+        if name.hasSuffix(".localhost"), name.count > ".localhost".count, !name.hasPrefix(".") { return true }
         let parts = host.split(separator: ".", omittingEmptySubsequences: false)
         return parts.count == 4 && parts[0] == "127" && parts.allSatisfy { UInt8($0) != nil }
     }

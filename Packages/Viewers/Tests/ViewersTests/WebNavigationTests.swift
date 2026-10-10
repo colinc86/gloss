@@ -44,6 +44,9 @@ struct WebProxyMapTests {
         #expect(port("http://127.1.2.3:3000/") == 3000)
         #expect(port("http://localhost.:3000/") == 3000)
         #expect(port("http://127.0.0.256:3000/") == nil)
+        #expect(port("http://app.localhost:3000/") == 3000, "RFC 6761: every name under .localhost is loopback")
+        #expect(port("http://a.b.localhost.:5173/") == 5173)
+        #expect(port("http://notlocalhost:3000/") == nil && port("http://localhost.dev:3000/") == nil)
         #expect(port("file:///tmp/x") == nil)
     }
 
