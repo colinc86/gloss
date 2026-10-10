@@ -438,7 +438,7 @@ public struct CSVGridPane: View {
         VStack(spacing: 0) {
             ViewerToolbar {
                 Label("\(controller.table.rows.count.counted("row")) · \(controller.table.columnCount.counted("column"))", systemImage: "tablecells")
-                if controller.isTruncated { Text("showing the first \(CSVParser.maximumRows)") }
+                if controller.isTruncated { Text("showing the first \(CSVParser.maximumRows.formatted())") }
                 if let summary = controller.selectionSummary {
                     Text(summary).foregroundStyle(.primary).transition(.opacity)
                 }

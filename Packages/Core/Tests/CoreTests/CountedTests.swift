@@ -7,6 +7,7 @@ struct CountedTests {
         #expect(0.counted("row") == "0 rows")
         #expect(3.counted("file") == "3 files")
         #expect(2.counted("match", plural: "matches") == "2 matches")
+        #expect(100_000.counted("row") == "\(100_000.formatted()) rows", "grouped as the region writes numbers")
     }
 }
 

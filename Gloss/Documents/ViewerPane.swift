@@ -399,7 +399,7 @@ private struct StatusBar: View {
         Group {
             if length > 0 {
                 let lines = position.end.line - position.start.line + 1
-                Text(lines > 1 ? "\(lines) lines · \(length.counted("character"))" : length.counted("character"))
+                Text(lines > 1 ? "\(lines.counted("line")) · \(length.counted("character"))" : length.counted("character"))
                     .foregroundStyle(.primary)
                     .help("Ln \(position.start.line), Col \(position.start.col) – Ln \(position.end.line), Col \(position.end.col)")
             } else {
