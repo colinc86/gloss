@@ -92,8 +92,13 @@ final class ExplorerModel {
     /// The recents of the host loaded last (the reopen-on-launch path reads it right after loading).
     private(set) var recentRoots: [Root] = []
     var showDotfiles = false {
-        didSet { treeDelegate?.treeDidChangeFilters() }
+        didSet {
+            treeDelegate?.treeDidChangeFilters()
+            if showDotfiles != oldValue { onShowDotfilesChange() }
+        }
     }
+    /// Set by the app: Find in Files' results follow the setting.
+    @ObservationIgnored var onShowDotfilesChange: () -> Void = {}
     /// The web address of a node on an integration host (a pull request, issue or page); set by the app.
     @ObservationIgnored var webURL: (HostID, String) -> URL? = { _, _ in nil }
 

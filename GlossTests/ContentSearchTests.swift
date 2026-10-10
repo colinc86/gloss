@@ -50,6 +50,29 @@ struct ContentSearchTests {
         #expect(await names(hidden: true) == ["a.txt", "ci.yml"])
     }
 
+    /// Turning Show Hidden Files on or off while results show finds them again the new way.
+    @Test func togglingHiddenFilesRerunsAShowingSearch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-search-toggle-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(root)/.github", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "needle in a workflow\n".write(toFile: "\(root)/.github/ci.yml", atomically: true, encoding: .utf8)
+        try "needle in plain sight\n".write(toFile: "\(root)/a.txt", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        for _ in 0..<100 where model.shownTab == nil { try await Task.sleep(for: .milliseconds(20)) }
+        model.explorer.showDotfiles = false
+        let search = model.explorer.contentSearch
+        search.isVisible = true
+        search.query = "needle"
+        model.runContentSearch()
+        for _ in 0..<100 where search.isSearching || search.hits.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(search.hits.count == 1)
+        model.explorer.showDotfiles = true
+        for _ in 0..<100 where search.hits.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(search.hits.count == 2, "the workflow is found once hidden files show")
+        await model.shutDown()
+    }
+
     private func runSearch(_ model: ContentSearchModel, _ query: String, in directory: String, regex: Bool = false) async throws -> [String] {
         model.query = query
         model.isRegex = regex

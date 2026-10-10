@@ -365,6 +365,11 @@ final class AppModel {
             syncNotesLocation()
         }
         explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+        // Search results showing were found with hidden files in or out: they are found again the other way.
+        explorer.onShowDotfilesChange = { [weak self] in
+            guard let self, self.explorer.contentSearch.isVisible, self.explorer.contentSearch.searchedPattern != nil else { return }
+            self.runContentSearch()
+        }
         explorer.onTabsChange = { [weak self] in
             self?.scheduleWorkspaceSave()
             self?.syncNotesLocation()
