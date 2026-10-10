@@ -162,6 +162,38 @@ public struct MarkdownRenderer {
         }
     }
 
+    /// A fence that names a diff (`diff`, `patch`).
+    nonisolated static func isDiff(fence info: String?) -> Bool {
+        guard let word = info?.split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first?.lowercased() else { return false }
+        return word == "diff" || word == "patch"
+    }
+
+    /// Each line of a diff that is coloured, as UTF-16 ranges in `code`, with its colour.
+    nonisolated static func diffColors(_ code: String) -> [(range: NSRange, color: NSColor)] {
+        let ns = code as NSString
+        var result: [(range: NSRange, color: NSColor)] = []
+        var location = 0
+        while location < ns.length {
+            let line = ns.lineRange(for: NSRange(location: location, length: 0))
+            let content = ns.substring(with: line).trimmingCharacters(in: .newlines)
+            let range = NSRange(location: line.location, length: (content as NSString).length)
+            let color: NSColor? = if content.hasPrefix("+++") || content.hasPrefix("---") || content.hasPrefix("diff ") || content.hasPrefix("index ") {
+                .secondaryLabelColor
+            } else if content.hasPrefix("@@") {
+                .systemPurple
+            } else if content.hasPrefix("+") {
+                .systemGreen
+            } else if content.hasPrefix("-") {
+                .systemRed
+            } else {
+                nil
+            }
+            if let color, range.length > 0 { result.append((range, color)) }
+            location = NSMaxRange(line)
+        }
+        return result
+    }
+
     /// Fenced-code info string to a grammar name: `swift`, `sh`, `ts`, `py` and friends.
     nonisolated static func grammarName(forFence info: String?) -> String? {
         guard let word = info?.split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first?.lowercased(), !word.isEmpty else { return nil }
@@ -487,6 +519,7 @@ public struct MarkdownRenderer {
         /// Syntax colours for a fenced block. The rendered code is the source code with each newline swapped for a
         /// one-unit line separator, so capture offsets carry over unchanged.
         private mutating func colorCode(_ code: String, language: String?, renderedStart: Int) {
+            if MarkdownRenderer.isDiff(fence: language) { return colorDiff(code, renderedStart: renderedStart) }
             guard code.utf16.count <= MarkdownRenderer.highlightLimit, let name = MarkdownRenderer.grammarName(forFence: language),
                   let captures = MarkdownRenderer.highlightCaptures(grammar: name, code: code) else { return }
             let renderedLength = output.length - renderedStart
@@ -496,6 +529,15 @@ public struct MarkdownRenderer {
                 let end = min(location + capture.range.length, renderedLength)
                 guard location < end else { continue }
                 output.addAttribute(.foregroundColor, value: color, range: NSRange(location: renderedStart + location, length: end - location))
+            }
+        }
+
+        /// A ```diff block coloured by line, as GitHub colours it: additions green, removals red, hunk headers purple,
+        /// file headers dimmed. No grammar reads a diff, so it showed as plain code.
+        private mutating func colorDiff(_ code: String, renderedStart: Int) {
+            let renderedLength = output.length - renderedStart
+            for (range, color) in MarkdownRenderer.diffColors(code) where NSMaxRange(range) <= renderedLength {
+                output.addAttribute(.foregroundColor, value: color, range: NSRange(location: renderedStart + range.location, length: range.length))
             }
         }
 

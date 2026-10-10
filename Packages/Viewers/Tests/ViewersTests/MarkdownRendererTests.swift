@@ -241,6 +241,19 @@ struct MarkdownRendererTests {
                 "the link maps to its source as the text did")
     }
 
+    /// A ```diff block is coloured by line as GitHub colours it.
+    @Test func diffBlocksAreColouredByLine() {
+        let output = MarkdownRenderer.render("```diff\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n same\n```\n")
+        let text = output.text.string as NSString
+        func color(_ needle: String) -> NSColor? {
+            output.text.attribute(.foregroundColor, at: text.range(of: needle).location, effectiveRange: nil) as? NSColor
+        }
+        #expect(color("-old") == .systemRed && color("+new") == .systemGreen && color("@@") == .systemPurple)
+        #expect(color("--- a/x") == .secondaryLabelColor && color("+++ b/x") == .secondaryLabelColor, "file headers are not a removal and an addition")
+        #expect(color(" same") != .systemRed && color(" same") != .systemGreen)
+        #expect(MarkdownRenderer.isDiff(fence: "patch") && !MarkdownRenderer.isDiff(fence: "swift"))
+    }
+
     @Test func fenceInfoStringsMapToGrammars() {
         #expect(MarkdownRenderer.grammarName(forFence: "swift") == "swift")
         #expect(MarkdownRenderer.grammarName(forFence: "sh") == "bash")
