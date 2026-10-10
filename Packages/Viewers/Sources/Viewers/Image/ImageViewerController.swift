@@ -62,6 +62,17 @@ public final class ImageViewerController {
         pendingZoomVersion += 1
     }
 
+    /// A region to bring into sight, in pixels, with a version so the same one twice still scrolls.
+    public private(set) var pendingReveal: CGRect?
+    public private(set) var pendingRevealVersion = 0
+
+    /// Scrolls a region into sight when the picture is zoomed past the window (a note's card was clicked, or Next Note
+    /// reached it).
+    public func reveal(_ rect: CGRect) {
+        pendingReveal = rect
+        pendingRevealVersion += 1
+    }
+
     public func rect(forPixelRect rect: CGRect) -> CGRect? {
         rectProvider(rect)
     }

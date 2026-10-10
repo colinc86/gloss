@@ -1,3 +1,4 @@
+import ImageIO
 import Core
 import Foundation
 import Testing
@@ -230,6 +231,34 @@ struct DocumentNotesTests {
         let stepped = session.stepNote(forward: true)
         #expect(stepped?.id == earlier.id)
         #expect(scrolled == [GridCell(row: 0, column: 1)], "the step scrolls the grid to the note")
+        session.close()
+    }
+
+    /// A picture's notes step in reading order, top to bottom then left to right, as a PDF's regions do, whatever
+    /// order they were made in.
+    @Test func aPicturesNotesStepTopToBottom() async throws {
+        let (directory, _) = try makeFile("")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = "\(directory)/chart.png"
+        let context = CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        let destination = try #require(CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let document = try #require(session.document)
+        let image = try #require(session.imageController)
+        func region(_ x: Int, _ y: Int) -> Anchor { .image(ImageAnchor(x: x, y: y, w: 20, h: 20, imageW: 400, imageH: 300)) }
+        let bottom = try await store.createNote(documentID: document.id, anchor: region(10, 250), body: "bottom", color: .yellow)
+        let topRight = try await store.createNote(documentID: document.id, anchor: region(300, 10), body: "top right", color: .yellow)
+        let topLeft = try await store.createNote(documentID: document.id, anchor: region(20, 10), body: "top left", color: .yellow)
+        await waitUntil { session.notes.count == 3 }
+        #expect(session.steppableNotes.map(\.id) == [topLeft.id, topRight.id, bottom.id])
+        session.reveal(bottom)
+        #expect(image.selectedNoteID == bottom.id && image.pendingReveal == CGRect(x: 10, y: 250, width: 20, height: 20))
         session.close()
     }
 

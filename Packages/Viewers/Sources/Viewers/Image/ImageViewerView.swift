@@ -49,6 +49,7 @@ public struct ImageViewerView: NSViewRepresentable {
         private weak var canvas: ImageCanvasView?
         private weak var scrollView: NSScrollView?
         private var appliedZoom = 0
+        private var appliedReveal = 0
         private var observer: (any NSObjectProtocol)?
         private var frameObserver: (any NSObjectProtocol)?
         private var boundsObserver: (any NSObjectProtocol)?
@@ -125,6 +126,11 @@ public struct ImageViewerView: NSViewRepresentable {
             if appliedZoom != controller.pendingZoomVersion, let command = controller.pendingZoom {
                 appliedZoom = controller.pendingZoomVersion
                 apply(command)
+            }
+            if appliedReveal != controller.pendingRevealVersion, let rect = controller.pendingReveal {
+                appliedReveal = controller.pendingRevealVersion
+                // The canvas is in pixels, flipped like the anchor; a margin keeps the region off the edge.
+                canvas?.scrollToVisible(rect.insetBy(dx: -24, dy: -24))
             }
         }
 

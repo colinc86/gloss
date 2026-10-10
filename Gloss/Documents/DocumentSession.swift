@@ -1642,8 +1642,9 @@ final class DocumentSession: Identifiable {
             pdf.scroll(toPage: anchor.page, bounds: Self.bounds(of: anchor, in: pdf))
             return
         }
-        if let image = imageController, case .image = note.anchor {
+        if let image = imageController, case .image(let anchor) = note.anchor {
             image.selectedNoteID = note.id
+            image.reveal(CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h))
             return
         }
         if let html, case .element(let anchor) = note.anchor {
@@ -1680,13 +1681,13 @@ final class DocumentSession: Identifiable {
     private var selectionAtStep: NSRange?
 
     /// This document's open notes in reading order, each with a key for its place: text by offset, PDF by page then
-    /// top to bottom, images in the order they were made. Orphans and whole-file notes have no place and are left out,
+    /// top to bottom, images top to bottom then left to right. Orphans and whole-file notes have no place and are left out,
     /// and so are notes the panel isn't listing, so a step never selects a card that isn't there.
     var steppableNotes: [(id: NoteID, key: Double)] {
         let open = notes.filter {
             $0.state != .resolved && $0.state != .orphaned && !hiddenNoteIDs.contains($0.id)
         }
-        let keyed: [(id: NoteID, key: Double)] = open.enumerated().compactMap { index, note in
+        let keyed: [(id: NoteID, key: Double)] = open.compactMap { note in
             switch note.anchor {
             case .text:
                 if let csv = csvController {
@@ -1700,8 +1701,9 @@ final class DocumentSession: Identifiable {
                 // Page space runs up the page, so a higher top comes first; text notes by the match they are on.
                 let top = pdfController.flatMap { Self.bounds(of: anchor, in: $0) }?.maxY ?? anchor.bounds?.cgRect.maxY ?? 999_999
                 return (note.id, Double(anchor.page) * 1_000_000 - top)
-            case .image:
-                return (note.id, Double(index))
+            case .image(let anchor):
+                // Top to bottom, then left to right, as a PDF's regions are.
+                return (note.id, Double(anchor.y) * 1_000_000 + Double(anchor.x))
             case .element(let anchor):
                 return (note.id, anchor.rect.y * 10_000 + anchor.rect.x)
             case .embeddedImage:
