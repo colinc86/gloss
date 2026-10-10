@@ -61,6 +61,9 @@ struct NotesPanelModelTests {
         model.colorFilter = []
         model.searchText = "helper"
         #expect(model.listedIDs(for: alpha.document.id) == [helper])
+        // The text a note is on, which its card quotes, finds it too.
+        model.searchText = "line 9"
+        #expect(model.listedIDs(for: alpha.document.id) == [helper])
     }
 
     @Test func hidingResolvedNotesLeavesThemOutOfEveryTabButResolved() async throws {

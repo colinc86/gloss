@@ -393,7 +393,20 @@ final class NotesPanelModel {
     /// The note's own words match: its comment, a resolve message, or any message in its thread.
     private func textMatches(_ note: Note, _ needle: String) -> Bool {
         Self.contains(note.body, needle) || Self.contains(note.resolveMessage, needle)
+            || Self.contains(Self.quotedText(of: note.anchor), needle)
             || messages(for: note.id).contains { Self.contains($0.body, needle) }
+    }
+
+    /// What a note is on, as its card quotes it: the text, a PDF selection, an element's text, a picture's source.
+    /// Search finds a note by it too ("the note on fetchForecast").
+    nonisolated static func quotedText(of anchor: Anchor) -> String? {
+        switch anchor {
+        case .text(let text): text.text
+        case .pdf(let pdf): pdf.text
+        case .element(let element): element.text
+        case .embeddedImage(let image): image.source
+        case .image, .wholeFile: nil
+        }
     }
 
     /// Open work: anything not resolved (an agent's question leaves its note open).
