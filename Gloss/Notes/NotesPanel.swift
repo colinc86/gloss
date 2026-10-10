@@ -1655,11 +1655,11 @@ private struct SendDraftsButton<MenuItems: View>: View {
     /// The panel's tab, colours, or search narrow what goes: the tooltip says "shown".
     var filtered = false
 
-    /// "blue " or "blue and pink " while a colour filter is on; nothing otherwise.
+    /// "blue " or "blue and pink " while a color filter is on; nothing otherwise.
     private var colorWords: String {
         guard !colors.isEmpty else { return "" }
         let names = colors.map(\.rawValue).sorted()
-        return (names.count <= 2 ? names.joined(separator: " and ") : "\(names.count)-colour") + " "
+        return (names.count <= 2 ? names.joined(separator: " and ") : "\(names.count)-color") + " "
     }
     let isSending: Bool
     let hasTarget: Bool

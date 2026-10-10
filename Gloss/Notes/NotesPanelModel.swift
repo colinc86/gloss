@@ -587,7 +587,7 @@ final class NotesPanelModel {
 
     func setColor(_ ids: [NoteID], _ color: NoteColor) async {
         for id in ids {
-            do { try await noteStore.updateColor(id, color: color) } catch { Log.notes.error("colour change failed: \(error, privacy: .public)") }
+            do { try await noteStore.updateColor(id, color: color) } catch { Log.notes.error("color change failed: \(error, privacy: .public)") }
         }
     }
 
