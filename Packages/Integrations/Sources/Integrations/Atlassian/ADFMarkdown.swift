@@ -257,7 +257,7 @@ public enum ADFMarkdown {
         for mark in marks {
             let attrs = mark["attrs"] as? [String: Any] ?? [:]
             switch mark["type"] as? String ?? "" {
-            case "code": result = "`" + result + "`"
+            case "code": result = codeSpan(result)
             case "strong": result = "**" + result + "**"
             case "em": result = "*" + result + "*"
             case "strike": result = "~~" + result + "~~"
@@ -269,6 +269,14 @@ public enum ADFMarkdown {
         }
         if let link, let safe = safeLink(link) { result = "[" + result + "](" + safe + ")" }
         return leading + result + rest.suffix(trailingCount)
+    }
+
+    /// Inline code that holds backticks of its own: fenced by a longer run, and padded with a space when it starts
+    /// or ends with one (Markdown strips one space from each side).
+    static func codeSpan(_ code: String) -> String {
+        let fence = String(repeating: "`", count: longestRun(of: "`", in: code) + 1)
+        let pad = code.hasPrefix("`") || code.hasSuffix("`") ? " " : ""
+        return fence + pad + code + pad + fence
     }
 
     /// A link target that stays one: script links are dropped (their text stays), and the characters that would

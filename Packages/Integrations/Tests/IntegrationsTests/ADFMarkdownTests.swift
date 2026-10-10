@@ -65,6 +65,13 @@ struct ADFMarkdownTests {
         #expect(render(adf) == "about \\~3h\\~ish\n\n\\~\\~\\~ not a fence\n")
     }
 
+    /// Inline code with backticks in it stays one code span.
+    @Test func inlineCodeHoldsItsBackticks() {
+        #expect(ADFMarkdown.codeSpan("a`b") == "``a`b``")
+        #expect(ADFMarkdown.codeSpan("`x`") == "`` `x` ``")
+        #expect(ADFMarkdown.codeSpan("plain") == "`plain`")
+    }
+
     @Test func renderingIsDeterministic() {
         let adf = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"same"}]}]}"#
         #expect(render(adf) == render(adf))
