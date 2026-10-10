@@ -295,6 +295,9 @@ struct NotesPanelModelTests {
         model.filter = .drafts
         #expect(Set(bodies(model)) == ["Rename the helper", "Expand this section"])
 
+        // The thread's messages arrive on their own observation, after the draft count: wait for the follow-up itself
+        // (taking the last message before then edited the agent's question, which is refused).
+        await waitUntil { model.messages(for: note.id).last?.body == "Both" }
         let followUp = try #require(model.messages(for: note.id).last)
         #expect(followUp.body == "Both" && !followUp.isSent)
         #expect(await model.updateFollowUp(followUp.id, "Both, Mac first"))
