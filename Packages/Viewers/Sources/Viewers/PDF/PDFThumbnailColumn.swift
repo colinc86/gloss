@@ -6,6 +6,15 @@ import SwiftUI
 /// and each page with notes marked by their colours and a count. A click goes to the page. Thumbnails render as
 /// they scroll into view.
 struct PDFThumbnailColumn: View {
+    /// A page's height over its width as it is shown: a page turned a quarter (`/Rotate 90`, as a scanned or
+    /// landscape page often is) shows its box on its side. The box alone gave a landscape page a portrait slot and
+    /// squeezed its thumbnail into it.
+    static func aspect(of page: PDFPage) -> CGFloat {
+        let box = page.bounds(for: .cropBox)
+        guard box.width > 0, box.height > 0 else { return 1.3 }
+        return page.rotation % 180 == 0 ? box.height / box.width : box.width / box.height
+    }
+
     let controller: PDFViewerController
     static let width: CGFloat = 120
 
@@ -45,10 +54,7 @@ private struct PageThumbnail: View {
 
     private static let width: CGFloat = 80
 
-    private var aspect: CGFloat {
-        guard let box = controller.document.page(at: index)?.bounds(for: .cropBox), box.width > 0 else { return 1.3 }
-        return box.height / box.width
-    }
+    private var aspect: CGFloat { controller.document.page(at: index).map(PDFThumbnailColumn.aspect(of:)) ?? 1.3 }
 
     var body: some View {
         Button { controller.scroll(toPage: index, bounds: nil) } label: {

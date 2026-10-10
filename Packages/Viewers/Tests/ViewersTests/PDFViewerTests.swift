@@ -25,6 +25,19 @@ struct PDFViewerTests {
         return PDFDocument(data: data as Data)!
     }
 
+    /// A thumbnail's slot has the page's shape as it is shown: a page turned a quarter is as wide as its box is tall.
+    @Test func aTurnedPagesThumbnailIsTurnedToo() throws {
+        let page = try #require(makePDF().page(at: 0))   // 300 × 200
+        func shape() -> CGFloat { (PDFThumbnailColumn.aspect(of: page) * 1000).rounded() / 1000 }
+        #expect(shape() == 0.667)
+        page.rotation = 90
+        #expect(shape() == 1.5)
+        page.rotation = 180
+        #expect(shape() == 0.667)
+        page.rotation = 270
+        #expect(shape() == 1.5)
+    }
+
     @Test func aTextNoteIsOnTheMatchItWasMadeOn() throws {
         let data = NSMutableData()
         var box = CGRect(x: 0, y: 0, width: 400, height: 200)
