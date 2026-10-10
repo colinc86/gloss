@@ -68,10 +68,36 @@ public enum MarkdownAnchors {
         return result
     }
 
-    /// The line of the heading `fragment` names, matched as GitHub matches it (case aside).
+    /// The line of the heading `fragment` names, matched as GitHub matches it (case aside); else of an anchor the
+    /// document sets by hand in its HTML (`<a name="install"></a>`, `<a id="install">`), as READMEs do.
     public static func line(of fragment: String, in source: String) -> Int? {
         let wanted = fragment.lowercased()
-        return headings(in: source).first { $0.anchor == wanted }?.line
+        if let line = headings(in: source).first(where: { $0.anchor == wanted })?.line { return line }
+        let named = htmlAnchors(in: source)
+        return (named.first { $0.anchor == fragment } ?? named.first { $0.anchor.lowercased() == wanted })?.line
+    }
+
+    /// Every `name` or `id` the document's HTML sets (not in code), in order, with its line.
+    static func htmlAnchors(in source: String) -> [(anchor: String, line: Int)] {
+        struct Collector: MarkupWalker {
+            var html: [(text: String, line: Int)] = []
+            mutating func visitHTMLBlock(_ block: HTMLBlock) { if let line = block.range?.lowerBound.line { html.append((block.rawHTML, line)) } }
+            mutating func visitInlineHTML(_ inline: InlineHTML) { if let line = inline.range?.lowerBound.line { html.append((inline.rawHTML, line)) } }
+        }
+        var collector = Collector()
+        collector.visit(Document(parsing: source))
+        guard let pattern = try? NSRegularExpression(pattern: #"\s(?:name|id)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))"#, options: [.caseInsensitive]) else { return [] }
+        var result: [(anchor: String, line: Int)] = []
+        for (text, line) in collector.html {
+            let ns = text as NSString
+            for match in pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                guard let range = (1...3).map({ match.range(at: $0) }).first(where: { $0.location != NSNotFound }), range.length > 0 else { continue }
+                // A block spans lines: the anchor is on the line it is written on.
+                let before = ns.substring(to: match.range.location).filter { $0 == "\n" }.count
+                result.append((ns.substring(with: range), line + before))
+            }
+        }
+        return result
     }
 
     static func slug(_ text: String) -> String {

@@ -37,6 +37,12 @@ struct MarkdownLinkTests {
         let nested = "# Top\n\n> ## Quoted\n\n- ### In a list\n\n## Top\n"
         #expect(MarkdownAnchors.headings(in: nested).map(\.anchor) == ["top", "quoted", "in-a-list", "top-1"], "a heading in a quote or a list item has its anchor too")
         #expect(MarkdownAnchors.line(of: "in-a-list", in: nested) == 5)
+        // Anchors set by hand in the HTML, as READMEs do; one in code is only shown.
+        let named = "# Guide\n\n<a name=\"install\"></a>\nSteps.\n\n<div>\n<span id='Faq'>Q</span>\n</div>\n\n`<a name=\"code\">`\n"
+        #expect(MarkdownAnchors.line(of: "install", in: named) == 3)
+        #expect(MarkdownAnchors.line(of: "Faq", in: named) == 7 && MarkdownAnchors.line(of: "faq", in: named) == 7)
+        #expect(MarkdownAnchors.line(of: "code", in: named) == nil)
+        #expect(MarkdownAnchors.line(of: "guide", in: named) == 1, "a heading still wins")
         #expect(MarkdownAnchors.line(of: "not-a-heading", in: source) == nil, "code is not a heading")
     }
 }
