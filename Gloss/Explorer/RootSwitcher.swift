@@ -55,12 +55,6 @@ struct RootSwitcher: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .contentTransition(.opacity)
-                    if explorer.isPinned(hostID: tab.hostID, path: tab.path) {
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.yellow)
-                            .transition((AnyTransition.scale.combined(with: .opacity)).calmed)
-                    }
                     CountBadge(count: explorer.folderCountForRoot(tab))
                 }
                 Spacer(minLength: DS.Space.xs)
