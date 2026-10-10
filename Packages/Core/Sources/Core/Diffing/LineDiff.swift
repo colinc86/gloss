@@ -20,12 +20,31 @@ public struct DiffHunk: Equatable, Sendable {
     }
 }
 
-/// Myers' O(ND) line diff. Past `maxEditDistance` edits it gives up and reports one whole-file hunk,
-/// which keeps memory bounded for completely unrelated inputs.
+/// Myers' O(ND) line diff. Lines both sides begin and end with are matched first, so only the changed middle is
+/// searched. Past `maxEditDistance` edits in that middle it gives up and reports the middle as one hunk. The search
+/// keeps, for each step d, only the 2d + 1 diagonals backtracking reads, so its memory grows as the square of the
+/// edits made (about 64 MB at the limit), never with the files' length.
 public enum LineDiff {
-    public static let maxEditDistance = 20_000
+    public static let maxEditDistance = 4_000
 
     public static func diff(old: [String], new: [String]) -> [DiffEdit] {
+        var prefix = 0
+        while prefix < old.count, prefix < new.count, old[prefix] == new[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < old.count - prefix, suffix < new.count - prefix, old[old.count - 1 - suffix] == new[new.count - 1 - suffix] { suffix += 1 }
+        let head = (0..<prefix).map { DiffEdit.equal(old: $0, new: $0) }
+        let tail = (0..<suffix).map { DiffEdit.equal(old: old.count - suffix + $0, new: new.count - suffix + $0) }
+        let middle = myers(old: Array(old[prefix..<(old.count - suffix)]), new: Array(new[prefix..<(new.count - suffix)])).map { edit -> DiffEdit in
+            switch edit {
+            case .equal(let o, let n): .equal(old: o + prefix, new: n + prefix)
+            case .delete(let o): .delete(old: o + prefix)
+            case .insert(let n): .insert(new: n + prefix)
+            }
+        }
+        return head + middle + tail
+    }
+
+    static func myers(old: [String], new: [String]) -> [DiffEdit] {
         let n = old.count
         let m = new.count
         if n == 0 { return (0..<m).map { .insert(new: $0) } }
@@ -33,10 +52,11 @@ public enum LineDiff {
         let max = min(n + m, maxEditDistance)
         let offset = max
         var v = [Int](repeating: 0, count: 2 * max + 2)
-        var trace: [[Int]] = []
+        // trace[d] holds v for diagonals -d...d as they stood before step d.
+        var trace: [[Int32]] = []
         var found = false
         search: for d in 0...max {
-            trace.append(v)
+            trace.append(v[(offset - d)...(offset + d)].map { Int32($0) })
             var k = -d
             while k <= d {
                 var x: Int
@@ -66,29 +86,32 @@ public enum LineDiff {
         var x = n
         var y = m
         for d in stride(from: trace.count - 1, through: 0, by: -1) {
-            let v = trace[d]
-            let k = x - y
-            let previousK: Int
-            if k == -d || (k != d && v[offset + k - 1] < v[offset + k + 1]) {
-                previousK = k + 1
-            } else {
-                previousK = k - 1
+            guard d > 0 else {
+                // Step 0 is the run of equal lines from the start.
+                while x > 0, y > 0 {
+                    x -= 1
+                    y -= 1
+                    edits.append(.equal(old: x, new: y))
+                }
+                break
             }
-            let previousX = v[offset + previousK]
+            let row = trace[d]
+            func at(_ k: Int) -> Int { Int(row[k + d]) }
+            let k = x - y
+            let previousK = k == -d || (k != d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1
+            let previousX = at(previousK)
             let previousY = previousX - previousK
             while x > previousX, y > previousY {
                 x -= 1
                 y -= 1
                 edits.append(.equal(old: x, new: y))
             }
-            if d > 0 {
-                if x == previousX {
-                    y -= 1
-                    edits.append(.insert(new: y))
-                } else {
-                    x -= 1
-                    edits.append(.delete(old: x))
-                }
+            if x == previousX {
+                y -= 1
+                edits.append(.insert(new: y))
+            } else {
+                x -= 1
+                edits.append(.delete(old: x))
             }
         }
         return edits.reversed()

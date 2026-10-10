@@ -38,6 +38,36 @@ struct LineDiffTests {
     }
 }
 
+extension LineDiffTests {
+    @Test func randomizedRoundTripWithSharedEnds() {
+        var generator = SystemRandomNumberGenerator()
+        for _ in 0..<50 {
+            let ends = (0..<Int.random(in: 0..<5, using: &generator)).map { "end\($0)" }
+            let old = ends + (0..<Int.random(in: 0..<30, using: &generator)).map { _ in String(Int.random(in: 0..<6, using: &generator)) } + ends
+            let new = ends + (0..<Int.random(in: 0..<30, using: &generator)).map { _ in String(Int.random(in: 0..<6, using: &generator)) } + ends
+            #expect(apply(LineDiff.diff(old: old, new: new), old: old, new: new) == new)
+        }
+    }
+
+    /// Two unrelated 15,000-line files: the search stops at its limit (it once kept a copy of every diagonal for
+    /// every step, gigabytes here) and reports only the changed middle, between the lines both sides share.
+    @Test func unrelatedLargeFilesGiveUpWithinBoundsAndKeepTheirSharedEnds() {
+        let old = ["header"] + (0..<15_000).map { "old \($0)" } + ["footer"]
+        let new = ["header"] + (0..<15_000).map { "new \($0)" } + ["footer"]
+        let hunks = LineDiff.hunks(old: old, new: new)
+        #expect(hunks == [DiffHunk(oldRange: 1..<15_001, newRange: 1..<15_001)])
+    }
+
+    @Test func aSmallEditInALargeFileIsExact() {
+        var new = (0..<50_000).map { "line \($0)" }
+        let old = new
+        new[25_000] = "changed"
+        new.insert("added", at: 40_000)
+        #expect(LineDiff.hunks(old: old, new: new) == [DiffHunk(oldRange: 25_000..<25_001, newRange: 25_000..<25_001),
+                                                         DiffHunk(oldRange: 40_000..<40_000, newRange: 40_000..<40_001)])
+    }
+}
+
 struct ThreeWayMergeTests {
     let base = ["one", "two", "three", "four", "five", "six"]
 
