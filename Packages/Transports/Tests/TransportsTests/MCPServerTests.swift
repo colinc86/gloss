@@ -76,6 +76,9 @@ struct MCPServerTests {
         #expect(MCPServer.absolutePath("file://otherbox/p/x") == nil, "another machine's file")
         #expect(MCPServer.absolutePath("relative.md") == nil)
         #expect(MCPServer.absolutePath("") == nil && MCPServer.absolutePath(nil) == nil)
+        #expect(MCPServer.absolutePath("~/proj/a.md") == nil, "a home path only where the app expands it")
+        #expect(MCPServer.absolutePath("~/proj/a.md", home: true) == "~/proj/a.md")
+        #expect(MCPServer.absolutePath("~other/a.md", home: true) == nil, "another user's home is not taken")
     }
 
     /// `open_in_viewer` opens on the session's host (from the registration URL) unless the call names another.

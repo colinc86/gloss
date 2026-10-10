@@ -65,4 +65,14 @@ struct AgentControlTests {
         #expect(note.anchor.summary == "Line 3")
         await model.shutDown()
     }
+
+    /// An agent's `~/…` path is the host's home: this Mac's here.
+    @Test @MainActor func aHomePathIsTheHostsHome() async throws {
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        #expect(model.expandingHome("~/proj/a.md", on: .local) == NSHomeDirectory() + "/proj/a.md")
+        #expect(model.expandingHome("~", on: .local) == NSHomeDirectory())
+        #expect(model.expandingHome("/p/~x", on: .local) == "/p/~x", "only a leading ~")
+        #expect(model.expandingHome("~/a", on: HostID(rawValue: "h_unknown")) == "~/a", "a host whose home isn't known yet: as written")
+        await model.shutDown()
+    }
 }

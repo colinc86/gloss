@@ -1000,6 +1000,12 @@ final class AppModel {
         return host
     }
 
+    /// `~` and `~/…` (as an agent may write a path) as the host's home, once connected; any other path as it is.
+    func expandingHome(_ path: String, on hostID: HostID) -> String {
+        guard path == "~" || path.hasPrefix("~/"), let home = home(of: hostID) else { return path }
+        return PathUtilities.lexicallyNormalized(path == "~" ? home : PathUtilities.join(home, String(path.dropFirst(2))))
+    }
+
     /// The home directory `~` stands for on a host, when known.
     func home(of hostID: HostID) -> String? {
         hostID == .local ? NSHomeDirectory() : hostHomes[hostID]
@@ -1052,6 +1058,7 @@ final class AppModel {
     func showForAgent(hostID: HostID, path given: String, line givenLine: Int?, endLine: Int?) async -> (path: String, line: Int?) {
         var path = given, line = givenLine
         if !hostID.isVirtual, !DocumentKindDetector.isWebURL(path), await ensureConnected(hostID), let fileSystem = fileSystems[hostID] {
+            path = expandingHome(path, on: hostID)
             if line == nil { (path, line) = await Self.splitLocation(path, on: fileSystem) }
             if let attributes = try? await fileSystem.stat(path), attributes.kind == .directory {
                 pickedHost = hostID
@@ -1412,6 +1419,7 @@ final class AppModel {
     func addFavorite(host: String, path: String) async throws -> Bool {
         let hostID = try await hostID(named: host)
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { throw DeliveryError.failed("couldn't connect to \(host)") }
+        let path = expandingHome(path, on: hostID)
         guard (try await fileSystem.stat(path)).kind == .directory else { throw DeliveryError.failed("\(path) is not a folder") }
         let root = try await noteStore.recordRootOpened(hostID: hostID, path: path)
         let added = !explorer.isPinned(hostID: hostID, path: path)
@@ -1427,6 +1435,7 @@ final class AppModel {
         var question = asked
         let hostID = try await hostID(named: question.host)
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { throw DeliveryError.failed("couldn't connect to \(question.host)") }
+        question.path = expandingHome(question.path, on: hostID)
         // `path:line`, as agents print a location and open_in_viewer reads it.
         if question.line == nil {
             let location = await Self.splitLocation(question.path, on: fileSystem)
