@@ -77,13 +77,17 @@ struct HerdrTests {
             let marker = "gloss-herdr-\(UUID().uuidString.prefix(6))"
             let prompted = try await client.prompt(target: paneID, text: "line one \(marker)\nline two \(marker)")
             #expect(prompted?.paneID == paneID)
+            // The visible text wraps at the pane's width, which is whatever the workspace leaves it (a narrow one
+            // breaks `line one <marker>` in two): the lines are compared with the wraps joined up.
             var text = ""
+            var joined = ""
             for _ in 0..<20 {
                 try await Task.sleep(for: .milliseconds(200))
                 text = try await client.paneRead(paneID, source: "visible", lines: 40)
-                if text.contains("line two \(marker)") { break }
+                joined = text.replacingOccurrences(of: "\n", with: "")
+                if joined.contains("line two \(marker)") { break }
             }
-            #expect(text.contains("line one \(marker)") && text.contains("line two \(marker)"), "the whole packet arrived in one paste: \(text)")
+            #expect(joined.contains("line one \(marker)") && joined.contains("line two \(marker)"), "the whole packet arrived in one paste: \(text)")
         } catch {
             _ = try? await client.call("pane.close", params: ["pane_id": paneID])
             throw error
