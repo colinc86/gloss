@@ -1,6 +1,7 @@
 import Core
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import Gloss
 
 @MainActor
@@ -336,5 +337,15 @@ struct FreeNameTests {
         #expect(ExplorerModel.freeName("untitled.txt", among: ["untitled.txt", "Untitled 2.txt"], isFolder: false) == "untitled 3.txt", "case is ignored, as on the Mac")
         #expect(ExplorerModel.freeName("untitled folder", among: ["untitled folder"], isFolder: true) == "untitled folder 2")
         #expect(ExplorerModel.freeName("v1.2", among: ["v1.2"], isFolder: true) == "v1.2 2", "a folder's dot is not an extension")
+    }
+}
+
+struct RemoteIconTests {
+    /// A file that isn't on this Mac shows its type's icon, as a local one does, rather than a blank page.
+    @Test func aRemoteFileShowsItsTypesIcon() {
+        #expect(FileCellView.iconType(name: "main.swift", isDirectory: false) == UTType.swiftSource)
+        #expect(FileCellView.iconType(name: "photo.PNG", isDirectory: false) == .png)
+        #expect(FileCellView.iconType(name: "src", isDirectory: true) == .folder)
+        #expect(FileCellView.iconType(name: "Makefile", isDirectory: false) == .data)
     }
 }

@@ -1,6 +1,7 @@
 import AppKit
 import Core
 import Integrations
+import UniformTypeIdentifiers
 import Viewers
 
 /// Icon, name, and an optional note-count badge. Ignored files are dimmed.
@@ -54,6 +55,13 @@ final class FileCellView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// The type whose icon a file that isn't on this Mac shows: a folder, its extension's type, or plain data.
+    nonisolated static func iconType(name: String, isDirectory: Bool) -> UTType {
+        if isDirectory { return .folder }
+        let ext = (name as NSString).pathExtension
+        return ext.isEmpty ? .data : UTType(filenameExtension: ext) ?? .data
+    }
+
     /// A file's name, or a Jira issue's key and summary ("CP-7 · Move the legend below the chart").
     nonisolated static func displayName(_ entry: DirectoryEntry) -> String {
         guard let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return entry.name }
@@ -71,7 +79,11 @@ final class FileCellView: NSTableCellView {
             : (node.hostID == .atlassian && node.isDirectory ? "doc.text" : node.isDirectory ? "folder" : "doc")
         iconView.image = node.hostID == .local
             ? NSWorkspace.shared.icon(forFile: node.path)
-            : NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            : isPullRoot || isAtlassianRoot || (node.hostID == .atlassian && node.isDirectory)
+            ? NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            // A host's file, or a pull request's, with the icon Finder gives its type: read from the name, as the
+            // file is not on this Mac.
+            : NSWorkspace.shared.icon(for: Self.iconType(name: node.name, isDirectory: node.isDirectory))
         let dim = node.isIgnored || node.entry.isHidden
         nameField.textColor = dim ? .tertiaryLabelColor : .labelColor
         iconView.alphaValue = dim ? 0.5 : 1
