@@ -17,16 +17,29 @@ nonisolated struct ShortcutGroup: Identifiable {
             ("New line in a note", ["⇧", "↩"]),
             ("Cancel", ["esc"]),
         ]),
+        ShortcutGroup(title: "Notes panel", symbol: "sidebar.trailing", items: [
+            ("Show the selected note in its document", ["↩"]),
+            ("Delete the selected notes", ["⌫"]),
+            ("Clear the search, then leave it", ["esc"]),
+        ]),
         ShortcutGroup(title: "Viewers", symbol: "photo", items: [
+            ("Put the Add Note button away", ["esc"]),
             ("Zoom in / out (images)", ["⌘", "=", "/", "⌘", "−"]),
             ("Actual size / fit (images)", ["⌘", "1", "/", "⌘", "0"]),
             ("Move between cells (spreadsheets)", ["←", "→", "↑", "↓"]),
             ("Extend the cell selection", ["⇧", "←", "→", "↑", "↓"]),
             ("Clear the selection", ["esc"]),
         ]),
+        ShortcutGroup(title: "Pick Element on Page", symbol: "rectangle.dashed", items: [
+            ("Step out to the enclosing element / back in", ["↑", "/", "↓"]),
+            ("Stop picking", ["esc"]),
+        ]),
         ShortcutGroup(title: "Folder switcher", symbol: "folder.badge.gearshape", items: [
             ("Move through folders", ["↑", "↓"]),
             ("Open or switch to it", ["↩"]),
+        ]),
+        ShortcutGroup(title: "Find in Files", symbol: "text.magnifyingglass", items: [
+            ("Back to the file tree", ["esc"]),
         ]),
     ]
 
