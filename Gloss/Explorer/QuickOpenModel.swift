@@ -133,6 +133,16 @@ final class QuickOpenModel {
         return (FuzzyMatcher.rank(split.text, in: candidates), line)
     }
 
+    /// An absolute path or `file://` link inside the root (as an agent prints a location) as the root-relative path
+    /// the files are listed by, `:line` kept; any other query as typed.
+    static func withinRoot(_ query: String, root: String) -> String {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("/") || trimmed.lowercased().hasPrefix("file://"),
+              case .path(let path)? = AddressInput.parse(trimmed, home: nil) else { return query }
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : query
+    }
+
     /// Every row in order.
     var rows: [Row] {
         let addressRow = address.map { [Row.address($0)] } ?? []
@@ -211,7 +221,7 @@ final class QuickOpenModel {
     private func rerank() {
         rankTask?.cancel()
         guard root != nil else { return }
-        let query = query
+        let query = Self.withinRoot(query, root: root ?? "/")
         let candidates = candidates
         isRanking = true
         rankTask = Task { [weak self] in

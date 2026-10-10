@@ -110,6 +110,15 @@ struct ContentSearchTests {
 
 @MainActor
 struct QuickOpenTests {
+    @Test func aPathInsideTheRootIsSearchedAsItsRelativePath() {
+        #expect(QuickOpenModel.withinRoot("/p/app/Sources/A.swift", root: "/p/app") == "Sources/A.swift")
+        #expect(QuickOpenModel.withinRoot("/p/app/Sources/A.swift:12", root: "/p/app/") == "Sources/A.swift:12", "the line stays for splitLine")
+        #expect(QuickOpenModel.withinRoot("file:///p/app/My%20Notes.md", root: "/p/app") == "My Notes.md")
+        #expect(QuickOpenModel.withinRoot("/p/other/A.swift", root: "/p/app") == "/p/other/A.swift", "outside the root, as typed")
+        #expect(QuickOpenModel.withinRoot("/p/apple/A.swift", root: "/p/app") == "/p/apple/A.swift")
+        #expect(QuickOpenModel.withinRoot("model", root: "/p/app") == "model")
+    }
+
     @Test func listsRanksAndSelectsFilesUnderTheRoot() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-quick-\(UUID().uuidString)").path
         defer { try? FileManager.default.removeItem(atPath: root) }
