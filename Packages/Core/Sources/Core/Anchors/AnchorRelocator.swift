@@ -26,7 +26,7 @@ extension RelocationError: LocalizedError {
         case .wrongKind:
             return "This note is on text; give `line`, `end_line` and `text`, or `removed` and `line`."
         case .lineOutOfRange(let line, let lineCount):
-            return "Line \(line) is outside the file, which has \(lineCount) lines."
+            return "Line \(line) is outside the file, which has \(lineCount.counted("line"))."
         case .emptyText:
             return "`text` is empty; to say the note's text was removed, pass `removed: true` and `line`."
         case .invalidSelector:

@@ -9,3 +9,10 @@ struct CountedTests {
         #expect(2.counted("match", plural: "matches") == "2 matches")
     }
 }
+
+extension CountedTests {
+    @Test func anAgentHearsHowManyLinesTheFileHas() {
+        #expect(RelocationError.lineOutOfRange(line: 3, lineCount: 1).errorDescription == "Line 3 is outside the file, which has 1 line.")
+        #expect(RelocationError.lineOutOfRange(line: 9, lineCount: 7).errorDescription == "Line 9 is outside the file, which has 7 lines.")
+    }
+}
