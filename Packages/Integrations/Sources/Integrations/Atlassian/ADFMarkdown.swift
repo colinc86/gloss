@@ -62,7 +62,12 @@ public enum ADFMarkdown {
             return inline(children).components(separatedBy: "  \n").map(escapeLineStart).joined(separator: "  \n")
         case "heading":
             let level = min(max(attrs["level"] as? Int ?? 1, 1), 6)
-            return String(repeating: "#", count: level) + " " + inline(children)
+            // One line, as a Markdown heading is; a closing run of `#` would be read as the heading's optional
+            // closing sequence and dropped ("Fix issue #"), so the run is escaped.
+            var text = inline(children).replacingOccurrences(of: "  \n", with: " ")
+            let hashes = text.reversed().prefix { $0 == "#" }.count
+            if hashes > 0 { text.insert("\\", at: text.index(text.endIndex, offsetBy: -hashes)) }
+            return String(repeating: "#", count: level) + " " + text
         case "bulletList":
             return list(children, ordered: false, context: context)
         case "orderedList":

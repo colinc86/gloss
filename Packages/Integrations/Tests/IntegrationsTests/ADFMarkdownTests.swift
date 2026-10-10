@@ -53,6 +53,12 @@ struct ADFMarkdownTests {
         #expect(render(adf) == "Ship **today** un*believ*able,  done.\n")
     }
 
+    /// A heading stays one line, and a `#` at its end is text rather than a closing sequence.
+    @Test func headingsKeepTheirWholeText() {
+        let adf = #"{"type":"doc","content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Plan"},{"type":"hardBreak"},{"type":"text","text":"for Q4"}]},{"type":"heading","attrs":{"level":3},"content":[{"type":"text","text":"Fix issue #"}]}]}"#
+        #expect(render(adf) == "## Plan for Q4\n\n### Fix issue \\#\n")
+    }
+
     @Test func renderingIsDeterministic() {
         let adf = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"same"}]}]}"#
         #expect(render(adf) == render(adf))
