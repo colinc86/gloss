@@ -142,7 +142,9 @@ final class IterationsModel {
     @concurrent nonisolated static func lastCommit(of path: String) async -> String? {
         guard let gitPath = GitIgnoreService.gitPath else { return nil }
         let directory = (path as NSString).deletingLastPathComponent
-        let spec = ChildProcessSpec(executable: gitPath, arguments: ["-C", directory, "log", "-1", "--format=%H", "--", (path as NSString).lastPathComponent])
+        // The name as written: git reads a path as a pattern, so `[draft].md` meant d.md, r.md… and `:memo.md` a pathspec
+        // to parse, and the commit found could be another file's.
+        let spec = ChildProcessSpec(executable: gitPath, arguments: ["--literal-pathspecs", "-C", directory, "log", "-1", "--format=%H", "--", (path as NSString).lastPathComponent])
         guard let process = try? ChildProcess.launch(spec) else { return nil }
         let output = await process.collectStdout()
         guard (try? await process.exitCode) == 0 else { return nil }

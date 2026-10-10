@@ -205,4 +205,29 @@ struct IterationTests {
         #expect(try await store.notes(for: document.id, iteration: 0).map(\.id) == [old.id])
         session.close()
     }
+
+    /// The last commit is the named file's, a name with pattern characters in it read as written.
+    @Test func theLastCommitIsTheNamedFilesOwn() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else { return }
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-git-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        func git(_ arguments: String...) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"] + arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+        }
+        try git("init", "-q")
+        try "d".write(toFile: "\(repo)/d.md", atomically: true, encoding: .utf8)
+        try git("add", "d.md")
+        try git("commit", "-q", "-m", "d")
+        try "draft".write(toFile: "\(repo)/[draft].md", atomically: true, encoding: .utf8)
+        #expect(await IterationsModel.lastCommit(of: "\(repo)/d.md") != nil)
+        #expect(await IterationsModel.lastCommit(of: "\(repo)/[draft].md") == nil, "never committed: not d.md's commit")
+        #expect(await IterationsModel.lastCommit(of: "\(repo)/:memo.md") == nil)
+    }
 }
