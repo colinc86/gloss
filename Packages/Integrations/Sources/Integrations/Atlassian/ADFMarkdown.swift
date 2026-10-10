@@ -43,6 +43,18 @@ public enum ADFMarkdown {
         return (target.isImage ? "!" : "") + "[" + label + "](" + destination + ")"
     }
 
+    /// What an attachment that can't be linked is called. A file name's extension says; without one (only an id),
+    /// a `mediaSingle` is a picture in the text and a `mediaGroup` a row of attached files. A PDF in a `mediaGroup`
+    /// read "[image: spec.pdf]".
+    static func unresolvedKind(name: String, single: Bool) -> String {
+        let pictures: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff", "svg"]
+        let ext = (name as NSString).pathExtension.lowercased()
+        if !ext.isEmpty, ext.count <= 5, ext.contains(where: \.isLetter) {
+            return pictures.contains(ext) ? "image" : "file"
+        }
+        return single ? "image" : "file"
+    }
+
     struct Context {
         var listDepth = 0
     }
@@ -86,11 +98,12 @@ public enum ADFMarkdown {
         case "table":
             return table(children, context: context)
         case "mediaSingle", "mediaGroup":
+            let single = node["type"] as? String == "mediaSingle"
             return children.compactMap { media in
                 let mediaAttrs = media["attrs"] as? [String: Any] ?? [:]
                 if let resolved = resolvedMedia(mediaAttrs) { return resolved }
                 let name = mediaAttrs["alt"] as? String ?? mediaAttrs["name"] as? String ?? mediaAttrs["id"] as? String ?? "attachment"
-                return "\\[image: " + escapeInline(name) + "\\]"
+                return "\\[" + unresolvedKind(name: name, single: single) + ": " + escapeInline(name) + "\\]"
             }.joined(separator: "\n")
         case "expand", "nestedExpand":
             let title = attrs["title"] as? String ?? "Details"

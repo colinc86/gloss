@@ -5,6 +5,19 @@ import Testing
 struct ADFMarkdownTests {
     func render(_ json: String) -> String { ADFMarkdown.markdown(fromJSON: Data(json.utf8)) ?? "<nil>" }
 
+    /// An attachment that can't be linked is named for what it is: a PDF among a row of files is a file, not an image.
+    @Test func unlinkedAttachmentsSayWhatTheyAre() {
+        #expect(ADFMarkdown.unresolvedKind(name: "spec.pdf", single: false) == "file")
+        #expect(ADFMarkdown.unresolvedKind(name: "spec.pdf", single: true) == "file", "the name decides when it has an extension")
+        #expect(ADFMarkdown.unresolvedKind(name: "Shot.PNG", single: false) == "image")
+        #expect(ADFMarkdown.unresolvedKind(name: "9a9a-uuid", single: true) == "image", "an id alone in a picture slot")
+        #expect(ADFMarkdown.unresolvedKind(name: "9a9a-uuid", single: false) == "file")
+        let adf: [String: Any] = ["type": "doc", "content": [
+            ["type": "mediaGroup", "content": [["type": "media", "attrs": ["id": "a1", "name": "spec.pdf", "type": "file"]]]],
+        ]]
+        #expect(ADFMarkdown.markdown(from: adf).contains("\\[file: spec.pdf\\]"))
+    }
+
     @Test func paragraphsHeadingsAndMarks() {
         let adf = #"{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Why"}]},{"type":"paragraph","content":[{"type":"text","text":"Use "},{"type":"text","text":"bold","marks":[{"type":"strong"}]},{"type":"text","text":", "},{"type":"text","text":"code","marks":[{"type":"code"}]},{"type":"text","text":" and "},{"type":"text","text":"a link","marks":[{"type":"link","attrs":{"href":"https://x.test/"}},{"type":"em"}]},{"type":"text","text":"."},{"type":"hardBreak"},{"type":"mention","attrs":{"id":"1","text":"@Sam"}},{"type":"text","text":" "},{"type":"emoji","attrs":{"shortName":":tada:","text":"🎉"}},{"type":"text","text":" "},{"type":"status","attrs":{"text":"DONE"}}]}]}"#
         #expect(render(adf) == "## Why\n\nUse **bold**, `code` and [*a link*](https://x.test/).  \n@Sam 🎉 \\[DONE\\]\n")
