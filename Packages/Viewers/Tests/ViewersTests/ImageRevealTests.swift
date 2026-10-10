@@ -21,7 +21,9 @@ struct ImageRevealTests {
         window.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(100))
         controller.zoom(.actualSize)
-        try await Task.sleep(for: .milliseconds(200))
+        // Until the zoom applies the whole picture fits: wait for actual size rather than for a fixed time.
+        for _ in 0..<100 where abs(controller.magnification - 1) > 0.001 { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(abs(controller.magnification - 1) < 0.001, "zoomed to actual size")
         func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
             if let match = view as? T { return match }
             for subview in view.subviews { if let found = find(type, in: subview) { return found } }
@@ -31,7 +33,7 @@ struct ImageRevealTests {
         let region = CGRect(x: 1850, y: 1450, width: 80, height: 60)
         #expect(!canvas.visibleRect.contains(region), "the corner starts out of sight")
         controller.reveal(region)
-        try await Task.sleep(for: .milliseconds(200))
+        for _ in 0..<100 where !canvas.visibleRect.contains(region) { try await Task.sleep(for: .milliseconds(20)) }
         #expect(canvas.visibleRect.contains(region), "revealing it scrolls it into sight: \(canvas.visibleRect)")
     }
 }
