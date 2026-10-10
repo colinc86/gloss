@@ -149,11 +149,12 @@ final class AtlassianPickerModel {
     }
 
     nonisolated static func filter(_ rows: [Row], query: String) -> [Row] {
-        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return rows }
         return rows.filter { row in
-            let haystack = "\(row.title) \(row.detail)".lowercased()
-            return words.allSatisfy { haystack.contains($0) }
+            // Case and accents aside, as the app's other filters match ("jose" finds "José").
+            let haystack = "\(row.title) \(row.detail)"
+            return words.allSatisfy { haystack.localizedStandardContains($0) }
         }
     }
 

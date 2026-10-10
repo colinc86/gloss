@@ -314,4 +314,14 @@ struct AddressBarTests {
         #expect(model.session(hostID: .local, path: "\(root)/guide.html")?.html?.pendingFragment == "install", "the page's first load scrolls to the anchor")
         await model.shutDown()
     }
+
+    /// The explorer's Web section filters by title or address, case and accents aside.
+    @Test func webPagesFilterByTitleOrAddress() {
+        let at = Date()
+        let pages = [WebPage(url: "https://example.com/docs", hostID: .web, title: "Référence", lastVisitedAt: at),
+                     WebPage(url: "http://localhost:3000/", hostID: .web, title: nil, lastVisitedAt: at)]
+        #expect(WebPagesSection.filtered(pages, by: " reference ").map(\.url) == ["https://example.com/docs"])
+        #expect(WebPagesSection.filtered(pages, by: "LOCALHOST").map(\.url) == ["http://localhost:3000/"])
+        #expect(WebPagesSection.filtered(pages, by: "").count == 2)
+    }
 }

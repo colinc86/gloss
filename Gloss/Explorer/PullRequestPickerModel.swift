@@ -118,13 +118,13 @@ final class PullRequestPickerModel {
         return PullRequestPath(owner: String(parts[0]), repo: String(parts[1]), number: summary.number)
     }
 
-    /// Every word of the query must appear in `owner/repo #n title`, in any order, case-insensitively.
+    /// Every word of the query must appear in `owner/repo #n title`, in any order, case and accents aside.
     nonisolated static func filter(_ pulls: [GitHubPullRequestSummary], query: String) -> [GitHubPullRequestSummary] {
-        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return pulls }
         return pulls.filter { pull in
-            let haystack = "\(pull.repository) #\(pull.number) \(pull.title)".lowercased()
-            return words.allSatisfy { haystack.contains($0) }
+            let haystack = "\(pull.repository) #\(pull.number) \(pull.title)"
+            return words.allSatisfy { haystack.localizedStandardContains($0) }
         }
     }
 
