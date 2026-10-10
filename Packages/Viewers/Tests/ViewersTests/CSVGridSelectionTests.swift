@@ -197,3 +197,17 @@ struct CSVGridFindTests {
         #expect(!table.validateUserInterfaceItem(item))
     }
 }
+
+/// Edit › Select All in a spreadsheet selects every record, which Copy and Add Note then take.
+@MainActor
+struct CSVGridSelectAllTests {
+    @Test func selectAllSelectsEveryRecord() {
+        let controller = CSVGridController(text: "a,b\n1,2\n3,4\n5,6\n", fileName: "x.csv")
+        controller.selectAll()
+        #expect(controller.selection == .rows(0...2))
+        #expect(controller.hasSelection)
+        let empty = CSVGridController(text: "a,b\n", fileName: "x.csv")
+        empty.selectAll()
+        #expect(empty.selection == .none, "a header alone has no records to select")
+    }
+}

@@ -66,6 +66,11 @@ public final class ImageViewerController {
         rectProvider(rect)
     }
 
+    /// Edit › Select All (⌘A): the whole picture as the region, for a note on all of it.
+    public func selectAll() {
+        selection = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    }
+
     public var selectionAnchor: ImageAnchor? {
         guard let selection, selection.width >= 1, selection.height >= 1 else { return nil }
         let rect = selection.integral

@@ -319,6 +319,11 @@ final class CSVTableView: NSTableView {
         coordinator?.controller.copyCount += 1
     }
 
+    /// Edit › Select All: the grid's own selection of every record (the table view's row selection is off).
+    override func selectAll(_ sender: Any?) {
+        coordinator?.controller.selectAll()
+    }
+
     /// Edit › Find, Find Next and Find Previous: a table view takes no find actions itself.
     override func performTextFinderAction(_ sender: Any?) {
         if let action = FindMenuAction.action(of: sender) { coordinator?.controller.perform(action) }
@@ -327,6 +332,7 @@ final class CSVTableView: NSTableView {
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         if item.action == #selector(copy(_:)) { return coordinator?.controller.hasSelection ?? false }
         if item.action == #selector(performTextFinderAction(_:)) { return FindMenuAction.action(of: item) != nil }
+        if item.action == #selector(selectAll(_:)) { return !(coordinator?.controller.table.rows.isEmpty ?? true) }
         return super.validateUserInterfaceItem(item)
     }
 

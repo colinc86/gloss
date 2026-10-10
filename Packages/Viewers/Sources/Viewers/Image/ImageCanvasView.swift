@@ -139,6 +139,11 @@ final class ImageCanvasView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func selectAll(_ sender: Any?) {
+        controller?.selectAll()
+        needsDisplay = true
+    }
+
     /// Edit › Copy (⌘C): the selected region, or the whole picture when nothing is selected, as PNG and TIFF so it
     /// pastes into chats, issues, and image editors alike.
     @objc func copy(_ sender: Any?) {

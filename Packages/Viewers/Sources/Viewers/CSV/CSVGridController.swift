@@ -239,6 +239,15 @@ public final class CSVGridController {
         cursor = nil
     }
 
+    /// Edit › Select All (⌘A): every record, as a drag down the line numbers would select them.
+    public func selectAll() {
+        guard !table.rows.isEmpty else { return }
+        selection = .rows(0...(table.rows.count - 1))
+        rowOrigin = 0
+        selectionOrigin = nil
+        cursor = nil
+    }
+
     static func block(from origin: GridCell, to cell: GridCell) -> Set<GridCell> {
         var result: Set<GridCell> = []
         for row in min(origin.row, cell.row)...max(origin.row, cell.row) {

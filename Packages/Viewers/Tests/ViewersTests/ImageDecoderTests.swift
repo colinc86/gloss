@@ -48,6 +48,16 @@ struct ImageDecoderTests {
         return context.makeImage()!
     }
 
+    /// Edit › Select All on a picture: the whole of it becomes the region, for a note on all of it.
+    @Test @MainActor func selectAllSelectsTheWholePicture() throws {
+        let decoded = try ImageDecoder.decode(encode(makeImage(), type: .png), fileName: "a.png")
+        let controller = ImageViewerController(image: decoded)
+        let canvas = ImageCanvasView(controller: controller)
+        #expect(canvas.responds(to: #selector(NSResponder.selectAll(_:))))
+        canvas.selectAll(nil)
+        #expect(controller.selectionAnchor == ImageAnchor(x: 0, y: 0, w: 4, h: 2, imageW: 4, imageH: 2, hash: decoded.hash))
+    }
+
     @Test func anAVIFDecodesAndAnIconShowsItsLargestSize() throws {
         let avif = try ImageDecoder.decode(encode(makeImage(), type: .init("public.avif")!), fileName: "photo.avif")
         #expect(avif.cgImage.width == 4 && avif.cgImage.height == 2)
