@@ -635,4 +635,10 @@ private actor OpenLog {
 private actor QuestionLog {
     private(set) var questions: [AgentQuestion] = []
     func record(_ question: AgentQuestion) { questions.append(question) }
+
+    /// A port past 65535 would trap inside NIO; it is a failed bind instead.
+    @Test func aPortOutOfRangeFailsToBindRatherThanTrapping() async {
+        await #expect(throws: HTTPListenerError.self) { _ = try await HTTPListener.start(port: 70_000) { _, _ in .data(Data(), headers: [:]) } }
+        await #expect(throws: HTTPListenerError.self) { _ = try await HTTPListener.start(port: -1) { _, _ in .data(Data(), headers: [:]) } }
+    }
 }

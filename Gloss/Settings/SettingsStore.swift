@@ -90,7 +90,19 @@ final class SettingsStore {
     /// How many ended iterations of a document keep their snapshot; 0 keeps them all.
     var snapshotsKept = 10 { didSet { persist("iterations.snapshotsKept", String(snapshotsKept)) } }
     static let snapshotsKeptChoices = [10, 0]
-    var mcpPort = 47831 { didSet { persist("mcp.port", String(mcpPort)) } }
+    /// A port outside `mcpPortRange` (a typo of 70000, a negative) is refused and the old one kept: past 65535 the
+    /// listener could not even be asked for it, and a saved one would be tried at every launch.
+    var mcpPort = 47831 {
+        didSet {
+            guard Self.mcpPortRange.contains(mcpPort) else {
+                mcpPort = oldValue
+                return
+            }
+            persist("mcp.port", String(mcpPort))
+        }
+    }
+    /// Ports an unprivileged server may take; 0 would ask for any port, which agents registered on this one can't find.
+    static let mcpPortRange = 1024...65535
     private(set) var loaded = false
 
     init(noteStore: NoteStore) {
@@ -118,7 +130,7 @@ final class SettingsStore {
         if let value = await read("iterations.afterResolved") { iteratesAfterResolved = value == "1" }
         if let value = await read("iterations.onCommit") { iteratesOnCommit = value == "1" }
         if let value = await read("iterations.snapshotsKept"), let count = Int(value), Self.snapshotsKeptChoices.contains(count) { snapshotsKept = count }
-        if let value = await read("mcp.port"), let port = Int(value) { mcpPort = port }
+        if let value = await read("mcp.port"), let port = Int(value), Self.mcpPortRange.contains(port) { mcpPort = port }
         loaded = true
     }
 

@@ -49,6 +49,8 @@ public final class HTTPListener: Sendable {
 
     /// Binds 127.0.0.1:`port` (0 picks a free port) and serves until `stop()`.
     public static func start(port: Int, authorize: Authorizer? = nil, limits: Limits = Limits(), handler: @escaping Handler) async throws -> HTTPListener {
+        // NIO turns the port into an `in_port_t`, which traps outside 0...65535: refuse it as a failed bind instead.
+        guard (0...65535).contains(port) else { throw HTTPListenerError.bindFailed("port \(port) is not between 0 and 65535") }
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
         let open = Atomic<Int>(0)
         let bootstrap = ServerBootstrap(group: group)

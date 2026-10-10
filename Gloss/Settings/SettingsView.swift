@@ -266,7 +266,7 @@ private struct AgentsSettings: View {
             } header: {
                 Text("MCP server")
             } footer: {
-                Text("Agents read and resolve notes through this server. A port change applies after relaunch.")
+                Text("Agents read and resolve notes through this server. The port is between 1024 and 65535; a change applies after relaunch.")
             }
             ForEach(hostIDs, id: \.self) { hostID in
                 hostSection(hostID, port: port, token: token, isLast: hostID == hostIDs.last)
