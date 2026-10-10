@@ -180,6 +180,25 @@ struct CSVCopyTests {
 struct CSVGridFindTests {
     static let csv = "name,city,note\nAda,London,likes tea\nBob,Paris,\nCy,london,TEA too\n"
 
+    /// A miss on a full sheet reads every cell: off the main thread, so the app keeps answering meanwhile.
+    @Test func aSearchOfABigSheetLeavesTheMainThreadFree() async {
+        let text = "a,b,c,d,e,f,g,h,i,j\n" + (0..<100_000).map { "row \($0),alpha,beta,gamma,delta,epsilon,zeta,eta,theta,iota" }.joined(separator: "\n")
+        let controller = CSVGridController(text: text, fileName: "big.csv")
+        controller.findText = "nothing here"
+        let asked = ContinuousClock.now
+        let search = Task { await controller.find(backwards: false) }
+        try? await Task.sleep(for: .milliseconds(20))
+        let woke = ContinuousClock.now - asked
+        await search.value
+        let searched = ContinuousClock.now - asked
+        // Relative, as other suites share the main actor: searching on it held it for the whole search.
+        #expect(woke < searched / 2, "the main actor woke (\(woke)) long before the search ended (\(searched))")
+        #expect(controller.findMissed)
+        controller.findText = "row 99999"
+        await controller.find(backwards: false)
+        #expect(controller.foundCell == GridCell(row: 99_999, column: 0))
+    }
+
     @Test func findSelectsEachMatchingCellInTurnAndWraps() async {
         let controller = CSVGridController(text: Self.csv, fileName: "people.csv")
         controller.perform(.showFindInterface)

@@ -3,7 +3,7 @@ import Core
 import Observation
 
 /// One cell of the grid: a record index into `CSVTable.rows` and a 0-based data column.
-public struct GridCell: Hashable, Sendable, Comparable {
+public nonisolated struct GridCell: Hashable, Sendable, Comparable {
     public var row: Int
     public var column: Int
 
@@ -138,29 +138,41 @@ public final class CSVGridController {
     }
 
     /// The next (or previous) cell holding `findText`, row by row, case aside, wrapping; it is selected, as a click
-    /// would, so a note can be added to it straight away.
+    /// would, so a note can be added to it straight away. The cells are searched off the main thread: a miss on a
+    /// full sheet reads every one of them, about a second that used to freeze the app on each Return.
     public func find(backwards: Bool) async {
         let needle = findText
         let rows = table.rows
         let columns = max(1, table.columnCount)
-        let total = rows.count * columns
-        guard !needle.isEmpty, total > 0 else {
+        guard !needle.isEmpty, !rows.isEmpty else {
             findMissed = false
             return
         }
-        let start = (foundCell ?? cursor).map { $0.row * columns + $0.column } ?? (backwards ? total : -1)
+        let start = (foundCell ?? cursor).map { $0.row * columns + $0.column }
+        let found = await Self.search(needle, in: rows, columns: columns, after: start, backwards: backwards)
+        // Typed over, or the file reloaded, while it searched: that answer is for another question.
+        guard needle == findText, rows == table.rows else { return }
+        guard let cell = found else {
+            findMissed = true
+            return
+        }
+        findMissed = false
+        foundCell = cell
+        click(cell, extend: false, toggle: false)
+        onScroll(cell)
+    }
+
+    @concurrent nonisolated private static func search(_ needle: String, in rows: [CSVRow], columns: Int, after start: Int?, backwards: Bool) async -> GridCell? {
+        let total = rows.count * columns
+        let origin = start ?? (backwards ? total : -1)
         for step in 1...total {
-            let index = ((start + (backwards ? -step : step)) % total + total) % total
+            if step % 65_536 == 0, Task.isCancelled { return nil }
+            let index = ((origin + (backwards ? -step : step)) % total + total) % total
             let cell = GridCell(row: index / columns, column: index % columns)
             let fields = rows[cell.row].fields
-            guard cell.column < fields.count, fields[cell.column].range(of: needle, options: .caseInsensitive) != nil else { continue }
-            findMissed = false
-            foundCell = cell
-            click(cell, extend: false, toggle: false)
-            onScroll(cell)
-            return
+            if cell.column < fields.count, fields[cell.column].range(of: needle, options: .caseInsensitive) != nil { return cell }
         }
-        findMissed = true
+        return nil
     }
 
     public func endFind() {
