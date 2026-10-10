@@ -100,26 +100,39 @@ public nonisolated enum ImageDecoder {
         }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let count = CGImageSourceGetCount(source)
-        guard count > 0, count <= maximumFrames else { return nil }
+        guard count > 0 else { return nil }
+        // Every image is still measured before any is decoded. One too big to show all of (too many frames, too
+        // many pixels all told, a page past the limit) shows the one image the image viewer shows, when that one
+        // fits: refusing the whole file left a long GIF out of the page, though the viewer opens it.
+        guard count <= maximumFrames else { return still(source, limit: limit) }
         var total = 0
         for index in 0..<count {
             guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
                   let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
-                  (try? checkPixels(width: width, height: height, limit: limit)) != nil else { return nil }
+                  (try? checkPixels(width: width, height: height, limit: limit)) != nil else { return count > 1 ? still(source, limit: limit) : nil }
             total += width * height
         }
-        guard total <= limit * animationPixelBudget else { return nil }
+        guard total <= limit * animationPixelBudget else { return still(source, limit: limit) }
         if count > 1, !animatedTypes.contains((CGImageSourceGetType(source) as String?) ?? "") {
-            // The image `decode` shows and cuts crops from (an icon's largest size), so a region drawn here is a
-            // region of the picture the crop comes from.
-            guard let shown = CGImageSourceCreateImageAtIndex(source, shownIndex(source), nil) else { return nil }
-            // A bitmap of its own pixels, so the picture's pixel size is the page's, not the screen's.
-            let rep = NSBitmapImageRep(cgImage: shown)
-            let image = NSImage(size: rep.size)
-            image.addRepresentation(rep)
-            return image
+            return still(source, limit: limit)
         }
         return NSImage(data: data)
+    }
+
+    /// The one image `decode` shows and cuts crops from (an animation's first frame, an icon's largest size), so a
+    /// region drawn here is a region of the picture the crop comes from; nil when it alone is too big. Only that
+    /// image is decoded.
+    static func still(_ source: CGImageSource, limit: Int) -> NSImage? {
+        let index = shownIndex(source)
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (try? checkPixels(width: width, height: height, limit: limit)) != nil,
+              let shown = CGImageSourceCreateImageAtIndex(source, index, nil) else { return nil }
+        // A bitmap of its own pixels, so the picture's pixel size is the page's, not the screen's.
+        let rep = NSBitmapImageRep(cgImage: shown)
+        let image = NSImage(size: rep.size)
+        image.addRepresentation(rep)
+        return image
     }
 
     /// An SVG named without its extension (a badge served from a web address): markup with an `<svg` element near

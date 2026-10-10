@@ -122,19 +122,26 @@ struct AnimatedPictureTests {
     }
 
     /// Every image in a file is measured, not just the first; a file of several pages shows (and crops) its first.
+    /// One too big to show all of shows only that first image, as the image viewer does; one whose first image is
+    /// itself too big shows nothing.
     @Test func everyPageAndFrameIsMeasured() throws {
         let pages = Self.picture(.tiff, frames: 2, sizes: [CGSize(width: 2, height: 2), CGSize(width: 20, height: 20)])
-        #expect(ImageDecoder.checkedImage(pages, maximumPixels: 100) == nil, "a big second page is refused")
+        let firstPage = try #require(ImageDecoder.checkedImage(pages, maximumPixels: 100), "a big second page leaves the first")
+        #expect(FittedImageAttachment.pixelSize(of: firstPage) == CGSize(width: 2, height: 2))
+        let bigFirst = Self.picture(.tiff, frames: 2, sizes: [CGSize(width: 20, height: 20), CGSize(width: 2, height: 2)])
+        #expect(ImageDecoder.checkedImage(bigFirst, maximumPixels: 100) == nil, "the image shown is itself too big")
         let image = try #require(ImageDecoder.checkedImage(pages))
         #expect(FittedImageAttachment.pixelSize(of: image) == CGSize(width: 2, height: 2), "the first page, as a crop is cut from it")
         #expect(try ImageDecoder.decode(pages, fileName: "pages.tiff").cgImage.width == 2)
         let gif = try #require(ImageDecoder.checkedImage(Self.picture(.gif, frames: 3)))
         #expect(FittedImageAttachment.isAnimated(gif), "an animation keeps its frames")
         let endless = Self.picture(.gif, frames: ImageDecoder.maximumFrames + 1, sizes: Array(repeating: CGSize(width: 1, height: 1), count: ImageDecoder.maximumFrames + 1))
-        #expect(ImageDecoder.checkedImage(endless) == nil, "too many frames")
+        let still = try #require(ImageDecoder.checkedImage(endless), "too many frames: the first, still")
+        #expect(!FittedImageAttachment.isAnimated(still))
         let heavy = Self.picture(.gif, frames: 5, sizes: Array(repeating: CGSize(width: 10, height: 10), count: 5))
-        #expect(ImageDecoder.checkedImage(heavy, maximumPixels: 100) == nil && ImageDecoder.checkedImage(heavy, maximumPixels: 200) != nil,
-                "frames all told stay within the budget")
+        let heavyStill = try #require(ImageDecoder.checkedImage(heavy, maximumPixels: 100), "too many pixels all told: the first frame, still")
+        #expect(!FittedImageAttachment.isAnimated(heavyStill) && FittedImageAttachment.pixelSize(of: heavyStill) == CGSize(width: 10, height: 10))
+        #expect(ImageDecoder.checkedImage(heavy, maximumPixels: 200).map(FittedImageAttachment.isAnimated) == true, "within the budget it moves")
     }
 
     /// An embed's own width and height size the playing view and the picture's frame, as they size the attachment.
