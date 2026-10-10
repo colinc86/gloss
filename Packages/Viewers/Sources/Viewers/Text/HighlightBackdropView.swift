@@ -87,7 +87,7 @@ final class HighlightBackdropView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let textView, let layoutManager = textView.textLayoutManager, let contentManager = layoutManager.textContentManager else { return }
         let documentStart = contentManager.documentRange.location
-        let inset = textView.textContainerInset
+        let inset = textView.textContainerOrigin
         if let lineChanges, !lineChanges.isEmpty {
             drawLineChanges(lineChanges, in: dirtyRect, layoutManager: layoutManager, contentManager: contentManager)
         }
@@ -112,7 +112,7 @@ final class HighlightBackdropView: NSView {
                   let to = contentManager.location(documentStart, offsetBy: entry.range.location + entry.range.length),
                   let textRange = NSTextRange(location: from, end: to) else { continue }
             layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: [.rangeNotRequired]) { _, frame, _, _ in
-                let rect = frame.offsetBy(dx: inset.width, dy: inset.height)
+                let rect = frame.offsetBy(dx: inset.x, dy: inset.y)
                 guard rect.intersects(dirtyRect) else { return true }
                 let color = Theme.color(for: entry.noteColor)
                 switch entry.mark {
@@ -148,17 +148,17 @@ final class HighlightBackdropView: NSView {
     /// what is on screen, not the file.
     private func drawLineChanges(_ changes: LineChanges, in dirtyRect: NSRect, layoutManager: NSTextLayoutManager, contentManager: NSTextContentManager) {
         guard let textView, let index = lineIndex(), index.lineCount > 0 else { return }
-        let inset = textView.textContainerInset
+        let inset = textView.textContainerOrigin
         let documentStart = contentManager.documentRange.location
         let scale = window?.backingScaleFactor ?? 2
-        guard let first = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, dirtyRect.minY - inset.height))) else { return }
+        guard let first = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, dirtyRect.minY - inset.y))) else { return }
         layoutManager.enumerateTextLayoutFragments(from: first.rangeInElement.location, options: []) { fragment in
             let frame = fragment.layoutFragmentFrame
-            if frame.minY + inset.height > dirtyRect.maxY { return false }
+            if frame.minY + inset.y > dirtyRect.maxY { return false }
             let line = index.position(forUTF16Offset: contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)).line
             let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
             let rowsHeight = height > 0 ? height : frame.height
-            let top = frame.minY + inset.height
+            let top = frame.minY + inset.y
             if changes.contains(line: line) {
                 Theme.changeAddedBackground.setFill()
                 NSRect(x: 0, y: top, width: bounds.width, height: rowsHeight).fill()
@@ -178,11 +178,11 @@ final class HighlightBackdropView: NSView {
 
     private func drawIndentGuides(in dirtyRect: NSRect, layoutManager: NSTextLayoutManager, contentManager: NSTextContentManager) {
         guard let textView, let storage = textView.textStorage, let index = lineIndex(), index.lineCount > 0 else { return }
-        let inset = textView.textContainerInset
+        let inset = textView.textContainerOrigin
         let documentStart = contentManager.documentRange.location
         // The lines on screen, then guides for them plus a margin (rebuilt only near its edge or after an edit).
         func line(atY y: CGFloat) -> Int {
-            guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y - inset.height))) else { return index.lineCount }
+            guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y - inset.y))) else { return index.lineCount }
             return index.position(forUTF16Offset: contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)).line
         }
         let visible = line(atY: visibleRect.minY)...max(line(atY: visibleRect.minY), line(atY: visibleRect.maxY))
@@ -196,24 +196,24 @@ final class HighlightBackdropView: NSView {
         let space = (" " as NSString).size(withAttributes: [.font: textView.font ?? Theme.editorFont]).width
         let active = caretLocation.flatMap { guides.covers($0) ? guides.activeGuide(aroundLine: guides.line(at: $0)) : nil }
         let scale = window?.backingScaleFactor ?? 2
-        guard let first = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, dirtyRect.minY - inset.height))) else { return }
+        guard let first = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, dirtyRect.minY - inset.y))) else { return }
         layoutManager.enumerateTextLayoutFragments(from: first.rangeInElement.location, options: []) { fragment in
             let frame = fragment.layoutFragmentFrame
-            if frame.minY + inset.height > dirtyRect.maxY { return false }
+            if frame.minY + inset.y > dirtyRect.maxY { return false }
             let offset = contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)
             guard guides.covers(offset) else { return true }
             let line = guides.line(at: offset)
             let count = guides.levels.indices.contains(line) ? guides.levels[line] : 0
             guard count > 0, let row = fragment.textLineFragments.first else { return true }
             // Column 0 is where the line's first character sits, whatever padding the container adds.
-            let origin = frame.minX + row.typographicBounds.minX + row.locationForCharacter(at: 0).x + inset.width
+            let origin = frame.minX + row.typographicBounds.minX + row.locationForCharacter(at: 0).x + inset.x
             let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
             let rowsHeight = height > 0 ? height : frame.height
             for level in 0..<count {
                 let x = (origin + CGFloat(level * guides.unit) * space).rounded(.down) + 0.5 / scale
                 let isActive = active.map { $0.level == level && $0.lines.contains(line) } ?? false
                 (isActive ? Self.activeGuideColor : Self.guideColor).setFill()
-                NSRect(x: x, y: frame.minY + inset.height, width: 1 / scale * (isActive ? 2 : 1), height: rowsHeight).fill()
+                NSRect(x: x, y: frame.minY + inset.y, width: 1 / scale * (isActive ? 2 : 1), height: rowsHeight).fill()
             }
             return true
         }
@@ -234,6 +234,6 @@ final class HighlightBackdropView: NSView {
         let frame = fragment.layoutFragmentFrame
         // Leave out the empty line fragment TextKit adds after a paragraph's newline.
         let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
-        return NSRect(x: 0, y: frame.minY + textView.textContainerInset.height, width: bounds.width, height: height > 0 ? height : frame.height)
+        return NSRect(x: 0, y: frame.minY + textView.textContainerOrigin.y, width: bounds.width, height: height > 0 ? height : frame.height)
     }
 }

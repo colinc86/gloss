@@ -46,7 +46,7 @@ extension NSTextView {
         let visibleStart = contentManager.offset(from: start, to: viewport.location)
         let visibleEnd = contentManager.offset(from: start, to: viewport.endLocation)
         let visible = visibleRect
-        let inset = textContainerInset
+        let inset = textContainerOrigin
         var result: [NoteID: [CGRect]] = [:]
         for (id, range) in ranges {
             // A removal point is its caret, so a path reaches where the text was.
@@ -64,7 +64,7 @@ extension NSTextView {
                   let textRange = NSTextRange(location: from, end: to) else { continue }
             var rects: [CGRect] = []
             layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: [.rangeNotRequired]) { _, frame, _, _ in
-                let clipped = frame.offsetBy(dx: inset.width, dy: inset.height).intersection(visible)
+                let clipped = frame.offsetBy(dx: inset.x, dy: inset.y).intersection(visible)
                 if !clipped.isNull, clipped.height > 0, let rect = self.topLeftWindowRect(clipped) { rects.append(rect) }
                 return true
             }
@@ -92,6 +92,6 @@ extension NSTextView {
             let font = self.font ?? Theme.editorFont
             frame.size.height = (font.ascender - font.descender + font.leading).rounded(.up)
         }
-        return NoteGeometry.caretBar(at: frame.offsetBy(dx: textContainerInset.width, dy: textContainerInset.height))
+        return NoteGeometry.caretBar(at: frame.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y))
     }
 }

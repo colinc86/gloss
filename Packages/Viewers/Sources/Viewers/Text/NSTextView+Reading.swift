@@ -25,4 +25,20 @@ extension NSTextView {
         guard let top else { return }
         scroll(NSPoint(x: visibleRect.minX, y: max(0, top + textContainerOrigin.y)))
     }
+
+    /// Scrolls so the line holding `location` is in the middle of the visible area, revealed first as `scrollToTop` is.
+    func scrollToCentre(_ location: Int) {
+        let clamped = min(max(location, 0), string.utf16.count)
+        scrollRangeToVisible(NSRange(location: clamped, length: 0))
+        guard let layoutManager = textLayoutManager, let content = layoutManager.textContentManager,
+              let start = content.location(content.documentRange.location, offsetBy: clamped) else { return }
+        var middle: CGFloat?
+        layoutManager.enumerateTextSegments(in: NSTextRange(location: start), type: .standard, options: [.rangeNotRequired]) { _, frame, _, _ in
+            middle = frame.midY
+            return false
+        }
+        guard let middle else { return }
+        let limit = max(0, frame.height - visibleRect.height)
+        scroll(NSPoint(x: visibleRect.minX, y: min(limit, max(0, middle + textContainerOrigin.y - visibleRect.height / 2))))
+    }
 }

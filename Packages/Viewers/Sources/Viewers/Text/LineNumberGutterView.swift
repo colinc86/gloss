@@ -219,20 +219,20 @@ final class LineNumberGutterView: NSView {
     }
 }
 
-/// Gutter on the left, scroll view on the right.
+/// Gutter on the left, scroll view in the middle, minimap on the right.
 public final class TextEditorContainerView: NSView {
     let gutter: LineNumberGutterView
     let scrollView: NSScrollView
-    let ruler: OverviewRulerView
+    let minimap: MinimapView
 
-    init(gutter: LineNumberGutterView, scrollView: NSScrollView, ruler: OverviewRulerView) {
+    init(gutter: LineNumberGutterView, scrollView: NSScrollView, minimap: MinimapView) {
         self.gutter = gutter
         self.scrollView = scrollView
-        self.ruler = ruler
+        self.minimap = minimap
         super.init(frame: .zero)
         addSubview(gutter)
         addSubview(scrollView)
-        addSubview(ruler)
+        addSubview(minimap)
     }
 
     @available(*, unavailable)
@@ -242,10 +242,10 @@ public final class TextEditorContainerView: NSView {
         super.layout()
         let width = gutter.gutterWidth
         gutter.frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
-        // The overview ruler takes room only while the file has notes.
-        let rulerWidth = ruler.hasMarks ? OverviewRulerView.width : 0
-        ruler.isHidden = rulerWidth == 0
-        scrollView.frame = NSRect(x: width, y: 0, width: max(0, bounds.width - width - rulerWidth), height: bounds.height)
-        ruler.frame = NSRect(x: bounds.width - rulerWidth, y: 0, width: rulerWidth, height: bounds.height)
+        // The minimap takes no room while Settings › Editor has it off.
+        let minimapWidth = Theme.showsMinimap ? MinimapView.width : 0
+        minimap.isHidden = minimapWidth == 0
+        scrollView.frame = NSRect(x: width, y: 0, width: max(0, bounds.width - width - minimapWidth), height: bounds.height)
+        minimap.frame = NSRect(x: bounds.width - minimapWidth, y: 0, width: minimapWidth, height: bounds.height)
     }
 }

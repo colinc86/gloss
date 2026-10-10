@@ -77,6 +77,9 @@ struct ContentView: View {
                     }
                 }
             }
+            // The document keeps room of its own: without a minimum, narrowing the window squeezed it to nothing beside
+            // the sidebar and the notes panel, and near that limit the split view kept re-dividing the width (#20).
+            .frame(minWidth: 360)
             .sheet(item: Binding(get: { model.explorer.fileNameRequest }, set: { model.explorer.fileNameRequest = $0 })) { request in
                 FileOperationSheet(request: request) { model.explorer.fileNameRequest = nil }
             }

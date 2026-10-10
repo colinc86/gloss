@@ -25,12 +25,12 @@ public struct TextEditorView: NSViewRepresentable {
         scroll.borderType = .noBorder
         scroll.drawsBackground = false
         let gutter = LineNumberGutterView(textView: textView, controller: controller)
-        let ruler = OverviewRulerView()
-        ruler.controller = controller
-        ruler.scrollView = scroll
-        let container = TextEditorContainerView(gutter: gutter, scrollView: scroll, ruler: ruler)
+        let minimap = MinimapView()
+        minimap.controller = controller
+        minimap.scrollView = scroll
+        let container = TextEditorContainerView(gutter: gutter, scrollView: scroll, minimap: minimap)
         context.coordinator.attach(textView: textView, gutter: gutter, scrollView: scroll)
-        context.coordinator.ruler = ruler
+        context.coordinator.minimap = minimap
         context.coordinator.loadContent()
         return container
     }
@@ -47,8 +47,12 @@ public struct TextEditorView: NSViewRepresentable {
     public final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
         let controller: TextEditorController
         private weak var textView: SourceTextView?
-        weak var ruler: OverviewRulerView? {
-            didSet { ruler?.superview?.needsLayout = true }
+        weak var minimap: MinimapView? {
+            didSet {
+                minimap?.visibleLines = { [weak self] in self?.visibleLines() }
+                minimap?.showLine = { [weak self] line, centred in self?.show(line: line, centred: centred) }
+                minimap?.superview?.needsLayout = true
+            }
         }
         private weak var gutter: LineNumberGutterView?
         private weak var backdrop: HighlightBackdropView?
@@ -72,6 +76,11 @@ public struct TextEditorView: NSViewRepresentable {
             textView.textStorage?.delegate = self
             textView.onAttachedToWindow = { [weak self] in self?.sync() }
             textView.onFocusChange = { [weak self] in self?.updateCurrentLine() }
+            textView.onEndLiveResize = { [weak self] in
+                self?.widthMayHaveChanged()
+                // The notes list held its place while the window was resized; it follows the page again now.
+                self?.controller.noteGeometry.changed()
+            }
             textView.structuralExpansion = { [controller] range in controller.structuralExpansion(of: range) }
             textView.onHoverCharacter = { [weak controller] index, caret in controller?.hover(at: index, caret: caret) }
             controller.rectProvider = { [weak self] range in self?.rect(for: range) }
@@ -101,6 +110,7 @@ public struct TextEditorView: NSViewRepresentable {
                 MainActor.assumeIsolated {
                     gutter?.needsDisplay = true
                     backdrop?.needsDisplay = true
+                    self?.minimap?.needsDisplay = true
                     self?.widthMayHaveChanged()
                     self?.controller.noteGeometry.changed()
                 }
@@ -120,7 +130,7 @@ public struct TextEditorView: NSViewRepresentable {
                 MainActor.assumeIsolated {
                     gutter?.needsDisplay = true
                     backdrop?.needsDisplay = true
-                    self?.ruler?.needsDisplay = true
+                    self?.minimap?.needsDisplay = true
                     self?.recolorVisibleIfStale()
                     // A peek points at where the note was; once the text scrolls it would point at nothing.
                     self?.controller.dismissPeek()
@@ -146,6 +156,8 @@ public struct TextEditorView: NSViewRepresentable {
         private var styledWidth: CGFloat = 0
         private var widthPending = false
         private func widthMayHaveChanged() {
+            // Restyling touches every paragraph, so not on every step of a window resize (#20): once, when it ends.
+            guard textView?.inLiveResize != true else { return }
             guard let width = textView?.textContainer?.size.width, width > 100, abs(width - styledWidth) >= 40, !widthPending else { return }
             widthPending = true
             RunLoop.main.perform(inModes: [.common]) { [weak self] in
@@ -164,6 +176,7 @@ public struct TextEditorView: NSViewRepresentable {
             backdrop?.showsIndentGuides = Theme.showsIndentGuides
             backdrop?.invalidateIndentGuides()
             gutter?.updateWidth()
+            minimap?.superview?.needsLayout = true
             invalidateHighlights()
         }
 
@@ -185,6 +198,7 @@ public struct TextEditorView: NSViewRepresentable {
             styledWidth = (textView.textContainer?.size.width ?? 0) > 100 ? textView.textContainer?.size.width ?? 0 : 0
             loadedContentVersion = controller.contentVersion
             textView.isEditable = controller.isEditable
+            minimap?.textDidChange()
             gutter?.updateWidth()
             invalidateHighlights()
         }
@@ -295,9 +309,7 @@ public struct TextEditorView: NSViewRepresentable {
             }
             backdrop?.lineChanges = controller.lineChanges
             gutter?.needsDisplay = true
-            // The ruler appears with a file's first note and goes with its last.
-            ruler?.needsDisplay = true
-            ruler?.superview?.needsLayout = true
+            minimap?.needsDisplay = true
             controller.noteGeometry.changed()
         }
 
@@ -310,6 +322,7 @@ public struct TextEditorView: NSViewRepresentable {
         /// re-estimated line heights and moved the view on every keystroke.
         private func invalidateRendering(_ range: NSRange?) {
             recolorVisibleFragments { _ in true }
+            minimap?.needsDisplay = true
         }
 
         /// The highlighter generation each fragment was last coloured for (weak keys: fragments come and go).
@@ -337,6 +350,47 @@ public struct TextEditorView: NSViewRepresentable {
                 return true
             }
             if changed { textView.needsDisplay = true }
+        }
+
+        // MARK: Minimap
+
+        /// The first and last source lines on screen: a wrapped line is one layout fragment, so it counts once.
+        private func visibleLines() -> ClosedRange<Int>? {
+            guard let textView, let layoutManager = textView.textLayoutManager,
+                  let contentManager = layoutManager.textContentManager else { return nil }
+            let visible = textView.visibleRect
+            let inset = textView.textContainerInset.height
+            func line(atY y: CGFloat) -> Int? {
+                guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, y - inset))) else { return nil }
+                let offset = contentManager.offset(from: contentManager.documentRange.location, to: fragment.rangeInElement.location)
+                return controller.lineIndex.position(forUTF16Offset: offset).line
+            }
+            let first = line(atY: visible.minY) ?? 1
+            let last = line(atY: visible.maxY - 1) ?? controller.lineIndex.lineCount
+            return first...max(first, last)
+        }
+
+        /// Scrolls to a line, centred or at the top, the keyboard staying where it was. Lines above it may still have
+        /// estimated heights, so once the scroll has laid out real ones it looks again and corrects (see `reveal`).
+        private func show(line: Int, centred: Bool, settling: Bool = true) {
+            guard let textView, let scrollView = textView.enclosingScrollView, let layoutManager = textView.textLayoutManager,
+                  let contentManager = layoutManager.textContentManager,
+                  let location = contentManager.location(contentManager.documentRange.location,
+                                                         offsetBy: controller.lineIndex.contentRange(ofLine: line).location) else { return }
+            layoutManager.ensureLayout(for: NSTextRange(location: location))
+            guard let fragment = layoutManager.textLayoutFragment(for: location) else { return }
+            let visible = scrollView.documentVisibleRect.height
+            let frame = fragment.layoutFragmentFrame
+            let target = (centred ? frame.midY - visible / 2 : frame.minY) + textView.textContainerInset.height
+            let y = min(max(0, textView.frame.height - visible), max(0, target)).rounded()
+            if abs(y - scrollView.contentView.bounds.minY) >= 1 {
+                scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.minX, y: y))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            }
+            guard settling else { return }
+            RunLoop.main.perform(inModes: [.common]) { [weak self] in
+                MainActor.assumeIsolated { self?.show(line: line, centred: centred, settling: false) }
+            }
         }
 
         // MARK: Rendering attributes (note highlights)
@@ -368,6 +422,7 @@ public struct TextEditorView: NSViewRepresentable {
             controller.dismissPeek()
             guard !isApplyingContent, let textView else { return }
             controller.viewDidChangeText(textView.string)
+            minimap?.textDidChange()
             gutter?.updateWidth()
             gutter?.needsDisplay = true
             backdrop?.needsDisplay = true

@@ -13,7 +13,7 @@ the tokens and components there instead of literals.
 3. **Open work leads.** Drafts and questions from agents stand at full contrast; everything else steps back (#12).
    In text a draft fills its words; a sent note is only a solid underline in its colour, a resolved one a faint
    dotted underline, an orphan a dashed one (`Theme.mark`). Every other surface uses one ladder (`Theme.strength`:
-   draft 1, sent 0.55, resolved 0.3): gutter bars, ruler ticks, image and PDF regions, spreadsheet rows, a web page's
+   draft 1, sent 0.55, resolved 0.3): gutter bars, minimap marks, image and PDF regions, spreadsheet rows, a web page's
    element boxes, and the paths. The note under the pointer, or whose card is selected, fills again whatever its
    state, so it can always be found.
 4. **The next step is obvious.** Each surface emphasises one primary action (a draft's Send) and keeps the rest
@@ -228,7 +228,7 @@ path. Dropping on the Dock icon is not supported yet.
 ### Explorer
 
 - **Root switcher** (`RootSwitcher`): one row above the tree, always shown, names the open folder (accent folder,
-  teal host for remote roots, a star if it is a favorite, its open-note count) with "N open" and a chevron that
+  teal host for remote roots, its open-note count; no favorite star, which shows in the open list) with "N open" and a chevron that
   turns over while the switcher is up; with Web picked it reads `globe` "Web", and with no folder open the host's
   icon and name (teal for ssh) and "No folder open". It is also the host picker (2026-10-07; the sidebar toolbar's
   host dropdown and the title's host chip are gone). Clicking opens a 320 pt popover with sections: **Hosts**
@@ -699,22 +699,35 @@ path. Dropping on the Dock icon is not supported yet.
 - **Changed lines** (a pull request's file, milestone 2): rows the pull request added or rewrote are tinted green
   across the whole width (`Theme.changeAddedBackground`, 10%, lighter than a resolved note so a green note on an added
   line still reads), with a 2 pt green bar at the gutter's text edge as VS Code marks changed rows; a red hairline
-  across gutter and text marks where lines were taken out. The overview ruler shows hunks in a lane of their own
+  across gutter and text marks where lines were taken out. The minimap shows hunks in a lane of their own
   under the notes (green bars, red ticks for deletions), clickable. The status bar reads "3 changes" with ⌃/⌄
   steppers, "2 of 3" while stepping; Notes › Next Change (⌥⌘↓) and Previous Change (⌥⌘↑) walk the hunks from the
   caret and wrap, landing each with the find indicator. A reload after a new commit shows "Pull request updated" for
   eight seconds (an Atlassian document says "Updated in Jira or Confluence").
-- **Overview ruler** (`OverviewRulerView`): a 12 pt strip at the editor's trailing edge, shown only while the file
-  has notes, that maps the whole file as Xcode's issue markers and VS Code's overview ruler do. Each note is a tick in
-  its colour at its place (a multi-line note spans its lines): drafts solid, sent at 70%, resolved at 35%, orphaned
-  as an outline; open work draws over settled work. A faint band marks the part on screen. Ticks widen under the
-  pointer and a click scrolls to the note the way browsing the notes panel does (the keyboard stays put); a click or
-  drag elsewhere scrubs the file like a minimap. A removal point is an outlined tick; a highlight whose text was
-  replaced while editing (invalidated) leaves the ruler, as it leaves the gutter.
+- **Minimap** (`MinimapView`, 2026-10-09; replaced the 12 pt overview ruler): a 100 pt picture of the whole file at
+  the editor's trailing edge, as VS Code draws one. Each run of characters is a block in its syntax colour (55%),
+  two points to a line and 0.8 pt to a column, tabs to four-column stops, clipped past the width. Geometry is in real
+  points, so a short file is a short picture at the top with marks a line tall (the ruler stretched a five-line file
+  over the pane, a one-line note a fifth of the window); a file taller than the view scrolls in step with the editor.
+  Notes tint their lines across the picture with a 3 pt bar at the trailing edge, on the state ladder (drafts over
+  settled work, orphans outlined, a removal a hairline); hunks keep a lane at the left. A slider covers the source
+  lines on screen (a wrapped line counts once) and is hidden while the whole file shows. A click on a note scrolls to
+  it as browsing the notes panel does (the keyboard stays put); a click elsewhere centres that line and a drag moves
+  the slider. Shown for every file in the editor (text, code, Markdown and HTML source); Settings › Editor › Show
+  minimap turns it off, and then it takes no room. A highlight whose text was replaced while editing (invalidated)
+  leaves it, as it leaves the gutter.
+  Rendered Markdown has its own (`RenderedMinimapView`): the whole rendered page, laid out once more offscreen at the
+  reading column's width (TextKit 2 lays out only near the screen, so the view itself cannot be snapshotted) and drawn
+  shrunk to the strip: headings, code blocks, tables, quotes, pictures and diagrams as they render. It is rebuilt
+  once the rendered text, column width and display have held still for 150 ms (never during a live window resize;
+  an appearance change alone rebuilds at once), and skipped past 150k characters. Notes
+  tint the lines they cover, notes on pictures their region; the slider and clicks map through text locations rather
+  than pixels, since the view's own height is partly TextKit's estimate. Both minimaps draw their chrome through
+  `MinimapStyle`.
 - **Removal points** (2026-10-07): a note whose text an agent or an edit removed is a point where the text was
   (a zero-length anchor), at the start of what now sits there (never the end of a heading above it), drawn as a caret: a 2 pt bar in the note's colour, the line's height, with a small round
   cap at its top, at the state ladder's strength (full when focused). The gutter marks its row with a hollow dot in
-  the note's lane, the ruler with an outlined tick, and the path ribbon reaches the caret (`NoteGeometry` gives a
+  the note's lane, the minimap with a hairline, and the path ribbon reaches the caret (`NoteGeometry` gives a
   2 pt rect for a point). Rendered Markdown maps the point to one rendered point (the start of an inexact run, never
   the whole block) and draws the same caret; a web page's text note draws it as an element in `<gloss-overlay>` at
   the collapsed range, since a CSS highlight of nothing shows nothing.
@@ -752,7 +765,7 @@ path. Dropping on the Dock icon is not supported yet.
   Every viewer that can place a note reports it through `NoteGeometry` (text by line fragment, rendered Markdown,
   PDF regions and text, image regions, grid cells and rows, a web page's element notes); Quick Look and text notes on
   a rendered HTML page have no place to point at, so the toggles hide there or the note goes without a path.
-- **Landing on a note**: every jump to a range (a ruler tick, a card in the notes panel, a search result) ends with
+- **Landing on a note**: every jump to a range (a minimap mark, a card in the notes panel, a search result) ends with
   AppKit's find indicator over the target, the brief yellow pop Xcode uses, so the eye finds where it landed
   instead of scanning. A note over several lines pops on its first line only; caret moves (no range) don't pop.
 - **Indent guides**: a hairline at each indentation level a line sits inside (the step is read from the file, so

@@ -67,12 +67,16 @@ struct SettingsView: View {
                         Text("Show indent guides")
                         Text("A faint line at each indentation level; the block around the caret is stronger.")
                     }
+                    Toggle(isOn: $settings.showMinimap) {
+                        Text("Show minimap")
+                        Text("A small map of the file beside the scroll bar (the code, or the rendered page) with your notes and changes.")
+                    }
                 } footer: {
                     EditorPreview(fontSize: settings.editorFontSize, wraps: settings.wrapLines, guides: settings.showIndentGuides)
                 }
             }
             .formStyle(.grouped)
-            .frame(height: 330)
+            .frame(height: 380)
             .animation(DS.Motion.snappy, value: settings.editorFontSize)
             .animation(DS.Motion.smooth, value: settings.showIndentGuides)
             .tabItem { Label("Editor", systemImage: "text.alignleft") }

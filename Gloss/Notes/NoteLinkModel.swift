@@ -214,6 +214,9 @@ final class NoteLinkModel {
         viewerViewport = viewport
         viewerRects = rects
         redraw()
+        // The list follows the page as it scrolls, not while the window is being resized: the note in view changes
+        // with every step then, and the list animated after it (#20).
+        guard NSApp?.keyWindow?.inLiveResize != true else { return }
         guard !isPointerInPanel, let viewport, let focus = Self.focus(visible: rects, viewport: viewport), focus != focusNoteID else { return }
         focusNoteID = focus
         focusRequest += 1

@@ -43,7 +43,7 @@ public enum Theme {
         return state == .sent ? .underline : .dottedUnderline
     }
 
-    /// One ladder for every surface that shows a note's state (gutter bars, the ruler, regions, rows, page boxes):
+    /// One ladder for every surface that shows a note's state (gutter bars, the minimap, regions, rows, page boxes):
     /// open work at full strength, then each step back quieter.
     public static func strength(for state: NoteState) -> CGFloat {
         switch state {
@@ -69,7 +69,7 @@ public enum Theme {
     public static let changeAddedBackground = NSColor(name: nil) { appearance in
         NSColor.systemGreen.withAlphaComponent(0.10 * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkBoost : 1))
     }
-    /// The gutter's strip beside an added row, and the ruler's mark for a hunk.
+    /// The gutter's strip beside an added row, and the minimap's mark for a hunk.
     public static let changeBar = NSColor.systemGreen.withAlphaComponent(0.85)
     /// The hairline where a change took lines out.
     public static let changeDeletedMarker = NSColor.systemRed.withAlphaComponent(0.9)
@@ -84,6 +84,9 @@ public enum Theme {
     }
     public static var showsIndentGuides = true {
         didSet { if oldValue != showsIndentGuides { announceEditorSettings() } }
+    }
+    public static var showsMinimap = true {
+        didSet { if oldValue != showsMinimap { announceEditorSettings() } }
     }
 
     public static let editorSettingsDidChange = Notification.Name("Viewers.editorSettingsDidChange")

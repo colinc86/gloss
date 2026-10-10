@@ -7,6 +7,13 @@ public final class SourceTextView: NSTextView {
 
     /// Called once the view is in a window and has been sized, for work that needs both (focus, scrolling).
     var onAttachedToWindow: (() -> Void)?
+    /// A window resize finished: work put off while it ran (restyling for the new width) happens now.
+    var onEndLiveResize: (() -> Void)?
+
+    override public func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        onEndLiveResize?()
+    }
 
     /// Files dragged from Finder open in the app instead of pasting their paths into the document: without the
     /// file types the drag falls through to the window, which opens them.

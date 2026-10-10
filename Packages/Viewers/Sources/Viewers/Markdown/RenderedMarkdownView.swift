@@ -14,7 +14,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         Coordinator(controller: controller)
     }
 
-    public func makeNSView(context: Context) -> NSScrollView {
+    public func makeNSView(context: Context) -> RenderedMarkdownContainerView {
         let textView = RenderedTextView(usingTextLayoutManager: true)
         textView.controller = controller
         textView.onAttachedToWindow = { [weak coordinator = context.coordinator] in coordinator?.sync() }
@@ -23,7 +23,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         textView.isRichText = true
         textView.drawsBackground = true
         textView.backgroundColor = .textBackgroundColor
-        textView.textContainerInset = NSSize(width: Coordinator.minimumInset, height: 20)
+        textView.textContainerInset = NSSize(width: RenderedTextView.minimumMargin, height: 20)
         textView.textContainer?.lineFragmentPadding = 0
         textView.linkTextAttributes = [.foregroundColor: NSColor.linkColor, .cursor: NSCursor.pointingHand]
         textView.textLayoutManager?.delegate = context.coordinator.layoutDelegate
@@ -31,8 +31,9 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        // The column is sized and centred by the view itself (`RenderedTextView.updateColumn`), not by tracking it.
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(width: RenderedTextView.maximumColumnWidth, height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = context.coordinator
         let scroll = NSScrollView()
         scroll.documentView = textView
@@ -40,16 +41,21 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.postsFrameChangedNotifications = true
+        let minimap = RenderedMinimapView()
+        minimap.controller = controller
+        minimap.textView = textView
+        let container = RenderedMarkdownContainerView(scrollView: scroll, minimap: minimap)
+        context.coordinator.minimap = minimap
         context.coordinator.attach(textView: textView)
         context.coordinator.sync()
-        return scroll
+        return container
     }
 
-    public func updateNSView(_ nsView: NSScrollView, context: Context) {
+    public func updateNSView(_ nsView: RenderedMarkdownContainerView, context: Context) {
         context.coordinator.sync()
     }
 
-    public static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
+    public static func dismantleNSView(_ nsView: RenderedMarkdownContainerView, coordinator: Coordinator) {
         coordinator.detach()
     }
 
@@ -71,6 +77,8 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         private weak var backdrop: HighlightBackdropView?
         private weak var imageOverlay: EmbeddedImageOverlayView?
         private weak var animatedPictures: AnimatedPicturesView?
+        weak var minimap: RenderedMinimapView?
+        private var settingsObserver: (any NSObjectProtocol)?
         private var appliedVersion = -1
         private var appliedScrollVersion = 0
         private var isSyncing = false
@@ -80,9 +88,6 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         private var textFrameObserver: (any NSObjectProtocol)?
         /// Held here: the layout manager keeps its delegate weakly.
         let layoutDelegate = MarkdownLayoutDelegate()
-        static let minimumInset: CGFloat = 24
-        /// Widest text column; wider panes centre it.
-        static let readableWidth: CGFloat = 780
 
         init(controller: MarkdownViewerController) {
             self.controller = controller
@@ -98,15 +103,16 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                         backdrop?.needsDisplay = true
                         controller?.noteGeometry.changed()
                         self?.animatedPictures?.layOut()
+                        self?.minimap?.needsDisplay = true
                     }
                 }
             }
             if let scroll = textView.enclosingScrollView {
                 frameObserver = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: scroll, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated {
-                        self?.updateReadableWidth()
                         self?.controller.noteGeometry.changed()
                         self?.animatedPictures?.layOut()
+                        self?.minimap?.needsDisplay = true
                     }
                 }
             }
@@ -120,10 +126,19 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                     self?.imageOverlay?.needsDisplay = true
                     self?.controller.noteGeometry.changed()
                     self?.animatedPictures?.layOut()
+                    self?.minimap?.needsDisplay = true
+                }
+            }
+            // Settings › Editor › Show minimap, while this view is open.
+            settingsObserver = NotificationCenter.default.addObserver(forName: Theme.editorSettingsDidChange, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.minimap?.superview?.needsLayout = true
+                    self?.minimap?.needsDisplay = true
                 }
             }
             (textView as? RenderedTextView)?.onLayout = { [weak self] in
                 self?.imageOverlay?.needsDisplay = true
+                self?.minimap?.needsDisplay = true
                 self?.controller.noteGeometry.changed()
                 self?.animatedPictures?.layOut()
             }
@@ -166,6 +181,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.source.isFocused($0.id))
             }
             imageOverlay?.needsDisplay = true
+            minimap?.needsDisplay = true
             controller.noteGeometry.changed()
         }
 
@@ -174,22 +190,12 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             if let scrollObserver { NotificationCenter.default.removeObserver(scrollObserver) }
             if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
             if let textFrameObserver { NotificationCenter.default.removeObserver(textFrameObserver) }
+            if let settingsObserver { NotificationCenter.default.removeObserver(settingsObserver) }
             textView?.delegate = nil
-        }
-
-        /// Caps the text column at `readableWidth`, centred, so long lines stay readable in a wide pane.
-        func updateReadableWidth() {
-            guard let textView, let scroll = textView.enclosingScrollView else { return }
-            let width = scroll.contentSize.width
-            let inset = max(Self.minimumInset, ((width - Self.readableWidth) / 2).rounded(.down))
-            guard textView.textContainerInset.width != inset else { return }
-            textView.textContainerInset = NSSize(width: inset, height: textView.textContainerInset.height)
-            backdrop?.needsDisplay = true
         }
 
         func sync() {
             guard let textView else { return }
-            updateReadableWidth()
             // Read the highlight version here so SwiftUI re-runs this update when notes change;
             // the rendering validator alone runs outside SwiftUI's dependency tracking.
             _ = controller.source.highlightsVersion
@@ -235,7 +241,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             }
             guard var rect = union else { return nil }
             if rect.width < 2 { rect.size.width = 2 }
-            rect = rect.offsetBy(dx: textView.textContainerInset.width, dy: textView.textContainerInset.height)
+            rect = rect.offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
             _ = container
             return textView.topLeftWindowRect(rect)
         }
@@ -293,6 +299,39 @@ final class RenderedTextView: NSTextView {
         super.textViewportLayoutControllerDidLayout(controller)
         onLayout?()
     }
+
+    /// The notes list held its place while the window was resized; it follows the page again now.
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        onLayout?()
+    }
+
+    /// The reading column: at most `maximumColumnWidth` wide, centred, with at least `minimumMargin` either side.
+    /// Centred by moving the container's origin, never by changing `textContainerInset` or letting the container
+    /// track the view's width: either makes TextKit lay the whole document out again on every step of a window
+    /// resize (#20), blanking and re-wrapping the text, while a column that keeps its width needs no layout at all.
+    static let minimumMargin: CGFloat = 24
+    static let maximumColumnWidth: CGFloat = 780
+
+    override var textContainerOrigin: NSPoint {
+        let column = textContainer?.size.width ?? 0
+        return NSPoint(x: max(Self.minimumMargin, ((bounds.width - column) / 2).rounded(.down)), y: textContainerInset.height)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateColumn()
+    }
+
+    /// Narrows the column only when the view is too narrow for the widest one; otherwise just re-centres it.
+    private var centredFor: CGFloat = -1
+    func updateColumn() {
+        guard let container = textContainer, bounds.width != centredFor else { return }
+        centredFor = bounds.width
+        let column = max(1, min(Self.maximumColumnWidth, bounds.width - Self.minimumMargin * 2))
+        if container.size.width != column { container.size = NSSize(width: column, height: CGFloat.greatestFiniteMagnitude) }
+        invalidateTextContainerOrigin()
+    }
     weak var controller: MarkdownViewerController?
 
     /// The picture under `point` (view coordinates), with its index in the text and its frame.
@@ -320,7 +359,7 @@ final class RenderedTextView: NSTextView {
             frame = rect
             return false
         }
-        return frame?.offsetBy(dx: textContainerInset.width, dy: textContainerInset.height)
+        return frame?.offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
     }
 
     /// An embed's frame in view coordinates, found by its source and occurrence.

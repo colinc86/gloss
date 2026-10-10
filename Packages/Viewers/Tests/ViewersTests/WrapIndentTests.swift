@@ -20,9 +20,9 @@ struct WrapIndentTests {
     @Test func aWrappedLineContinuesUnderItsIndentation() throws {
         let long = "    /// " + Array(repeating: "words that run on", count: 12).joined(separator: " ")
         let controller = TextEditorController(text: "first\n" + long + "\nlast")
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
-        hosting.frame = NSRect(x: 0, y: 0, width: 360, height: 400)
+        hosting.frame = NSRect(x: 0, y: 0, width: 460, height: 400)
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
         window.layoutIfNeeded()
@@ -65,9 +65,9 @@ struct LiveEditorSettingsTests {
     @Test func anOpenEditorTakesANewFontAndWrappingAndKeepsItsText() throws {
         let long = "    " + Array(repeating: "words that run on", count: 12).joined(separator: " ")
         let controller = TextEditorController(text: "a {\n    b {\n        c\n    }\n}\n" + (1...60).map { "line \($0)" }.joined(separator: "\n") + "\n" + long)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
         let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
-        hosting.frame = NSRect(x: 0, y: 0, width: 360, height: 300)
+        hosting.frame = NSRect(x: 0, y: 0, width: 460, height: 300)
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
         window.displayIfNeeded()

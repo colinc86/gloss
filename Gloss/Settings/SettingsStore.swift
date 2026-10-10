@@ -57,6 +57,12 @@ final class SettingsStore {
             persist("editor.guides", showIndentGuides ? "1" : "0")
         }
     }
+    var showMinimap = true {
+        didSet {
+            Theme.showsMinimap = showMinimap
+            persist("editor.minimap", showMinimap ? "1" : "0")
+        }
+    }
     var stagedFileExpiryDays = 7 {
         didSet {
             onStagedExpiryChange(stagedFileExpiryDays)
@@ -105,6 +111,7 @@ final class SettingsStore {
         if let value = await read("editor.fontSize"), let size = Double(value) { editorFontSize = size }
         if let value = await read("editor.wrap") { wrapLines = value == "1" }
         if let value = await read("editor.guides") { showIndentGuides = value == "1" }
+        if let value = await read("editor.minimap") { showMinimap = value == "1" }
         if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = days }
         if let value = await read("notes.trashDays"), let days = Int(value), Self.trashRetentionChoices.contains(days) { trashRetentionDays = days }
         if let value = await read("iterations.openNotes"), let choice = IterationOpenNotes(rawValue: value) { iterationOpenNotes = choice }
