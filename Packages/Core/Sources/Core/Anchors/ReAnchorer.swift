@@ -73,10 +73,11 @@ public enum ReAnchorer {
 
     // MARK: Text
 
-    public static func text(_ anchor: TextAnchor, in newContent: String, newHash: String) -> ReAnchorResult {
+    /// `fileName` picks a spreadsheet's delimiter as the grid does (tab for `.tsv`), for whole-column notes.
+    public static func text(_ anchor: TextAnchor, in newContent: String, newHash: String, fileName: String = "") -> ReAnchorResult {
         guard let cells = anchor.cells else { return lineText(anchor, in: newContent, newHash: newHash) }
         if let hash = anchor.hash, hash == newHash { return .unchanged }
-        if cells.isColumns { return columns(anchor, cells: cells, in: newContent, newHash: newHash) }
+        if cells.isColumns { return columns(anchor, cells: cells, in: newContent, newHash: newHash, fileName: fileName) }
         // Cells point at records by line offset; follow each record line from the old span into the new one.
         let result = lineText(anchor, in: newContent, newHash: newHash)
         let moved: TextAnchor
@@ -156,12 +157,12 @@ public enum ReAnchorer {
     static let alignmentLimit = 4_000_000
 
     /// Whole-column notes follow the header record and find each column by its name.
-    static func columns(_ anchor: TextAnchor, cells: CellSelection, in newContent: String, newHash: String) -> ReAnchorResult {
+    static func columns(_ anchor: TextAnchor, cells: CellSelection, in newContent: String, newHash: String, fileName: String) -> ReAnchorResult {
         let normalized = normalizeNewlines(newContent)
         let index = LineIndex(normalized)
         // The header is the first record; a prefix is enough to parse it.
         let prefix = String(normalized.prefix(65_536))
-        guard let header = CSVParser.parse(prefix, delimiter: CSVParser.delimiter(for: prefix, fileName: ""), hasHeader: false).rows.first else { return .orphaned }
+        guard let header = CSVParser.parse(prefix, delimiter: CSVParser.delimiter(for: prefix, fileName: fileName), hasHeader: false).rows.first else { return .orphaned }
         let names = cells.headers ?? []
         var columns: [Int] = []
         var keptNames: [String] = []

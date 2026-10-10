@@ -1222,7 +1222,7 @@ final class DocumentSession: Identifiable {
                 } else if range.length == 0, !current.text.isEmpty {
                     // Deleted while editing, but undo or a paste may have put it back: the saved text decides. Found,
                     // the note follows it; only text that is really gone is a removal, at the point the edit left.
-                    let result = ReAnchorer.text(current, in: text, newHash: hash)
+                    let result = ReAnchorer.text(current, in: text, newHash: hash, fileName: fileName)
                     switch result {
                     case .moved(let moved), .movedNeedsReview(let moved):
                         if case .movedNeedsReview = result { needsReview.insert(note.id) }
@@ -1303,7 +1303,7 @@ final class DocumentSession: Identifiable {
             let index = LineIndex(text)
             for note in restored {
                 guard case .text(let anchor) = note.anchor else { continue }
-                switch ReAnchorer.text(anchor, in: text, newHash: Data(text.utf8).sha256Hex) {
+                switch ReAnchorer.text(anchor, in: text, newHash: Data(text.utf8).sha256Hex, fileName: fileName) {
                 case .unchanged: liveRanges[note.id] = index.range(for: anchor)
                 case .moved(.text(let moved)), .movedNeedsReview(.text(let moved)): liveRanges[note.id] = index.range(for: moved)
                 default: continue
@@ -1325,7 +1325,7 @@ final class DocumentSession: Identifiable {
             do {
                 switch note.anchor {
                 case .text(let anchor):
-                    try await apply(ReAnchorer.text(anchor, in: text, newHash: hash), to: note, unchanged: .text(anchor))
+                    try await apply(ReAnchorer.text(anchor, in: text, newHash: hash, fileName: fileName), to: note, unchanged: .text(anchor))
                 case .embeddedImage(let anchor):
                     try await apply(ReAnchorer.embeddedImage(anchor, in: text, newHash: hash), to: note, unchanged: .embeddedImage(anchor))
                 default:

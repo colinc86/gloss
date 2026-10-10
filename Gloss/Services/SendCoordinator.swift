@@ -444,7 +444,7 @@ final class SendCoordinator {
                 // note's text again, so the excerpt and the line numbers describe the file as it is now.
                 // Only an anchor that records what it was made on (its file's hash and text) can be looked for.
                 if let hash = hashes[key], let made = anchor.hash, made != hash, !anchor.text.isEmpty, let content = contents[key] {
-                    switch ReAnchorer.text(anchor, in: content, newHash: hash) {
+                    switch ReAnchorer.text(anchor, in: content, newHash: hash, fileName: PathUtilities.name(of: document.path)) {
                     case .moved(let moved), .movedNeedsReview(let moved):
                         note.anchor = moved
                         // Found on changed words, the thread records the move (`applyReanchor`).

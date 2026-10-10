@@ -161,6 +161,17 @@ struct CellAnchorTests {
         #expect(ReAnchorer.text(anchor, in: "h\n1\n", newHash: "h5") == .orphaned, "the column is gone")
     }
 
+    /// A `.tsv` header with a comma in a name is split on tabs, as the grid splits it, when the column is found again.
+    @Test func aTSVColumnIsFoundByItsTabs() throws {
+        let tsv = "Last, First, Middle, Suffix\tNotes\nDoe, J, Q, Jr\tok\n"
+        let anchor = columnAnchor(tsv, columns: [1], headers: ["Notes"])
+        let edited = "Id\tLast, First, Middle, Suffix\tNotes\n1\tDoe, J, Q, Jr\tok\n"
+        let result = try #require(moved(ReAnchorer.text(anchor, in: edited, newHash: "h2", fileName: "people.tsv")))
+        #expect(result.anchor.cells?.columns == [2] && !result.review)
+        let guessed = moved(ReAnchorer.text(anchor, in: edited, newHash: "h2"))
+        #expect(guessed == nil || guessed?.anchor.cells?.columns != [2] || guessed?.review == true, "without the name, commas outnumber tabs")
+    }
+
     @Test func hugeSpansDoNotBuildAnAlignmentTable() {
         let old = (0..<3000).map { "line \($0)" }
         let new = (0..<3000).map { "other \($0)" }
