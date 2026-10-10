@@ -58,6 +58,9 @@ struct AddressBarTests {
         #expect(beside("./docs//plan.md") == .path("/Users/me/project/docs/plan.md"))
         #expect(AddressInput.parse("/Users/me/project/./a/../b.md", home: nil) == .path("/Users/me/project/b.md"))
         #expect(AddressInput.parse("~/x/../y.md", home: "/Users/me") == .path("/Users/me/y.md"))
+        #expect(AddressInput.parse("file:///Users/me/notes%20draft.md", home: nil) == .path("/Users/me/notes draft.md"), "a file link is its path")
+        #expect(AddressInput.parse("FILE://localhost/Users/me/src/", home: nil) == .path("/Users/me/src"))
+        #expect(AddressInput.parse("file://otherbox/Users/me/a.md", home: nil) == nil, "a file link to another machine is not a path here")
     }
 
     @Test func outsidePagesAreNotSentThroughTheDocumentsHost() async {

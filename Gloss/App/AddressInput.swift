@@ -9,7 +9,7 @@ enum AddressInput: Equatable {
     case web(URL)
     case path(String)
 
-    /// An absolute path (`/…`) or a home path (`~/…`, expanded with `home`); then a web address as `webURL(from:)`
+    /// An absolute path (`/…`, or a `file://` link to one) or a home path (`~/…`, expanded with `home`); then a web address as `webURL(from:)`
     /// reads it; then, with `folder` (the open document's), a relative path with a dot or a slash in it, so
     /// `README.md` or `src/main.swift` is a file beside the document rather than a website. Nil for anything else
     /// (`README.md` without a folder included), and for a home path when the host's home is not known.
@@ -25,6 +25,12 @@ enum AddressInput: Equatable {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if trimmed.hasPrefix("/") { return .path(trimmed) }
+        // A `file://` link (as editors and agents print a location) is its path, percent escapes undone.
+        if trimmed.lowercased().hasPrefix("file://") {
+            guard let url = URL(string: trimmed), url.isFileURL, ["", "localhost"].contains(url.host(percentEncoded: false)?.lowercased() ?? ""),
+                  case let path = url.path(percentEncoded: false), path.hasPrefix("/") else { return nil }
+            return .path(path)
+        }
         if trimmed == "~" || trimmed.hasPrefix("~/") {
             guard let home, home.hasPrefix("/") else { return nil }
             let rest = trimmed.dropFirst(2)
