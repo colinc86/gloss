@@ -29,6 +29,42 @@ struct FileListingTests {
         #expect(relative == ["src/deep/a.swift", "space dir/b c.md", ".env"], "\(relative)")
     }
 
+    /// Without rg, a git work tree is listed by git: ignored build products left out, untracked files in, a tracked
+    /// file deleted from disk out, node_modules out; a folder its repository ignores falls back to find. The remote
+    /// script does the same, run here by sh.
+    @Test func withoutRipgrepAGitWorkTreeLeavesIgnoredFilesOut() async throws {
+        let git = try #require(FileListing.localGit)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-gitlist-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        for directory in ["src", ".build/debug", "node_modules/pkg", "sp ace"] {
+            try FileManager.default.createDirectory(atPath: "\(root)/\(directory)", withIntermediateDirectories: true)
+        }
+        try ".build/\n*.log\n".write(toFile: "\(root)/.gitignore", atomically: true, encoding: .utf8)
+        for file in ["src/a.swift", "src/gone.swift", ".build/debug/app.o", "node_modules/pkg/i.js", "sp ace/b c.md", "run.log", "new.txt"] {
+            try "x".write(toFile: "\(root)/\(file)", atomically: true, encoding: .utf8)
+        }
+        func run(_ arguments: [String]) async throws {
+            let process = try ChildProcess.launch(ChildProcessSpec(executable: git, arguments: ["-C", root] + arguments))
+            #expect(try await process.exitCode == 0)
+        }
+        try await run(["init", "-q"])
+        try await run(["add", ".gitignore", "src/a.swift", "src/gone.swift"])
+        try FileManager.default.removeItem(atPath: "\(root)/src/gone.swift")
+        let expected: Set<String> = [".gitignore", "src/a.swift", "sp ace/b c.md", "new.txt"]
+
+        let listed = await FileListing.listLocally(root: root, ripgrep: nil)
+        #expect(Set(listed.map { String($0.dropFirst(root.count + 1)) }) == expected)
+
+        var tools = RemoteTools()
+        tools.git = true
+        let shell = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", FileListing.script(root: root, tools: tools)]))
+        let output = await shell.collectStdout()
+        #expect(Set(FileListing.parse(output).map { String($0.dropFirst(root.count + 1)) }) == expected, "the remote script lists the same")
+
+        let ignored = await FileListing.listLocally(root: "\(root)/.build", ripgrep: nil)
+        #expect(ignored.map { String($0.dropFirst(root.count + 1)) } == [".build/debug/app.o"], "an ignored folder opened on its own is listed by find")
+    }
+
     /// `GLOSS_REMOTE_HOST=<alias>`: lists a throwaway directory on the host over the exec channel.
     @Test(.enabled(if: TestGates.remoteHost != nil))
     func listsFilesOnTheRemoteHost() async throws {
