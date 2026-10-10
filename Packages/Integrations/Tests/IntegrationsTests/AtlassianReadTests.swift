@@ -11,6 +11,24 @@ struct AtlassianReadTests {
 
     static let issueJSON = #"{"id":"10001","key":"CP-7","fields":{"summary":"Name the receiver","issuetype":{"name":"Task"},"status":{"name":"In Progress"},"priority":{"name":"High"},"assignee":{"displayName":"Colin Campbell"},"reporter":{"displayName":"Sam"},"labels":["infra"],"parent":{"key":"CP-1"},"project":{"key":"CP"},"created":"2026-10-01T09:00:00.000+0100","updated":"2026-10-03T12:00:00.000+0100","description":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Rename it."}]}]},"comment":{"comments":[{"id":"2","author":{"displayName":"Sam"},"created":"2026-10-02T10:00:00.000+0100","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Agreed."}]}]}},{"id":"1","author":{"displayName":"Colin Campbell"},"created":"2026-10-01T10:00:00.000+0100","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Why?"}]}]}}]}}}"#
 
+    /// An issue whose discussion runs past the comments Jira sends with it reads all of them, from the comments' own
+    /// listing, page by page.
+    @Test func aLongDiscussionIsReadInFull() async throws {
+        func comment(_ id: Int) -> String {
+            #"{"id":"\#(id)","author":{"displayName":"Sam"},"created":"2026-10-0\#(1 + id % 8)T10:00:00.000+0100","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Comment \#(id)."}]}]}}"#
+        }
+        let issue = #"{"id":"10001","key":"CP-7","fields":{"summary":"Long","project":{"key":"CP"},"comment":{"total":3,"maxResults":1,"startAt":0,"comments":["# + comment(0) + #"]}}}"#
+        let stub = Stub()
+        let fields = "summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project,attachment"
+        stub.respond(to: "\(Self.site)/rest/api/3/issue/CP-7?fields=\(fields)", with: .json(issue))
+        let listing = "\(Self.site)/rest/api/3/issue/CP-7/comment?maxResults=100&orderBy=created&startAt="
+        stub.respond(to: listing + "0", with: .json(#"{"total":3,"comments":["# + comment(0) + "," + comment(1) + #"]}"#))
+        stub.respond(to: listing + "2", with: .json(#"{"total":3,"comments":["# + comment(2) + #"]}"#))
+        let read = try await client(stub).issue(key: "CP-7")
+        #expect(read.comments.map(\.id) == ["0", "1", "2"])
+        #expect(read.comments.map(\.body) == ["Comment 0.\n", "Comment 1.\n", "Comment 2.\n"])
+    }
+
     @Test func readsAnIssueWithItsDescriptionAndComments() async throws {
         let stub = Stub()
         stub.respond(to: "\(Self.site)/rest/api/3/issue/CP-7?fields=summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project,attachment", with: .json(Self.issueJSON))

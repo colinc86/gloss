@@ -140,7 +140,32 @@ public actor AtlassianClient {
     }
 
     public func issue(key: String) async throws -> JiraIssue {
-        try Self.issue(from: try object(try await http.get(url("rest/api/3/issue/\(key)", query: ["fields": Self.issueFields]), headers: headers)))
+        var reply = try object(try await http.get(url("rest/api/3/issue/\(key)", query: ["fields": Self.issueFields]), headers: headers))
+        // The issue carries only its first page of comments; Jira says how many there are in all. The rest come from
+        // the comments' own listing, or a long discussion stopped short without a word.
+        if var fields = reply["fields"] as? [String: Any], var comment = fields["comment"] as? [String: Any],
+           let total = comment["total"] as? Int, total > (comment["comments"] as? [[String: Any]])?.count ?? 0 {
+            comment["comments"] = try await allComments(key: key, total: total)
+            fields["comment"] = comment
+            reply["fields"] = fields
+        }
+        return try Self.issue(from: reply)
+    }
+
+    /// Most comments an issue shows; past it the oldest are kept.
+    static let maximumComments = 5_000
+
+    /// Every comment on an issue, oldest first, 100 at a time.
+    private func allComments(key: String, total: Int) async throws -> [[String: Any]] {
+        var comments: [[String: Any]] = []
+        while comments.count < min(total, Self.maximumComments) {
+            let page = try object(try await http.get(url("rest/api/3/issue/\(key)/comment",
+                                                          query: ["startAt": String(comments.count), "maxResults": "100", "orderBy": "created"]), headers: headers))
+            let batch = page["comments"] as? [[String: Any]] ?? []
+            if batch.isEmpty { break }
+            comments += batch
+        }
+        return comments
     }
 
     /// Issues matching a JQL query, newest first, following the new search API's page tokens.
