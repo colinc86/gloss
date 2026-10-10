@@ -170,6 +170,10 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// Unpinned folders kept beyond this many are forgotten, oldest first, as recent web pages are: every folder an
+    /// agent or a typed path opened otherwise stayed forever, though only a handful are ever offered.
+    public static let maximumRecentRoots = 200
+
     public func recordRootOpened(hostID: HostID, path: String, at date: Date = Date()) async throws -> Root {
         let date = Self.rounded(date)
         return try await queue.write { db in
@@ -180,6 +184,10 @@ public struct NoteStore: Sendable {
             }
             let record = RootRecord(id: RootID.new().rawValue, hostId: hostID.rawValue, path: path, lastOpenedAt: date, pinned: false)
             try record.insert(db)
+            try db.execute(sql: """
+                DELETE FROM root WHERE pinned = 0 AND rowid NOT IN
+                    (SELECT rowid FROM root WHERE pinned = 0 ORDER BY last_opened_at DESC LIMIT ?)
+                """, arguments: [Self.maximumRecentRoots])
             return Root(record: try Self.refetch(record, db))
         }
     }

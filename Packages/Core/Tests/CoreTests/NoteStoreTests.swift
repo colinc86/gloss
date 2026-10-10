@@ -297,6 +297,20 @@ struct NoteStoreTests {
         #expect(!pages.contains { $0.url == "https://example.com/5" } && pages.contains { $0.url == "https://example.com/6" }, "the oldest unpinned ones went")
     }
 
+    @Test func recentRootsAreCappedButFavoritesKept() async throws {
+        let store = try makeStore()
+        let favorite = try await store.recordRootOpened(hostID: .local, path: "/fav", at: Date(timeIntervalSince1970: 0))
+        try await store.setRootPinned(favorite.id, true)
+        let total = NoteStore.maximumRecentRoots + 5
+        for index in 1...total {
+            _ = try await store.recordRootOpened(hostID: .local, path: "/r/\(index)", at: Date(timeIntervalSince1970: Double(index)))
+        }
+        let paths = try await store.roots(for: .local).map(\.path)
+        #expect(paths.count == NoteStore.maximumRecentRoots + 1)
+        #expect(paths.contains("/fav"), "a favorite stays however old")
+        #expect(!paths.contains("/r/5") && paths.contains("/r/6") && paths.contains("/r/\(total)"), "the oldest unpinned ones went")
+    }
+
     @Test func rootsTargetsStagedFilesAndSettings() async throws {
         let store = try makeStore()
         let root = try await store.recordRootOpened(hostID: .local, path: "/tmp/proj", at: Date(timeIntervalSince1970: 5))
