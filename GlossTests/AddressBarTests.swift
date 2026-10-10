@@ -227,4 +227,20 @@ struct AddressBarTests {
         #expect(model.session(hostID: .local, path: "\(root)/notes 10:30") != nil, "a file named so opens as itself")
         await model.shutDown()
     }
+
+    /// `open_in_viewer` given `path:line` with no line of its own opens the file at that line, as the address field does.
+    @Test func anAgentsLocationOpensAtItsLine() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-agent-line-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try (1...20).map { "line \($0)" }.joined(separator: "\n").write(toFile: "\(root)/a.swift", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        await model.showForAgent(hostID: .local, path: "\(root)/a.swift:7", line: nil, endLine: nil)
+        await waitUntil { model.session(hostID: .local, path: "\(root)/a.swift")?.textController?.pendingScroll != nil }
+        let controller = try #require(model.session(hostID: .local, path: "\(root)/a.swift")?.textController)
+        #expect(controller.pendingScroll == controller.lineIndex.contentRange(ofLine: 7))
+        #expect(model.session(hostID: .local, path: "\(root)/a.swift:7") == nil, "no tab for a file that does not exist")
+        await model.shutDown()
+    }
 }

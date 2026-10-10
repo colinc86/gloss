@@ -1036,28 +1036,37 @@ final class AppModel {
     /// A typed path: a directory opens as a root, anything else as a document with its folder in the explorer.
     /// What `open_in_viewer` shows: a folder opens in the explorer, as typing it in the address field does (the viewer
     /// would only say it can't open a folder); anything else opens as a document, at its lines when given.
-    func showForAgent(hostID: HostID, path: String, line: Int?, endLine: Int?) async {
-        if !hostID.isVirtual, !DocumentKindDetector.isWebURL(path), await ensureConnected(hostID),
-           let attributes = try? await fileSystems[hostID]?.stat(path), attributes.kind == .directory {
-            pickedHost = hostID
-            await explorer.openRoot(hostID: hostID, path: path)
-            return
+    /// A path given as `path:line` with no line of its own (as agents print a location) opens at that line, as the
+    /// address field does.
+    func showForAgent(hostID: HostID, path given: String, line givenLine: Int?, endLine: Int?) async {
+        var path = given, line = givenLine
+        if !hostID.isVirtual, !DocumentKindDetector.isWebURL(path), await ensureConnected(hostID), let fileSystem = fileSystems[hostID] {
+            if line == nil { (path, line) = await Self.splitLocation(path, on: fileSystem) }
+            if let attributes = try? await fileSystem.stat(path), attributes.kind == .directory {
+                pickedHost = hostID
+                await explorer.openRoot(hostID: hostID, path: path)
+                return
+            }
         }
         await openRootIfNeeded(hostID: hostID, containing: path)
         if let line { openDocument(hostID: hostID, path: path, line: line, endLine: endLine) } else { openDocument(hostID: hostID, path: path) }
+    }
+
+    /// `path:line` read as the path and a line when no file is named so but the path exists: a name that really ends
+    /// in `:30` stays whole.
+    private static func splitLocation(_ typed: String, on fileSystem: any FileSystemProvider) async -> (path: String, line: Int?) {
+        let split = QuickOpenModel.splitLine(typed)
+        if let wanted = split.line, (try? await fileSystem.stat(typed)) == nil, (try? await fileSystem.stat(split.text)) != nil {
+            return (split.text, wanted)
+        }
+        return (typed, nil)
     }
 
     /// `path:line` (as agents print a location) opens the file at that line when no file is named so: a name that
     /// really ends in `:30` still opens as it is.
     private func openPath(_ typed: String, on hostID: HostID) async {
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { return }
-        var path = typed
-        var line: Int?
-        let split = QuickOpenModel.splitLine(typed)
-        if let wanted = split.line, (try? await fileSystem.stat(typed)) == nil, (try? await fileSystem.stat(split.text)) != nil {
-            path = split.text
-            line = wanted
-        }
+        let (path, line) = await Self.splitLocation(typed, on: fileSystem)
         if let attributes = try? await fileSystem.stat(path), attributes.kind == .directory {
             pickedHost = hostID
             await explorer.openRoot(hostID: hostID, path: path)
