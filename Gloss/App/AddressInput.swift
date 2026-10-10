@@ -14,6 +14,14 @@ enum AddressInput: Equatable {
     /// `README.md` or `src/main.swift` is a file beside the document rather than a website. Nil for anything else
     /// (`README.md` without a folder included), and for a home path when the host's home is not known.
     static func parse(_ text: String, home: String?, folder: String? = nil) -> AddressInput? {
+        // A path is keyed by its text: `docs/../README.md` must open the same document as `README.md`.
+        switch parseUnnormalized(text, home: home, folder: folder) {
+        case .path(let path)?: .path(PathUtilities.lexicallyNormalized(path))
+        case let other: other
+        }
+    }
+
+    private static func parseUnnormalized(_ text: String, home: String?, folder: String?) -> AddressInput? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if trimmed.hasPrefix("/") { return .path(trimmed) }

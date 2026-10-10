@@ -52,6 +52,11 @@ struct AddressBarTests {
         #expect(beside("src/main.swift") == .path("/Users/me/project/src/main.swift"))
         #expect(beside("example.com") == .web(URL(string: "https://example.com")!))
         #expect(beside("notes") == nil, "a bare word is still neither")
+        // Documents are keyed by path: `..` and `.` are worked out, so the file isn't opened as a second document.
+        #expect(beside("../shared/README.md") == .path("/Users/me/shared/README.md"))
+        #expect(beside("./docs//plan.md") == .path("/Users/me/project/docs/plan.md"))
+        #expect(AddressInput.parse("/Users/me/project/./a/../b.md", home: nil) == .path("/Users/me/project/b.md"))
+        #expect(AddressInput.parse("~/x/../y.md", home: "/Users/me") == .path("/Users/me/y.md"))
     }
 
     @Test func outsidePagesAreNotSentThroughTheDocumentsHost() async {
