@@ -21,7 +21,21 @@ public enum RemoteSearch {
             return "rg --json -n --no-messages --max-count \(maxMatchesPerFile) --max-filesize 2M \(flags) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
         }
         let excludes = (["--exclude-dir=.git"] + grepHiddenFlags(hidden, root: root).map(ShellQuote.single)).joined(separator: " ")
-        return "grep -rnI \(grepOutputFlags.joined(separator: " ")) \(excludes) \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+        let match = "\(grepOutputFlags.joined(separator: " ")) \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern))"
+        let recursive = "grep -rnI \(grepOutputFlags.joined(separator: " ")) \(excludes) \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+        guard tools.git else { return recursive }
+        // In a git work tree, git names the files (ignored ones left out, as rg leaves them out) and grep reads them;
+        // a build folder full of generated code otherwise buried the sources' matches. -H names the file even when a
+        // batch holds one. Outside a work tree, or where git lists nothing, grep walks the folder as before.
+        let quoted = ShellQuote.single(root)
+        let pathspecs = (["."] + gitExclusions(hidden: hidden)).map(ShellQuote.single).joined(separator: " ")
+        let git = "git -C \(quoted) -c core.quotePath=false ls-files -co --exclude-standard -- \(pathspecs) 2>/dev/null"
+        return "r=\(quoted); if [ -n \"$(\(git) | head -n 1)\" ]; then \(git) | while IFS= read -r f; do [ -f \"$r/$f\" ] && printf '%s/%s\\0' \"$r\" \"$f\"; done | xargs -0 grep -nIH \(match) --; else \(recursive); fi"
+    }
+
+    /// What a git listing leaves out, as the other tools do: `node_modules`, and dotfiles when the explorer hides them.
+    static func gitExclusions(hidden: Bool) -> [String] {
+        [":(exclude,glob)**/node_modules/**"] + (hidden ? [] : [":(exclude,glob)**/.*", ":(exclude,glob)**/.*/**"])
     }
 
     /// Hidden files and folders (dotfiles: `.github/`, `.env.example`) are searched when the explorer shows them,

@@ -70,6 +70,37 @@ struct GrepFallbackTests {
         #expect(colon == [RemoteSearchHit(path: "\(root)/a:b/notes 10:30.md", line: 2, text: "needle: one")])
         #expect(hits.filter { $0.path.hasSuffix("many.txt") }.count == RemoteSearch.maxMatchesPerFile)
     }
+
+    /// Without rg, in a git work tree, grep reads the files git lists: an ignored build folder's matches are left
+    /// out, as rg leaves them out, node_modules too, dotfiles follow the explorer, and a lone file in a batch still
+    /// names its path. Outside a work tree grep walks the folder as before.
+    @Test func grepInAGitWorkTreeLeavesIgnoredFilesOut() async throws {
+        let git = try #require(FileListing.localGit)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-gitgrep-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        for directory in ["src", "build", "node_modules/pkg", ".github", "a:b"] {
+            try FileManager.default.createDirectory(atPath: "\(root)/\(directory)", withIntermediateDirectories: true)
+        }
+        try "build/\n".write(toFile: "\(root)/.gitignore", atomically: true, encoding: .utf8)
+        for file in ["src/main.swift", "build/generated.swift", "node_modules/pkg/i.js", ".github/ci.yml", "a:b/notes 10:30.md"] {
+            try "intro\nneedle here\n".write(toFile: "\(root)/\(file)", atomically: true, encoding: .utf8)
+        }
+        let initialise = try ChildProcess.launch(ChildProcessSpec(executable: git, arguments: ["-C", root, "init", "-q"]))
+        #expect(try await initialise.exitCode == 0)
+        var tools = RemoteTools()
+        tools.git = true
+        func search(_ pattern: String, in folder: String? = nil, hidden: Bool = false, regex: Bool = false) async throws -> [RemoteSearchHit] {
+            let script = RemoteSearch.script(pattern: pattern, root: folder ?? root, tools: tools, regex: regex, hidden: hidden)
+            let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", script]))
+            return await process.collectStdout().split(separator: 0x0A).compactMap { RemoteSearch.parse(line: Data($0), ripgrep: false) }
+        }
+        #expect(Set(try await search("needle").map(\.path)) == ["\(root)/src/main.swift", "\(root)/a:b/notes 10:30.md"])
+        #expect(Set(try await search("needle", hidden: true).map(\.path)) == ["\(root)/src/main.swift", "\(root)/a:b/notes 10:30.md", "\(root)/.github/ci.yml"])
+        #expect(try await search("needle", in: "\(root)/src") == [RemoteSearchHit(path: "\(root)/src/main.swift", line: 2, text: "needle here")],
+                "one file in the batch still names its path")
+        #expect(try await search("n[e]+dle", regex: true).count == 2)
+        #expect(try await search("needle", in: "\(root)/build").map(\.path) == ["\(root)/build/generated.swift"], "an ignored folder on its own is walked")
+    }
 }
 
 struct ExecIntegrationTests {
