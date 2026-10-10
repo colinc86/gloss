@@ -58,6 +58,8 @@ struct ImageDecoderTests {
         #expect(CGImageDestinationFinalize(destination))
         let icon = try ImageDecoder.decode(data as Data, fileName: "favicon.ico")
         #expect(icon.cgImage.width == 64 && icon.cgImage.height == 64, "the largest size, not the first")
+        let embedded = try #require(ImageDecoder.checkedImage(data as Data))
+        #expect(embedded.size == CGSize(width: 64, height: 64), "rendered Markdown shows the size a region note's crop is cut from")
     }
 
     @Test func decodesPNGAndCropsWithTopLeftOrigin() throws {

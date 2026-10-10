@@ -90,7 +90,7 @@ public nonisolated enum ImageDecoder {
 
     /// A picture fetched for rendered Markdown, decoded only when its size is safe: every image in a bitmap is
     /// measured from its header before any pixels, an SVG once parsed. A file of several pages or sizes (a TIFF, an
-    /// icon) gives its first image, the one a crop is cut from; only an animation keeps every frame. Call it off the
+    /// icon) gives the image `decode` does, the one a crop is cut from; only an animation keeps every frame. Call it off the
     /// main actor; nil when it is unreadable or too big.
     public static func checkedImage(_ data: Data, maximumPixels limit: Int = maximumPixels) -> NSImage? {
         if isSVG(data) {
@@ -110,9 +110,11 @@ public nonisolated enum ImageDecoder {
         }
         guard total <= limit * animationPixelBudget else { return nil }
         if count > 1, !animatedTypes.contains((CGImageSourceGetType(source) as String?) ?? "") {
-            guard let first = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+            // The image `decode` shows and cuts crops from (an icon's largest size), so a region drawn here is a
+            // region of the picture the crop comes from.
+            guard let shown = CGImageSourceCreateImageAtIndex(source, shownIndex(source), nil) else { return nil }
             // A bitmap of its own pixels, so the picture's pixel size is the page's, not the screen's.
-            let rep = NSBitmapImageRep(cgImage: first)
+            let rep = NSBitmapImageRep(cgImage: shown)
             let image = NSImage(size: rep.size)
             image.addRepresentation(rep)
             return image
