@@ -184,7 +184,11 @@ public actor SSHConnection {
         if !hostName.isEmpty { result += ["-o", "HostName=\(hostName)"] }
         if !user.isEmpty { result += ["-o", "User=\(user)"] }
         if let port { result += ["-o", "Port=\(port)"] }
-        if !identityFile.isEmpty { result += ["-o", "IdentityFile=\(identityFile)", "-o", "IdentitiesOnly=yes"] }
+        // ssh reads an -o value as a config line: a path with a space in it ("My Keys") is quoted or ssh refuses it.
+        if !identityFile.isEmpty {
+            let path = identityFile.contains(where: \.isWhitespace) ? "\"\(identityFile)\"" : identityFile
+            result += ["-o", "IdentityFile=\(path)", "-o", "IdentitiesOnly=yes"]
+        }
         return result
     }
 

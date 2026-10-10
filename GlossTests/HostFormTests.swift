@@ -14,6 +14,10 @@ struct HostFormTests {
         #expect(HostForm.problem(name: "workbox", port: "", taken: taken) == "Another host is already called “workbox”.")
         #expect(HostForm.problem(name: "buildbox", port: "abc", taken: taken) == "The port is a number from 1 to 65535.", "it used to be dropped without a word")
         #expect(HostForm.problem(name: "buildbox", port: "70000", taken: taken) != nil)
+        #expect(HostForm.problem(name: "buildbox", port: "", taken: taken, hostName: "10.0.0 .5") == "A host name can't contain spaces.")
+        #expect(HostForm.problem(name: "buildbox", port: "", taken: taken, user: "my user") == "A user name can't contain spaces.")
+        #expect(HostForm.problem(name: "buildbox", port: "", taken: taken, identityFile: "/k/My Keys/id") == nil, "a space in a path is quoted for ssh")
+        #expect(HostForm.problem(name: "buildbox", port: "", taken: taken, identityFile: "/k/\"id") != nil)
         #expect(HostForm.problem(name: "", port: "", taken: taken) == nil, "an empty name only leaves Save off")
     }
 }

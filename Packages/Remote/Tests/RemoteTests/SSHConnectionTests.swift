@@ -105,6 +105,16 @@ struct SSHConnectionTests {
         #expect(SSHForward(kind: .localPort(local: 50_123, remotePort: 3000)).arguments == ["-L", "127.0.0.1:50123:localhost:3000"])
     }
 
+    /// A key in a folder with a space in its name: ssh refused the unquoted path ("extra arguments at end of line").
+    @Test func anIdentityFileWithASpaceReachesSSHWhole() async throws {
+        let options = SSHConnection.arguments(hostName: "", user: "", port: nil, identityFile: "/Users/me/My Keys/id_ed25519")
+        #expect(options.contains("IdentityFile=\"/Users/me/My Keys/id_ed25519\""))
+        let process = try ChildProcess.launch(ChildProcessSpec(executable: "/usr/bin/ssh", arguments: ["-G"] + options + ["--", "gloss-test-host"]))
+        let output = String(decoding: await process.collectStdout(), as: UTF8.self)
+        #expect(try await process.exitCode == 0)
+        #expect(output.split(whereSeparator: \.isNewline).contains("identityfile /Users/me/My Keys/id_ed25519"))
+    }
+
     @Test func buildsHostOptionArguments() {
         #expect(SSHConnection.arguments(hostName: "", user: "", port: nil, identityFile: "").isEmpty)
         #expect(SSHConnection.arguments(hostName: "10.0.0.5", user: "me", port: 2222, identityFile: "/k/id") ==

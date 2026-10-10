@@ -663,7 +663,9 @@ private struct HostEditor: View {
         }
     }
 
-    private var problem: String? { HostForm.problem(name: name, port: port, taken: taken) }
+    private var problem: String? {
+        HostForm.problem(name: name, port: port, taken: taken, hostName: hostName, user: user, identityFile: identityFile.trimmingCharacters(in: .whitespaces))
+    }
 
     private func chooseKey() {
         let panel = NSOpenPanel()

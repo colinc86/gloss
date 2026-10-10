@@ -268,7 +268,8 @@ enum HostForm {
     nonisolated static let reservedNames: Set<String> = Set(HostKind.allCases.filter { $0 != .ssh }.map(\.rawValue))
 
     /// Why the form can't be saved, for the line under it; nil when it can (an empty name just leaves Save off).
-    nonisolated static func problem(name rawName: String, port rawPort: String, taken: Set<String>) -> String? {
+    nonisolated static func problem(name rawName: String, port rawPort: String, taken: Set<String>, hostName: String = "", user: String = "",
+                                    identityFile: String = "") -> String? {
         let name = rawName.trimmingCharacters(in: .whitespaces)
         let port = rawPort.trimmingCharacters(in: .whitespaces)
         if name.contains(where: \.isWhitespace) { return "A name can't contain spaces." }
@@ -276,6 +277,10 @@ enum HostForm {
         if reservedNames.contains(name.lowercased()) { return "“\(name)” is a name Gloss uses for itself." }
         if taken.contains(name) { return "Another host is already called “\(name)”." }
         if !port.isEmpty, !(Int(port).map { (1...65535).contains($0) } ?? false) { return "The port is a number from 1 to 65535." }
+        // ssh reads each option as a config line: a space ends the value there.
+        if hostName.trimmingCharacters(in: .whitespaces).contains(where: \.isWhitespace) { return "A host name can't contain spaces." }
+        if user.trimmingCharacters(in: .whitespaces).contains(where: \.isWhitespace) { return "A user name can't contain spaces." }
+        if identityFile.contains("\"") { return "An identity file's path can't contain a double quote." }
         return nil
     }
 }
