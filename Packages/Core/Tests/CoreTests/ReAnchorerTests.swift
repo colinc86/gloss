@@ -191,6 +191,7 @@ struct ReAnchorerTests {
             Issue.record("expected a move to the nearest page"); return
         }
         #expect(moved.page == 1 && moved.occurrence == nil, "the first match on the page it moved to")
+        #expect(moved.textTop == 1, "and the top of that match, for its place on the page")
         let third = PDFAnchor(page: 0, bounds: nil, text: "Revenue", pageCount: 1)
         guard case .moved(.pdf(let only)) = ReAnchorer.pdf(third, in: WordsPDF(pages: [["x"], ["Revenue"]])) else { Issue.record("expected moved"); return }
         #expect(only.occurrence == nil)

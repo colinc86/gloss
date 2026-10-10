@@ -206,14 +206,21 @@ public struct PDFAnchor: Codable, Hashable, Sendable {
     /// For a text selection (no bounds), which match of `text` on the page it was, 0-based in the order the
     /// document finds them; nil for the first, as notes made before it was kept.
     public var occurrence: Int?
+    /// For a text selection, the top of its match in page points (page space runs up from the bottom), so it is
+    /// ordered on its page among the regions; nil for notes made before it was kept.
+    public var textTop: Double?
 
-    public init(page: Int, bounds: PDFBounds?, text: String?, pageCount: Int, occurrence: Int? = nil) {
+    public init(page: Int, bounds: PDFBounds?, text: String?, pageCount: Int, occurrence: Int? = nil, textTop: Double? = nil) {
         self.page = page
         self.bounds = bounds
         self.text = text
         self.pageCount = pageCount
         self.occurrence = occurrence.flatMap { $0 > 0 ? $0 : nil }
+        self.textTop = textTop
     }
+
+    /// Where the note starts on its page, from the top: a region's top edge, else its text's.
+    public var top: Double? { bounds.map { $0.y + $0.h } ?? textTop }
 }
 
 /// A rectangle in CSS pixels, in page (document) coordinates with the origin at the page's top-left.
@@ -356,7 +363,7 @@ public enum Anchor: Hashable, Sendable {
         case .text(let anchor): SortKey(primary: anchor.start.line, secondary: anchor.start.col)
         case .image(let anchor): SortKey(primary: anchor.y, secondary: anchor.x)
         // Page space runs up from the bottom: a region reads from its top edge, the higher first.
-        case .pdf(let anchor): SortKey(primary: anchor.page, secondary: Int(-((anchor.bounds.map { $0.y + $0.h }) ?? 0)))
+        case .pdf(let anchor): SortKey(primary: anchor.page, secondary: Int(-(anchor.top ?? 0)))
         case .wholeFile: SortKey(primary: Int.max, secondary: 0)
         case .element(let anchor): SortKey(primary: Int(anchor.rect.y.rounded()), secondary: Int(anchor.rect.x.rounded()))
         case .embeddedImage(let anchor): SortKey(primary: anchor.embed.start.line, secondary: anchor.embed.start.col)

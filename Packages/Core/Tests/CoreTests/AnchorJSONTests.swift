@@ -96,7 +96,7 @@ struct AnchorJSONTests {
         #expect(try JSONDecoder().decode([Anchor].self, from: data) == anchors)
     }
 
-    @Test func summariesAndSortKeys() {
+    @Test func summariesAndSortKeys() throws {
         #expect(Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 3, col: 9), text: "", before: "", after: "")).summary == "Line 3")
         #expect(Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 5, col: 9), text: "", before: "", after: "")).summary == "Lines 3-5")
         #expect(Anchor.pdf(PDFAnchor(page: 2, bounds: nil, text: nil, pageCount: 3)).summary == "Page 3")
@@ -105,6 +105,12 @@ struct AnchorJSONTests {
         let tall = Anchor.pdf(PDFAnchor(page: 0, bounds: PDFBounds(x: 0, y: 100, w: 50, h: 600), text: nil, pageCount: 1))
         let short = Anchor.pdf(PDFAnchor(page: 0, bounds: PDFBounds(x: 0, y: 500, w: 50, h: 100), text: nil, pageCount: 1))
         #expect(tall.sortKey < short.sortKey)
+        // A text note sits among them by the top of its text; one made before that was kept goes last on its page.
+        let text = Anchor.pdf(PDFAnchor(page: 0, bounds: nil, text: "Revenue", pageCount: 1, textTop: 650))
+        #expect(tall.sortKey < text.sortKey && text.sortKey < short.sortKey)
+        let older = Anchor.pdf(PDFAnchor(page: 0, bounds: nil, text: "Revenue", pageCount: 1))
+        #expect(short.sortKey < older.sortKey)
+        #expect(try Anchor(type: .pdf, json: try text.encodedJSON()) == text, "kept in its JSON")
         #expect(Anchor.wholeFile.sortKey > Anchor.text(TextAnchor(start: .init(line: 999, col: 1), end: .init(line: 999, col: 1), text: "", before: "", after: "")).sortKey)
     }
 }

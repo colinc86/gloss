@@ -133,6 +133,7 @@ public final class PDFViewerController {
         if anchor.bounds == nil, let text = anchor.text, let textSelection {
             anchor.occurrence = occurrence(of: text, onPage: anchor.page, at: textSelection.bounds)
             if anchor.occurrence == 0 { anchor.occurrence = nil }
+            anchor.textTop = Double(textSelection.bounds.maxY)
         }
         return anchor
     }

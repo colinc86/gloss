@@ -552,10 +552,13 @@ public enum ReAnchorer {
             if textPresent {
                 var updated = anchor
                 updated.pageCount = pageCount
-                if let occurrence = anchor.occurrence, let text = anchor.text,
-                   source.find(text).filter({ $0.page == anchor.page }).count <= occurrence {
-                    updated.occurrence = nil
-                    return .movedNeedsReview(.pdf(updated))
+                if let occurrence = anchor.occurrence, let text = anchor.text {
+                    let onPage = source.find(text).filter { $0.page == anchor.page }
+                    if onPage.count <= occurrence {
+                        updated.occurrence = nil
+                        updated.textTop = onPage.first.map { $0.bounds.y + $0.bounds.h } ?? anchor.textTop
+                        return .movedNeedsReview(.pdf(updated))
+                    }
                 }
                 if pageCount == anchor.pageCount { return .unchanged }
                 return .movedNeedsReview(.pdf(updated))
@@ -566,7 +569,8 @@ public enum ReAnchorer {
         guard let nearest = found.indices.min(by: { abs(found[$0].page - anchor.page) < abs(found[$1].page - anchor.page) }) else { return .orphaned }
         let hit = found[nearest]
         let occurrence = anchor.bounds == nil ? found[..<nearest].filter { $0.page == hit.page }.count : nil
-        let moved = PDFAnchor(page: hit.page, bounds: anchor.bounds == nil ? nil : hit.bounds, text: text, pageCount: pageCount, occurrence: occurrence)
+        let moved = PDFAnchor(page: hit.page, bounds: anchor.bounds == nil ? nil : hit.bounds, text: text, pageCount: pageCount, occurrence: occurrence,
+                              textTop: anchor.bounds == nil ? hit.bounds.y + hit.bounds.h : nil)
         return found.count == 1 ? .moved(.pdf(moved)) : .movedNeedsReview(.pdf(moved))
     }
 

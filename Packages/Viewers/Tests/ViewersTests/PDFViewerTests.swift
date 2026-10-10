@@ -43,6 +43,7 @@ struct PDFViewerTests {
 
         controller.textSelection = (0, second, "Revenue")
         #expect(controller.noteAnchor?.occurrence == 1, "noting the second match notes that one")
+        #expect(controller.noteAnchor?.textTop == Double(second.maxY), "and where its text is on the page")
         #expect(controller.selectionAnchor?.occurrence == nil, "the selection itself is not searched for while it is dragged")
         controller.textSelection = (0, first, "Revenue")
         #expect(controller.noteAnchor?.occurrence == nil, "the first is stored as notes always were")
