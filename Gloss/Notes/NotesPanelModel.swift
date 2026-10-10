@@ -795,8 +795,25 @@ final class NotesPanelModel {
         }
     }
 
+    /// Deletes a follow-up not yet sent, with Edit › Undo (⌘Z) to bring it back, as a deleted note has: it can hold a
+    /// long answer, and one click on a small trash icon took it for good.
     func deleteFollowUp(_ id: MessageID) async {
-        do { try await noteStore.deleteFollowUp(id) } catch { Log.notes.error("follow-up delete failed: \(error, privacy: .public)") }
+        let removed = messages.values.lazy.flatMap { $0 }.first { $0.id == id }
+        do { try await noteStore.deleteFollowUp(id) } catch {
+            Log.notes.error("follow-up delete failed: \(error, privacy: .public)")
+            return
+        }
+        guard let removed, let undo = NSApp?.mainWindow?.undoManager ?? NSApp?.keyWindow?.undoManager else { return }
+        undo.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated { _ = Task { await model.restoreFollowUp(removed) } }
+        }
+        undo.setActionName("Delete Follow-Up")
+    }
+
+    /// A deleted follow-up back on its note, at the end of its thread (with a new id: it was never sent).
+    @discardableResult
+    func restoreFollowUp(_ message: NoteMessage) async -> Bool {
+        await addFollowUp(to: message.noteID, message.body)
     }
 
     /// Puts a moved note back where it was before its first move.

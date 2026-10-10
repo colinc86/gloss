@@ -307,6 +307,21 @@ struct NotesPanelModelTests {
         #expect(model.messages(for: note.id).map(\.body) == ["Which platform, Mac or Linux?"] && model.draftCount == 1)
     }
 
+    /// A follow-up deleted by mistake comes back (Edit › Undo calls this with what was deleted).
+    @Test func aDeletedFollowUpCanBeRestored() async throws {
+        let (model, _) = try await makeModel()
+        defer { model.stop() }
+        let note = try #require(model.groups.flatMap(\.notes).first { $0.body == "Expand this section" })
+        #expect(await model.addFollowUp(to: note.id, "A long answer worth keeping"))
+        await waitUntil { model.messages(for: note.id).last?.body == "A long answer worth keeping" }
+        let followUp = try #require(model.messages(for: note.id).last)
+        await model.deleteFollowUp(followUp.id)
+        await waitUntil { model.messages(for: note.id).isEmpty }
+        #expect(await model.restoreFollowUp(followUp))
+        await waitUntil { model.messages(for: note.id).last?.body == "A long answer worth keeping" }
+        #expect(model.messages(for: note.id).map(\.body) == ["A long answer worth keeping"])
+    }
+
     /// An edit begun in a card lives in the model, so a card the list recycles (scrolled away and back) still has it.
     @Test func editsInCardsOutliveTheCard() async throws {
         let (model, _) = try await makeModel()
