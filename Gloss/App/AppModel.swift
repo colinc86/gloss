@@ -331,9 +331,19 @@ final class AppModel {
         }
         // Pull requests, tickets and pages are not polled while the app is in the background (a launch that never
         // came to the front included; a test host never pauses, since it is not an app launch).
-        if !launchOptions.isTestHost, !NSApplication.shared.isActive { PollGate.shared.isPaused = true }
-        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in PollGate.shared.isPaused = true }
-        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in PollGate.shared.isPaused = false }
+        // Files and folders on ssh hosts are looked at less often meanwhile.
+        if !launchOptions.isTestHost, !NSApplication.shared.isActive {
+            PollGate.shared.isPaused = true
+            RemotePolling.isAppActive = false
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+            PollGate.shared.isPaused = true
+            RemotePolling.isAppActive = false
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            PollGate.shared.isPaused = false
+            RemotePolling.isAppActive = true
+        }
         explorer.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         explorer.webURL = { [weak self] hostID, path in self?.webURL(hostID: hostID, path: path) }
         explorer.hostName = { [weak self] hostID in self?.hostName(hostID) ?? hostID.rawValue }

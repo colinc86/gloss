@@ -1,6 +1,18 @@
 import Core
 import Foundation
 import OSLog
+import Synchronization
+
+/// Whether the app is in front, for how often a remote file or folder is looked at: `focusedInterval` while it is,
+/// `backgroundInterval` while it isn't, so an ssh host isn't asked every few seconds about each open file and
+/// folder while nobody is looking. The app sets it as it pauses its other polling.
+public enum RemotePolling {
+    private static let active = Mutex(true)
+    public static var isAppActive: Bool {
+        get { active.withLock { $0 } }
+        set { active.withLock { $0 = newValue } }
+    }
+}
 
 /// Keeps one SFTP client per connection and reopens it when the channel drops.
 public actor SFTPChannel {
@@ -256,10 +268,12 @@ public struct SFTPFileSystem: FileSystemProvider {
         }
     }
 
-    /// Polls: a file's size and mtime, or a directory's listing, at `focusedInterval`.
+    /// Polls: a file's size and mtime, or a directory's listing, at `focusedInterval` while the app is in front and
+    /// `backgroundInterval` while it isn't.
     public func watch(_ path: String) -> AsyncStream<FileSystemEvent> {
         let channel = channel
         let interval = focusedInterval
+        let background = backgroundInterval
         return AsyncStream { continuation in
             let task = Task {
                 var lastFile: (UInt64?, UInt32?)?
@@ -307,7 +321,7 @@ public struct SFTPFileSystem: FileSystemProvider {
                     } catch {
                         // Connection hiccups: try again next tick.
                     }
-                    try? await Task.sleep(for: interval)
+                    try? await Task.sleep(for: RemotePolling.isAppActive ? interval : max(interval, background))
                 }
                 continuation.finish()
             }
