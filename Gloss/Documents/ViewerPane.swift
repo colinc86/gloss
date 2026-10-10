@@ -101,11 +101,16 @@ struct ViewerPane: View {
             QuickLookView(url: url)
                 .notePopover(session: session)
         case .unsupported(let kind):
-            ContentUnavailableView(
-                session.fileName,
-                systemImage: icon(for: kind),
-                description: Text("No viewer for this file on a remote host yet. Whole-file notes still work (⌘⇧N).")
-            )
+            ContentUnavailableView {
+                Label(session.fileName, systemImage: icon(for: kind))
+            } description: {
+                Text(Self.unsupportedMessage(hostID: session.hostID, isPastIteration: session.pastIteration != nil))
+            } actions: {
+                // A button as well as ⌘⇧N: the shortcut is never the only way to a note.
+                if session.pastIteration == nil {
+                    Button("Add Note to File") { session.beginNote() }
+                }
+            }
                 .notePopover(session: session)
         case .failed(let message):
             ContentUnavailableView {
@@ -117,6 +122,15 @@ struct ViewerPane: View {
                     .buttonStyle(.glass)
             }
         }
+    }
+
+    /// Why there is nothing to show, by where the file is: it said "on a remote host" for an earlier iteration of a
+    /// file on this Mac and for a pull request's file too.
+    nonisolated static func unsupportedMessage(hostID: HostID, isPastIteration: Bool) -> String {
+        if isPastIteration { return "Gloss can't show an earlier version of this kind of file." }
+        let notes = " A note on the whole file still works."
+        if hostID.isVirtual { return "Gloss has no viewer for this kind of file." + notes }
+        return hostID == .local ? "Gloss has no viewer for this kind of file." + notes : "Gloss has no viewer for this kind of file on a remote host yet." + notes
     }
 
     private func icon(for kind: DocumentKind) -> String {

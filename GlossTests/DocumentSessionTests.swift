@@ -354,3 +354,13 @@ struct SessionTrimTests {
         await model.shutDown()
     }
 }
+
+/// A file Gloss can't show says why for where it is, and offers a whole-file note without the shortcut.
+struct UnsupportedFileTests {
+    @Test func theMessageFitsWhereTheFileIs() {
+        #expect(ViewerPane.unsupportedMessage(hostID: HostID(rawValue: "h_box"), isPastIteration: false).contains("on a remote host"))
+        #expect(!ViewerPane.unsupportedMessage(hostID: .github, isPastIteration: false).contains("remote host"), "a pull request's file isn't on a host")
+        #expect(ViewerPane.unsupportedMessage(hostID: .local, isPastIteration: true) == "Gloss can't show an earlier version of this kind of file.",
+                "an earlier iteration on this Mac, which takes no new notes")
+    }
+}
