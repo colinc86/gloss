@@ -36,6 +36,8 @@ final class DocumentSession: Identifiable {
 
     struct ConflictState {
         var regions: [MergeRegion]
+        /// The lines each region stands in for, as opened, so a deletion shows what it deleted.
+        var originals: [[String]] = []
         var theirsText: String
         var theirsFingerprint: Fingerprint
         /// The encoding the other side was read in; a merge adopts it along with its text.
@@ -708,12 +710,13 @@ final class DocumentSession: Identifiable {
             if let expected = fingerprintAtOpen {
                 if case .changed(let current, let fingerprint) = try await fileSystem.checkForChanges(at: path, since: expected) {
                     let (theirs, theirsEncoding) = TextEncoding.decode(current)
-                    let regions = ThreeWayMerge.merge(
+                    let merged = ThreeWayMerge.mergeWithOriginals(
                         base: ExcerptExtractor.allLines(baseText ?? ""),
                         mine: ExcerptExtractor.allLines(controller.text),
                         theirs: ExcerptExtractor.allLines(theirs)
                     )
-                    conflict = ConflictState(regions: regions, theirsText: theirs, theirsFingerprint: fingerprint, theirsEncoding: theirsEncoding)
+                    conflict = ConflictState(regions: merged.map(\.region), originals: merged.map(\.original), theirsText: theirs,
+                                             theirsFingerprint: fingerprint, theirsEncoding: theirsEncoding)
                     return
                 }
             }

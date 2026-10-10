@@ -120,6 +120,7 @@ struct DocumentSessionTests {
         await session.save()
         let conflict = try #require(session.conflict)
         #expect(conflict.canMerge)
+        #expect(conflict.originals == [["one"], ["two", "three"], ["four"]], "each region with the lines it replaces")
         #expect(try String(contentsOfFile: path, encoding: .utf8) == "one\ntwo\nthree\nFOUR\n", "no silent overwrite")
         await session.mergeAndSave()
         #expect(session.conflict == nil)

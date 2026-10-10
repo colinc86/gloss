@@ -9,7 +9,7 @@ struct ConflictSheet: View {
 
     var body: some View {
         ConflictContent(
-            fileName: session.fileName, regions: conflict.regions, canMerge: conflict.canMerge, canSaveAs: session.hostID == .local,
+            fileName: session.fileName, regions: conflict.regions, originals: conflict.originals, canMerge: conflict.canMerge, canSaveAs: session.hostID == .local,
             saveAs: { Task { await session.saveAs() } },
             takeDisk: { Task { await session.takeTheirs() } },
             keepMine: { Task { await session.keepMine() } },
@@ -22,6 +22,8 @@ struct ConflictSheet: View {
 struct ConflictContent: View {
     let fileName: String
     let regions: [MergeRegion]
+    /// The lines each region stands in for, as opened (empty when not known).
+    var originals: [[String]] = []
     let canMerge: Bool
     let canSaveAs: Bool
     let saveAs: () -> Void
@@ -108,8 +110,8 @@ struct ConflictContent: View {
 
     private var regionList: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
-            ForEach(Array(regions.enumerated()), id: \.offset) { _, region in
-                MergeRegionView(region: region)
+            ForEach(Array(regions.enumerated()), id: \.offset) { index, region in
+                MergeRegionView(region: region, original: index < originals.count ? originals[index] : [])
             }
         }
         .padding(DS.Space.s)
@@ -135,17 +137,19 @@ private struct PrimaryIf: ViewModifier {
 /// label, or a conflict as two cards side by side.
 private struct MergeRegionView: View {
     let region: MergeRegion
+    /// The lines the region stands in for, as opened.
+    let original: [String]
 
     var body: some View {
         switch region {
         case .unchanged(let lines):
             lineBlock(fold(lines), tint: nil)
         case .mine(let lines):
-            labelled("Yours", tint: ConflictContent.mineTint) { lineBlock(lines, tint: ConflictContent.mineTint) }
+            change(lines, "Yours", removed: "Removed by you", tint: ConflictContent.mineTint)
         case .theirs(let lines):
-            labelled("On disk", tint: ConflictContent.diskTint) { lineBlock(lines, tint: ConflictContent.diskTint) }
+            change(lines, "On disk", removed: "Removed on disk", tint: ConflictContent.diskTint)
         case .both(let lines):
-            labelled("Both", tint: .teal) { lineBlock(lines, tint: .teal) }
+            change(lines, "Both", removed: "Removed on both sides", tint: .teal)
         case .conflict(let mine, let theirs):
             VStack(alignment: .leading, spacing: DS.Space.xs) {
                 Label("Conflict", systemImage: "exclamationmark.triangle.fill")
@@ -159,6 +163,17 @@ private struct MergeRegionView: View {
             .padding(DS.Space.s)
             .background(ConflictContent.conflictTint.opacity(0.07), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(ConflictContent.conflictTint.opacity(0.35)))
+        }
+    }
+
+    /// A change, or for one that only deletes (no lines of its own), the lines it deleted struck through: an empty
+    /// block said nothing about what Keep Mine or Merge would remove.
+    @ViewBuilder
+    private func change(_ lines: [String], _ title: String, removed: String, tint: Color) -> some View {
+        if lines.isEmpty, !original.isEmpty {
+            labelled(removed, tint: tint) { lineBlock(original, tint: tint, struck: true) }
+        } else {
+            labelled(title, tint: tint) { lineBlock(lines, tint: tint) }
         }
     }
 
@@ -180,20 +195,26 @@ private struct MergeRegionView: View {
 
     private func side(_ title: String, _ lines: [String], tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2.weight(.semibold)).foregroundStyle(tint)
-            lineBlock(lines.isEmpty ? ["(removed)"] : lines, tint: tint)
+            if lines.isEmpty, !original.isEmpty {
+                Text("\(title): removed").font(.caption2.weight(.semibold)).foregroundStyle(tint)
+                lineBlock(original, tint: tint, struck: true)
+            } else {
+                Text(title).font(.caption2.weight(.semibold)).foregroundStyle(tint)
+                lineBlock(lines.isEmpty ? ["(removed)"] : lines, tint: tint)
+            }
         }
         .padding(DS.Space.s)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous))
     }
 
-    private func lineBlock(_ lines: [String], tint: Color?) -> some View {
+    private func lineBlock(_ lines: [String], tint: Color?, struck: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                 Text(line.isEmpty ? " " : line)
                     .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(tint == nil ? (line.hasPrefix("⋯") ? Color.secondary.opacity(0.7) : Color.secondary) : Color.primary)
+                    .foregroundStyle(tint == nil || struck ? (line.hasPrefix("⋯") ? Color.secondary.opacity(0.7) : Color.secondary) : Color.primary)
+                    .strikethrough(struck)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, DS.Space.s)

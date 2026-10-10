@@ -85,6 +85,17 @@ struct ThreeWayMergeTests {
         #expect(regions == [.unchanged(["one"]), .both(["2"]), .unchanged(["three", "four", "five", "six"])])
     }
 
+    /// Each region comes with the lines it stands in for, so a change that only deletes can show what went.
+    @Test func regionsCarryTheLinesTheyReplace() {
+        let mine = ["one", "four", "five", "six"]   // two and three deleted
+        let theirs = ["one", "two", "three", "four", "5", "six"]
+        let merged = ThreeWayMerge.mergeWithOriginals(base: base, mine: mine, theirs: theirs)
+        #expect(merged.map(\.region) == ThreeWayMerge.merge(base: base, mine: mine, theirs: theirs))
+        #expect(merged.map(\.region) == [.unchanged(["one"]), .mine([]), .unchanged(["four"]), .theirs(["5"]), .unchanged(["six"])])
+        #expect(merged.map(\.original) == [["one"], ["two", "three"], ["four"], ["five"], ["six"]])
+        #expect(merged.flatMap(\.original) == base, "the originals add up to the file as opened")
+    }
+
     @Test func overlappingDifferentChangesConflict() {
         let mine = ["one", "two-mine", "three", "four", "five", "six"]
         let theirs = ["one", "two-theirs", "three", "four", "five", "six"]

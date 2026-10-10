@@ -165,9 +165,15 @@ public enum MergeRegion: Equatable, Sendable {
 /// diff3-style merge of `mine` (the editor) and `theirs` (the disk) against `base` (what was opened).
 public enum ThreeWayMerge {
     public static func merge(base: [String], mine: [String], theirs: [String]) -> [MergeRegion] {
+        mergeWithOriginals(base: base, mine: mine, theirs: theirs).map(\.region)
+    }
+
+    /// `merge`, each region with the lines of `base` it stands in for (the same lines for `.unchanged`), so a
+    /// change that only deletes can show what it deleted.
+    public static func mergeWithOriginals(base: [String], mine: [String], theirs: [String]) -> [(region: MergeRegion, original: [String])] {
         let mineHunks = LineDiff.hunks(old: base, new: mine)
         let theirsHunks = LineDiff.hunks(old: base, new: theirs)
-        var regions: [MergeRegion] = []
+        var regions: [(region: MergeRegion, original: [String])] = []
         var pos = 0
         var mi = 0
         var ti = 0
@@ -181,7 +187,7 @@ public enum ThreeWayMerge {
             case let (nil, t?): start = t.oldRange.lowerBound
             default: start = base.count
             }
-            if start > pos { regions.append(.unchanged(Array(base[pos..<start]))) }
+            if start > pos { regions.append((.unchanged(Array(base[pos..<start])), Array(base[pos..<start]))) }
 
             // Grow the group while hunks from either side overlap the current base span.
             var end = start
@@ -205,15 +211,16 @@ public enum ThreeWayMerge {
             }
             let mineLines = apply(groupMine, to: base, span: start..<end, side: mine)
             let theirsLines = apply(groupTheirs, to: base, span: start..<end, side: theirs)
+            let original = Array(base[start..<end])
             switch (groupMine.isEmpty, groupTheirs.isEmpty) {
-            case (false, true): regions.append(.mine(mineLines))
-            case (true, false): regions.append(.theirs(theirsLines))
-            case (false, false): regions.append(mineLines == theirsLines ? .both(mineLines) : .conflict(mine: mineLines, theirs: theirsLines))
+            case (false, true): regions.append((.mine(mineLines), original))
+            case (true, false): regions.append((.theirs(theirsLines), original))
+            case (false, false): regions.append((mineLines == theirsLines ? .both(mineLines) : .conflict(mine: mineLines, theirs: theirsLines), original))
             case (true, true): break
             }
             pos = end
         }
-        if pos < base.count { regions.append(.unchanged(Array(base[pos...]))) }
+        if pos < base.count { regions.append((.unchanged(Array(base[pos...])), Array(base[pos...]))) }
         return regions
     }
 

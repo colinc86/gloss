@@ -19,6 +19,18 @@ struct ConflictContentTests {
         .both(["}"]),
     ]
 
+    /// Lines you deleted, and a conflict where the disk deleted what you edited.
+    static let deleting: [MergeRegion] = [
+        .unchanged(["struct Segment {"]),
+        .mine([]),
+        .unchanged(["    let climb: Int"]),
+        .conflict(mine: ["    let grade: Double // steeper"], theirs: []),
+        .unchanged(["}"]),
+    ]
+    static let deletingOriginals: [[String]] = [
+        ["struct Segment {"], ["    let name: String", "    let kilometres: Double"], ["    let climb: Int"], ["    let grade: Double"], ["}"],
+    ]
+
     @Test func summariesCountEachKindOfChange() {
         #expect(ConflictContent.summary(Self.mergeable) == "1 change of yours · 1 change from disk")
         #expect(ConflictContent.summary(Self.conflicting) == "1 made on both sides · 1 conflict")
@@ -28,8 +40,9 @@ struct ConflictContentTests {
     @Test func rendersBothCases() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-conflict")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        for (name, regions, merge) in [("merge", Self.mergeable, true), ("conflict", Self.conflicting, false)] {
-            let view = ConflictContent(fileName: "trail.swift", regions: regions, canMerge: merge, canSaveAs: true,
+        for (name, regions, originals, merge) in [("merge", Self.mergeable, [], true), ("conflict", Self.conflicting, [], false),
+                                                  ("deletion", Self.deleting, Self.deletingOriginals, false)] {
+            let view = ConflictContent(fileName: "trail.swift", regions: regions, originals: originals, canMerge: merge, canSaveAs: true,
                                        saveAs: {}, takeDisk: {}, keepMine: {}, merge: {}, scrolls: false)
                 .frame(width: 760, height: 520)
                 .background(Color(nsColor: .windowBackgroundColor))
