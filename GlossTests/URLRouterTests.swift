@@ -44,3 +44,20 @@ struct URLRouterTests {
         #expect(!URLRouter.carriesToken(URL(string: "gloss://note?text=x&token=\(token)")!, expected: nil))
     }
 }
+
+
+/// A gloss://open link (the Herdr plugin's, on this Mac) shows a location as open_in_viewer does.
+@MainActor
+struct URLOpenTests {
+    @Test func aLinkToAFolderOpensItInTheExplorer() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-link-open-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(root)/docs", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.start()
+        await URLRouter.open(hostID: .local, path: "\(root)/docs", line: nil, model: model)
+        #expect(model.explorer.selectedTab?.path == "\(root)/docs")
+        #expect(model.session(hostID: .local, path: "\(root)/docs") == nil, "no tab trying to read a folder")
+        await model.shutDown()
+    }
+}

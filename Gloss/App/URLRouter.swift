@@ -100,9 +100,10 @@ enum URLRouter {
     }
 
     /// Opens a routed document, adding a root for it when needed; also what confirming a link does.
+    /// As `open_in_viewer` shows a location: a folder opens in the explorer (a link to one, clicked in a Herdr pane,
+    /// used to open a tab that couldn't show it), and `path:line` with no line of its own opens at the line.
     static func open(hostID: HostID, path: String, line: Int?, model: AppModel) async {
-        await model.openRootIfNeeded(hostID: hostID, containing: path)
-        if let line { model.openDocument(hostID: hostID, path: path, line: line) } else { model.openDocument(hostID: hostID, path: path) }
+        await model.showForAgent(hostID: hostID, path: path, line: line, endLine: nil)
     }
 
     static func handle(_ url: URL, model: AppModel) async {
