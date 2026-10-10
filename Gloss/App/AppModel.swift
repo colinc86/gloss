@@ -1845,7 +1845,7 @@ final class AppModel {
                 await forwardMCPPort(to: connection, alias: hosts.entry(for: hostID)?.alias ?? hostID.rawValue)
             }
         } catch {
-            mcpStatus = "MCP server could not bind port \(settings.mcpPort): \(error)"
+            mcpStatus = "MCP server could not bind port \(settings.mcpPort): \(error.userMessage)"
             Log.transport.error("MCP server failed to start: \(error, privacy: .public)")
         }
     }

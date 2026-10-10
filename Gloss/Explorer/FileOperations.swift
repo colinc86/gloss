@@ -94,7 +94,7 @@ extension ExplorerModel {
             do {
                 try await body(fileSystem)
             } catch {
-                self.lastError = "Could not \(what): \(error)"
+                self.lastError = "Could not \(what): \(error.userMessage)"
                 Log.explorer.error("\(what, privacy: .public) failed: \(error, privacy: .public)")
             }
         }

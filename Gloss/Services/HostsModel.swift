@@ -206,7 +206,7 @@ final class HostsModel {
             Log.transport.error("connect \(entry.name, privacy: .public) failed: \(String(describing: error), privacy: .public)")
             return nil
         } catch {
-            status[hostID] = .failed("\(error)")
+            status[hostID] = .failed("\(error.userMessage)")
             return nil
         }
     }

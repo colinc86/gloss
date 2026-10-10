@@ -635,7 +635,7 @@ final class DocumentSession: Identifiable {
             if hostID.isVirtual, !discardingEdits { showResourceUpdated() }
             onReloaded()
         } catch {
-            lastError = "Reload failed: \(error)"
+            lastError = "Reload failed: \(error.userMessage)"
         }
     }
 
@@ -658,7 +658,7 @@ final class DocumentSession: Identifiable {
             // Grid anchors hash the text itself (see `CSVGridController.selectionAnchor`).
             await reanchorAll(in: text, hash: Data(text.utf8).sha256Hex)
         } catch {
-            lastError = "Reload failed: \(error)"
+            lastError = "Reload failed: \(error.userMessage)"
         }
     }
 
@@ -760,7 +760,7 @@ final class DocumentSession: Identifiable {
             banner = .decodedAsLatin1
             lastError = refusal.message
         } catch {
-            lastError = "Save failed: \(error)"
+            lastError = "Save failed: \(error.userMessage)"
         }
     }
 
@@ -790,7 +790,7 @@ final class DocumentSession: Identifiable {
         rendered?.syncWithSourceIfReplaced()
         liveRanges = [:]
         invalidatedNotes = []
-        do { try await write(text) } catch { lastError = "Save failed: \(error)" }
+        do { try await write(text) } catch { lastError = "Save failed: \(error.userMessage)" }
         await reanchorAll(in: text, hash: Data(text.utf8).sha256Hex)
     }
 
@@ -827,7 +827,7 @@ final class DocumentSession: Identifiable {
             try Data(controller.text.utf8).write(to: url, options: .atomic)
             conflict = nil
         } catch {
-            lastError = "Save As failed: \(error)"
+            lastError = "Save As failed: \(error.userMessage)"
         }
     }
 
@@ -1475,7 +1475,7 @@ final class DocumentSession: Identifiable {
                 try await noteStore.recoverOrphan(id, anchor: newAnchor)
                 needsReview.remove(id)
             } catch {
-                lastError = "Re-anchoring failed: \(error)"
+                lastError = "Re-anchoring failed: \(error.userMessage)"
             }
         }
     }
@@ -1565,7 +1565,7 @@ final class DocumentSession: Identifiable {
                 clearSelection()
             }
         } catch {
-            lastError = "Saving the note failed: \(error)"
+            lastError = "Saving the note failed: \(error.userMessage)"
             // The crop already took the chosen picture's drawing off the page; an Add Note left beside nothing
             // would be stale.
             html?.selectedPicture = nil
@@ -1648,7 +1648,7 @@ final class DocumentSession: Identifiable {
     }
 
     func resolveNote(_ id: NoteID) async {
-        do { try await noteStore.resolve(id) } catch { lastError = "Resolving the note failed: \(error)" }
+        do { try await noteStore.resolve(id) } catch { lastError = "Resolving the note failed: \(error.userMessage)" }
         needsReview.remove(id)
     }
 

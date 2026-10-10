@@ -64,8 +64,8 @@ final class IntegrationsModel {
             var errors: [String] = []
             var github: GitHubCredentials?
             var atlassian: AtlassianCredentials?
-            do { github = try store.read(account: Service.github.rawValue).flatMap { try JSONDecoder().decode(GitHubCredentials.self, from: $0) } } catch { errors.append("GitHub: \(error)") }
-            do { atlassian = try store.read(account: Service.atlassian.rawValue).flatMap { try JSONDecoder().decode(AtlassianCredentials.self, from: $0) } } catch { errors.append("Atlassian: \(error)") }
+            do { github = try store.read(account: Service.github.rawValue).flatMap { try JSONDecoder().decode(GitHubCredentials.self, from: $0) } } catch { errors.append("GitHub: \(error.userMessage)") }
+            do { atlassian = try store.read(account: Service.atlassian.rawValue).flatMap { try JSONDecoder().decode(AtlassianCredentials.self, from: $0) } } catch { errors.append("Atlassian: \(error.userMessage)") }
             return (github, atlassian, errors)
         }.value
         // A key saved or removed while the Keychain was being read is newer than what the read found.
@@ -161,7 +161,7 @@ final class IntegrationsModel {
             }
             lastError = nil
         } catch {
-            lastError = "Couldn't save the key: \(error)"
+            lastError = "Couldn't save the key: \(error.userMessage)"
             return false
         }
         onChange()
@@ -185,7 +185,7 @@ final class IntegrationsModel {
         do {
             try store.delete(account: service.rawValue)
         } catch {
-            lastError = "Couldn't remove the key: \(error)"
+            lastError = "Couldn't remove the key: \(error.userMessage)"
             return
         }
         switch service {

@@ -97,7 +97,7 @@ final class HooksModel {
             lastReport = lines.joined(separator: "\n")
             status[key] = await installer.status(agent)
         } catch {
-            lastError = "\(agent.displayName): \(error)"
+            lastError = "\(agent.displayName): \(error.userMessage)"
             Log.transport.error("hook install failed: \(error, privacy: .public)")
         }
     }

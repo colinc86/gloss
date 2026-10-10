@@ -348,15 +348,15 @@ final class SendCoordinator {
                 lastResult = SendResult(noteIDs: packet.noteIDs, target: target, failure: nil)
                 if generation == targetGeneration { rememberTarget(target) }
             } catch {
-                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error)"))
+                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error.userMessage)"))
                 if !staging.remoteDirectories.isEmpty {
                     try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
                 }
                 throw error
             }
         } catch {
-            lastError = "Send failed: \(error)"
-            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: (error as? LocalizedError)?.errorDescription ?? "\(error)")
+            lastError = "Send failed: \(error.userMessage)"
+            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: error.userMessage)
             Log.transport.error("send failed: \(error, privacy: .public)")
         }
     }
@@ -372,7 +372,7 @@ final class SendCoordinator {
             writeClipboard(packet.text)
             lastResult = SendResult(noteIDs: packet.noteIDs, target: ClipboardTransport.target, failure: nil, copied: true)
         } catch {
-            lastError = "Copy failed: \(error)"
+            lastError = "Copy failed: \(error.userMessage)"
             Log.transport.error("copy failed: \(error, privacy: .public)")
         }
     }

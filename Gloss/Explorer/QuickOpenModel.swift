@@ -106,7 +106,7 @@ final class QuickOpenModel {
         do {
             return try await FileListing.list(root: root, over: connection)
         } catch {
-            failure = "Listing failed: \(error)"
+            failure = "Listing failed: \(error.userMessage)"
             return []
         }
     }

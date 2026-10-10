@@ -389,7 +389,7 @@ final class ExplorerModel {
         case .permissionDenied: return "you don't have permission to open it."
         case .io(let detail): return detail
         default:
-            if error is SFTPClientError || error is SSHError { return "the connection to its host was lost or refused (\(error))." }
+            if error is SFTPClientError || error is SSHError { return "the connection to its host was lost or refused (\(error.userMessage))." }
             return error.localizedDescription
         }
     }
