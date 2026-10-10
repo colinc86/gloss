@@ -417,7 +417,7 @@ public struct NoteStore: Sendable {
             let record = NoteRecord(
                 id: NoteID.new().rawValue, documentId: documentID.rawValue,
                 anchorJson: try anchor.encodedJSON(), anchorType: anchor.type.rawValue,
-                body: body, state: NoteState.draft.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
+                body: Self.cleanBody(body), state: NoteState.draft.rawValue, createdAt: date, updatedAt: date, color: color.rawValue,
                 resolveOutcome: nil, resolveMessage: nil, iteration: iteration
             )
             try record.insert(db)
@@ -475,8 +475,14 @@ public struct NoteStore: Sendable {
     public func updateBody(_ id: NoteID, body: String, at date: Date = Date()) async throws {
         let date = Self.rounded(date)
         return try await queue.write { db in
-            try db.execute(sql: "UPDATE note SET body = ?, updated_at = ? WHERE id = ?", arguments: [body, date, id.rawValue])
+            try db.execute(sql: "UPDATE note SET body = ?, updated_at = ? WHERE id = ?", arguments: [Self.cleanBody(body), date, id.rawValue])
         }
+    }
+
+    /// A comment as kept and sent: without the blank lines and spaces typed around it, which the packet would carry
+    /// as escaped `\n`s. Editing a note in its card trimmed already; the composer didn't.
+    static func cleanBody(_ body: String) -> String {
+        body.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Saves an edit only if the comment is still `expected`, in one write, so an answer added meanwhile is never
@@ -485,7 +491,7 @@ public struct NoteStore: Sendable {
         let date = Self.rounded(date)
         return try await queue.write { db in
             try db.execute(sql: "UPDATE note SET body = ?, color = ?, updated_at = ? WHERE id = ? AND body = ?",
-                           arguments: [body, color.rawValue, date, id.rawValue, expected])
+                           arguments: [Self.cleanBody(body), color.rawValue, date, id.rawValue, expected])
             return db.changesCount > 0
         }
     }

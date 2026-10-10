@@ -11,6 +11,16 @@ struct NoteStoreTests {
         try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint(mtime: Date(timeIntervalSince1970: 1), size: 10, hash: "h"))
     }
 
+    /// A comment is kept without the blank lines and spaces typed around it, however it was written.
+    @Test func commentsAreKeptTrimmed() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "  Fix this\n  keep this indent\n\n\n", color: .green)
+        #expect(note.body == "Fix this\n  keep this indent")
+        try await store.updateBody(note.id, body: "\nShorter \n")
+        #expect(try await store.note(note.id)?.body == "Shorter")
+    }
+
     @Test func createsDraftNotes() async throws {
         let store = try makeStore()
         let document = try await makeDocument(store)
