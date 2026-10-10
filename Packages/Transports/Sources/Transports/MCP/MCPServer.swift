@@ -13,7 +13,8 @@ public struct MCPDependencies: Sendable {
     public var createDraft: @Sendable (_ host: String, _ path: String?, _ cwd: String?, _ text: String) async throws -> NoteID
     /// Opens a file on a host, scrolled to a 1-based line when one is given and selecting through `endLine` when that
     /// is given too; for `open_in_viewer` and the plugin's link handler on a host.
-    public var openDocument: @Sendable (_ host: String, _ path: String, _ line: Int?, _ endLine: Int?) async throws -> Void = { _, _, _, _ in }
+    /// Returns what was shown: the path and line, after a `path:line` given as the path is read as both.
+    public var openDocument: @Sendable (_ host: String, _ path: String, _ line: Int?, _ endLine: Int?) async throws -> (path: String, line: Int?) = { _, path, line, _ in (path, line) }
     /// Makes a folder a favourite in the explorer and opens it; true when it was not one already (`add_favorite`).
     public var addFavorite: @Sendable (_ host: String, _ path: String) async throws -> Bool = { _, _ in false }
     /// An agent's question to the user about a place in a file (`ask_user`); the new note's id.
@@ -261,7 +262,7 @@ public actor MCPServer {
             if host != "web", !DocumentKindDetector.isWebURL(path) { path = PathUtilities.lexicallyNormalized(path) }
             do {
                 let line = (object["line"] as? Int).flatMap { $0 > 0 ? $0 : nil }
-                try await dependencies.openDocument(host, path, line, nil)
+                _ = try await dependencies.openDocument(host, path, line, nil)
                 return .ok(headers: ["Content-Length": "0"])
             } catch {
                 return .error(statusCode: 500, MCPError.internalError(error.userMessage))
@@ -588,9 +589,9 @@ public actor MCPServer {
             } catch {
                 return CallTool.Result(content: [text(error.userMessage)], isError: true)
             }
-            try await dependencies.openDocument(host, path, line, endLine)
-            let at = line.map { start in endLine.map { $0 > start ? " at lines \(start)-\($0)" : " at line \(start)" } ?? " at line \(start)" } ?? ""
-            return CallTool.Result(content: [text("showing \(host):\(path)\(at)")])
+            let shown = try await dependencies.openDocument(host, path, line, endLine)
+            let at = shown.line.map { start in endLine.map { $0 > start ? " at lines \(start)-\($0)" : " at line \(start)" } ?? " at line \(start)" } ?? ""
+            return CallTool.Result(content: [text("showing \(host):\(shown.path)\(at)")])
         case "add_favorite":
             let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
             guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {

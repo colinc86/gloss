@@ -1047,18 +1047,21 @@ final class AppModel {
     /// would only say it can't open a folder); anything else opens as a document, at its lines when given.
     /// A path given as `path:line` with no line of its own (as agents print a location) opens at that line, as the
     /// address field does.
-    func showForAgent(hostID: HostID, path given: String, line givenLine: Int?, endLine: Int?) async {
+    /// Returns what it showed, a `path:line` read as its path and line, so the agent is told that.
+    @discardableResult
+    func showForAgent(hostID: HostID, path given: String, line givenLine: Int?, endLine: Int?) async -> (path: String, line: Int?) {
         var path = given, line = givenLine
         if !hostID.isVirtual, !DocumentKindDetector.isWebURL(path), await ensureConnected(hostID), let fileSystem = fileSystems[hostID] {
             if line == nil { (path, line) = await Self.splitLocation(path, on: fileSystem) }
             if let attributes = try? await fileSystem.stat(path), attributes.kind == .directory {
                 pickedHost = hostID
                 await explorer.openRoot(hostID: hostID, path: path)
-                return
+                return (path, nil)
             }
         }
         await openRootIfNeeded(hostID: hostID, containing: path)
         if let line { openDocument(hostID: hostID, path: path, line: line, endLine: endLine) } else { openDocument(hostID: hostID, path: path) }
+        return (path, line)
     }
 
     /// `path:line` read as the path and a line when no file is named so but the path exists: a name that really ends
@@ -1891,13 +1894,10 @@ final class AppModel {
         dependencies.openDocument = { [weak self] host, path, line, endLine in
             let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
             guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }
-            await MainActor.run {
-                guard let self else { return }
-                Task {
-                    await self.showForAgent(hostID: hostID, path: path, line: line, endLine: endLine)
-                    self.bringForwardForAgent()
-                }
-            }
+            guard let self else { return (path, line) }
+            let shown = await self.showForAgent(hostID: hostID, path: path, line: line, endLine: endLine)
+            await self.bringForwardForAgent()
+            return shown
         }
         dependencies.addFavorite = { [weak self] host, path in
             guard let self else { return false }
