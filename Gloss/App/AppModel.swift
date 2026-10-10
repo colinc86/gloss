@@ -1399,13 +1399,20 @@ final class AppModel {
     nonisolated static func occurrence(of needle: String, in text: String, index: LineIndex, nearLine line: Int?) -> NSRange? {
         let ns = text as NSString
         var found: [NSRange] = []
-        var from = 0
-        while from < ns.length {
-            let range = ns.range(of: needle, options: [.literal], range: NSRange(location: from, length: ns.length - from))
-            guard range.location != NSNotFound else { break }
-            found.append(range)
-            from = range.location + max(1, range.length)
+        // An agent joins quoted lines with "\n"; a file that ends its lines with "\r\n" is searched for that spelling
+        // too (the relocator does the same by normalizing both).
+        var needles = [needle]
+        if needle.contains("\n"), !needle.contains("\r\n"), text.contains("\r\n") { needles.append(needle.replacingOccurrences(of: "\n", with: "\r\n")) }
+        for needle in needles {
+            var from = 0
+            while from < ns.length {
+                let range = ns.range(of: needle, options: [.literal], range: NSRange(location: from, length: ns.length - from))
+                guard range.location != NSNotFound else { break }
+                found.append(range)
+                from = range.location + max(1, range.length)
+            }
         }
+        found.sort { $0.location < $1.location }
         guard let line else { return found.first }
         return found.min { abs(index.position(forUTF16Offset: $0.location).line - line) < abs(index.position(forUTF16Offset: $1.location).line - line) }
     }
