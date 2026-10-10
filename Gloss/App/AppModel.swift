@@ -508,7 +508,7 @@ final class AppModel {
                 // The connection callback starts following this host; its first event is the focused pane.
                 let generation = followGeneration
                 guard await hosts.connect(hostID) != nil else {
-                    if followGeneration == generation { followStatus = "Could not connect to \(name) for Herdr" }
+                    if followGeneration == generation { followStatus = "Couldn't connect to \(name) for Herdr" }
                     return
                 }
             }

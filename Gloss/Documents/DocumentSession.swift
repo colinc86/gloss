@@ -956,7 +956,7 @@ final class DocumentSession: Identifiable {
         do {
             try await write(controller.text)
         } catch {
-            lastError = "Could not save \(fileName): \(error.userMessage)"
+            lastError = "Couldn't save \(fileName): \(error.userMessage)"
         }
     }
 

@@ -30,7 +30,7 @@ final class FileNameRequest: Identifiable {
         do { try await operation(value); return true }
         catch FileSystemError.alreadyExists { error = "That name already exists. Choose a different name." }
         catch FileSystemError.permissionDenied { error = "You don't have permission to change this folder." }
-        catch { self.error = "Could not \(actionTitle.lowercased()): \(error.userMessage)" }
+        catch { self.error = "Couldn't \(actionTitle.lowercased()): \(error.userMessage)" }
         return false
     }
 }

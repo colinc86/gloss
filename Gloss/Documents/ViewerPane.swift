@@ -114,7 +114,7 @@ struct ViewerPane: View {
                 .notePopover(session: session)
         case .failed(let message):
             ContentUnavailableView {
-                Label("Could not open \(session.fileName)", systemImage: "exclamationmark.triangle")
+                Label("Couldn't open \(session.fileName)", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(message)
             } actions: {
