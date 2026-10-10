@@ -72,6 +72,18 @@ struct FileOutlineView: NSViewRepresentable {
         return path as NSString
     }
 
+    enum KeyAction: Equatable { case rename, delete }
+
+    /// What a key does to the selected row: what the context menu offers it, no more (not the root, nor a pull
+    /// request's or a ticket's tree, which are read-only).
+    static func keyAction(characters: String, modifiers: NSEvent.ModifierFlags, node: FileNode) -> KeyAction? {
+        guard node.parent != nil, !node.hostID.isVirtual else { return nil }
+        let plain = modifiers.subtracting([.function, .numericPad, .capsLock]).isEmpty
+        if (characters == "\r" || characters == "\u{3}"), plain { return .rename }
+        if characters == "\u{7f}", modifiers.subtracting([.function, .numericPad, .capsLock]) == .command { return .delete }
+        return nil
+    }
+
     /// The one column spans exactly the visible sidebar, so a row's trailing note mark sits at its edge.
     static func fitColumn(_ outline: NSOutlineView) {
         guard let column = outline.tableColumns.first, let clip = outline.enclosingScrollView?.contentView else { return }
@@ -271,10 +283,21 @@ struct FileOutlineView: NSViewRepresentable {
         @objc private func menuCopyURL() { if let node = clickedNode { model.copyURL(node) } }
         @objc private func menuCopyRelativePath() { if let node = clickedNode { model.copyPath(node, relative: true) } }
 
-        /// The selected row, for menu-bar commands.
+        /// The selected row, for the tree's own keys.
         var selectedNode: FileNode? {
             guard let outline, outline.selectedRow >= 0 else { return nil }
             return outline.item(atRow: outline.selectedRow) as? FileNode
+        }
+
+        /// Return renames and ⌘⌫ deletes the selected row, as in Finder: with keyboard navigation on, the context
+        /// menu was the only way to either. False when the key is not one of them, or doesn't apply to the row.
+        func handleKey(characters: String, modifiers: NSEvent.ModifierFlags) -> Bool {
+            guard let node = selectedNode, let action = FileOutlineView.keyAction(characters: characters, modifiers: modifiers, node: node) else { return false }
+            switch action {
+            case .rename: model.rename(node)
+            case .delete: model.delete(node)
+            }
+            return true
         }
 
         // MARK: ExplorerTreeDelegate
@@ -326,6 +349,13 @@ struct FileOutlineView: NSViewRepresentable {
 /// keyboard navigation on, a window should start in its content, not on the host picker.
 final class TreeOutlineView: NSOutlineView {
     private var claimedInitialFocus = false
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if let coordinator = delegate as? FileOutlineView.Coordinator,
+           coordinator.handleKey(characters: event.charactersIgnoringModifiers ?? "", modifiers: modifiers) { return }
+        super.keyDown(with: event)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()

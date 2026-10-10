@@ -40,6 +40,10 @@ nonisolated struct ShortcutGroup: Identifiable {
             ("Step out to the enclosing element / back in", ["↑", "/", "↓"]),
             ("Stop picking", ["esc"]),
         ]),
+        ShortcutGroup(title: "File tree", symbol: "list.bullet.indent", items: [
+            ("Rename the selected item", ["↩"]),
+            ("Move it to the Trash (delete, on a remote host)", ["⌘", "⌫"]),
+        ]),
         ShortcutGroup(title: "Folder switcher", symbol: "folder.badge.gearshape", items: [
             ("Move through folders", ["↑", "↓"]),
             ("Open or switch to it", ["↩"]),

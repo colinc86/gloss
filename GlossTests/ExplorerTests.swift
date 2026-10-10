@@ -1,3 +1,4 @@
+import AppKit
 import Core
 import Foundation
 import Testing
@@ -353,5 +354,22 @@ struct RemoteIconTests {
         #expect(FileCellView.iconType(name: "photo.PNG", isDirectory: false) == .png)
         #expect(FileCellView.iconType(name: "src", isDirectory: true) == .folder)
         #expect(FileCellView.iconType(name: "Makefile", isDirectory: false) == .data)
+    }
+}
+
+/// The tree's own keys, as in Finder: Return renames, ⌘⌫ deletes; only where the context menu offers the same.
+@MainActor
+struct TreeKeyTests {
+    @Test func returnRenamesAndCommandDeleteDeletes() {
+        let root = FileNode(hostID: .local, entry: DirectoryEntry(name: "root", path: "/root", kind: .directory), parent: nil)
+        _ = root.merge(entries: [DirectoryEntry(name: "a.md", path: "/root/a.md", kind: .file)])
+        let file = root.children![0]
+        #expect(FileOutlineView.keyAction(characters: "\r", modifiers: [], node: file) == .rename)
+        #expect(FileOutlineView.keyAction(characters: "\u{7f}", modifiers: .command, node: file) == .delete)
+        #expect(FileOutlineView.keyAction(characters: "\u{7f}", modifiers: [], node: file) == nil, "plain delete does nothing, as in Finder")
+        #expect(FileOutlineView.keyAction(characters: "\r", modifiers: [], node: root) == nil, "not the root")
+        let pull = FileNode(hostID: .github, entry: DirectoryEntry(name: "pr", path: "/o/r/pull/1", kind: .directory), parent: nil)
+        _ = pull.merge(entries: [DirectoryEntry(name: "a.swift", path: "/o/r/pull/1/a.swift", kind: .file)])
+        #expect(FileOutlineView.keyAction(characters: "\r", modifiers: [], node: pull.children![0]) == nil, "a pull request is read-only")
     }
 }

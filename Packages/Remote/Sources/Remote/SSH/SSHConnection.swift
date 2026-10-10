@@ -137,7 +137,6 @@ public actor SSHConnection {
     /// The launch in progress, shared by every concurrent `connect` and by the supervisor.
     private var connecting: Task<Void, any Error>?
     private var toolsCache: RemoteTools?
-    private var homeCache: String?
     /// After the user accepts a new host key once, the master is launched with accept-new for this host.
     public private(set) var acceptNewHostKey = false
 

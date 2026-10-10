@@ -46,7 +46,7 @@ struct ShortcutsTests {
         #expect(zoom.flatMap { $0.items.map(\.action) } == ["Zoom in / out (images, PDFs, pages)"])
         #expect(ShortcutGroup.filtered("viewers", in: groups).first?.items.count == groups.first { $0.title == "Viewers" }?.items.count)
         #expect(ShortcutGroup.filtered("zzz", in: groups).isEmpty)
-        #expect(ShortcutGroup.filtered("delete", in: groups).map(\.title) == ["Notes panel"], "the notes list's own keys are listed")
+        #expect(ShortcutGroup.filtered("delete", in: groups).map(\.title) == ["Notes panel", "File tree"], "the notes list's and the tree's own keys are listed")
         #expect(ShortcutGroup.filtered("pick", in: groups).first?.items.count == 2)
         #expect(ShortcutGroup.filtered("previous match", in: groups).flatMap { $0.items.map(\.keys) } == [["⇧", "↩"]], "the find bar's own keys are listed")
     }
