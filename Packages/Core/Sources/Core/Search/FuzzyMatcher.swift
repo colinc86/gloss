@@ -37,15 +37,20 @@ public enum FuzzyMatcher {
 
     /// The best `limit` paths for `query`, best first; all paths (shortest first) when the query is empty.
     public static func rank(_ query: String, in paths: [String], limit: Int = 50) -> [String] {
-        if query.allSatisfy(\.isWhitespace) { return Array(paths.sorted { ($0.count, $0) < ($1.count, $1) }.prefix(limit)) }
+        rankCounted(query, in: paths, limit: limit).paths
+    }
+
+    /// `rank`, and how many paths matched in all, of which only the best `limit` are returned.
+    public static func rankCounted(_ query: String, in paths: [String], limit: Int = 50) -> (paths: [String], total: Int) {
+        if query.allSatisfy(\.isWhitespace) { return (Array(paths.sorted { ($0.count, $0) < ($1.count, $1) }.prefix(limit)), paths.count) }
         var scored: [(path: String, score: Int)] = []
         for (offset, path) in paths.enumerated() {
             // A newer keystroke cancels this ranking: stop rather than finish work nobody will see.
-            if offset % 1_024 == 0, Task.isCancelled { return [] }
+            if offset % 1_024 == 0, Task.isCancelled { return ([], 0) }
             if let score = score(query: query, path: path) { scored.append((path, score)) }
         }
         scored.sort { $0.score != $1.score ? $0.score > $1.score : $0.path < $1.path }
-        return scored.prefix(limit).map(\.path)
+        return (scored.prefix(limit).map(\.path), scored.count)
     }
 
     /// Left-to-right alignment that prefers word starts, without ever giving up a match: `latest[i]` is the last

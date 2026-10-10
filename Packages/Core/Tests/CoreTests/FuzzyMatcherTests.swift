@@ -40,6 +40,14 @@ struct FuzzyMatcherTests {
         #expect(FuzzyMatcher.rank("store", in: paths) == ["Packages/Core/Sources/Core/Notes/NoteStore.swift"])
     }
 
+    @Test func countsEveryMatchBeyondTheLimit() {
+        let many = (0..<200).map { "src/File\($0).swift" }
+        let ranked = FuzzyMatcher.rankCounted("file", in: many, limit: 50)
+        #expect(ranked.paths.count == 50 && ranked.total == 200)
+        #expect(FuzzyMatcher.rankCounted("", in: many, limit: 50).total == 200)
+        #expect(FuzzyMatcher.rankCounted("zzz", in: many).total == 0)
+    }
+
     @Test func handlesALargeList() {
         let many = (0..<50_000).map { "src/module\($0 % 97)/File\($0).swift" }
         let ranked = FuzzyMatcher.rank("file4242", in: many, limit: 5)

@@ -196,6 +196,8 @@ struct AddressBarTests {
         #expect(QuickOpenSheet.countLine(files: 1, pages: 1) == "1 file · 1 page")
         #expect(QuickOpenSheet.countLine(files: 3, pages: 0) == "3 files")
         #expect(QuickOpenSheet.countLine(files: nil, pages: 2) == "2 pages")
+        #expect(QuickOpenSheet.countLine(files: 50, of: 3_214, pages: 0) == "50 of 3,214 files", "only the best of more are listed")
+        #expect(QuickOpenSheet.countLine(files: 3, of: 3, pages: 0) == "3 files")
         quick.moveSelection(by: 1)
         #expect(quick.selectedPath == root.path + "/guide.md")
         quick.dismiss()
