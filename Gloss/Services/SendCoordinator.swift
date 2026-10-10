@@ -447,12 +447,17 @@ final class SendCoordinator {
                     switch ReAnchorer.text(anchor, in: content, newHash: hash, fileName: PathUtilities.name(of: document.path)) {
                     case .moved(let moved), .movedNeedsReview(let moved):
                         note.anchor = moved
-                        // Found on changed words, the thread records the move (`applyReanchor`).
-                        try? await noteStore.applyReanchor(note.id, to: moved)
+                        // Found on changed words, the thread records the move (`applyReanchor`). Only from where it
+                        // was read: an agent's move landing meanwhile stands, and the packet describes that.
+                        if (try? await noteStore.applyReanchor(note.id, to: moved, ifAnchorIs: .text(anchor))) == false {
+                            note.anchor = (try? await noteStore.note(note.id))?.anchor ?? moved
+                        }
                     case .removed(let point):
                         // Its text was removed: the note is a point where it was, which the thread says.
                         note.anchor = point
-                        try? await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil)
+                        if (try? await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil, ifAnchorIs: .text(anchor))) == false {
+                            note.anchor = (try? await noteStore.note(note.id))?.anchor ?? point
+                        }
                     case .orphaned:
                         // Its text is gone from the file: quote what the note was made on rather than whatever now
                         // sits at its old lines. The session marks it orphaned when the document opens.
