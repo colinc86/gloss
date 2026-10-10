@@ -121,6 +121,8 @@ public final class HTMLViewerController: RenderedDocumentController {
     /// Reads a file the page refers to, by absolute path on the document's host.
     @ObservationIgnored public let loadResource: @Sendable (String) async throws -> Data
     public private(set) var projection: HTMLTextProjection
+    /// The anchor the page's first load scrolls to, when a link on another page named one; used once.
+    @ObservationIgnored public var pendingFragment: String?
     /// Bumped when the page must reload with new source text.
     public private(set) var renderedVersion = 0
     /// The page's own `<title>`, once it has loaded one.

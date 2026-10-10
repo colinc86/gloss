@@ -297,4 +297,21 @@ struct AddressBarTests {
         #expect(model.explorer.selectedTab?.path == "\(root)/assets", "a folder without an index opens in the explorer")
         await model.shutDown()
     }
+
+    /// A page's link to an anchor on another page (`guide.html#install`) opens that page at the anchor.
+    @Test func aPagesLinkToAnotherPagesAnchorCarriesIt() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-page-anchor-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "<a href=\"guide.html#install\">Install</a>".write(toFile: "\(root)/index.html", atomically: true, encoding: .utf8)
+        try "<h1>Guide</h1><h2 id=\"install\">Install</h2>".write(toFile: "\(root)/guide.html", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        model.openDocument(hostID: .local, path: "\(root)/index.html")
+        await waitUntil { model.activeSession?.html != nil }
+        model.browser.onOpenFile(.local, "\(root)/guide.html", "install", model.activeSession?.html)
+        await waitUntil { model.session(hostID: .local, path: "\(root)/guide.html")?.html != nil }
+        #expect(model.session(hostID: .local, path: "\(root)/guide.html")?.html?.pendingFragment == "install", "the page's first load scrolls to the anchor")
+        await model.shutDown()
+    }
 }

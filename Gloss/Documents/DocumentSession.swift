@@ -143,6 +143,8 @@ final class DocumentSession: Identifiable {
     @ObservationIgnored var resourceRoot: () -> String? = { nil }
     /// Opens another document on this host, for a relative link clicked in rendered Markdown.
     @ObservationIgnored var openLinkedDocument: (String, String?) -> Void = { _, _ in }
+    /// The anchor a page opened from another page's link (`guide.html#install`) first scrolls to.
+    @ObservationIgnored var initialFragment: String?
     /// For a web page reached through an ssh host's loopback: the tunnels to use. Set before `open`.
     var proxy: WebProxyMap?
     /// The lines a change touched in this document (a pull request's file), asked for on open and after a reload.
@@ -445,6 +447,8 @@ final class DocumentSession: Identifiable {
                     return try await fileSystem.read(resource)
                 }
                 viewer.isLocal = hostID == .local
+                viewer.pendingFragment = initialFragment
+                initialFragment = nil
                 if let sftp = fileSystem as? SFTPFileSystem {
                     viewer.resolveRemotePath = { path in try await sftp.resolvedPath(path) }
                 }

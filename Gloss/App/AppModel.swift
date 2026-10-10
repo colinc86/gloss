@@ -340,13 +340,16 @@ final class AppModel {
         fileSystems[.web] = UnavailableFileSystem(hostID: .web)
         // A page moves the viewer only while it is what the viewer shows: one left running behind another document
         // (a redirect, a refresh, a script) never pulls the reader away.
-        browser.onOpenFile = { [weak self] hostID, path, previous in
+        browser.onOpenFile = { [weak self] hostID, path, fragment, previous in
             guard let self, browserMayMoveViewer(from: previous), let hostID = hostID ?? activeSession?.hostID, hostID != .web else { return }
             Task {
                 // A link to a folder is its index page, as a web server serves `about/`; a folder without one opens
                 // in the explorer rather than as a document that can't show it.
                 guard let page = await self.linkedPage(hostID: hostID, path: path) else { return }
+                let opening = self.session(hostID: hostID, path: page) == nil
                 self.openDocument(hostID: hostID, path: page)
+                // Before the page loads: its first load carries the anchor, and WebKit scrolls there.
+                if opening, let fragment { self.session(hostID: hostID, path: page)?.initialFragment = fragment }
                 self.browserOpened = self.activeSession
             }
         }

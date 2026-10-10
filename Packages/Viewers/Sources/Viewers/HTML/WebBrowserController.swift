@@ -30,7 +30,8 @@ public final class WebBrowserController {
     /// app can tell whether the browser was what the viewer showed.
     @ObservationIgnored public var onDocumentChange: @MainActor (_ url: URL, _ via: HostID?, _ previous: HTMLViewerController?) -> Void = { _, _, _ in }
     /// A link to a file, or Back to one: the host it lives on, its absolute path, and the page that was current.
-    @ObservationIgnored public var onOpenFile: @MainActor (_ host: HostID?, _ path: String, _ previous: HTMLViewerController?) -> Void = { _, _, _ in }
+    /// A link to another file: its host, path, and the `#fragment` it names (an anchor on that page), if any.
+    @ObservationIgnored public var onOpenFile: @MainActor (_ host: HostID?, _ path: String, _ fragment: String?, _ previous: HTMLViewerController?) -> Void = { _, _, _, _ in }
     /// Scheme host keys of the hosts whose files this view has served, back to their ids (WebKit lowercases hosts).
     @ObservationIgnored private var hostKeys: [String: HostID] = [:]
     /// The open document for a served file on a host, so Back and Forward can return to a file without a new
@@ -278,7 +279,13 @@ public final class WebBrowserController {
         refusal = nil
         switch controller.page {
         case .file(let path):
-            guard let url = Self.fileURL(path: path, host: controller.hostID) else { return }
+            guard var url = Self.fileURL(path: path, host: controller.hostID) else { return }
+            // Opened from a link to an anchor on it (`guide.html#install`): WebKit scrolls there as it loads, once.
+            if let fragment = controller.pendingFragment, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                components.fragment = fragment
+                url = components.url ?? url
+            }
+            controller.pendingFragment = nil
             displayedURL = nil
             shownFilePath = path
             shownFileHost = Self.hostKey(controller.hostID)
@@ -406,7 +413,7 @@ public final class WebBrowserController {
             } else {
                 host = current.hostID
             }
-            onOpenFile(host, path, current)
+            onOpenFile(host, path, url.fragment(percentEncoded: false).flatMap { $0.isEmpty ? nil : $0 }, current)
             return .cancel
         case .tunnel(let port, let then):
             if let proxy { tunnel(port: port, then: then, proxy: proxy) }
@@ -481,7 +488,7 @@ public final class WebBrowserController {
             // Back to the page the view just left (a bounce, Back then Forward): it takes the view straight back.
             if current == nil, let released, shows(released) { attach(released, load: false); return }
             release()
-            if let key, let host = hostKeys[key] { onOpenFile(host, url.path, context) }
+            if let key, let host = hostKeys[key] { onOpenFile(host, url.path, nil, context) }
             return
         }
         let proxy = context?.proxy ?? shownProxy ?? loopbackOwner(of: url)
