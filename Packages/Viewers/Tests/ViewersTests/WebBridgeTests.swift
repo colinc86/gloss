@@ -30,8 +30,10 @@ struct WebBridgeTests {
         var documentChanges: [URL] = []
         var urlObservations = 0
         private var observation: NSKeyValueObservation?
+        private let url: URL
 
         init(html: String, url: URL = URL(string: "http://fixture.test/")!) {
+            self.url = url
             page = HTMLViewerController(livePage: url)
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
             browser.webView.frame = window.contentView!.bounds
@@ -53,7 +55,11 @@ struct WebBridgeTests {
         }
 
         func ready() async throws {
-            try await wait("the page to load and align") { page.alignment != nil }
+            // The fixture's own document, loaded: the blank page the web view starts on runs the bridge too, and a
+            // busy machine can let it report first, leaving a test to script a page with no URL.
+            try await wait("the page to load and align") {
+                page.alignment != nil && browser.webView.url?.host == url.host && !browser.webView.isLoading
+            }
         }
 
         /// Runs a function body in the bridge's world and returns its value.
