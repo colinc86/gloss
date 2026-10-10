@@ -90,7 +90,7 @@ private struct OpenWorkRow: View {
                 }
                 Spacer(minLength: DS.Space.m)
                 HStack(spacing: DS.Space.s) {
-                    if item.attention > 0 { count(item.attention, symbol: NoteState.orphaned.style.symbol, tint: .orange, label: "need attention") }
+                    if item.attention > 0 { count(item.attention, symbol: NoteState.orphaned.style.symbol, tint: .orange, label: item.attention == 1 ? "needs attention" : "need attention") }
                     if item.drafts > 0 { count(item.drafts, symbol: NoteState.draft.style.symbol, tint: .secondary, label: item.drafts == 1 ? "draft" : "drafts") }
                     if item.sent > 0 { count(item.sent, symbol: NoteState.sent.style.symbol, tint: .blue, label: "sent") }
                 }
