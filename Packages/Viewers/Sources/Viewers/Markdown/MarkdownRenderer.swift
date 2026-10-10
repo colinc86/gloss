@@ -101,7 +101,7 @@ public struct MarkdownRenderer {
                 attributes[.link] = link
                 attributes[.foregroundColor] = NSColor.linkColor
                 // The real destination on hover: link text can say anything.
-                attributes[.toolTip] = (link as? URL)?.absoluteString ?? "\(link)"
+                attributes[.toolTip] = link
             }
             if codeBackground { attributes[.backgroundColor] = NSColor.quaternarySystemFill }
             return attributes
