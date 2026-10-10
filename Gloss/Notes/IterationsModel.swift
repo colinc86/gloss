@@ -223,7 +223,8 @@ final class IterationsModel {
             session.showChanges(since: nil, snapshot: nil)
             return
         }
-        session.showChanges(since: number, snapshot: String(decoding: data, as: UTF8.self))
+        // Decoded as the document is: read as UTF-8, a Latin-1 snapshot's accents differed from the text on every line.
+        session.showChanges(since: number, snapshot: TextEncoding.decode(data).text)
     }
 
     /// Copies an earlier iteration's note into the current one, found again in the content as it is now (where it
@@ -250,7 +251,7 @@ final class IterationsModel {
     private func currentText(of document: Core.Document) async -> String? {
         if let text = liveSession(document.id)?.baseText { return text }
         guard let fileSystem = fileSystem(document.hostID), let data = try? await fileSystem.read(document.path) else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        return TextEncoding.decode(data).text
     }
 
     func rename(_ iteration: Iteration, to name: String) async {

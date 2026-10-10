@@ -108,6 +108,38 @@ struct IterationFlowTests {
         await model.shutDown()
     }
 
+    /// A file that isn't UTF-8 (Latin-1) is read as its document reads it: Show Changes tints only the line that
+    /// changed, not every line with an accent, and a note brought forward finds its accented text again.
+    @Test func aLatin1FilesIterationsReadItsAccents() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = "\(folder)/menu.txt"
+        func write(_ text: String) throws { try #require(text.data(using: .isoLatin1)).write(to: URL(fileURLWithPath: path)) }
+        try write("café\nnaïve\nplain\n")
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.explorer.openRoot(hostID: .local, path: folder)
+
+        // Brought forward while the file isn't open, so it is read from disk.
+        let document = try await model.noteStore.upsertDocument(hostID: .local, path: path, kind: .text, fingerprint: Fingerprint())
+        let note = try await model.noteStore.createNote(documentID: document.id, anchor: .text(TextAnchor(start: .init(line: 1, col: 1), end: .init(line: 1, col: 5), text: "café", before: "", after: "naïve", hash: "made-on-another-version")), body: "accent", color: .blue)
+        try await model.noteStore.resolve(note.id)
+        await model.iterations.start(document, openNotes: .leave)
+        await model.iterations.bringForward(note, in: document)
+        let current = try await model.noteStore.notes(for: document.id, iteration: 1)
+        #expect(current.count == 1)
+        #expect(current.first?.state != .orphaned, "café is found again")
+
+        // Changed before it is opened, so the only tint is the diff from the iteration's snapshot.
+        try write("café\nnaïve\nplain\nnew\n")
+        model.openDocument(hostID: .local, path: path)
+        let session = try #require(model.activeSession)
+        await waitUntil { session.textController?.text == "café\nnaïve\nplain\nnew\n" }
+        await model.iterations.showChanges(since: 0, in: session)
+        await waitUntil { session.textController?.lineChanges?.added == [4...4] }
+        #expect(session.textController?.lineChanges == LineChanges(added: [4...4]), "only the new line, not the accented ones")
+        await model.shutDown()
+    }
+
     /// A document's header in the notes panel shows an earlier iteration, opening the document first, and its menu
     /// starts the next one.
     @Test func aDocumentsHeaderShowsAndStartsIterations() async throws {
