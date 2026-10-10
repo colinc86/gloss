@@ -31,6 +31,58 @@ public final class SourceTextView: NSTextView {
 
     @objc func addNoteFromMenu(_ sender: Any?) { onAddNote?() }
 
+    // MARK: Indentation
+
+    /// Return keeps the line's indentation, as editors do: a new line in indented code began at the margin.
+    override public func insertNewline(_ sender: Any?) {
+        guard isEditable else { return super.insertNewline(sender) }
+        let text = string as NSString
+        let indent = Self.leadingWhitespace(ofLineAt: selectedRange().location, in: text)
+        insertText("\n" + indent, replacementRange: selectedRange())
+    }
+
+    /// Tab indents as the file does: a tab in a tab-indented file, else spaces to the next stop of its width, so a
+    /// space-indented file doesn't gain stray tabs.
+    override public func insertTab(_ sender: Any?) {
+        // Read-only (an earlier iteration, a file too large to edit): Tab moves the focus on, as it did.
+        guard isEditable else { return super.insertTab(sender) }
+        let text = string as NSString
+        let unit = Self.indentUnit(for: text)
+        guard unit != "\t" else { return super.insertTab(sender) }
+        let lineStart = text.lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
+        let column = selectedRange().location - lineStart
+        insertText(String(repeating: " ", count: unit.count - column % unit.count), replacementRange: selectedRange())
+    }
+
+    /// The spaces and tabs a line starts with, up to `location` at most.
+    nonisolated static func leadingWhitespace(ofLineAt location: Int, in text: NSString) -> String {
+        let line = text.lineRange(for: NSRange(location: min(location, text.length), length: 0))
+        var end = line.location
+        while end < min(location, line.location + line.length), let scalar = Unicode.Scalar(text.character(at: end)), scalar == " " || scalar == "\t" { end += 1 }
+        return text.substring(with: NSRange(location: line.location, length: end - line.location))
+    }
+
+    /// How the file indents, from its first indented lines: the spaces of its smallest indent (2, 4…) when it indents
+    /// with spaces, else a tab, as Tab always typed (a Makefile needs one, and a new file has said nothing yet).
+    nonisolated static func indentUnit(for text: NSString) -> String {
+        var tabs = 0, spaced = 0, smallest = Int.max
+        text.enumerateSubstrings(in: NSRange(location: 0, length: min(text.length, 200_000)), options: [.byLines, .substringNotRequired]) { _, range, _, stop in
+            guard range.length > 0 else { return }
+            let first = text.character(at: range.location)
+            if first == 9 {
+                tabs += 1
+            } else if first == 32 {
+                var count = 0
+                while count < range.length, text.character(at: range.location + count) == 32 { count += 1 }
+                // A lone space (a wrapped comment, a list continuation) says nothing of the indent.
+                if count >= 2, count < range.length { spaced += 1; smallest = min(smallest, count) }
+            }
+            if tabs + spaced >= 200 { stop.pointee = true }
+        }
+        guard spaced > tabs else { return "\t" }
+        return String(repeating: " ", count: min(smallest, 8))
+    }
+
     /// Focus moved to or from the editor, or its window became or stopped being key.
     var onFocusChange: (() -> Void)?
     private var keyObservers: [any NSObjectProtocol] = []
