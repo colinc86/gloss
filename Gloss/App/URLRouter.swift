@@ -86,12 +86,13 @@ enum URLRouter {
                 return nil
             }
             guard let path = query["path"], path.hasPrefix("/") else { return nil }
-            return .open(hostID: hostID, path: path, line: line)
+            return .open(hostID: hostID, path: PathUtilities.lexicallyNormalized(path), line: line)
         case "note":
             let text = query["text"] ?? ""
             let file = query["file"]
             guard !text.isEmpty || file != nil else { return nil }
-            return .note(hostID: hostID, path: query["path"], cwd: query["cwd"], line: query["line"].flatMap(Int.init), text: text, file: file,
+            return .note(hostID: hostID, path: query["path"].map(PathUtilities.lexicallyNormalized), cwd: query["cwd"].map(PathUtilities.lexicallyNormalized),
+                         line: query["line"].flatMap(Int.init), text: text, file: file,
                          color: query["color"].flatMap { NoteColor(rawValue: $0.lowercased()) })
         default:
             return nil

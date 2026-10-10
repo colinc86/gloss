@@ -248,6 +248,7 @@ public actor MCPServer {
             guard path.hasPrefix("/") || DocumentKindDetector.isWebURL(path) else {
                 return .error(statusCode: 400, MCPError.invalidParams("path is required"))
             }
+            if host != "web", !DocumentKindDetector.isWebURL(path) { path = PathUtilities.lexicallyNormalized(path) }
             do {
                 let line = (object["line"] as? Int).flatMap { $0 > 0 ? $0 : nil }
                 try await dependencies.openDocument(host, path, line, nil)
@@ -306,7 +307,8 @@ public actor MCPServer {
         }
         let host = object["host"] as? String ?? "local"
         do {
-            let id = try await dependencies.createDraft(host, object["path"] as? String, object["cwd"] as? String, text)
+            let id = try await dependencies.createDraft(host, (object["path"] as? String).map(PathUtilities.lexicallyNormalized),
+                                                        (object["cwd"] as? String).map(PathUtilities.lexicallyNormalized), text)
             let data = try JSONSerialization.data(withJSONObject: ["note_id": id.rawValue])
             return .data(data, headers: ["Content-Type": "application/json"])
         } catch {
@@ -563,7 +565,7 @@ public actor MCPServer {
                 guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {
                     return CallTool.Result(content: [text("path must be absolute (or give url)")], isError: true)
                 }
-                path = given
+                path = PathUtilities.lexicallyNormalized(given)
             }
             if host != "local", try await hostID(named: host, store: store) == nil {
                 return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
@@ -579,9 +581,10 @@ public actor MCPServer {
             return CallTool.Result(content: [text("showing \(host):\(path)\(at)")])
         case "add_favorite":
             let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
-            guard let path = arguments["path"]?.stringValue, path.hasPrefix("/") else {
+            guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {
                 return CallTool.Result(content: [text("path must be an absolute folder path")], isError: true)
             }
+            let path = PathUtilities.lexicallyNormalized(given)
             if host != "local", try await hostID(named: host, store: store) == nil {
                 return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
             }
@@ -595,9 +598,10 @@ public actor MCPServer {
             return CallTool.Result(content: [text(lines.isEmpty ? "No favorites." : lines.joined(separator: "\n"))])
         case "ask_user":
             let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
-            guard let path = arguments["path"]?.stringValue, path.hasPrefix("/") else {
+            guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {
                 return CallTool.Result(content: [text("path must be absolute")], isError: true)
             }
+            let path = PathUtilities.lexicallyNormalized(given)
             guard let question = arguments["question"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !question.isEmpty else {
                 return CallTool.Result(content: [text("question is required")], isError: true)
             }

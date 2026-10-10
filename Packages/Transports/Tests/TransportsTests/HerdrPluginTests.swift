@@ -44,6 +44,9 @@ struct HerdrPluginTests {
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///tmp/a.md#L12"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fa.md&line=12")
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"/srv/12:30"}"#) == "gloss://open?host=local&path=%2Fsrv%2F12%3A30", "a digits-only name in a directory keeps its colons too")
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"12:30"}"#) == "gloss://open?host=local&path=%2Ftmp%2Fx%2F12%3A30", "a name made only of digits keeps its colons")
+        let encodedHome = home.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? home
+        #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"~/notes/plan.md:3"}"#)
+                == "gloss://open?host=local&path=\(encodedHome)%2Fnotes%2Fplan.md&line=3", "~/ is the home folder, not a folder named ~ in the pane's")
         #expect(run("note", context: #"{"focused_pane_cwd":"/tmp/x"}"#).isEmpty, "no selection: nothing to send")
         let long = String(repeating: "y", count: 7000)
         let longURL = run("note", context: "{\"focused_pane_cwd\":\"/tmp/x\",\"selected_text\":\"\(long)\"}")

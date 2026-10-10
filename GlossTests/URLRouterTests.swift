@@ -29,6 +29,13 @@ struct URLRouterTests {
                 == .note(hostID: .local, path: "/p/a.md", cwd: nil, line: nil, text: "x", file: nil), "an unknown colour falls back to the default")
     }
 
+    /// Notes are keyed by path: a link spelling it with `./` or `../` opens the same document, not a second one.
+    @Test func pathsAreNormalized() {
+        #expect(URLRouter.parse(URL(string: "gloss://open?path=/p/./docs/../a.md")!, hosts: hosts) == .open(hostID: .local, path: "/p/a.md"))
+        #expect(URLRouter.parse(URL(string: "gloss://note?cwd=/p//sub/..&text=x")!, hosts: hosts)
+                == .note(hostID: .local, path: nil, cwd: "/p", line: nil, text: "x", file: nil))
+    }
+
     @Test func linksThatCreateNotesMustCarryTheUsersToken() {
         let token = "ab" + String(repeating: "c", count: 62)
         #expect(URLRouter.carriesToken(URL(string: "gloss://note?text=x&token=\(token)")!, expected: token))

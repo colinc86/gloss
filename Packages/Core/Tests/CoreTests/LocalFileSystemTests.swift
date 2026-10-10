@@ -162,5 +162,11 @@ struct LocalFileSystemTests {
         #expect(PathUtilities.parent(of: "/a") == "/")
         #expect(PathUtilities.relative("/a/b/c.md", to: "/a") == "b/c.md")
         #expect(PathUtilities.relative("/x/c.md", to: "/a") == "/x/c.md")
+        #expect(PathUtilities.lexicallyNormalized("/proj/./docs/../README.md") == "/proj/README.md")
+        #expect(PathUtilities.lexicallyNormalized("//proj//a/") == "/proj/a")
+        #expect(PathUtilities.lexicallyNormalized("/../a") == "/a", "nothing goes above the root")
+        #expect(PathUtilities.lexicallyNormalized("/") == "/")
+        #expect(PathUtilities.lexicallyNormalized("/private/tmp/x") == "/private/tmp/x", "only the text: this Mac's disk is never asked")
+        #expect(PathUtilities.lexicallyNormalized("docs/./a") == "docs/./a", "a relative path is left alone")
     }
 }

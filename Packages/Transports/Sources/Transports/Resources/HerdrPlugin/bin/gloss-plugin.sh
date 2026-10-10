@@ -56,7 +56,8 @@ open)
         line=$(printf '%s' "$path" | sed -n "s|$loc|\\3|p")
         [ -n "$line" ] && path=$(printf '%s' "$path" | sed "s|$loc|\\1|")
     fi
-    case "$path" in /*) ;; *) path="$cwd/$path" ;; esac
+    # `~/x` is in this machine's home folder; any other relative path is in the pane's folder.
+    case "$path" in /*) ;; "~") path="$home" ;; "~/"*) path="$home/${path#\~/}" ;; *) path="$cwd/$path" ;; esac
     if [ "$transport" = url ]; then
         url="gloss://open?host=$(encode "$host")&path=$(encode "$path")"
         [ -n "$line" ] && url="$url&line=$line"

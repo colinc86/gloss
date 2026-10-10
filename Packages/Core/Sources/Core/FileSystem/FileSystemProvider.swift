@@ -170,6 +170,23 @@ public enum PathUtilities {
         (path as NSString).lastPathComponent
     }
 
+    /// An absolute path with `//`, `/./` and `/../` worked out from its text alone, without a trailing slash:
+    /// `/proj/./docs/../README.md` is `/proj/README.md`. Documents and their notes are keyed by path, so a path an
+    /// agent or a link spells another way must not become a second document. Unlike `standardizingPath` it never
+    /// looks at this Mac's disk or home folder, so it holds for a host's paths too. A relative path comes back as it is.
+    public static func lexicallyNormalized(_ path: String) -> String {
+        guard path.hasPrefix("/") else { return path }
+        var parts: [Substring] = []
+        for part in path.split(separator: "/", omittingEmptySubsequences: true) {
+            switch part {
+            case ".": continue
+            case "..": if !parts.isEmpty { parts.removeLast() }
+            default: parts.append(part)
+            }
+        }
+        return "/" + parts.joined(separator: "/")
+    }
+
     /// `/a/b/c.md` relative to root `/a` is `b/c.md`; paths outside the root come back unchanged.
     public static func relative(_ path: String, to root: String) -> String {
         let normalizedRoot = root.hasSuffix("/") ? root : root + "/"
