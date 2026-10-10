@@ -107,14 +107,23 @@ public enum RemoteSearch {
                   let payload = object["data"] as? [String: Any],
                   let path = (payload["path"] as? [String: Any])?["text"] as? String,
                   let number = payload["line_number"] as? Int,
-                  let text = (payload["lines"] as? [String: Any])?["text"] as? String else { return nil }
+                  let text = lineText(payload["lines"] as? [String: Any]) else { return nil }
             return RemoteSearchHit(path: path, line: number, text: text.trimmingCharacters(in: .newlines))
         }
         // `path NUL line:text` (`grepOutputFlags`).
         guard let nul = line.firstIndex(of: 0) else { return nil }
-        let rest = String(decoding: line[line.index(after: nul)...], as: UTF8.self)
-        let parts = rest.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2, let number = Int(parts[0]) else { return nil }
-        return RemoteSearchHit(path: String(decoding: line[..<nul], as: UTF8.self), line: number, text: String(parts[1]))
+        let rest = line[line.index(after: nul)...]
+        guard let colon = rest.firstIndex(of: UInt8(ascii: ":")),
+              let number = Int(String(decoding: rest[..<colon], as: UTF8.self)) else { return nil }
+        let text = TextEncoding.decode(Data(rest[rest.index(after: colon)...])).text
+        return RemoteSearchHit(path: String(decoding: line[..<nul], as: UTF8.self), line: number, text: text)
+    }
+
+    /// A matched line as ripgrep reports it: `text`, or, for a line that isn't UTF-8 (a Latin-1 or Windows-1252
+    /// file), base64 `bytes`, decoded as the viewer decodes that file.
+    private static func lineText(_ lines: [String: Any]?) -> String? {
+        if let text = lines?["text"] as? String { return text }
+        guard let encoded = lines?["bytes"] as? String, let data = Data(base64Encoded: encoded) else { return nil }
+        return TextEncoding.decode(data).text
     }
 }

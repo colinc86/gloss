@@ -113,15 +113,9 @@ final class ContentSearchModel {
         guard let (data, status) = await output(of: rg, arguments: arguments) else { return ([], false) }
         // Status 2 also means "some file was unreadable"; only a pattern the tool rejects on its own is an error.
         let rejected = status == 2 ? await output(of: rg, arguments: ["--no-messages"] + RemoteSearch.ripgrepFlags(regex: regex) + ["-e", pattern, "--", "/dev/null"])?.1 == 2 : false
-        var hits: [SearchHit] = []
-        for line in data.split(separator: 0x0A) {
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
-                  object["type"] as? String == "match",
-                  let payload = object["data"] as? [String: Any],
-                  let path = (payload["path"] as? [String: Any])?["text"] as? String,
-                  let lineNumber = payload["line_number"] as? Int,
-                  let text = (payload["lines"] as? [String: Any])?["text"] as? String else { continue }
-            hits.append(SearchHit(path: path, line: lineNumber, text: text.trimmingCharacters(in: .newlines)))
+        // Read as a remote search reads it, so a line in a Latin-1 file is found here too.
+        let hits: [SearchHit] = data.split(separator: 0x0A).compactMap { line in
+            RemoteSearch.parse(line: Data(line), ripgrep: true).map { SearchHit(path: $0.path, line: $0.line, text: $0.text) }
         }
         return (hits, rejected)
     }

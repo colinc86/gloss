@@ -29,6 +29,20 @@ struct ContentSearchTests {
         #expect(model.hits.isEmpty)
     }
 
+    /// A match in a file that isn't UTF-8 (Latin-1, as old Windows projects have) is listed, read as the viewer reads it.
+    @Test func findsMatchesInALatin1File() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-search-latin1-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        try (Data("intro\ncaf".utf8) + Data([0xE9]) + Data(" needle\n".utf8)).write(to: URL(fileURLWithPath: "\(directory)/old.txt"))
+        let model = ContentSearchModel()
+        model.query = "needle"
+        model.search(in: directory)
+        for _ in 0..<100 where model.isSearching { try await Task.sleep(for: .milliseconds(30)) }
+        #expect(model.hits.map(\.line) == [2])
+        #expect(model.hits.first?.text == "café needle")
+    }
+
     /// Hidden files and folders are searched when the explorer shows them, and left out when it hides them;
     /// `.git` never is.
     @Test func hiddenFilesFollowTheExplorer() async throws {

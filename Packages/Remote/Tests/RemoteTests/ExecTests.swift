@@ -9,6 +9,11 @@ struct RemoteSearchParsingTests {
         #expect(RemoteSearch.parse(line: Data(json.utf8), ripgrep: true) == RemoteSearchHit(path: "/p/a.swift", line: 12, text: "let needle = 1"))
         #expect(RemoteSearch.parse(line: Data(#"{"type":"begin","data":{}}"#.utf8), ripgrep: true) == nil)
         #expect(RemoteSearch.parse(line: Data("/p/b.md\u{0}3:needle: here".utf8), ripgrep: false) == RemoteSearchHit(path: "/p/b.md", line: 3, text: "needle: here"))
+        // A line that isn't UTF-8 (café in Latin-1) comes as base64 bytes from rg and as raw bytes from grep.
+        let latin1 = Data("caf".utf8) + Data([0xE9]) + Data(" needle".utf8)
+        let bytes = #"{"type":"match","data":{"path":{"text":"/p/c.txt"},"lines":{"bytes":"\#(latin1.base64EncodedString())"},"line_number":4}}"#
+        #expect(RemoteSearch.parse(line: Data(bytes.utf8), ripgrep: true) == RemoteSearchHit(path: "/p/c.txt", line: 4, text: "café needle"))
+        #expect(RemoteSearch.parse(line: Data("/p/c.txt\u{0}4:".utf8) + latin1, ripgrep: false) == RemoteSearchHit(path: "/p/c.txt", line: 4, text: "café needle"))
         #expect(RemoteSearch.parse(line: Data("/p/a:b/notes 10:30.md\u{0}1:needle".utf8), ripgrep: false) == RemoteSearchHit(path: "/p/a:b/notes 10:30.md", line: 1, text: "needle"),
                 "grep ends the path with a NUL, so a colon in it is part of the name")
         #expect(RemoteSearch.parse(line: Data("/p/b.md:3:needle".utf8), ripgrep: false) == nil, "a line without the NUL is not a hit")
