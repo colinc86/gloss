@@ -910,10 +910,11 @@ public struct NoteStore: Sendable {
     /// The note's text is gone. Remembers the state it had, so `recoverOrphan` can put it back. A resolved note
     /// stays resolved: its work is done, and the agent rewriting the text it pointed at is the expected outcome,
     /// not something to look at again.
-    public func markOrphaned(_ id: NoteID, at date: Date = Date()) async throws {
+    public func markOrphaned(_ id: NoteID, ifAnchorIs expected: Anchor? = nil, at date: Date = Date()) async throws {
         let date = Self.rounded(date)
         try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
+            guard try Self.anchor(of: record, is: expected) else { return }
             let current = NoteState(rawValue: record.state) ?? .draft
             guard current != .resolved else { return }
             try Self.checkTransition(from: current, to: .orphaned)
@@ -926,10 +927,11 @@ public struct NoteStore: Sendable {
 
     /// An orphan found again (by re-anchoring, or placed by the user): it takes `anchor` and returns to the state
     /// it had before it was orphaned, draft or sent, never silently becoming a draft that could be sent twice.
-    public func recoverOrphan(_ id: NoteID, anchor: Anchor, at date: Date = Date()) async throws {
+    public func recoverOrphan(_ id: NoteID, anchor: Anchor, ifAnchorIs expected: Anchor? = nil, at date: Date = Date()) async throws {
         let date = Self.rounded(date)
         try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
+            guard try Self.anchor(of: record, is: expected) else { return }
             record.anchorJson = try anchor.encodedJSON()
             record.anchorType = anchor.type.rawValue
             if record.state == NoteState.orphaned.rawValue {
@@ -1048,12 +1050,17 @@ public struct NoteStore: Sendable {
     /// (`author` its name), or by Gloss finding the text removed (`author` nil). The first move remembers where the
     /// note was, for `restoreOriginalPlace`; every move adds a `moved` message; an orphan finds its place again as
     /// `recoverOrphan` does. Moving to where the note already is changes nothing.
-    public func applyRelocation(_ noteID: NoteID, to anchor: Anchor, removed: Bool, author: String?, at date: Date = Date()) async throws {
+    /// False when `expected` was given and the note had moved from it, so nothing was written.
+    @discardableResult
+    public func applyRelocation(_ noteID: NoteID, to anchor: Anchor, removed: Bool, author: String?, ifAnchorIs expected: Anchor? = nil,
+                                at date: Date = Date()) async throws -> Bool {
         let date = Self.rounded(date)
-        try await queue.write { db in
+        return try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+            guard try Self.anchor(of: record, is: expected) else { return false }
             try Self.relocate(&record, to: anchor, removed: removed, author: author.map(MessageAuthor.agent) ?? .app, at: date, db)
             try record.update(db)
+            return true
         }
     }
 
@@ -1062,17 +1069,21 @@ public struct NoteStore: Sendable {
     /// Found on changed words (someone rewrote them), it is a move Gloss records as its own, so the thread says so and
     /// Restore Original can return to the words the note was made on. An agent saying where its change is soon
     /// after takes that move over (`relocate`).
-    public func applyReanchor(_ noteID: NoteID, to anchor: Anchor, at date: Date = Date()) async throws {
+    /// `expected`: the anchor the new place was worked out from. When the note has moved since (an agent's move landed
+    /// while the file was being read), that place is stale and nothing is written: the move stands.
+    @discardableResult
+    public func applyReanchor(_ noteID: NoteID, to anchor: Anchor, ifAnchorIs expected: Anchor? = nil, at date: Date = Date()) async throws -> Bool {
         let date = Self.rounded(date)
-        try await queue.write { db in
+        return try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+            guard try Self.anchor(of: record, is: expected) else { return false }
             let current = try Anchor(type: AnchorType(rawValue: record.anchorType) ?? .file, json: record.anchorJson)
             // CRLF files: the stored text and the text found may end their lines differently and still be the same words.
             if case .text(let was) = current, case .text(let now) = anchor,
                ReAnchorer.normalizeNewlines(was.text) != ReAnchorer.normalizeNewlines(now.text) {
                 try Self.relocate(&record, to: anchor, removed: false, author: .app, at: date, db)
             } else {
-                guard anchor != current || record.state == NoteState.orphaned.rawValue else { return }
+                guard anchor != current || record.state == NoteState.orphaned.rawValue else { return true }
                 record.anchorJson = try anchor.encodedJSON()
                 record.anchorType = anchor.type.rawValue
                 if record.state == NoteState.orphaned.rawValue {
@@ -1083,7 +1094,14 @@ public struct NoteStore: Sendable {
                 record.updatedAt = date
             }
             try record.update(db)
+            return true
         }
+    }
+
+    /// Whether the stored anchor is still `expected` (always, when there is none to check).
+    static func anchor(of record: NoteRecord, is expected: Anchor?) throws -> Bool {
+        guard let expected else { return true }
+        return try Anchor(type: AnchorType(rawValue: record.anchorType) ?? .file, json: record.anchorJson) == expected
     }
 
     /// Puts a moved note back where it was before its first move, and says so in the thread.

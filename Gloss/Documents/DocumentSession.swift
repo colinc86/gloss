@@ -1270,7 +1270,7 @@ final class DocumentSession: Identifiable {
         switch result {
         case .unchanged:
             // Exactly what it was when the note was made: an orphan's place is back.
-            if note.state == .orphaned { try await noteStore.recoverOrphan(note.id, anchor: anchor) }
+            if note.state == .orphaned { try await noteStore.recoverOrphan(note.id, anchor: anchor, ifAnchorIs: note.anchor) }
         case .moved(let moved), .movedNeedsReview(let moved):
             if case .movedNeedsReview = result { needsReview.insert(note.id) } else { needsReview.remove(note.id) }
             // An orphan has its place back; found on changed words, the thread records the move (`applyReanchor`).
@@ -1278,15 +1278,23 @@ final class DocumentSession: Identifiable {
                 // This session's own write: when it comes back after typing has begun (the notes arrived late),
                 // it must not be taken for someone else's move and drop the typed shift.
                 anchorsBeingSaved[note.id, default: []].append(moved)
-                try await noteStore.applyReanchor(note.id, to: moved)
+                // Only from the place it was worked out from: an agent's move landing meanwhile stands.
+                if try await !noteStore.applyReanchor(note.id, to: moved, ifAnchorIs: note.anchor) { forgetSaving(moved, for: note.id) }
             }
         case .removed(let point):
             needsReview.remove(note.id)
             anchorsBeingSaved[note.id, default: []].append(point)
-            try await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil)
+            if try await !noteStore.applyRelocation(note.id, to: point, removed: true, author: nil, ifAnchorIs: note.anchor) { forgetSaving(point, for: note.id) }
         case .orphaned:
-            if note.state != .orphaned { try await noteStore.markOrphaned(note.id) }
+            if note.state != .orphaned { try await noteStore.markOrphaned(note.id, ifAnchorIs: note.anchor) }
         }
+    }
+
+    /// A write that didn't happen (the note had moved meanwhile) won't come back to be recognized as this session's.
+    private func forgetSaving(_ anchor: Anchor, for id: NoteID) {
+        guard var pending = anchorsBeingSaved[id], let index = pending.lastIndex(of: anchor) else { return }
+        pending.remove(at: index)
+        anchorsBeingSaved[id] = pending.isEmpty ? nil : pending
     }
 
     /// Re-anchors every text note against new content (reload after an external change, or a file that changed

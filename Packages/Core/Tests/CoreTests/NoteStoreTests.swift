@@ -11,6 +11,27 @@ struct NoteStoreTests {
         try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint(mtime: Date(timeIntervalSince1970: 1), size: 10, hash: "h"))
     }
 
+    /// A reload works out a note's new place from the anchor it read; if an agent moved the note meanwhile, that
+    /// place is stale and is not written over the move.
+    @Test func aStaleReanchorLeavesAnAgentsMove() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        func anchor(_ line: Int, _ text: String) -> Anchor {
+            .text(TextAnchor(start: .init(line: line, col: 1), end: .init(line: line, col: text.count), text: text, before: "", after: ""))
+        }
+        let read = anchor(2, "poll every 60 seconds")
+        let note = try await store.createNote(documentID: document.id, anchor: read, body: "Poll less", color: .yellow)
+        let agentsMove = anchor(4, "poll every 300 seconds")
+        try await store.applyRelocation(note.id, to: agentsMove, removed: false, author: "claude")
+
+        #expect(try await !store.applyReanchor(note.id, to: anchor(3, "stale"), ifAnchorIs: read))
+        #expect(try await !store.applyRelocation(note.id, to: anchor(2, ""), removed: true, author: nil, ifAnchorIs: read))
+        try await store.markOrphaned(note.id, ifAnchorIs: read)
+        let after = try #require(try await store.note(note.id))
+        #expect(after.anchor == agentsMove && after.state == .draft, "the agent's move stands")
+        #expect(try await store.applyReanchor(note.id, to: anchor(5, "poll every 300 seconds"), ifAnchorIs: agentsMove), "from where it is, it moves")
+    }
+
     /// A comment is kept without the blank lines and spaces typed around it, however it was written.
     @Test func commentsAreKeptTrimmed() async throws {
         let store = try makeStore()
