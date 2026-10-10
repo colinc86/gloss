@@ -48,10 +48,51 @@ public final class SourceTextView: NSTextView {
         guard isEditable else { return super.insertTab(sender) }
         let text = string as NSString
         let unit = Self.indentUnit(for: text)
+        // A selection over lines: they are indented, not replaced by a tab (which deleted the code selected).
+        if Self.spansLines(selectedRange(), in: text) { return shiftLines(by: unit, outdent: false) }
         guard unit != "\t" else { return super.insertTab(sender) }
         let lineStart = text.lineRange(for: NSRange(location: selectedRange().location, length: 0)).location
         let column = selectedRange().location - lineStart
         insertText(String(repeating: " ", count: unit.count - column % unit.count), replacementRange: selectedRange())
+    }
+
+    /// Shift-Tab outdents the caret's line, or every line selected, by one indent.
+    override public func insertBacktab(_ sender: Any?) {
+        guard isEditable else { return super.insertBacktab(sender) }
+        shiftLines(by: Self.indentUnit(for: string as NSString), outdent: true)
+    }
+
+    nonisolated static func spansLines(_ range: NSRange, in text: NSString) -> Bool {
+        range.length > 0 && text.substring(with: range).contains(where: \.isNewline)
+    }
+
+    /// The selected lines (the caret's line, with nothing selected), each indented by `unit` or outdented by up to
+    /// one indent, as one undoable change, the lines left selected.
+    private func shiftLines(by unit: String, outdent: Bool) {
+        let text = string as NSString
+        let selection = selectedRange()
+        // A selection ending at a line's start doesn't take that line.
+        let end = selection.length > 0 && selection.location + selection.length <= text.length && text.substring(with: NSRange(location: selection.location + selection.length - 1, length: 1)) == "\n"
+            ? selection.location + selection.length - 1 : selection.location + selection.length
+        let lines = text.lineRange(for: NSRange(location: selection.location, length: max(0, end - selection.location)))
+        let original = text.substring(with: lines)
+        let shifted = Self.shift(original, by: unit, outdent: outdent)
+        guard shifted != original, shouldChangeText(in: lines, replacementString: shifted) else { return }
+        replaceCharacters(in: lines, with: shifted)
+        didChangeText()
+        setSelectedRange(NSRange(location: lines.location, length: (shifted as NSString).length - (shifted.hasSuffix("\n") ? 1 : 0)))
+    }
+
+    /// Each line indented by `unit`, or outdented by up to one indent (a tab, or as many leading spaces as `unit`
+    /// has); empty lines are left as they are.
+    nonisolated static func shift(_ lines: String, by unit: String, outdent: Bool) -> String {
+        let width = unit == "\t" ? 4 : unit.count
+        return lines.split(separator: "\n", omittingEmptySubsequences: false).enumerated().map { index, line -> String in
+            let line = String(line)
+            if !outdent { return line.isEmpty ? line : unit + line }
+            if line.hasPrefix("\t") { return String(line.dropFirst()) }
+            return String(line.dropFirst(min(width, line.prefix { $0 == " " }.count)))
+        }.joined(separator: "\n")
     }
 
     /// The spaces and tabs a line starts with, up to `location` at most.

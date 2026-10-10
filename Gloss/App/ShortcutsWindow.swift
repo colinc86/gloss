@@ -31,6 +31,10 @@ nonisolated struct ShortcutGroup: Identifiable {
             ("Extend the cell selection", ["⇧", "←", "→", "↑", "↓"]),
             ("Clear the selection", ["esc"]),
         ]),
+        ShortcutGroup(title: "Text editor", symbol: "text.cursor", items: [
+            ("Indent the selected lines", ["⇥"]),
+            ("Outdent the line or the selected lines", ["⇧", "⇥"]),
+        ]),
         ShortcutGroup(title: "Find bar (pages, PDFs, spreadsheets)", symbol: "magnifyingglass", items: [
             ("Next match", ["↩"]),
             ("Previous match", ["⇧", "↩"]),

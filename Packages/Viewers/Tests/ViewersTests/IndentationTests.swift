@@ -36,4 +36,34 @@ struct IndentationTests {
         view.insertNewline(nil)
         #expect(view.string == before, "a read-only view gains nothing")
     }
+
+    @Test func linesShiftByOneIndent() {
+        #expect(SourceTextView.shift("a\n\nb", by: "  ", outdent: false) == "  a\n\n  b", "empty lines stay empty")
+        #expect(SourceTextView.shift("    a\n  b\nc", by: "    ", outdent: true) == "a\nb\nc", "only as many spaces as there are")
+        #expect(SourceTextView.shift("\t\ta\n    b", by: "\t", outdent: true) == "\ta\nb")
+    }
+
+    @Test func tabOverSelectedLinesIndentsThem() {
+        let view = SourceTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        view.isEditable = true
+        view.string = "func a() {\n    b()\n    c()\n}\n"
+        view.setSelectedRange(NSRange(location: 13, length: 12))   // from inside "b()" to inside "c()"
+        view.insertTab(nil)
+        #expect(view.string == "func a() {\n        b()\n        c()\n}\n", "the lines are indented, not replaced")
+        #expect(view.selectedRange() == NSRange(location: 11, length: 23), "and stay selected")
+        view.insertBacktab(nil)
+        view.insertBacktab(nil)
+        #expect(view.string == "func a() {\nb()\nc()\n}\n")
+        view.string = "func a() {\n    b()\n    c()\n}\n"
+
+        view.setSelectedRange(NSRange(location: 11, length: 8))   // "    b()\n": the next line is not taken
+        view.insertTab(nil)
+        #expect(view.string == "func a() {\n        b()\n    c()\n}\n")
+        view.setSelectedRange(NSRange(location: 1, length: 0))
+        view.insertBacktab(nil)
+        #expect(view.string == "func a() {\n        b()\n    c()\n}\n", "nothing to outdent")
+        view.setSelectedRange(NSRange(location: 15, length: 0))
+        view.insertTab(nil)
+        #expect(view.string == "func a() {\n            b()\n    c()\n}\n", "a caret still types to the next stop")
+    }
 }
