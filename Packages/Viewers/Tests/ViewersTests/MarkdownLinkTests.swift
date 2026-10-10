@@ -34,6 +34,9 @@ struct MarkdownLinkTests {
         #expect(MarkdownAnchors.headings(in: source).map(\.anchor) == ["gloss", "getting-started", "notes--links", "notes--links-1"])
         #expect(MarkdownAnchors.line(of: "getting-started", in: source) == 3)
         #expect(MarkdownAnchors.line(of: "Notes--Links-1", in: source) == 9, "case aside, the repeat")
+        let nested = "# Top\n\n> ## Quoted\n\n- ### In a list\n\n## Top\n"
+        #expect(MarkdownAnchors.headings(in: nested).map(\.anchor) == ["top", "quoted", "in-a-list", "top-1"], "a heading in a quote or a list item has its anchor too")
+        #expect(MarkdownAnchors.line(of: "in-a-list", in: nested) == 5)
         #expect(MarkdownAnchors.line(of: "not-a-heading", in: source) == nil, "code is not a heading")
     }
 }

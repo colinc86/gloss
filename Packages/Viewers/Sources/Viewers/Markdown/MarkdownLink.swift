@@ -51,7 +51,14 @@ public enum MarkdownAnchors {
     public static func headings(in source: String) -> [(anchor: String, line: Int)] {
         var seen: [String: Int] = [:]
         var result: [(anchor: String, line: Int)] = []
-        for case let heading as Heading in Document(parsing: source).children {
+        // Every heading, as GitHub anchors them: one inside a quote or a list item too, in document order.
+        struct Collector: MarkupWalker {
+            var headings: [Heading] = []
+            mutating func visitHeading(_ heading: Heading) { headings.append(heading) }
+        }
+        var collector = Collector()
+        collector.visit(Document(parsing: source))
+        for heading in collector.headings {
             guard let line = heading.range?.lowerBound.line else { continue }
             let base = slug(heading.plainText)
             let count = seen[base, default: 0]
