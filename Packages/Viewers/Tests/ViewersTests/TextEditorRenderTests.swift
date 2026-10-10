@@ -181,4 +181,42 @@ struct TextEditorRenderTests {
         #expect(tinted > 0, "the added row carries the green tint far from the text")
         #expect(plain > tinted, "only the added row is tinted")
     }
+
+    /// Add Note heads the context menu while text is selected, beside the floating button and ⌘↩.
+    @Test func theContextMenuOffersAddNoteOnASelection() throws {
+        let controller = TextEditorController(text: "one\ntwo\nthree\n", languageName: nil)
+        var added = 0
+        controller.onAddNote = { added += 1 }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        let hosting = NSHostingView(rootView: TextEditorView(controller: controller))
+        hosting.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
+        window.contentView = hosting
+        window.layoutIfNeeded()
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T { return match }
+            for subview in view.subviews { if let found = find(type, in: subview) { return found } }
+            return nil
+        }
+        let textView = try #require(find(SourceTextView.self, in: hosting))
+        let event = try #require(NSEvent.mouseEvent(with: .rightMouseDown, location: NSPoint(x: 20, y: 180), modifierFlags: [], timestamp: 0,
+                                                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        textView.setSelectedRange(NSRange(location: 4, length: 3))
+        let menu = try #require(textView.menu(for: event))
+        #expect(menu.items.first?.title == "Add Note")
+        textView.addNoteFromMenu(nil)
+        #expect(added == 1)
+        // A right-click with nothing selected selects the word under the pointer, as text views do: Add Note is on it.
+        textView.setSelectedRange(NSRange(location: 4, length: 0))
+        let onWord = textView.menu(for: event)
+        #expect(textView.selectedRange() == NSRange(location: 0, length: 3) && onWord?.items.first?.title == "Add Note")
+        // The same menu comes back each time: with nothing selected the item put there before comes out.
+        let menu2 = NSMenu()
+        AddNoteMenuItem.insert(into: menu2, selection: NSRange(location: 0, length: 3), target: textView, action: #selector(SourceTextView.addNoteFromMenu(_:)))
+        menu2.addItem(withTitle: "Copy", action: nil, keyEquivalent: "")
+        AddNoteMenuItem.insert(into: menu2, selection: NSRange(location: 0, length: 0), target: textView, action: #selector(SourceTextView.addNoteFromMenu(_:)))
+        #expect(menu2.items.map(\.title) == ["Copy"])
+        textView.onAddNote = nil
+        textView.setSelectedRange(NSRange(location: 4, length: 3))
+        #expect(textView.menu(for: event)?.items.contains { $0.title == "Add Note" } == false, "where notes can't be added, it isn't offered")
+    }
 }

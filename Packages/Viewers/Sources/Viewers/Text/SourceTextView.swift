@@ -20,6 +20,17 @@ public final class SourceTextView: NSTextView {
     override public func registerForDraggedTypes(_ newTypes: [NSPasteboard.PasteboardType]) {
         super.registerForDraggedTypes(newTypes.filter { $0 != .fileURL && $0.rawValue != "NSFilenamesPboardType" })
     }
+    /// Add Note from the context menu; nil leaves it out (an earlier iteration, read-only).
+    var onAddNote: (() -> Void)?
+
+    override public func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)
+        if let menu { AddNoteMenuItem.insert(into: menu, selection: onAddNote == nil ? NSRange() : selectedRange(), target: self, action: #selector(addNoteFromMenu(_:))) }
+        return menu
+    }
+
+    @objc func addNoteFromMenu(_ sender: Any?) { onAddNote?() }
+
     /// Focus moved to or from the editor, or its window became or stopped being key.
     var onFocusChange: (() -> Void)?
     private var keyObservers: [any NSObjectProtocol] = []

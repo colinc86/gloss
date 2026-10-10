@@ -306,6 +306,17 @@ final class RenderedTextView: NSTextView {
         onLayout?()
     }
 
+    /// Add Note on a selection of the page, as the source editor's menu has it.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)
+        if let menu {
+            AddNoteMenuItem.insert(into: menu, selection: controller?.source.onAddNote == nil ? NSRange() : selectedRange(), target: self, action: #selector(addNoteFromMenu(_:)))
+        }
+        return menu
+    }
+
+    @objc func addNoteFromMenu(_ sender: Any?) { controller?.source.onAddNote?() }
+
     /// The notes list held its place while the window was resized; it follows the page again now.
     override func viewDidEndLiveResize() {
         super.viewDidEndLiveResize()

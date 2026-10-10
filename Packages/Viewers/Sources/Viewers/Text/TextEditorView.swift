@@ -76,6 +76,7 @@ public struct TextEditorView: NSViewRepresentable {
             textView.textStorage?.delegate = self
             textView.onAttachedToWindow = { [weak self] in self?.sync() }
             textView.onFocusChange = { [weak self] in self?.updateCurrentLine() }
+            textView.onAddNote = controller.onAddNote.map { _ in { [weak controller] in controller?.onAddNote?() } }
             textView.onEndLiveResize = { [weak self] in
                 self?.widthMayHaveChanged()
                 // The notes list held its place while the window was resized; it follows the page again now.

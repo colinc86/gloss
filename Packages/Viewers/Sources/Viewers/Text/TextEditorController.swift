@@ -142,6 +142,8 @@ public final class TextEditorController {
     /// Called after the text storage processed an edit, in pre-edit coordinates.
     public var onEdit: (_ edit: NSRange, _ replacementLength: Int) -> Void = { _, _ in }
     public var onTextChange: () -> Void = {}
+    /// Add Note from the text's context menu (the source editor's, or the rendered page's over it); nil offers none.
+    @ObservationIgnored public var onAddNote: (() -> Void)?
     public var onSelectionChange: (NSRange) -> Void = { _ in }
     /// A click in the gutter: the 1-based line, and whether a note marker was hit.
     public var onGutterClick: (_ line: Int, _ noteID: NoteID?) -> Void = { _, _ in }

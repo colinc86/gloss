@@ -434,3 +434,24 @@ struct ZoomControls: View {
         }
     }
 }
+
+/// "Add Note" at the head of a text view's context menu while text is selected, beside the floating button and ⌘↩
+/// (a right-click is where many look first).
+enum AddNoteMenuItem {
+    static let identifier = NSUserInterfaceItemIdentifier("GlossAddNote")
+
+    /// Text views hand back the same menu each time: an item put there for an earlier selection comes out first.
+    static func insert(into menu: NSMenu, selection: NSRange, target: AnyObject, action: Selector) {
+        if let index = menu.items.firstIndex(where: { $0.identifier == identifier }) {
+            menu.removeItem(at: index)
+            if index < menu.items.count, menu.items[index].isSeparatorItem { menu.removeItem(at: index) }
+        }
+        guard selection.length > 0 else { return }
+        let item = NSMenuItem(title: "Add Note", action: action, keyEquivalent: "")
+        item.identifier = identifier
+        item.target = target
+        item.image = NSImage(systemSymbolName: "note.text.badge.plus", accessibilityDescription: nil)
+        menu.insertItem(.separator(), at: 0)
+        menu.insertItem(item, at: 0)
+    }
+}

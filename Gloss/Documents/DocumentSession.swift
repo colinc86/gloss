@@ -394,6 +394,8 @@ final class DocumentSession: Identifiable {
             // Highlighting stays on for a small read-only file (a pull request's); only size turns it off.
             let controller = TextEditorController(text: text, languageName: tooLarge ? nil : GrammarCatalog.languageName(forPath: path))
             controller.isEditable = !isReadOnly
+            // Add Note in the text's context menu, on the iteration in progress only.
+            if pastIteration == nil { controller.onAddNote = { [weak self] in self?.beginNote() } }
             controller.onTextChange = { [weak self] in
                 self?.isDirty = true
                 self?.textChangedUnderChanges()
