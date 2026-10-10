@@ -322,6 +322,26 @@ struct WebBridgeTests {
         #expect(harness.browser.webView.pageZoom == 1)
     }
 
+    /// The page's context menu leaves out what this browser refuses (new windows, downloads), with no stray separators.
+    @Test func theContextMenuLeavesOutNewWindowsAndDownloads() {
+        func item(_ title: String, _ identifier: String) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier(identifier)
+            return item
+        }
+        let menu = NSMenu()
+        menu.addItem(item("Open Link", "WKMenuItemIdentifierOpenLink"))
+        menu.addItem(item("Open Link in New Window", "WKMenuItemIdentifierOpenLinkInNewWindow"))
+        menu.addItem(.separator())
+        menu.addItem(item("Download Linked File", "WKMenuItemIdentifierDownloadLinkedFile"))
+        menu.addItem(.separator())
+        menu.addItem(item("Copy Link", "WKMenuItemIdentifierCopyLink"))
+        menu.addItem(.separator())
+        menu.addItem(item("Download Image", "WKMenuItemIdentifierDownloadImage"))
+        FindingWebView.removeUnavailableItems(from: menu)
+        #expect(menu.items.map { $0.isSeparatorItem ? "—" : $0.title } == ["Open Link", "—", "Copy Link"])
+    }
+
     @Test func pushStateBecomesANewDocument() async throws {
         let harness = Harness(html: Self.fixture)
         try await harness.ready()

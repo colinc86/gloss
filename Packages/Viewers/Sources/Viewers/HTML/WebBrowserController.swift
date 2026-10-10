@@ -1033,6 +1033,29 @@ final class FindingWebView: WKWebView {
         if item.action == #selector(performTextFinderAction(_:)) { return FindMenuAction.action(of: item) != nil }
         return super.validateUserInterfaceItem(item)
     }
+
+    /// WebKit's context menu offers what this browser refuses: new windows (one view shows every page) and downloads.
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        // WebKit fills the menu first; then the items it can't serve here come out.
+        super.willOpenMenu(menu, with: event)
+        Self.removeUnavailableItems(from: menu)
+    }
+
+    static let unavailableMenuItems: Set<String> = [
+        "WKMenuItemIdentifierOpenLinkInNewWindow", "WKMenuItemIdentifierOpenImageInNewWindow", "WKMenuItemIdentifierOpenMediaInNewWindow",
+        "WKMenuItemIdentifierOpenFrameInNewWindow", "WKMenuItemIdentifierDownloadLinkedFile", "WKMenuItemIdentifierDownloadImage",
+        "WKMenuItemIdentifierDownloadMedia",
+    ]
+
+    /// Takes those items out, and the separators they leave doubled or at either end.
+    static func removeUnavailableItems(from menu: NSMenu) {
+        for item in menu.items where unavailableMenuItems.contains(item.identifier?.rawValue ?? "") { menu.removeItem(item) }
+        var previousWasSeparator = true
+        for item in menu.items {
+            if item.isSeparatorItem, previousWasSeparator { menu.removeItem(item) } else { previousWasSeparator = item.isSeparatorItem }
+        }
+        if let last = menu.items.last, last.isSeparatorItem { menu.removeItem(last) }
+    }
 }
 
 extension WebBrowserController: FindBarModel {}
