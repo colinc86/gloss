@@ -39,6 +39,21 @@ struct NotesPanelModelTests {
         return (model, store)
     }
 
+    /// An action that fails says so instead of leaving the note as it was without a word.
+    @Test func aFailedActionSaysSo() async throws {
+        let (model, store) = try await makeModel()
+        let resolved = try #require(model.groups.flatMap(\.notes).first { $0.state == .resolved })
+        await model.reopen(resolved.id)
+        #expect(model.lastError == nil)
+        try await store.deleteForever([resolved.id])
+        await model.reopen(resolved.id)
+        #expect(model.lastError == "Couldn't reopen the note: it was deleted.")
+        model.lastError = nil
+        let draft = try #require(model.groups.flatMap(\.notes).first { $0.body == "Rename the helper" })
+        await model.restoreOriginalPlace(draft.id)
+        #expect(model.lastError?.hasPrefix("Couldn't put the note back where it was: ") == true, "a note that never moved")
+    }
+
     private func bodies(_ model: NotesPanelModel) -> [String] {
         model.visibleGroups.flatMap(\.notes).map(\.body)
     }

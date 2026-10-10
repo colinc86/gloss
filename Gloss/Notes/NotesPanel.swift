@@ -16,11 +16,17 @@ struct NotesPanel: View {
     @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
-        if model.notesPanel.showsRecentlyDeleted {
-            RecentlyDeletedView()
-        } else {
-            notes
+        Group {
+            if model.notesPanel.showsRecentlyDeleted {
+                RecentlyDeletedView()
+            } else {
+                notes
+            }
         }
+        // A resolve, delete or restore that failed said nothing: the note just stayed as it was.
+        .alert("Couldn't Complete the Action", isPresented: Binding(get: { model.notesPanel.lastError != nil }, set: { if !$0 { model.notesPanel.lastError = nil } })) {
+            Button("OK", role: .cancel) { model.notesPanel.lastError = nil }
+        } message: { Text(model.notesPanel.lastError ?? "") }
     }
 
     @ViewBuilder private var notes: some View {

@@ -578,8 +578,30 @@ final class NotesPanelModel {
     /// Notes that can go back to drafts: resolved ones, and sent ones (#13).
     nonisolated static func reopenable(_ notes: [Note]) -> [Note] { notes.filter { $0.state == .resolved || $0.state == .sent } }
 
+    /// Why the last action on notes failed, in a sentence, for the panel's alert; nil when none did.
+    var lastError: String?
+
+    /// Runs a store write, and on failure logs it and says so in `lastError`. False when it failed.
+    @discardableResult
+    private func attempt(_ what: String, _ write: () async throws -> Void) async -> Bool {
+        do {
+            try await write()
+            return true
+        } catch {
+            Log.notes.error("\(what, privacy: .public) failed: \(error, privacy: .public)")
+            // The store's own words are for agents and name note ids; a note gone meanwhile (deleted in another
+            // window, say) is said plainly.
+            let reason = switch error as? NoteStoreError {
+            case .noteNotFound?, .noteDeleted?: "it was deleted."
+            default: error.userMessage
+            }
+            lastError = "Couldn't \(what): \(reason)"
+            return false
+        }
+    }
+
     func resolve(_ id: NoteID) async {
-        do { try await noteStore.resolve(id) } catch { Log.notes.error("resolve failed: \(error, privacy: .public)") }
+        await attempt("resolve the note") { try await noteStore.resolve(id) }
     }
 
     /// Resolves the unresolved notes among `ids` (drafts, sent and orphaned), by hand.
@@ -598,7 +620,7 @@ final class NotesPanelModel {
 
     /// A sent note back to a draft (#13).
     func unsend(_ id: NoteID) async {
-        do { try await noteStore.unsend(id) } catch { Log.notes.error("unsend failed: \(error, privacy: .public)") }
+        await attempt("put the note back to a draft") { try await noteStore.unsend(id) }
     }
 
     /// Why an inline edit couldn't be saved; nil when it was.
@@ -621,7 +643,7 @@ final class NotesPanelModel {
 
     func setColor(_ ids: [NoteID], _ color: NoteColor) async {
         for id in ids {
-            do { try await noteStore.updateColor(id, color: color) } catch { Log.notes.error("color change failed: \(error, privacy: .public)") }
+            guard await attempt("change the note's color", { try await noteStore.updateColor(id, color: color) }) else { return }
         }
     }
 
@@ -647,12 +669,7 @@ final class NotesPanelModel {
             if let note = try? await noteStore.note(id) { batch.append(note) }
         }
         guard !batch.isEmpty else { return }
-        do {
-            try await noteStore.trashNotes(batch.map(\.id))
-        } catch {
-            Log.notes.error("delete failed: \(error, privacy: .public)")
-            return
-        }
+        guard await attempt(batch.count == 1 ? "delete the note" : "delete \(batch.count) notes", { try await noteStore.trashNotes(batch.map(\.id)) }) else { return }
         if !lastDeleted.isEmpty, lastDeleted.map(\.id) != batch.map(\.id) {
             Log.notes.info("undo toast replaced: \(self.lastDeleted.count, privacy: .public) by \(batch.count, privacy: .public) notes")
         }
@@ -739,17 +756,15 @@ final class NotesPanelModel {
     func restoreFromTrash(_ ids: [NoteID]) async {
         let wanted = Set(ids)
         let notes = trashed.map(\.note).filter { wanted.contains($0.id) }
-        do {
+        await attempt("restore from Recently Deleted") {
             let restored = try await noteStore.untrashNotes(ids)
             onRestored(notes.filter { restored.contains($0.id) })
-        } catch {
-            Log.notes.error("restore from Recently Deleted failed: \(error, privacy: .public)")
         }
     }
 
     /// Deletes notes for good, from Recently Deleted.
     func deleteNow(_ ids: [NoteID]) async {
-        do { try await noteStore.deleteForever(ids) } catch { Log.notes.error("delete now failed: \(error, privacy: .public)") }
+        await attempt("delete for good") { try await noteStore.deleteForever(ids) }
     }
 
     /// Deletes for good every note Recently Deleted lists (the folder in front's).
@@ -808,10 +823,7 @@ final class NotesPanelModel {
     /// long answer, and one click on a small trash icon took it for good.
     func deleteFollowUp(_ id: MessageID) async {
         let removed = messages.values.lazy.flatMap { $0 }.first { $0.id == id }
-        do { try await noteStore.deleteFollowUp(id) } catch {
-            Log.notes.error("follow-up delete failed: \(error, privacy: .public)")
-            return
-        }
+        guard await attempt("delete the follow-up", { try await noteStore.deleteFollowUp(id) }) else { return }
         guard let removed, let undo = NSApp?.mainWindow?.undoManager ?? NSApp?.keyWindow?.undoManager else { return }
         undo.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated { _ = Task { await model.restoreFollowUp(removed) } }
@@ -827,14 +839,14 @@ final class NotesPanelModel {
 
     /// Puts a moved note back where it was before its first move.
     func restoreOriginalPlace(_ id: NoteID) async {
-        do { try await noteStore.restoreOriginalPlace(id) } catch { Log.notes.error("restore original place failed: \(error, privacy: .public)") }
+        await attempt("put the note back where it was") { try await noteStore.restoreOriginalPlace(id) }
     }
 
     func reopen(_ id: NoteID) async {
-        do { try await noteStore.reopen(id) } catch { Log.notes.error("reopen failed: \(error, privacy: .public)") }
+        await attempt("reopen the note") { try await noteStore.reopen(id) }
     }
 
     func restoreDraft(_ note: Note) async {
-        do { try await noteStore.updateAnchor(note.id, anchor: note.anchor, state: .draft) } catch { Log.notes.error("restore failed: \(error, privacy: .public)") }
+        await attempt("restore the note") { try await noteStore.updateAnchor(note.id, anchor: note.anchor, state: .draft) }
     }
 }
