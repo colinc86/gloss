@@ -265,6 +265,10 @@ public struct SFTPFileSystem: FileSystemProvider {
                 var lastFile: (UInt64?, UInt32?)?
                 var lastListing: [String: (UInt64?, UInt32?)]?
                 var missing = false
+                // mtime has one-second granularity on SFTP v3: a second write of the same size within the second
+                // a change was seen leaves size and mtime as they were. The content at that change is hashed and
+                // compared once more on the next tick, which is where such a write shows.
+                var hashAtChange: String?
                 while !Task.isCancelled {
                     do {
                         let client = try await channel.client()
@@ -283,7 +287,13 @@ public struct SFTPFileSystem: FileSystemProvider {
                             lastListing = listing
                         } else {
                             let current = (attributes.size, attributes.mtime)
-                            if let previous = lastFile, previous != current { continuation.yield(.changed([path])) }
+                            if let previous = lastFile, previous != current {
+                                continuation.yield(.changed([path]))
+                                hashAtChange = (attributes.size ?? .max) <= Self.recheckLimit ? try? await Self.contentHash(path, client) : nil
+                            } else if let earlier = hashAtChange {
+                                hashAtChange = nil
+                                if let now = try? await Self.contentHash(path, client), now != earlier { continuation.yield(.changed([path])) }
+                            }
                             // Back after being missing: the viewer clears its "Deleted on disk" banner and reloads.
                             if missing { continuation.yield(.changed([path])) }
                             lastFile = current
@@ -303,6 +313,13 @@ public struct SFTPFileSystem: FileSystemProvider {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Files read back to catch a same-second rewrite: larger ones rely on size and mtime alone.
+    static let recheckLimit: UInt64 = 2 * 1024 * 1024
+
+    private static func contentHash(_ path: String, _ client: SFTPClient) async throws -> String {
+        try await client.readFile(path).sha256Hex
     }
 
     // MARK: Mapping
