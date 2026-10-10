@@ -314,6 +314,13 @@ struct NoteStoreTests {
         let sameTarget = try await store.upsertTarget(hostID: .local, transport: "herdr", identityJSON: #"{"pane_id":"w1:p1"}"#, label: "claude · w1:p1", usedAt: Date())
         #expect(target.id == sameTarget.id)
         #expect(try await store.targets(transport: "herdr").map(\.label) == ["claude · w1:p1"])
+        // The same pane under a new agent name, its keys in another order: still the one row, holding the newest JSON.
+        let renamed = try await store.upsertTarget(hostID: .local, transport: "tmux", identityJSON: #"{"target":"%3","command":"node","cwd":"/a"}"#, label: "node")
+        let moved = try await store.upsertTarget(hostID: .local, transport: "tmux", identityJSON: #"{"cwd":"/b","target":"%3","command":"claude"}"#, label: "claude")
+        #expect(renamed.id == moved.id, "a tmux pane is its target, whatever runs in it")
+        #expect(try await store.targets(transport: "tmux").map(\.identityJSON) == [#"{"cwd":"/b","target":"%3","command":"claude"}"#])
+        _ = try await store.upsertTarget(hostID: .local, transport: "tmux", identityJSON: #"{"target":"%4"}"#, label: "other")
+        #expect(try await store.targets(transport: "tmux").count == 2, "another pane is another target")
 
         let sendID = try await store.recordSend(transport: "herdr", targetJSON: "{}", packetText: "p", noteIDs: [], outcome: .delivered)
         try await store.recordStagedFiles(sendID: sendID, hostID: .local, remotePaths: ["/tmp/gloss/x/a.png"], expiresAt: Date(timeIntervalSince1970: 100))

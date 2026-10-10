@@ -1368,11 +1368,22 @@ public struct NoteStore: Sendable {
 
     // MARK: Targets
 
+    /// One row per agent, found by what identifies it (`AgentTarget.id`'s key), not by the JSON's text: a Herdr
+    /// agent's name or a tmux pane's command changes while it is the same agent, and each change used to add a row.
+    /// The row keeps the newest JSON; rows an older build added for the same agent are folded into it.
     public func upsertTarget(hostID: HostID, transport: String, identityJSON: String, label: String, usedAt: Date? = nil) async throws -> KnownTarget {
-        try await queue.write { db in
-            if var existing = try TargetRecord
-                .filter(Column("host_id") == hostID.rawValue && Column("transport") == transport && Column("identity_json") == identityJSON)
-                .fetchOne(db) {
+        // An unknown transport falls back to the whole identity, keys sorted, as any transport without a key does.
+        let kind = TransportKind(rawValue: transport) ?? .clipboard
+        let key = AgentTarget.identityKey(transport: kind, json: identityJSON)
+        return try await queue.write { db in
+            let same = try TargetRecord
+                .filter(Column("host_id") == hostID.rawValue && Column("transport") == transport)
+                .order(Column("last_used_at").desc)
+                .fetchAll(db)
+                .filter { AgentTarget.identityKey(transport: kind, json: $0.identityJson) == key }
+            if var existing = same.first {
+                for duplicate in same.dropFirst() { try duplicate.delete(db) }
+                existing.identityJson = identityJSON
                 existing.label = label
                 if let usedAt { existing.lastUsedAt = Self.rounded(usedAt) }
                 try existing.update(db)
