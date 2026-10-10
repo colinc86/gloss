@@ -1084,21 +1084,27 @@ final class AppModel {
         }
         openDocument(hostID: hostID, path: path)
         guard let session = self.session(hostID: hostID, path: path) else { return }
-        Task {
-            for _ in 0..<50 where session.textController == nil { try? await Task.sleep(for: .milliseconds(50)) }
-            guard let controller = session.textController else { return }
-            let first = controller.lineIndex.contentRange(ofLine: line)
-            let last = controller.lineIndex.contentRange(ofLine: max(line, endLine ?? line))
-            let lines = NSRange(location: first.location, length: last.location + last.length - first.location)
-            let range = select ? lines : NSRange(location: first.location, length: 0)
-            // A jump shows its lines; resuming puts the line where reading stopped back at the top.
-            if let markdown = session.markdown {
-                markdown.scroll(toSource: range, select: select, atTop: !select)
-            } else if let rendered = session.rendered {
-                rendered.scroll(toSource: range, select: select)
-            } else {
-                controller.scroll(to: range, select: select, atTop: !select)
-            }
+        Task { await Self.jump(session, line: line, endLine: endLine, select: select) }
+    }
+
+    /// Shows lines once the document has loaded, however long its host takes to send it: a fixed 2.5 s let a slow
+    /// host's file open at the top with the jump lost. Gives up after two minutes (a load that never ends) and does
+    /// nothing for a document without text (a picture, a PDF).
+    static func jump(_ session: DocumentSession, line: Int, endLine: Int?, select: Bool, timeout: Duration = .seconds(120)) async {
+        let deadline = ContinuousClock.now + timeout
+        while !session.isLoaded, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+        guard let controller = session.textController else { return }
+        let first = controller.lineIndex.contentRange(ofLine: line)
+        let last = controller.lineIndex.contentRange(ofLine: max(line, endLine ?? line))
+        let lines = NSRange(location: first.location, length: last.location + last.length - first.location)
+        let range = select ? lines : NSRange(location: first.location, length: 0)
+        // A jump shows its lines; resuming puts the line where reading stopped back at the top.
+        if let markdown = session.markdown {
+            markdown.scroll(toSource: range, select: select, atTop: !select)
+        } else if let rendered = session.rendered {
+            rendered.scroll(toSource: range, select: select)
+        } else {
+            controller.scroll(to: range, select: select, atTop: !select)
         }
     }
 

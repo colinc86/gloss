@@ -291,3 +291,25 @@ struct OpenFailureMessageTests {
         #expect(DocumentSession.openFailure(FileSystemError.io("timed out")).hasSuffix("timed out"))
     }
 }
+
+/// A jump to a line waits for the document, however long its host takes: a fixed 2.5 s lost it on a slow host.
+@MainActor
+struct LineJumpTests {
+    @Test func aJumpWaitsForASlowDocument() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-jump-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = "\(directory)/a.swift"
+        try (1...40).map { "line \($0)" }.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        let session = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent),
+                                      noteStore: NoteStore(database: try AppDatabase.inMemory()))
+        let jump = Task { await AppModel.jump(session, line: 30, endLine: nil, select: true) }
+        // Longer than the old wait before the document arrives.
+        try await Task.sleep(for: .seconds(3))
+        await session.open()
+        await jump.value
+        let controller = try #require(session.textController)
+        #expect(controller.pendingScroll == controller.lineIndex.contentRange(ofLine: 30))
+        session.close()
+    }
+}
