@@ -68,6 +68,16 @@ struct MCPServerTests {
         return (reply, http?.value(forHTTPHeaderField: "Mcp-Session-Id"), http?.statusCode ?? 0)
     }
 
+    /// Every tool's `path` takes a `file://` link as agents print one, and nothing but an absolute path or such a link.
+    @Test func pathsAcceptFileLinks() {
+        #expect(MCPServer.absolutePath("/p/./a/../b.md") == "/p/b.md")
+        #expect(MCPServer.absolutePath("file:///p/My%20Notes.md") == "/p/My Notes.md")
+        #expect(MCPServer.absolutePath(" file://localhost/p/x ") == "/p/x")
+        #expect(MCPServer.absolutePath("file://otherbox/p/x") == nil, "another machine's file")
+        #expect(MCPServer.absolutePath("relative.md") == nil)
+        #expect(MCPServer.absolutePath("") == nil && MCPServer.absolutePath(nil) == nil)
+    }
+
     /// `open_in_viewer` opens on the session's host (from the registration URL) unless the call names another.
     @Test func openInViewerUsesTheSessionHost() async throws {
         let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-open-\(UUID().uuidString.prefix(8))")

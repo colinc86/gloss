@@ -223,6 +223,17 @@ public actor MCPServer {
         if let portFileURL { try? FileManager.default.removeItem(at: portFileURL) }
     }
 
+    /// A tool's `path`: an absolute path, or a `file://` link to one (as agents print locations), normalized; nil for
+    /// anything else.
+    static func absolutePath(_ given: String?) -> String? {
+        guard let given, !given.isEmpty else { return nil }
+        // A path is taken as written: a name may really end in a space.
+        if given.hasPrefix("/") { return PathUtilities.lexicallyNormalized(given) }
+        let link = given.trimmingCharacters(in: .whitespaces)
+        guard link.lowercased().hasPrefix("file://"), let url = URL(string: link) else { return nil }
+        return filePath(of: url)
+    }
+
     /// A `file://` link (as agents print a location) on the machine that sent it: its path, percent escapes undone.
     /// Nil for any other URL, or a file link naming another machine.
     static func filePath(of url: URL) -> String? {
@@ -462,7 +473,7 @@ public actor MCPServer {
             }
             // Sent notes, and sent notes whose text has since gone (often because the agent removed it, as asked).
             let sentOrphans = try await store.sentOrphanIDs()
-            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue.map(PathUtilities.lexicallyNormalized), states: Self.sharedStates.union([.orphaned]))
+            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue.map { Self.absolutePath($0) ?? PathUtilities.lexicallyNormalized($0) }, states: Self.sharedStates.union([.orphaned]))
                 .filter { $0.note.state != .orphaned || sentOrphans.contains($0.note.id) }
             func anchor(_ note: Note) -> String {
                 note.state == .orphaned ? "\(note.anchor.summary) (text no longer found)" : note.anchor.summary
@@ -575,10 +586,10 @@ public actor MCPServer {
                     return CallTool.Result(content: [text("no viewer for \(raw)")], isError: true)
                 }
             } else {
-                guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {
+                guard let given = Self.absolutePath(arguments["path"]?.stringValue) else {
                     return CallTool.Result(content: [text("path must be absolute (or give url)")], isError: true)
                 }
-                path = PathUtilities.lexicallyNormalized(given)
+                path = given
             }
             if host != "local", try await hostID(named: host, store: store) == nil {
                 return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
@@ -594,10 +605,9 @@ public actor MCPServer {
             return CallTool.Result(content: [text("showing \(host):\(shown.path)\(at)")])
         case "add_favorite":
             let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
-            guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {
+            guard let path = Self.absolutePath(arguments["path"]?.stringValue) else {
                 return CallTool.Result(content: [text("path must be an absolute folder path")], isError: true)
             }
-            let path = PathUtilities.lexicallyNormalized(given)
             if host != "local", try await hostID(named: host, store: store) == nil {
                 return CallTool.Result(content: [text("unknown host \(host)")], isError: true)
             }
@@ -611,10 +621,9 @@ public actor MCPServer {
             return CallTool.Result(content: [text(lines.isEmpty ? "No favorites." : lines.joined(separator: "\n"))])
         case "ask_user":
             let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
-            guard let given = arguments["path"]?.stringValue, given.hasPrefix("/") else {
+            guard let path = Self.absolutePath(arguments["path"]?.stringValue) else {
                 return CallTool.Result(content: [text("path must be absolute")], isError: true)
             }
-            let path = PathUtilities.lexicallyNormalized(given)
             guard let question = arguments["question"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !question.isEmpty else {
                 return CallTool.Result(content: [text("question is required")], isError: true)
             }
