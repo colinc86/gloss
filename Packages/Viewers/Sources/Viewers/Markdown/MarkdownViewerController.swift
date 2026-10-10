@@ -343,6 +343,15 @@ public final class MarkdownViewerController {
         map.sourceRange(forRendered: renderedSelection)
     }
 
+    /// The source lines a span of the rendered text shows; nil when it is generated text with no source (a rule).
+    public func sourceLines(forRendered range: NSRange) -> ClosedRange<Int>? {
+        guard let mapping = map.sourceRange(forRendered: range) else { return nil }
+        let index = source.lineIndex
+        let first = index.position(forUTF16Offset: min(mapping.source.location, index.length)).line
+        let lastOffset = min(max(mapping.source.location, mapping.source.location + mapping.source.length - 1), index.length)
+        return first...max(first, index.position(forUTF16Offset: lastOffset).line)
+    }
+
     /// Source-coordinate highlights projected onto the rendered text. A note on a picture is drawn on the picture
     /// instead, so its embed isn't also tinted.
     public func renderedHighlights() -> [TextHighlight] {

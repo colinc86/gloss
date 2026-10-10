@@ -291,6 +291,24 @@ final class RenderedMinimapView: NSView {
 
         // Until the page catches up with the text, notes would land where the old page had their places.
         guard page.key.version == controller.renderedVersion else { return }
+        // Changes in a lane of their own at the left, under the notes, as in the editor's minimap: each hunk's source
+        // lines found on the page.
+        if let changes = controller.source.lineChanges {
+            let index = controller.source.lineIndex
+            for hunk in MinimapView.hunkMarks(for: changes) {
+                let first = index.contentRange(ofLine: hunk.lines.lowerBound)
+                let last = index.contentRange(ofLine: hunk.lines.upperBound)
+                let source = hunk.isDeletion ? NSRange(location: first.location, length: 0)
+                                             : NSRange(location: first.location, length: last.location + last.length - first.location)
+                let lines = controller.map.renderedRanges(forSource: source).flatMap { page.rects(for: $0) }.map(place)
+                guard let union = lines.dropFirst().reduce(lines.first, { $0?.union($1) }), union.maxY >= 0, union.minY <= bounds.height else { continue }
+                let rect = hunk.isDeletion
+                    ? NSRect(x: 1.5, y: union.minY - 1, width: 3, height: 2)
+                    : NSRect(x: 1.5, y: union.minY, width: 2, height: max(2, union.height))
+                (hunk.isDeletion ? Theme.changeDeletedMarker : Theme.changeBar).setFill()
+                rect.fill()
+            }
+        }
         // Settled notes underneath, open work on top, as in the editor's minimap.
         let order: [NoteState: Int] = [.resolved: 0, .sent: 1, .orphaned: 2, .draft: 3]
         for highlight in controller.renderedHighlights().filter({ !$0.isInvalidated }).sorted(by: { (order[$0.state] ?? 0) < (order[$1.state] ?? 0) }) {

@@ -29,6 +29,13 @@ final class HighlightBackdropView: NSView {
         didSet { if oldValue != lineChanges { needsDisplay = true } }
     }
 
+    /// For a view whose text isn't the source (rendered Markdown): the source lines a laid-out paragraph shows, from
+    /// its character range in the view; nil for one that shows none. Line changes are then matched by source line, a
+    /// paragraph tinted when any of its lines changed.
+    var sourceLines: ((NSRange) -> ClosedRange<Int>?)? {
+        didSet { needsDisplay = true }
+    }
+
     /// The caret's location while nothing is selected and the editor has focus; its line gets a quiet full-width band.
     var caretLocation: Int? {
         didSet { if oldValue != caretLocation { needsDisplay = true } }
@@ -147,6 +154,10 @@ final class HighlightBackdropView: NSView {
     /// Tinted rows and deletion hairlines for the fragments in view: the same walk the guides make, so the cost is
     /// what is on screen, not the file.
     private func drawLineChanges(_ changes: LineChanges, in dirtyRect: NSRect, layoutManager: NSTextLayoutManager, contentManager: NSTextContentManager) {
+        if let sourceLines {
+            drawSourceLineChanges(changes, sourceLines: sourceLines, in: dirtyRect, layoutManager: layoutManager, contentManager: contentManager)
+            return
+        }
         guard let textView, let index = lineIndex(), index.lineCount > 0 else { return }
         let inset = textView.textContainerOrigin
         let documentStart = contentManager.documentRange.location
@@ -172,6 +183,42 @@ final class HighlightBackdropView: NSView {
                 Theme.changeDeletedMarker.setFill()
                 NSRect(x: 0, y: top + rowsHeight - 1 / scale, width: bounds.width, height: 1 / scale).fill()
             }
+            return true
+        }
+    }
+
+    /// Line changes on a view showing the source another way: a paragraph is tinted when a line it shows changed, and
+    /// lines taken out since the paragraph before (or inside it) put a hairline on its top edge.
+    private func drawSourceLineChanges(_ changes: LineChanges, sourceLines: (NSRange) -> ClosedRange<Int>?, in dirtyRect: NSRect,
+                                       layoutManager: NSTextLayoutManager, contentManager: NSTextContentManager) {
+        guard let textView else { return }
+        let inset = textView.textContainerOrigin
+        let documentStart = contentManager.documentRange.location
+        let scale = window?.backingScaleFactor ?? 2
+        guard let first = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, dirtyRect.minY - inset.y))) else { return }
+        // The source line the paragraph above the first drawn one ended on, so a removal between the two is found.
+        var previousEnd = 0
+        if let before = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, first.layoutFragmentFrame.minY - 1))), before !== first {
+            let start = contentManager.offset(from: documentStart, to: before.rangeInElement.location)
+            let end = contentManager.offset(from: documentStart, to: before.rangeInElement.endLocation)
+            previousEnd = sourceLines(NSRange(location: start, length: end - start))?.upperBound ?? 0
+        }
+        layoutManager.enumerateTextLayoutFragments(from: first.rangeInElement.location, options: []) { fragment in
+            let frame = fragment.layoutFragmentFrame
+            if frame.minY + inset.y > dirtyRect.maxY { return false }
+            let start = contentManager.offset(from: documentStart, to: fragment.rangeInElement.location)
+            let end = contentManager.offset(from: documentStart, to: fragment.rangeInElement.endLocation)
+            guard let lines = sourceLines(NSRange(location: start, length: end - start)) else { return true }
+            let top = frame.minY + inset.y
+            if changes.added.contains(where: { $0.overlaps(lines) }) {
+                Theme.changeAddedBackground.setFill()
+                NSRect(x: 0, y: top, width: bounds.width, height: frame.height).fill()
+            }
+            if changes.deletions.contains(where: { $0 > previousEnd && $0 <= lines.upperBound }) {
+                Theme.changeDeletedMarker.setFill()
+                NSRect(x: 0, y: top, width: bounds.width, height: 1 / scale).fill()
+            }
+            previousEnd = max(previousEnd, lines.upperBound)
             return true
         }
     }

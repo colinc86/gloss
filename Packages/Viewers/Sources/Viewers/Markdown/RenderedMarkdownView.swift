@@ -96,6 +96,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         func attach(textView: NSTextView) {
             self.textView = textView
             backdrop = HighlightBackdropView.install(in: textView)
+            backdrop?.sourceLines = { [weak controller] range in controller?.sourceLines(forRendered: range) }
             if let clip = textView.enclosingScrollView?.contentView {
                 clip.postsBoundsChangedNotifications = true
                 scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self, weak backdrop = self.backdrop, weak controller] _ in
@@ -180,6 +181,8 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             backdrop?.entries = controller.renderedHighlights().filter { !$0.isInvalidated }.map {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.source.isFocused($0.id))
             }
+            // An iteration's changes, tinted on the paragraphs that show the changed lines.
+            backdrop?.lineChanges = controller.source.lineChanges
             imageOverlay?.needsDisplay = true
             minimap?.needsDisplay = true
             controller.noteGeometry.changed()
