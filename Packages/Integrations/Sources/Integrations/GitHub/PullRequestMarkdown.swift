@@ -26,7 +26,9 @@ enum PullRequestMarkdown {
     /// with the lines the description and each review comment take (1-based), so a note can name what it is about.
     static func description(_ pull: GitHubPullRequest, files: [GitHubPullRequestFile], reviewComments: [GitHubComment], path: PullRequestPath)
         -> (text: String, body: ClosedRange<Int>, reviews: [(range: ClosedRange<Int>, url: URL)]) {
-        var lines: [String] = ["# \(pull.title)", ""]
+        // GitHub's title, labels and file names are plain text: `app/__init__.py` must not turn bold.
+        let plain = ADFMarkdown.escapeInline
+        var lines: [String] = ["# " + ADFMarkdown.headingText(plain(pull.title)), ""]
         let short = String(pull.head.sha.prefix(7))
         // One fact per list item: Markdown would run adjacent lines into a single paragraph.
         lines.append("- **\(path.repository) #\(pull.number)** · \(state(of: pull)) · by @\(pull.user.login)")
@@ -35,11 +37,11 @@ enum PullRequestMarkdown {
             branches += " · +\(additions) −\(deletions) in \((pull.changedFiles ?? files.count).counted("file"))"
         }
         lines.append(branches)
-        if !pull.labels.isEmpty { lines.append("- Labels: " + pull.labels.map(\.name).joined(separator: ", ")) }
+        if !pull.labels.isEmpty { lines.append("- Labels: " + pull.labels.map { plain($0.name) }.joined(separator: ", ")) }
         if let reviewers = pull.requestedReviewers, !reviewers.isEmpty { lines.append("- Reviewers: " + reviewers.map { "@" + $0.login }.joined(separator: ", ")) }
         let removed = files.filter { $0.status == "removed" }.map(\.filename)
-        if !removed.isEmpty { lines.append("- Removed: " + removed.joined(separator: ", ")) }
-        let renamed = files.compactMap { file in file.previousFilename.map { "\($0) → \(file.filename)" } }
+        if !removed.isEmpty { lines.append("- Removed: " + removed.map(plain).joined(separator: ", ")) }
+        let renamed = files.compactMap { file in file.previousFilename.map { "\(plain($0)) → \(plain(file.filename))" } }
         if !renamed.isEmpty { lines.append("- Renamed: " + renamed.joined(separator: ", ")) }
         // GitHub lists at most 3000 files; a tree from a bigger pull request is not the whole change.
         // Only at the cap: a push between fetching the pull request and its files is not a truncated tree.
@@ -60,7 +62,7 @@ enum PullRequestMarkdown {
                     lines.append("")
                     let start = lines.count + 1
                     let where_ = comment.line ?? comment.originalLine
-                    lines.append("### \(file)" + (where_.map { ":\($0)" } ?? "") + " · @\(comment.user.login) · \(stamp(comment.createdAt))")
+                    lines.append("### " + ADFMarkdown.headingText(plain(file) + (where_.map { ":\($0)" } ?? "") + " · @\(comment.user.login) · \(stamp(comment.createdAt))"))
                     lines.append(contentsOf: bodyLines(comment.body))
                     reviews.append((start...lines.count, comment.htmlUrl))
                 }

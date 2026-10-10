@@ -118,6 +118,19 @@ struct GitHubPullRequestFileSystemTests {
         GitHubPullRequestFileSystem(client: GitHubClient(token: "t", session: stub.session()), pollInterval: poll)
     }
 
+    /// The title and file names are plain text on GitHub: `app/__init__.py` must not turn bold in the description.
+    @Test func headerTextIsEscaped() async throws {
+        let stub = Stub()
+        let pull = Self.pullJSON(sha: "f00d123abcdef").replacingOccurrences(of: #""title":"Name the receiver""#, with: #""title":"Fix __init__ #""#)
+        stub.respond(to: "\(Self.base)/repos/o/r/pulls/2", with: .json(pull))
+        stub.respond(to: "\(Self.base)/repos/o/r/pulls/2/files?page=1&per_page=100", with: .json(#"[{"filename":"app/__init__.py","status":"removed","additions":0,"deletions":4}]"#))
+        stub.respond(to: "\(Self.base)/repos/o/r/issues/2/comments?page=1&per_page=100", with: .json("[]"))
+        stub.respond(to: "\(Self.base)/repos/o/r/pulls/2/comments?page=1&per_page=100", with: .json("[]"))
+        let description = String(decoding: try await provider(stub).read("/o/r/pull/2/Pull request.md"), as: UTF8.self)
+        #expect(description.hasPrefix("# Fix \\_\\_init\\_\\_ \\#\n"), Comment(rawValue: description))
+        #expect(description.contains("- Removed: app/\\_\\_init\\_\\_.py\n"), Comment(rawValue: description))
+    }
+
     @Test func listsTheTreeAndReadsEveryDocument() async throws {
         let stub = Stub()
         Self.serve(stub)
