@@ -321,7 +321,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // A termination signal leaves nobody to answer a prompt: save what can be saved, then give writes
             // already under way a moment to land before the connections they use are closed.
             if signalled, !unsaved.isEmpty { _ = await withDeadline(.seconds(4)) { await model.saveAll() } }
-            for _ in 0..<40 where model.isSavingAnything { try? await Task.sleep(for: .milliseconds(50)) }
+            // A save the reader started (⌘S, then ⌘Q) finishes before its connection closes: on a slow host 2 s cut
+            // it off and the save was lost. A signal leaves little time, so it still waits only briefly.
+            let deadline = ContinuousClock.now + (signalled ? .seconds(2) : .seconds(30))
+            while model.isSavingAnything, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
             await model.shutDown()
             sender.reply(toApplicationShouldTerminate: true)
         }
