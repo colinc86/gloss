@@ -145,6 +145,23 @@ public struct MarkdownRenderer {
         }
     }
 
+    nonisolated private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
+    /// The addresses GitHub links on its own in `text` (UTF-16 ranges) with where each goes: `http(s)://…` as written,
+    /// `www.…` over https, an e-mail address as `mailto:`. A bare `example.com` is left as text, as GitHub leaves it.
+    nonisolated static func autolinks(in text: String) -> [(range: NSRange, link: String)] {
+        guard let detector = linkDetector, text.contains(where: { $0 == "." || $0 == "@" }) else { return [] }
+        let ns = text as NSString
+        return detector.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
+            let written = ns.substring(with: match.range)
+            let lowered = written.lowercased()
+            if lowered.hasPrefix("http://") || lowered.hasPrefix("https://") { return (match.range, written) }
+            if lowered.hasPrefix("www.") { return (match.range, "https://" + written) }
+            if match.url?.scheme == "mailto", written.contains("@"), !written.contains(":") { return (match.range, "mailto:" + written) }
+            return nil
+        }
+    }
+
     /// Fenced-code info string to a grammar name: `swift`, `sh`, `ts`, `py` and friends.
     nonisolated static func grammarName(forFence info: String?) -> String? {
         guard let word = info?.split(whereSeparator: { $0 == " " || $0 == "{" || $0 == "," }).first?.lowercased(), !word.isEmpty else { return nil }
@@ -1216,7 +1233,19 @@ public struct MarkdownRenderer {
                 return
             }
             let (range, exact) = exactness(text, rendered: text.string)
+            let start = output.length
             append(text.string, source: range, exact: exact)
+            if style.link == nil { linkAddresses(in: text.string, at: start) }
+        }
+
+        /// GitHub links a bare `https://…`, `www.…` or e-mail address in text (not in code, not inside a link);
+        /// without it a URL in a README or an issue could not be followed.
+        private mutating func linkAddresses(in string: String, at start: Int) {
+            for (range, link) in MarkdownRenderer.autolinks(in: string) {
+                let target = NSRange(location: start + range.location, length: range.length)
+                guard NSMaxRange(target) <= output.length else { continue }
+                output.addAttributes([.link: link, .foregroundColor: NSColor.linkColor, .toolTip: link], range: target)
+            }
         }
 
         mutating func visitEmphasis(_ emphasis: Emphasis) {

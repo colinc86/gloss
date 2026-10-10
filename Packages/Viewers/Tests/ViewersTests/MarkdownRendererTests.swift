@@ -217,6 +217,30 @@ struct MarkdownRendererTests {
         }
     }
 
+    /// Bare addresses link as GitHub links them: a URL, a www address over https, an e-mail; not in code, not a
+    /// bare domain, and a written link keeps its own target.
+    @Test func bareAddressesBecomeLinks() {
+        func links(_ markdown: String) -> [String] {
+            let output = MarkdownRenderer.render(markdown)
+            var found: [String] = []
+            output.text.enumerateAttribute(.link, in: NSRange(location: 0, length: output.text.length)) { value, range, _ in
+                if let value { found.append((output.text.string as NSString).substring(with: range) + " → \(value)") }
+            }
+            return found
+        }
+        #expect(links("See https://example.com/a?b=1 now.") == ["https://example.com/a?b=1 → https://example.com/a?b=1"], "a trailing full stop stays out")
+        #expect(links("Visit www.example.com today") == ["www.example.com → https://www.example.com"])
+        #expect(links("Mail me@example.com") == ["me@example.com → mailto:me@example.com"])
+        #expect(links("Docs at https://example.com/snake_case_path/x") == ["https://example.com/snake_case_path/x → https://example.com/snake_case_path/x"])
+        #expect(links("Just example.com here").isEmpty, "a bare domain is not a link on GitHub either")
+        #expect(links("Run `curl https://example.com` first").isEmpty, "code stays code")
+        #expect(links("[the site](https://example.org) and more") == ["the site → https://example.org"])
+        let output = MarkdownRenderer.render("See https://example.com now.")
+        let url = (output.text.string as NSString).range(of: "https://example.com")
+        #expect(output.map.sourceRange(forRendered: url).map { ("See https://example.com now." as NSString).substring(with: $0.source) } == "https://example.com",
+                "the link maps to its source as the text did")
+    }
+
     @Test func fenceInfoStringsMapToGrammars() {
         #expect(MarkdownRenderer.grammarName(forFence: "swift") == "swift")
         #expect(MarkdownRenderer.grammarName(forFence: "sh") == "bash")
