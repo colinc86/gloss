@@ -56,6 +56,18 @@ struct CSVGridSelectionTests {
         #expect(grid.isSelected(row: 2, column: 3) && !grid.isSelected(row: 2, column: 0))
     }
 
+    /// After an Excel `sep=;` line the header is line 2: a column note anchors there, and a cell names its own line.
+    @Test func aColumnAfterExcelsSeparatorLineAnchorsOnTheHeader() throws {
+        let grid = CSVGridController(text: "sep=;\nName;Price, EUR\nTea;3,50\n", fileName: "prices.csv")
+        #expect(grid.table.header == ["Name", "Price, EUR"])
+        grid.clickColumn(1, extend: false, toggle: false)
+        let anchor = try #require(grid.selectionAnchor())
+        #expect(anchor.start.line == 2 && anchor.end.line == 2 && anchor.text == "Name;Price, EUR")
+        #expect(anchor.cells == CellSelection(columns: [1], headers: ["Price, EUR"]))
+        grid.click(GridCell(row: 0, column: 1), extend: false, toggle: false)
+        #expect(grid.selectionSummary == "Cell B3")
+    }
+
     @Test func rowClicksKeepPlainLineAnchors() throws {
         let grid = grid()
         grid.clickRow(1, extend: false)

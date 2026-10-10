@@ -316,10 +316,11 @@ public final class CSVGridController {
             return ReAnchorer.make(from: range, in: text, index: lineIndex, hash: hash)
         case .columns(let columns):
             guard !columns.isEmpty else { return nil }
-            // The header record, which may span lines when a quoted name holds a newline.
-            let headerLines = CSVParser.parse(String(text.prefix(65_536)), delimiter: table.delimiter, hasHeader: false).rows.first?.lastLine ?? 1
-            let start = lineIndex.contentRange(ofLine: 1).location
-            let end = lineIndex.contentRange(ofLine: headerLines)
+            // The header record, which may span lines when a quoted name holds a newline, and starts after an
+            // Excel `sep=` line.
+            let header = CSVParser.parse(String(text.prefix(65_536)), delimiter: table.delimiter, hasHeader: false).rows.first
+            let start = lineIndex.contentRange(ofLine: header?.firstLine ?? 1).location
+            let end = lineIndex.contentRange(ofLine: header?.lastLine ?? 1)
             var anchor = ReAnchorer.make(from: NSRange(location: start, length: end.location + end.length - start), in: text, index: lineIndex, hash: hash)
             anchor.cells = CellSelection(columns: Array(columns), headers: columns.map { $0 < table.header.count ? table.header[$0] : "" })
             return anchor

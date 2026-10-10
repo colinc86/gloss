@@ -186,7 +186,7 @@ public enum ReAnchorer {
             keptNames.append(header.fields[columns.last!])
         }
         guard !columns.isEmpty else { return .orphaned }
-        let start = index.contentRange(ofLine: 1).location
+        let start = index.contentRange(ofLine: header.firstLine).location   // after an Excel `sep=` line
         let endRange = index.contentRange(ofLine: header.lastLine)
         var rebuilt = make(from: NSRange(location: start, length: endRange.location + endRange.length - start), in: normalized, index: index, hash: newHash)
         rebuilt.cells = CellSelection(columns: columns, headers: keptNames)

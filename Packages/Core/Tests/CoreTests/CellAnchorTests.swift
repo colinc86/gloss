@@ -161,6 +161,17 @@ struct CellAnchorTests {
         #expect(ReAnchorer.text(anchor, in: "h\n1\n", newHash: "h5") == .orphaned, "the column is gone")
     }
 
+    /// After an Excel `sep=;` line the header is line 2: a column note found again sits on it, not on the sep line.
+    @Test func aColumnAfterExcelsSeparatorLineSitsOnTheHeader() throws {
+        let csv = "sep=;\nName;Price\nTea;3\n"
+        let anchor = columnAnchor(csv, columns: [1], headers: ["Price"])
+        let edited = "sep=;\nId;Name;Price\n1;Tea;3\n"
+        let result = try #require(moved(ReAnchorer.text(anchor, in: edited, newHash: "h2", fileName: "prices.csv")))
+        #expect(result.anchor.cells?.columns == [2] && !result.review)
+        #expect(result.anchor.start.line == 2 && result.anchor.end.line == 2, "\(result.anchor.start)–\(result.anchor.end)")
+        #expect(result.anchor.text == "Id;Name;Price")
+    }
+
     /// A `.tsv` header with a comma in a name is split on tabs, as the grid splits it, when the column is found again.
     @Test func aTSVColumnIsFoundByItsTabs() throws {
         let tsv = "Last, First, Middle, Suffix\tNotes\nDoe, J, Q, Jr\tok\n"
