@@ -342,8 +342,13 @@ final class AppModel {
         // (a redirect, a refresh, a script) never pulls the reader away.
         browser.onOpenFile = { [weak self] hostID, path, previous in
             guard let self, browserMayMoveViewer(from: previous), let hostID = hostID ?? activeSession?.hostID, hostID != .web else { return }
-            openDocument(hostID: hostID, path: path)
-            browserOpened = activeSession
+            Task {
+                // A link to a folder is its index page, as a web server serves `about/`; a folder without one opens
+                // in the explorer rather than as a document that can't show it.
+                guard let page = await self.linkedPage(hostID: hostID, path: path) else { return }
+                self.openDocument(hostID: hostID, path: page)
+                self.browserOpened = self.activeSession
+            }
         }
         browser.tunnelOwner = { [weak self] local in
             guard let self, let (hostID, _) = tunnels.lazy.compactMap({ host, ports in ports.values.contains(local) ? (host, ()) : nil }).first else { return nil }
@@ -1131,6 +1136,18 @@ final class AppModel {
     /// as it would.
     func openDocument(hostID: HostID, path: String, heading: String?) {
         Task { await openLinked(hostID: hostID, path: path, heading: heading) }
+    }
+
+    /// The document a page's link to `path` opens: the path itself, or a folder's `index.html`; nil when it is a
+    /// folder without one, which is opened in the explorer instead.
+    func linkedPage(hostID: HostID, path: String) async -> String? {
+        guard !hostID.isVirtual, await ensureConnected(hostID), let fileSystem = fileSystems[hostID],
+              let attributes = try? await fileSystem.stat(path), attributes.kind == .directory else { return path }
+        let index = PathUtilities.join(path, "index.html")
+        if let page = try? await fileSystem.stat(index), page.kind == .file { return index }
+        pickedHost = hostID
+        await explorer.openRoot(hostID: hostID, path: path)
+        return nil
     }
 
     /// A link to a folder (`[docs](docs/)`, common in a README) opens it in the explorer, as typing it in the address

@@ -280,4 +280,21 @@ struct AddressBarTests {
         #expect(model.session(hostID: .local, path: "\(root)/docs") == nil, "no document tab for a folder")
         await model.shutDown()
     }
+
+    /// A page's link to a folder opens the folder's index page, as a web server serves `about/`; a folder without one
+    /// opens in the explorer.
+    @Test func aPagesLinkToAFolderOpensItsIndex() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-page-folder-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(root)/about", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(root)/assets", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "<h1>About</h1>".write(toFile: "\(root)/about/index.html", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        #expect(await model.linkedPage(hostID: .local, path: "\(root)/about") == "\(root)/about/index.html")
+        #expect(await model.linkedPage(hostID: .local, path: "\(root)/about/index.html") == "\(root)/about/index.html", "a file is itself")
+        #expect(await model.linkedPage(hostID: .local, path: "\(root)/assets") == nil)
+        #expect(model.explorer.selectedTab?.path == "\(root)/assets", "a folder without an index opens in the explorer")
+        await model.shutDown()
+    }
 }
