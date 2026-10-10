@@ -31,6 +31,9 @@ struct FileOutlineView: NSViewRepresentable {
         outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         outline.autoresizingMask = [.width]
         outline.sizeLastColumnToFit()
+        // Dragging a row out copies (Finder never moves a file out from under its notes).
+        outline.setDraggingSourceOperationMask(.copy, forLocal: false)
+        outline.setDraggingSourceOperationMask(.copy, forLocal: true)
         outline.dataSource = context.coordinator
         outline.delegate = context.coordinator
         outline.target = context.coordinator
@@ -57,6 +60,14 @@ struct FileOutlineView: NSViewRepresentable {
         outline.reloadData()
         if let root = model.selectedTab?.node { outline.expandItem(root) }
         return scroll
+    }
+
+    /// What a row drags out as; nil for an integration's document (a pull request's file, an issue), which is a file
+    /// nowhere.
+    nonisolated static func dragItem(hostID: HostID, path: String) -> (any NSPasteboardWriting)? {
+        if hostID == .local { return URL(fileURLWithPath: path) as NSURL }
+        guard !hostID.isVirtual else { return nil }
+        return path as NSString
     }
 
     /// The one column spans exactly the visible sidebar, so a row's trailing note mark sits at its edge.
@@ -97,6 +108,13 @@ struct FileOutlineView: NSViewRepresentable {
         }
 
         // MARK: Data source
+
+        /// A row dragged out of the tree: a file or folder on this Mac as itself (Finder copies it, a terminal or an
+        /// agent's prompt takes its path), one on an ssh host as its path there, which is where the agent reads it.
+        func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
+            guard let node = item as? FileNode else { return nil }
+            return FileOutlineView.dragItem(hostID: node.hostID, path: node.path)
+        }
 
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
             children(of: item).count
