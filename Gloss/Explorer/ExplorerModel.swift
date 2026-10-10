@@ -412,8 +412,11 @@ final class ExplorerModel {
         var node = tab.node
         let relative = target.dropFirst(normalize(tab.path).count).split(separator: "/")
         for component in relative {
-            // A listing already under way (the user just expanded this folder) is waited for, not skipped.
-            for _ in 0..<200 where node.isLoading { try? await Task.sleep(for: .milliseconds(25)) }
+            // A listing already under way (the user just expanded this folder) is waited for, not skipped, however
+            // long a host takes to answer: after a fixed 5 s the reveal stopped at that folder. A failed listing ends
+            // the wait too; two minutes is the backstop.
+            let deadline = ContinuousClock.now + .seconds(120)
+            while node.isLoading, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(25)) }
             if !node.isLoaded { await loadChildren(of: node) }
             // By the path's own component, not the shown name: a Confluence page's folder is named by its title
             // and addressed by its id.

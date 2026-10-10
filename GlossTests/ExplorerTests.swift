@@ -250,3 +250,48 @@ struct ActiveDocumentPathTests {
         #expect(!explorer.holdsActiveDocument(folder("/tmp/gloss-active")))
     }
 }
+
+
+/// A file system whose listing of one folder takes a while, as a slow host's does.
+private struct SlowListing: FileSystemProvider {
+    let local = LocalFileSystem(deleteBehavior: .permanent)
+    let slowFolder: String
+    let delay: Duration
+    var hostID: HostID { .local }
+    func list(_ directory: String) async throws -> [DirectoryEntry] {
+        if directory == slowFolder { try await Task.sleep(for: delay) }
+        return try await local.list(directory)
+    }
+    func stat(_ path: String) async throws -> FileAttributes { try await local.stat(path) }
+    func read(_ path: String) async throws -> Data { try await local.read(path) }
+    func writeAtomically(_ data: Data, to path: String, preservingModeFrom original: FileAttributes?) async throws -> FileAttributes {
+        try await local.writeAtomically(data, to: path, preservingModeFrom: original)
+    }
+    func makeDirectory(_ path: String) async throws { try await local.makeDirectory(path) }
+    func rename(_ path: String, to newPath: String) async throws { try await local.rename(path, to: newPath) }
+    func delete(_ path: String) async throws { try await local.delete(path) }
+    func watch(_ path: String) -> AsyncStream<FileSystemEvent> { local.watch(path) }
+}
+
+@MainActor
+struct ExplorerSlowRevealTests {
+    /// Revealing a file inside a folder whose listing is already under way waits for it, however long the host
+    /// takes: after a fixed 5 s the reveal used to stop at that folder.
+    @Test func aRevealWaitsForASlowListing() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-slow-reveal-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(base)/src", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        try "x".write(toFile: "\(base)/src/deep.txt", atomically: true, encoding: .utf8)
+        let explorer = ExplorerModel(noteStore: NoteStore(database: try AppDatabase.inMemory()))
+        let slow = SlowListing(slowFolder: "\(base)/src", delay: .seconds(6))
+        explorer.fileSystemProvider = { _ in slow }
+        await explorer.openRoot(hostID: .local, path: base)
+        let src = try #require(explorer.selectedTab?.node.children?.first { $0.name == "src" })
+        let expanding = Task { await explorer.loadChildren(of: src) }   // the user expanded it just now
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(src.isLoading)
+        let found = await explorer.reveal(hostID: .local, path: "\(base)/src/deep.txt")
+        await expanding.value
+        #expect(found, "the reveal reached the file once the folder had listed")
+    }
+}
