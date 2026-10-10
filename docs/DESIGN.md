@@ -650,7 +650,8 @@ path. Dropping on the Dock icon is not supported yet.
   the Mac): `magnifyingglass`, a "Find on page" field searching as it is typed, case aside and wrapping, an orange
   "Not found" when nothing matches, previous/next chevrons (⇧⌘G, ⌘G; Return and Shift-Return in the field), and
   Done (Escape too). A PDF has the same bar ("Find in document"): PDFKit has none either; the match found is selected
-  and scrolled to, and the next search starts from it.
+  and scrolled to, and the next search starts from it. So does a spreadsheet's grid ("Find in table"): row by row,
+  each matching cell is selected in turn, as a click would, ready for a note.
 - **Pictures on a page** (decided 2026-10-06): no mode, as in rendered Markdown. A press on an `img`, `picture` or
   `svg` (found through transparent wrappers and links laid over it, never through text or through something that
   paints its own background) starts a picture gesture, except on one inside a button, label or other control, or

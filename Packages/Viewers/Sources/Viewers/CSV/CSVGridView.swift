@@ -66,6 +66,10 @@ public struct CSVGridView: NSViewRepresentable {
         scroll.borderType = .noBorder
         controller.onHighlightsChange = { [weak coordinator = context.coordinator] in coordinator?.refreshAppearance() }
         controller.onSelectionChange = { [weak coordinator = context.coordinator] in coordinator?.refreshAppearance() }
+        controller.onFound = { [weak table] cell in
+            table?.scrollRowToVisible(cell.row)
+            table?.scrollColumnToVisible(cell.column + 1)
+        }
         controller.rectProvider = { [weak coordinator = context.coordinator] selection in coordinator?.rect(for: selection) }
         controller.noteGeometry.viewport = { [weak table] in
             guard let table, table.window != nil else { return nil }
@@ -315,8 +319,14 @@ final class CSVTableView: NSTableView {
         coordinator?.controller.copyCount += 1
     }
 
+    /// Edit › Find, Find Next and Find Previous: a table view takes no find actions itself.
+    override func performTextFinderAction(_ sender: Any?) {
+        if let action = FindMenuAction.action(of: sender) { coordinator?.controller.perform(action) }
+    }
+
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         if item.action == #selector(copy(_:)) { return coordinator?.controller.hasSelection ?? false }
+        if item.action == #selector(performTextFinderAction(_:)) { return FindMenuAction.action(of: item) != nil }
         return super.validateUserInterfaceItem(item)
     }
 
@@ -428,7 +438,12 @@ public struct CSVGridPane: View {
             }
             .animation(Motion.smooth, value: controller.selectionSummary)
             .animation(Motion.smooth, value: controller.hasSelection)
+            if controller.isFinding {
+                FindBar(model: controller, prompt: "Find in table")
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             CSVGridView(controller: controller)
+                .animation(Motion.smooth, value: controller.isFinding)
         }
     }
 }

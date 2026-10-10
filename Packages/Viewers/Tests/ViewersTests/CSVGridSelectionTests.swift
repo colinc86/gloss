@@ -1,3 +1,4 @@
+import AppKit
 import Core
 import Foundation
 import Testing
@@ -154,5 +155,45 @@ struct CSVCopyTests {
         grid.click(GridCell(row: 0, column: 0), extend: false, toggle: false)
         grid.click(GridCell(row: 2, column: 2), extend: false, toggle: true)
         #expect(grid.copyText() == "1\t\t\n\t\t\n\t\t9")
+    }
+}
+
+/// Edit › Find in a spreadsheet: a table view takes no find actions, so the grid answers them with its own bar.
+@MainActor
+struct CSVGridFindTests {
+    static let csv = "name,city,note\nAda,London,likes tea\nBob,Paris,\nCy,london,TEA too\n"
+
+    @Test func findSelectsEachMatchingCellInTurnAndWraps() async {
+        let controller = CSVGridController(text: Self.csv, fileName: "people.csv")
+        controller.perform(.showFindInterface)
+        #expect(controller.isFinding)
+        controller.findText = "london"
+        var found: [GridCell] = []
+        for _ in 0..<3 {
+            await controller.find(backwards: false)
+            if let cell = controller.foundCell { found.append(cell) }
+        }
+        #expect(found == [GridCell(row: 0, column: 1), GridCell(row: 2, column: 1), GridCell(row: 0, column: 1)], "case aside, row by row, wrapping")
+        #expect(controller.selection == .cells([GridCell(row: 0, column: 1)]), "the match is selected, ready for a note")
+        await controller.find(backwards: true)
+        #expect(controller.foundCell == GridCell(row: 2, column: 1), "back from the first goes round to the last")
+
+        controller.findText = "tea"
+        await controller.find(backwards: false)
+        #expect(controller.foundCell == GridCell(row: 2, column: 2), "the search goes on from the last match")
+        controller.findText = "nowhere"
+        await controller.find(backwards: false)
+        #expect(controller.findMissed)
+        controller.endFind()
+        #expect(!controller.isFinding && !controller.findMissed)
+    }
+
+    @Test func theFindMenuIsOfferedOnTheGrid() {
+        let table = CSVTableView()
+        let item = NSMenuItem(title: "", action: #selector(NSResponder.performTextFinderAction(_:)), keyEquivalent: "")
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        #expect(table.validateUserInterfaceItem(item))
+        item.tag = NSTextFinder.Action.replace.rawValue
+        #expect(!table.validateUserInterfaceItem(item))
     }
 }

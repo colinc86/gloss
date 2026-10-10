@@ -113,6 +113,58 @@ public final class CSVGridController {
         }
     }()
 
+    // MARK: Find
+
+    /// The find field over the grid is showing (Edit › Find; a table view has no find bar of its own).
+    public var isFinding = false
+    public var findText = ""
+    public private(set) var findMissed = false
+    /// The cell found last; the next search starts after it.
+    @ObservationIgnored public private(set) var foundCell: GridCell?
+    /// Set by the view: scroll a found cell into sight.
+    @ObservationIgnored public var onFound: (GridCell) -> Void = { _ in }
+
+    func perform(_ action: NSTextFinder.Action) {
+        switch action {
+        case .showFindInterface: isFinding = true
+        case .nextMatch: Task { await find(backwards: false) }
+        case .previousMatch: Task { await find(backwards: true) }
+        case .hideFindInterface: endFind()
+        default: break
+        }
+    }
+
+    /// The next (or previous) cell holding `findText`, row by row, case aside, wrapping; it is selected, as a click
+    /// would, so a note can be added to it straight away.
+    public func find(backwards: Bool) async {
+        let needle = findText
+        let rows = table.rows
+        let columns = max(1, table.columnCount)
+        let total = rows.count * columns
+        guard !needle.isEmpty, total > 0 else {
+            findMissed = false
+            return
+        }
+        let start = (foundCell ?? cursor).map { $0.row * columns + $0.column } ?? (backwards ? total : -1)
+        for step in 1...total {
+            let index = ((start + (backwards ? -step : step)) % total + total) % total
+            let cell = GridCell(row: index / columns, column: index % columns)
+            let fields = rows[cell.row].fields
+            guard cell.column < fields.count, fields[cell.column].range(of: needle, options: .caseInsensitive) != nil else { continue }
+            findMissed = false
+            foundCell = cell
+            click(cell, extend: false, toggle: false)
+            onFound(cell)
+            return
+        }
+        findMissed = true
+    }
+
+    public func endFind() {
+        isFinding = false
+        findMissed = false
+    }
+
     // MARK: Selecting
 
     public func deselectAll() {
@@ -330,3 +382,5 @@ public final class CSVGridController {
         onHighlightsChange()
     }
 }
+
+extension CSVGridController: FindBarModel {}
