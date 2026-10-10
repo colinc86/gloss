@@ -311,6 +311,25 @@ struct NoteStoreTests {
         #expect(!paths.contains("/r/5") && paths.contains("/r/6") && paths.contains("/r/\(total)"), "the oldest unpinned ones went")
     }
 
+    /// A send holds the packet as sent: once its notes are deleted for good it goes too, after its staged files.
+    @Test func aSendGoesWithTheLastOfItsNotes() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let kept = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "kept", color: .blue)
+        let gone = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "secret words", color: .blue)
+        let shared = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "kept + secret words", noteIDs: [kept.id, gone.id], outcome: .delivered)
+        let alone = try await store.recordSend(transport: "tmux", targetJSON: "{}", packetText: "secret words", noteIDs: [gone.id], outcome: .delivered)
+        let staged = try await store.recordSend(transport: "herdr", targetJSON: "{}", packetText: "secret words, staged", noteIDs: [gone.id], outcome: .delivered)
+        try await store.recordStagedFiles(sendID: staged, hostID: .local, remotePaths: ["/tmp/x.png"], expiresAt: Date())
+        func sends() async throws -> Set<String> { Set(try await store.database.queue.read { db in try String.fetchAll(db, sql: "SELECT id FROM send") }) }
+
+        try await store.deleteForever([gone.id])
+        #expect(try await sends() == [shared.rawValue, staged.rawValue], "the send of only that note went; one with another note stays")
+        try await store.deleteStagedFiles(try await store.expiredStagedFiles(now: Date().addingTimeInterval(60)).map(\.id))
+        #expect(try await sends() == [shared.rawValue], "the staged one goes once its files are swept")
+        _ = alone
+    }
+
     @Test func rootsTargetsStagedFilesAndSettings() async throws {
         let store = try makeStore()
         let root = try await store.recordRootOpened(hostID: .local, path: "/tmp/proj", at: Date(timeIntervalSince1970: 5))

@@ -768,11 +768,23 @@ public struct NoteStore: Sendable {
         .sorted { $0.deletedAt != $1.deletedAt ? $0.deletedAt > $1.deletedAt : $0.note.id.rawValue > $1.note.id.rawValue }
     }
 
-    /// Deletes notes for good, with their threads, attachment rows and send links. Attachment files stay on disk for
-    /// the attachment sweep.
+    /// Deletes notes for good, with their threads, attachment rows, send links, and sends left carrying no note.
+    /// Attachment files stay on disk for the attachment sweep.
     public func deleteForever(_ ids: [NoteID]) async throws {
         guard !ids.isEmpty else { return }
-        _ = try await queue.write { db in try NoteRecord.deleteAll(db, keys: ids.map(\.rawValue)) }
+        try await queue.write { db in
+            _ = try NoteRecord.deleteAll(db, keys: ids.map(\.rawValue))
+            try Self.deleteEmptySends(db)
+        }
+    }
+
+    /// A send keeps the packet as sent, the notes' words and excerpts of the files: once none of its notes is left
+    /// it goes too, or a note deleted for good lived on in it. One still owning staged files waits for their sweep.
+    static func deleteEmptySends(_ db: Database) throws {
+        try db.execute(sql: """
+            DELETE FROM send WHERE NOT EXISTS (SELECT 1 FROM send_note WHERE send_note.send_id = send.id)
+                AND NOT EXISTS (SELECT 1 FROM staged_file WHERE staged_file.send_id = send.id)
+            """)
     }
 
     /// Deletes for good every note deleted at or before `date`; returns how many went.
@@ -780,7 +792,10 @@ public struct NoteStore: Sendable {
     public func purgeTrash(olderThan date: Date) async throws -> Int {
         try await queue.write { db in
             try db.execute(sql: "DELETE FROM note WHERE deleted_at IS NOT NULL AND deleted_at <= ?", arguments: [Self.rounded(date)])
-            return db.changesCount
+            let purged = db.changesCount
+            // Also sends emptied by earlier deletes (a document's notes went with it, or an older build's purge).
+            try Self.deleteEmptySends(db)
+            return purged
         }
     }
 
@@ -1371,7 +1386,10 @@ public struct NoteStore: Sendable {
     }
 
     public func deleteStagedFiles(_ ids: [StagedFileID]) async throws {
-        _ = try await queue.write { db in try StagedFileRecord.deleteAll(db, keys: ids.map(\.rawValue)) }
+        try await queue.write { db in
+            _ = try StagedFileRecord.deleteAll(db, keys: ids.map(\.rawValue))
+            try Self.deleteEmptySends(db)
+        }
     }
 
     // MARK: Targets
