@@ -128,7 +128,8 @@ public enum AtlassianPath: Equatable, Sendable {
         return cleaned.isEmpty ? "Untitled" : String(cleaned.prefix(120))
     }
 
-    /// `PROJ-123`, `https://site/browse/PROJ-123`, or a Confluence page URL `https://site/wiki/spaces/KEY/pages/123/Title`.
+    /// `PROJ-123`, `https://site/browse/PROJ-123` (or the board and issue-list addresses of an open issue), or a
+    /// Confluence page URL `https://site/wiki/spaces/KEY/pages/123/Title`.
     public static func parse(reference text: String, site: URL?) -> AtlassianPath? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if isIssueKey(trimmed.uppercased()) {
@@ -140,6 +141,16 @@ public enum AtlassianPath: Equatable, Sendable {
         let parts = url.pathComponents.filter { $0 != "/" }
         if parts.count >= 2, parts[0] == "browse", isIssueKey(parts[1].uppercased()) {
             let key = parts[1].uppercased()
+            return .jiraIssue(project: String(key.split(separator: "-")[0]), key: key)
+        }
+        // An issue opened from a board or backlog (`…/boards/1?selectedIssue=CP-7`) or in the issue list
+        // (`…/projects/CP/issues/CP-7`): the address the browser shows while it is open.
+        let selected = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "selectedIssue" }?.value?.uppercased()
+        if let issues = parts.lastIndex(of: "issues"), issues + 1 < parts.count, isIssueKey(parts[issues + 1].uppercased()) {
+            let key = parts[issues + 1].uppercased()
+            return .jiraIssue(project: String(key.split(separator: "-")[0]), key: key)
+        }
+        if let key = selected, isIssueKey(key) {
             return .jiraIssue(project: String(key.split(separator: "-")[0]), key: key)
         }
         if let spaces = parts.firstIndex(of: "spaces"), parts.count > spaces + 3, parts[spaces + 2] == "pages", parts[spaces + 3].allSatisfy(\.isNumber) {
