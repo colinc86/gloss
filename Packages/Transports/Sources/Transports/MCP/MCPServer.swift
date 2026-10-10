@@ -451,7 +451,7 @@ public actor MCPServer {
             }
             // Sent notes, and sent notes whose text has since gone (often because the agent removed it, as asked).
             let sentOrphans = try await store.sentOrphanIDs()
-            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue, states: Self.sharedStates.union([.orphaned]))
+            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue.map(PathUtilities.lexicallyNormalized), states: Self.sharedStates.union([.orphaned]))
                 .filter { $0.note.state != .orphaned || sentOrphans.contains($0.note.id) }
             func anchor(_ note: Note) -> String {
                 note.state == .orphaned ? "\(note.anchor.summary) (text no longer found)" : note.anchor.summary

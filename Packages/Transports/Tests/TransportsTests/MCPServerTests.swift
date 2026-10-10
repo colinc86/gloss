@@ -130,6 +130,10 @@ struct MCPServerTests {
         }
         let listing = try await call("list_pending_notes")
         #expect(listing.text.contains(ids[0].rawValue) && !listing.text.contains(draft.id.rawValue) && !listing.text.contains("unsent draft"))
+        // A folder spelled with `./` or `..` lists the same notes as the plain path.
+        let spelled = try await call("list_pending_notes", ["path": .string("/tmp/other/../demo/./")])
+        #expect(spelled.text.contains(ids[0].rawValue), "\(spelled.text)")
+        #expect(!(try await call("list_pending_notes", ["path": .string("/tmp/dem")])).text.contains(ids[0].rawValue), "a prefix of a folder's name is another folder")
         #expect(try await call("get_note", ["id": .string(draft.id.rawValue)]).isError)
         #expect(try await call("resolve_note", ["id": .string(draft.id.rawValue)]).isError)
         #expect(try await store.note(draft.id)?.state == .draft)
