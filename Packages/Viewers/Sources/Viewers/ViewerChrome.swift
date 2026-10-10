@@ -389,11 +389,12 @@ enum FindMenuAction {
     }
 }
 
-/// Zoom out, the zoom level (a click goes to actual size), zoom in, and Fit, with ⌘−, ⌘1, ⌘=, ⌘0: the image viewer's
-/// and the PDF viewer's alike.
+/// Zoom out, the zoom level (a click goes to actual size), zoom in, and Fit, with ⌘−, ⌘1, ⌘=, ⌘0: the image viewer's,
+/// the PDF viewer's and a web page's (without Fit) alike.
 struct ZoomControls: View {
     let magnification: CGFloat
-    let fitHelp: String
+    /// Nil leaves Fit out (a web page has nothing to fit).
+    let fitHelp: String?
     let zoom: (ImageViewerController.ZoomCommand) -> Void
 
     var body: some View {
@@ -418,16 +419,18 @@ struct ZoomControls: View {
                 .accessibilityLabel("Zoom in")
         }
         .animation(Motion.snappy, value: magnification)
-        ToolGroup {
-            Button { zoom(.fit) } label: {
-                ViewThatFits(in: .horizontal) {
-                    Label("Fit", systemImage: "arrow.down.right.and.arrow.up.left").fixedSize()
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+        if let fitHelp {
+            ToolGroup {
+                Button { zoom(.fit) } label: {
+                    ViewThatFits(in: .horizontal) {
+                        Label("Fit", systemImage: "arrow.down.right.and.arrow.up.left").fixedSize()
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    }
                 }
+                .accessibilityLabel("Fit")
+                .keyboardShortcut("0", modifiers: [.command])
+                .help(fitHelp)
             }
-            .accessibilityLabel("Fit")
-            .keyboardShortcut("0", modifiers: [.command])
-            .help(fitHelp)
         }
     }
 }

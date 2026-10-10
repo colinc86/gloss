@@ -58,6 +58,24 @@ public final class WebBrowserController {
     /// The page draws a chosen picture; once the app's selection is cleared, the drawing goes too.
     @ObservationIgnored private var pageShowsPicture = false
 
+    // MARK: Zoom
+
+    /// The page's zoom (1 = actual size), shared by every page the one web view shows, as a browser window's is.
+    public private(set) var pageZoom: CGFloat = 1
+    /// Safari's steps.
+    static let zoomSteps: [CGFloat] = [0.5, 0.75, 0.85, 1, 1.15, 1.25, 1.5, 1.75, 2, 2.5, 3]
+
+    public func zoom(_ command: ImageViewerController.ZoomCommand) {
+        let current = webView.pageZoom
+        let next: CGFloat = switch command {
+        case .fit, .actualSize: 1
+        case .zoomIn: Self.zoomSteps.first { $0 > current + 0.001 } ?? current
+        case .zoomOut: Self.zoomSteps.last { $0 < current - 0.001 } ?? current
+        }
+        webView.pageZoom = next
+        pageZoom = next
+    }
+
     // MARK: Find
 
     /// The find field over the page is showing: Edit › Find (⌘F) on the page, which has no find bar of its own.

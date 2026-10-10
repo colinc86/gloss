@@ -307,6 +307,21 @@ struct WebBridgeTests {
         #expect(!harness.browser.isFinding && !harness.browser.findMissed)
     }
 
+    /// A page zooms in Safari's steps, as a picture and a PDF zoom, and back to actual size.
+    @Test func thePageZooms() async throws {
+        let harness = Harness(html: Self.fixture)
+        try await harness.ready()
+        harness.browser.zoom(.zoomIn)
+        #expect(harness.browser.webView.pageZoom == 1.15 && harness.browser.pageZoom == 1.15)
+        harness.browser.zoom(.zoomOut)
+        harness.browser.zoom(.zoomOut)
+        #expect(harness.browser.webView.pageZoom == 0.85)
+        for _ in 0..<10 { harness.browser.zoom(.zoomOut) }
+        #expect(harness.browser.pageZoom == 0.5, "no smaller than half")
+        harness.browser.zoom(.actualSize)
+        #expect(harness.browser.webView.pageZoom == 1)
+    }
+
     @Test func pushStateBecomesANewDocument() async throws {
         let harness = Harness(html: Self.fixture)
         try await harness.ready()

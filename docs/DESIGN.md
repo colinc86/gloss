@@ -643,7 +643,8 @@ path. Dropping on the Dock icon is not supported yet.
   and the notes panel use. Trailing, in Rendered mode: Pick Element (`rectangle.dashed` and its name, accent-filled
   while on, also Notes › Pick Element on Page, ⇧⌘E, enabled only on a rendered page; while on, the hints `↑ ↓ Parent,
   child` and `esc Leave`), Reload (`arrow.clockwise`, for a file it runs the page and its scripts again
-  keeping the scroll place), then the Rendered/Source switch; a live page's Source is its current DOM, read-only.
+  keeping the scroll place), the zoom controls a picture and a PDF have (zoom out, the level, which goes to actual
+  size, zoom in; ⌘−, ⌘1, ⌘=; Safari's steps from 50% to 300%, shared by every page), then the Rendered/Source switch; a live page's Source is its current DOM, read-only.
   While the page loads, a 2 pt accent line (`LoadProgressLine`) grows along the toolbar's bottom edge; at the end it
   fills, then fades after 350 ms, instead of vanishing mid-way.
   Edit › Find (⌘F) on a rendered page opens a 30 pt find bar under the toolbar (WebKit has no find bar of its own on

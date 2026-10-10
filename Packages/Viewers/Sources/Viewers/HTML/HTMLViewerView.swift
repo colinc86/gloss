@@ -78,6 +78,8 @@ public struct HTMLViewerView: View {
                             .accessibilityLabel("Reload")
                     }
                     .transition(.opacity)
+                    ZoomControls(magnification: browser.pageZoom, fitHelp: nil) { browser.zoom($0) }
+                        .transition(.opacity)
                 }
                 ModeSwitch([
                     .init(HTMLViewerController.Mode.rendered, "Rendered", symbol: "eye"),
