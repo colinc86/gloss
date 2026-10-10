@@ -94,7 +94,7 @@ private struct RecentFolderRow: View {
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 0) {
                     Text((root.path as NSString).lastPathComponent).font(.callout.weight(.medium))
-                    Text((root.path as NSString).deletingLastPathComponent.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                    Text(SwitcherEntry.subtitle(hostID: root.hostID, path: root.path))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

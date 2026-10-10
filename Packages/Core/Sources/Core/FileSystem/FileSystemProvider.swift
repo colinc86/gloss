@@ -187,6 +187,14 @@ public enum PathUtilities {
         return "/" + parts.joined(separator: "/")
     }
 
+    /// `~` for `home` at the start of `path`, as a whole folder: `/Users/me/src` is `~/src`, `/Users/meg` stays.
+    public static func abbreviatingHome(_ path: String, home: String) -> String {
+        let home = home.hasSuffix("/") && home.count > 1 ? String(home.dropLast()) : home
+        guard !home.isEmpty, home != "/" else { return path }
+        if path == home { return "~" }
+        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+
     /// `/a/b/c.md` relative to root `/a` is `b/c.md`; paths outside the root come back unchanged.
     public static func relative(_ path: String, to root: String) -> String {
         let normalizedRoot = root.hasSuffix("/") ? root : root + "/"

@@ -145,7 +145,9 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
         switch hostID {
         case .github: "Pull request"
         case .atlassian: path.hasPrefix("/jira") ? "Jira project" : "Confluence space"
-        default: (path as NSString).deletingLastPathComponent.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        // `~` is this Mac's home; a host's folders are shown as they are.
+        case .local: PathUtilities.abbreviatingHome(PathUtilities.parent(of: path), home: NSHomeDirectory())
+        default: PathUtilities.parent(of: path)
         }
     }
 
