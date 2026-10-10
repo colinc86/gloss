@@ -222,7 +222,7 @@ public actor SSHConnection {
         do {
             process = try ChildProcess.launch(spec)
         } catch {
-            let failure = SSHError.other("ssh could not start: \(error)")
+            let failure = SSHError.other("ssh could not start: \(error.userMessage)")
             state = .failed(failure)
             events.yield(.failed(hostID, failure))
             throw failure

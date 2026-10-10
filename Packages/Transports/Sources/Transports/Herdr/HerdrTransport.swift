@@ -196,7 +196,7 @@ public actor HerdrTransport: Transport {
             }
         case .requestTooLarge: return .packetTooLarge(limit: HerdrError.lineLimit)
         case .connection(let message): return .targetUnavailable(message)
-        default: return .failed("\(error)")
+        default: return .failed(error.userMessage)
         }
     }
 

@@ -254,7 +254,7 @@ public actor MCPServer {
                 try await dependencies.openDocument(host, path, line, nil)
                 return .ok(headers: ["Content-Length": "0"])
             } catch {
-                return .error(statusCode: 500, MCPError.internalError("\(error)"))
+                return .error(statusCode: 500, MCPError.internalError(error.userMessage))
             }
         default:
             return .error(statusCode: 404, MCPError.methodNotFound("no route for \(request.path ?? "/")"))
@@ -284,7 +284,7 @@ public actor MCPServer {
         do {
             try await server.start(transport: transport) { info, _ in client.set(info.name) }
         } catch {
-            return .error(statusCode: 500, MCPError.internalError("\(error)"))
+            return .error(statusCode: 500, MCPError.internalError(error.userMessage))
         }
         sessions[id] = Session(server: server, transport: transport, lastUsed: Date())
         let response = await transport.handleRequest(request)
@@ -312,7 +312,7 @@ public actor MCPServer {
             let data = try JSONSerialization.data(withJSONObject: ["note_id": id.rawValue])
             return .data(data, headers: ["Content-Type": "application/json"])
         } catch {
-            return .error(statusCode: 500, MCPError.internalError("\(error)"))
+            return .error(statusCode: 500, MCPError.internalError(error.userMessage))
         }
     }
 
@@ -574,7 +574,7 @@ public actor MCPServer {
             do {
                 (line, endLine) = try lines(arguments)
             } catch {
-                return CallTool.Result(content: [text("\(error)")], isError: true)
+                return CallTool.Result(content: [text(error.userMessage)], isError: true)
             }
             try await dependencies.openDocument(host, path, line, endLine)
             let at = line.map { start in endLine.map { $0 > start ? " at lines \(start)-\($0)" : " at line \(start)" } ?? " at line \(start)" } ?? ""
@@ -612,7 +612,7 @@ public actor MCPServer {
             do {
                 (line, endLine) = try lines(arguments)
             } catch {
-                return CallTool.Result(content: [text("\(error)")], isError: true)
+                return CallTool.Result(content: [text(error.userMessage)], isError: true)
             }
             let quoted = arguments["text"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
             do {
@@ -701,7 +701,7 @@ public actor MCPServer {
         } catch let refusal as Refusal {
             return .failure(refusal)
         } catch {
-            let reason = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            let reason = error.userMessage
             return .failure(Refusal(description: "couldn't move the note, so nothing was written: \(reason)"))
         }
     }

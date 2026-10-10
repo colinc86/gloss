@@ -142,7 +142,7 @@ public struct SFTPFileSystem: FileSystemProvider {
             throw Self.map(status, path: path)
         }
         do { try await client.close(handle: handle) }
-        catch { throw FileSystemError.io("The file was created, but closing it failed: \(error). Refresh the folder before trying again.") }
+        catch { throw FileSystemError.io("The file was created, but closing it failed: \(error.userMessage). Refresh the folder before trying again.") }
         return try await stat(path)
     }
 
