@@ -1324,8 +1324,8 @@ final class AppModel {
         let attributes = try await fileSystem.stat(question.path)
         guard attributes.kind == .file else { throw DeliveryError.failed("\(question.path) is not a file") }
         var anchor = Anchor.wholeFile
-        if question.line != nil || question.text != nil, attributes.size <= DocumentSession.refuseThreshold {
-            let data = try await fileSystem.read(question.path)
+        if question.line != nil || question.text != nil, attributes.size <= DocumentSession.refuseThreshold,
+           case let data = try await fileSystem.read(question.path), Self.takesLineAnchors(DocumentKindDetector.kind(forPath: question.path), data) {
             // Decoded and hashed as an open document does, so the document finds the anchor as made.
             let text = TextEncoding.decode(data).text
             let index = LineIndex(text)
@@ -1400,6 +1400,17 @@ final class AppModel {
         return try AnchorRelocator.relocate(anchor, to: target, content: text, hash: Data(text.utf8).sha256Hex)
     }
 
+    /// Whether a file's lines make a note's place: text the viewers show as text. A picture's or a PDF's bytes are
+    /// not lines, and a note made on them could never be shown or quoted; such a question is on the whole file.
+    nonisolated static func takesLineAnchors(_ kind: DocumentKind, _ data: Data) -> Bool {
+        switch kind {
+        case .text, .code, .markdown, .csv: true
+        // An extension nobody listed opens as text when its bytes look like text.
+        case .file: DocumentKindDetector.looksLikeText(data)
+        case .image, .pdf, .web: false
+        }
+    }
+
     /// Where `needle` occurs in `text`, nearest `line` when it occurs more than once.
     nonisolated static func occurrence(of needle: String, in text: String, index: LineIndex, nearLine line: Int?) -> NSRange? {
         let ns = text as NSString
@@ -1429,7 +1440,8 @@ final class AppModel {
             var anchor = Anchor.wholeFile
             let size = (try? await fileSystem.stat(path))?.size ?? 0
             // The viewer refuses files above this size; downloading one just to place a line anchor would be worse.
-            if let line, size <= DocumentSession.refuseThreshold, let data = try? await fileSystem.read(path) {
+            if let line, size <= DocumentSession.refuseThreshold, let data = try? await fileSystem.read(path),
+               Self.takesLineAnchors(DocumentKindDetector.kind(forPath: path), data) {
                 let text = TextEncoding.decode(data).text
                 let index = LineIndex(text)
                 let range = index.contentRange(ofLine: line)

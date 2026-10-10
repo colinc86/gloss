@@ -23,4 +23,16 @@ struct AgentControlTests {
         #expect(found.map { (text as NSString).substring(with: $0) } == "first line\r\nsecond line")
         #expect(found.map { index.position(forUTF16Offset: $0.location).line } == 2)
     }
+
+    /// A question (or a linked note) with a line on a picture or a PDF is on the whole file: their bytes are not lines.
+    @Test func onlyTextFilesTakeLineAnchors() {
+        let text = Data("one\ntwo\n".utf8)
+        let binary = Data([0x25, 0x50, 0x44, 0x46, 0x00, 0x01, 0x02])
+        #expect(AppModel.takesLineAnchors(.markdown, text))
+        #expect(AppModel.takesLineAnchors(.csv, text))
+        #expect(!AppModel.takesLineAnchors(.pdf, binary))
+        #expect(!AppModel.takesLineAnchors(.image, binary))
+        #expect(AppModel.takesLineAnchors(.file, text), "an unlisted extension holding text opens as text")
+        #expect(!AppModel.takesLineAnchors(.file, binary))
+    }
 }
