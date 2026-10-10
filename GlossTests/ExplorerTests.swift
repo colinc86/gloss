@@ -329,3 +329,12 @@ struct DuplicateTests {
         #expect(try await ExplorerModel.duplicate("\(root)/Makefile", in: root, using: fileSystem) == "\(root)/Makefile copy")
     }
 }
+
+struct FreeNameTests {
+    @Test func aNewItemIsOfferedANameNotTaken() {
+        #expect(ExplorerModel.freeName("untitled.txt", among: ["a.md"], isFolder: false) == "untitled.txt")
+        #expect(ExplorerModel.freeName("untitled.txt", among: ["untitled.txt", "Untitled 2.txt"], isFolder: false) == "untitled 3.txt", "case is ignored, as on the Mac")
+        #expect(ExplorerModel.freeName("untitled folder", among: ["untitled folder"], isFolder: true) == "untitled folder 2")
+        #expect(ExplorerModel.freeName("v1.2", among: ["v1.2"], isFolder: true) == "v1.2 2", "a folder's dot is not an extension")
+    }
+}

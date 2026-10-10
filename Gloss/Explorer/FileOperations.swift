@@ -6,7 +6,7 @@ import OSLog
 extension ExplorerModel {
     func newFile(in directory: FileNode) {
         guard let fileSystem = fileSystemProvider(directory.hostID) else { return }
-        fileNameRequest = FileNameRequest(title: "New File", actionTitle: "Create", name: "untitled.txt", directory: directory.path) { [weak self] name in
+        fileNameRequest = FileNameRequest(title: "New File", actionTitle: "Create", name: Self.freeName("untitled.txt", in: directory, isFolder: false), directory: directory.path) { [weak self] name in
             let path = PathUtilities.join(directory.path, name)
             _ = try await fileSystem.createFile(at: path)
             await self?.loadChildren(of: directory)
@@ -16,11 +16,29 @@ extension ExplorerModel {
 
     func newFolder(in directory: FileNode) {
         guard let fileSystem = fileSystemProvider(directory.hostID) else { return }
-        fileNameRequest = FileNameRequest(title: "New Folder", actionTitle: "Create", name: "untitled folder", directory: directory.path) { [weak self] name in
+        fileNameRequest = FileNameRequest(title: "New Folder", actionTitle: "Create", name: Self.freeName("untitled folder", in: directory, isFolder: true), directory: directory.path) { [weak self] name in
             let path = PathUtilities.join(directory.path, name)
             try await fileSystem.createDirectory(at: path)
             await self?.loadChildren(of: directory)
         }
+    }
+
+    /// The name a new file or folder is offered: `wanted`, or "untitled 2.txt" and on when the folder (as listed)
+    /// already has it, ignoring case as the Mac's volume does, so Create works without editing it first. A folder's
+    /// name has no extension to keep at the end.
+    nonisolated static func freeName(_ wanted: String, among taken: [String], isFolder: Bool) -> String {
+        let names = Set(taken.map { $0.lowercased() })
+        guard names.contains(wanted.lowercased()) else { return wanted }
+        let ext = (wanted as NSString).pathExtension
+        let base = ext.isEmpty || isFolder ? wanted : (wanted as NSString).deletingPathExtension
+        let suffix = base == wanted ? "" : ".\(ext)"
+        var counter = 2
+        while names.contains("\(base) \(counter)\(suffix)".lowercased()) { counter += 1 }
+        return "\(base) \(counter)\(suffix)"
+    }
+
+    private static func freeName(_ wanted: String, in directory: FileNode, isFolder: Bool) -> String {
+        freeName(wanted, among: (directory.children ?? []).map(\.name), isFolder: isFolder)
     }
 
     func rename(_ node: FileNode) {
