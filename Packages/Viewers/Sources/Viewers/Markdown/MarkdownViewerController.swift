@@ -13,7 +13,10 @@ public final class MarkdownViewerController {
     }
 
     public let source: TextEditorController
-    public var mode: Mode = .rendered
+    public var mode: Mode = .rendered {
+        // Renders skipped while the source showed are caught up as the page comes back.
+        didSet { if mode == .rendered, renderOwed || renderedContentVersion != source.contentVersion { rebuildNow() } }
+    }
     public private(set) var rendered: NSAttributedString = NSAttributedString()
     public private(set) var map = RenderedSourceMap(spans: [], blocks: [])
     public private(set) var renderedVersion = 0
@@ -64,6 +67,8 @@ public final class MarkdownViewerController {
     @ObservationIgnored private var rebuildTask: Task<Void, Never>?
 
     @ObservationIgnored private var renderedContentVersion = -1
+    /// A render was asked for while the source showed (a picture or diagram arrived, the text changed).
+    @ObservationIgnored private var renderOwed = false
 
     /// The document's folder on this Mac, for relative images; nil for remote documents.
     public var baseURL: URL?
@@ -218,9 +223,15 @@ public final class MarkdownViewerController {
         mode = mode == .rendered ? .source : .rendered
     }
 
-    /// Re-renders shortly after the source stops changing.
+    /// Re-renders shortly after the source stops changing. Not while the source shows: typing in a large file
+    /// rendered the whole page, unseen, after every pause (two seconds of main thread at 360 KB); it renders once the
+    /// page is shown again.
     public func scheduleRebuild() {
         rebuildTask?.cancel()
+        guard mode == .rendered else {
+            renderOwed = true
+            return
+        }
         rebuildTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
@@ -229,6 +240,7 @@ public final class MarkdownViewerController {
     }
 
     public func rebuildNow() {
+        renderOwed = false
         renderedContentVersion = source.contentVersion
         let output = MarkdownRenderer.render(source.text, baseURL: baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion)
         rendered = output.text
