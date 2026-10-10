@@ -7,7 +7,7 @@ struct ADFMarkdownTests {
 
     @Test func paragraphsHeadingsAndMarks() {
         let adf = #"{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Why"}]},{"type":"paragraph","content":[{"type":"text","text":"Use "},{"type":"text","text":"bold","marks":[{"type":"strong"}]},{"type":"text","text":", "},{"type":"text","text":"code","marks":[{"type":"code"}]},{"type":"text","text":" and "},{"type":"text","text":"a link","marks":[{"type":"link","attrs":{"href":"https://x.test/"}},{"type":"em"}]},{"type":"text","text":"."},{"type":"hardBreak"},{"type":"mention","attrs":{"id":"1","text":"@Sam"}},{"type":"text","text":" "},{"type":"emoji","attrs":{"shortName":":tada:","text":"🎉"}},{"type":"text","text":" "},{"type":"status","attrs":{"text":"DONE"}}]}]}"#
-        #expect(render(adf) == "## Why\n\nUse **bold**, `code` and [_a link_](https://x.test/).  \n@Sam 🎉 \\[DONE\\]\n")
+        #expect(render(adf) == "## Why\n\nUse **bold**, `code` and [*a link*](https://x.test/).  \n@Sam 🎉 \\[DONE\\]\n")
     }
 
     @Test func listsTasksQuotesPanelsRulesAndCode() {
@@ -45,6 +45,12 @@ struct ADFMarkdownTests {
         // A code block as a list item's first part stays inside the item.
         let list = #"{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"codeBlock","content":[{"type":"text","text":"a\nb"}]}]}]}]}"#
         #expect(render(list) == "- ```\n  a\n  b\n  ```\n")
+    }
+
+    /// Emphasis that renders: spaces a mark covers go outside its delimiters, and italics work inside a word.
+    @Test func emphasisDelimitersHugTheirWords() {
+        let adf = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Ship "},{"type":"text","text":"today ","marks":[{"type":"strong"}]},{"type":"text","text":"un"},{"type":"text","text":"believ","marks":[{"type":"em"}]},{"type":"text","text":"able, "},{"type":"text","text":" ","marks":[{"type":"em"}]},{"type":"text","text":"done."}]}]}"#
+        #expect(render(adf) == "Ship **today** un*believ*able,  done.\n")
     }
 
     @Test func renderingIsDeterministic() {

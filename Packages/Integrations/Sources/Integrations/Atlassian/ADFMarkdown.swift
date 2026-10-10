@@ -238,15 +238,23 @@ public enum ADFMarkdown {
         }.joined()
     }
 
+    /// Delimiters go around the words, spaces outside: `**bold **` (Jira's editor often marks the space after a
+    /// word too) is not emphasis in Markdown, only asterisks. Italics are `*`, which works inside a word, as
+    /// `un*believ*able`; `_` does not.
     static func marked(_ text: String, marks: [[String: Any]]) -> String {
-        var result = text
+        let leading = text.prefix { $0 == " " || $0 == "\t" }
+        let rest = text.dropFirst(leading.count)
+        let trailingCount = rest.reversed().prefix { $0 == " " || $0 == "\t" }.count
+        let core = String(rest.dropLast(trailingCount))
+        guard !core.isEmpty else { return text }
+        var result = core
         var link: String?
         for mark in marks {
             let attrs = mark["attrs"] as? [String: Any] ?? [:]
             switch mark["type"] as? String ?? "" {
             case "code": result = "`" + result + "`"
             case "strong": result = "**" + result + "**"
-            case "em": result = "_" + result + "_"
+            case "em": result = "*" + result + "*"
             case "strike": result = "~~" + result + "~~"
             // Markdown has no underline, and raw HTML would show as text: underlined text is plain.
             case "underline": break
@@ -255,7 +263,7 @@ public enum ADFMarkdown {
             }
         }
         if let link, let safe = safeLink(link) { result = "[" + result + "](" + safe + ")" }
-        return result
+        return leading + result + rest.suffix(trailingCount)
     }
 
     /// A link target that stays one: script links are dropped (their text stays), and the characters that would
