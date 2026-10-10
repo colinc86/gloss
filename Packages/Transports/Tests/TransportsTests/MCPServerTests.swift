@@ -106,11 +106,14 @@ struct MCPServerTests {
         #expect(try await call(local, ["url": "https://github.com/o/r/pull/12"]).text == "showing github:/o/r/pull/12/Pull request.md")
         #expect(try await call(local, ["url": "https://example.com/docs", "line": 4]).text == "showing web:https://example.com/docs at line 4")
         #expect(try await call(local, ["url": "ftp://example.com/x"]).isError, "a URL with no viewer is refused")
+        #expect(try await call(local, ["url": "file:///tmp/My%20Notes.md", "line": 2]).text == "showing local:/tmp/My Notes.md at line 2", "a file link is its path")
+        #expect(try await call(remote, ["url": "file:///home/colin/x.py"]).text == "showing asus:/home/colin/x.py", "on the machine the agent runs on")
+        #expect(try await call(local, ["url": "file://otherbox/tmp/a.md"]).isError, "a file link to another machine is refused")
         #expect(try await call(local, ["path": "/tmp/a.swift", "line": 3, "end_line": 9]).text == "showing local:/tmp/a.swift at lines 3-9")
         #expect(try await call(local, ["path": "/tmp/a.swift", "line": 9, "end_line": 3]).isError, "a range must not run backwards")
         #expect(try await call(local, ["path": "/tmp/a.swift", "end_line": 3]).isError, "end_line needs line")
         #expect(try await call(local, [:]).isError, "path or url is required")
-        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-", "github|/o/r/pull/12/Pull request.md|-", "web|https://example.com/docs|4", "local|/tmp/a.swift|3-9"])
+        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-", "github|/o/r/pull/12/Pull request.md|-", "web|https://example.com/docs|4", "local|/tmp/My Notes.md|2", "asus|/home/colin/x.py|-", "local|/tmp/a.swift|3-9"])
     }
 
     /// Drafts stay in the app until the user sends them: no tool lists, reads or resolves one, and the old hook

@@ -222,6 +222,14 @@ public actor MCPServer {
         if let portFileURL { try? FileManager.default.removeItem(at: portFileURL) }
     }
 
+    /// A `file://` link (as agents print a location) on the machine that sent it: its path, percent escapes undone.
+    /// Nil for any other URL, or a file link naming another machine.
+    static func filePath(of url: URL) -> String? {
+        guard url.isFileURL, ["", "localhost"].contains(url.host(percentEncoded: false)?.lowercased() ?? "") else { return nil }
+        let path = url.path(percentEncoded: false)
+        return path.hasPrefix("/") ? PathUtilities.lexicallyNormalized(path) : nil
+    }
+
     // MARK: Routing
 
     private func route(_ request: HTTPRequest, query: [String: String]) async -> HTTPResponse {
@@ -243,7 +251,9 @@ public actor MCPServer {
             var path = object["path"] as? String ?? ""
             if let raw = object["url"] as? String, let url = URL(string: raw) {
                 // A URL the app has no document for is a web page, as open_in_viewer treats it.
-                if let resolved = dependencies.resolveURL(url) { (host, path) = resolved } else if DocumentKindDetector.isWebURL(raw) { (host, path) = ("web", raw) }
+                if let local = Self.filePath(of: url) {
+                    path = local
+                } else if let resolved = dependencies.resolveURL(url) { (host, path) = resolved } else if DocumentKindDetector.isWebURL(raw) { (host, path) = ("web", raw) }
             }
             guard path.hasPrefix("/") || DocumentKindDetector.isWebURL(path) else {
                 return .error(statusCode: 400, MCPError.invalidParams("path is required"))
@@ -355,7 +365,7 @@ public actor MCPServer {
         ),
         Tool(
             name: "open_in_viewer",
-            description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another. Give url instead for a GitHub pull request (https://github.com/o/r/pull/12, optionally /files/<path>), a Jira issue (https://<site>/browse/KEY) or Confluence page (https://<site>/wiki/spaces/KEY/pages/<id>) of the user's saved site, or any web page.",
+            description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another. Give url instead for a GitHub pull request (https://github.com/o/r/pull/12, optionally /files/<path>), a Jira issue (https://<site>/browse/KEY) or Confluence page (https://<site>/wiki/spaces/KEY/pages/<id>) of the user's saved site, or any web page; a file:// link is read as its path.",
             inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "url": ["type": "string", "description": "a pull request, Jira issue, Confluence page or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "end_line": ["type": "integer", "minimum": 1, "description": "selects line through end_line"], "host": ["type": "string", "description": "\"local\", an ssh alias, \"github\" or \"atlassian\"; defaults to your machine"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true, idempotentHint: true, openWorldHint: false)
         ),
@@ -554,7 +564,9 @@ public actor MCPServer {
             let path: String
             if let raw = arguments["url"]?.stringValue, !raw.isEmpty {
                 guard let url = URL(string: raw) else { return CallTool.Result(content: [text("url is not a URL")], isError: true) }
-                if let resolved = dependencies.resolveURL(url) {
+                if let local = Self.filePath(of: url) {
+                    path = local
+                } else if let resolved = dependencies.resolveURL(url) {
                     (host, path) = resolved
                 } else if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                     (host, path) = ("web", raw)
