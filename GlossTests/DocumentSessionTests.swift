@@ -332,3 +332,25 @@ struct LineJumpTests {
         session.close()
     }
 }
+
+
+/// Opening many documents lets the oldest go, but never one holding work that lives only in it.
+@MainActor
+struct SessionTrimTests {
+    @Test func aNoteBeingWrittenKeepsItsDocumentOpen() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-trim-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        for index in 0..<12 { try "file \(index)".write(toFile: "\(root)/f\(index).txt", atomically: true, encoding: .utf8) }
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        model.openDocument(hostID: .local, path: "\(root)/f0.txt")
+        let first = try #require(model.activeSession)
+        for _ in 0..<100 where !first.isLoaded { try await Task.sleep(for: .milliseconds(20)) }
+        first.noteEditor = NoteEditorState(anchor: .wholeFile, body: "half a thought", color: .yellow, anchorRect: .zero)
+        for index in 1..<12 { model.openDocument(hostID: .local, path: "\(root)/f\(index).txt") }
+        #expect(model.session(hostID: .local, path: "\(root)/f0.txt") === first, "the document with a note being written stays open")
+        #expect(model.session(hostID: .local, path: "\(root)/f1.txt") == nil, "an idle older one is let go")
+        await model.shutDown()
+    }
+}

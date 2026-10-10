@@ -1059,13 +1059,19 @@ final class AppModel {
     static let maximumOpenSessions = 8
     @ObservationIgnored private var activationOrder: [String] = []
 
+    /// Whether an open document can be let go to keep the open ones few: not the one in front, nor one holding work
+    /// that lives only in it (unsaved edits, a note half written in its composer, a save still writing).
+    private func mayBeTrimmed(_ session: DocumentSession) -> Bool {
+        session !== activeSession && !session.isDirty && session.noteEditor == nil && !session.isSaving
+    }
+
     private func trimSessions() {
         if let active = activeSession {
             activationOrder.removeAll { $0 == active.id }
             activationOrder.append(active.id)
         }
         while sessions.count > Self.maximumOpenSessions {
-            guard let victim = activationOrder.first(where: { id in sessions[id].map { $0 !== activeSession && !$0.isDirty } ?? false }) else { break }
+            guard let victim = activationOrder.first(where: { id in sessions[id].map { mayBeTrimmed($0) } ?? false }) else { break }
             activationOrder.removeAll { $0 == victim }
             if let session = sessions[victim] { retire(session) }
             sessions[victim] = nil
