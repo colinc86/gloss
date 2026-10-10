@@ -539,7 +539,8 @@ final class DocumentSession: Identifiable {
         let results = await resolve(items)
         guard !Task.isCancelled else { return }
         for (id, anchor) in items {
-            guard let note = notes.first(where: { $0.id == id }), var resolution = results[id] else { continue }
+            // Moved while the page was asked (an agent's move, an edit): the answer is for a place it has left.
+            guard let note = notes.first(where: { $0.id == id }), note.anchor == .element(anchor), var resolution = results[id] else { continue }
             // On a served file each candidate's place in the page maps to a source line, so the note's Line
             // follows its element when lines are added above it.
             if kind != .web {
