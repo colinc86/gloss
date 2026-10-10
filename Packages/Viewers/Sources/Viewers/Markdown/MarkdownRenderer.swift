@@ -210,8 +210,11 @@ public struct MarkdownRenderer {
         private enum LastBlock: Equatable { case none, heading(Int), listItem, other }
         private var lastBlock = LastBlock.none
         private var blockCount = 0
-        /// Left edge of each open quote's bar and the block count when it opened.
-        private var quotes: [(x: CGFloat, openedAt: Int)] = []
+        /// Left edge of each open quote's bar, the block count when it opened, and its kind when it is an alert.
+        private var quotes: [(x: CGFloat, openedAt: Int, alert: MarkdownAlert?)] = []
+        /// An alert's `[!NOTE]` line is being read: its text becomes the alert's title, its break a line break.
+        private var pendingAlert: MarkdownAlert?
+        private var alertTitled = false
 
         init(source: String, table: SourceLineTable, baseURL: URL?) {
             self.source = source
@@ -310,7 +313,7 @@ public struct MarkdownRenderer {
             } else {
                 gap = kind == .rule ? 16 : 12
             }
-            let bars = quotes.map { MarkdownBlockDecoration.QuoteBar(x: $0.x, continuesFromAbove: blockCount > $0.openedAt) }
+            let bars = quotes.map { MarkdownBlockDecoration.QuoteBar(x: $0.x, continuesFromAbove: blockCount > $0.openedAt, alert: $0.alert) }
             decoration = MarkdownBlockDecoration(kind: kind, leading: indent, quoteBars: bars)
             blockCount += 1
             if case .heading(let level) = kind { lastBlock = .heading(level) } else { lastBlock = .other }
@@ -352,15 +355,21 @@ public struct MarkdownRenderer {
         mutating func visitParagraph(_ paragraph: Paragraph) {
             openBlock()
             descendInto(paragraph)
+            // A `[!NOTE]` alone in its paragraph: the title is the whole paragraph.
+            pendingAlert = nil
             endBlock(paragraph)
         }
 
         mutating func visitBlockQuote(_ blockQuote: BlockQuote) {
             openContainer()
             let saved = (style, indent)
-            style.color = .secondaryLabelColor
-            quotes.append((x: indent, openedAt: blockCount))
+            let alert = MarkdownAlert(quote: blockQuote)
+            // An alert reads as body text, as on GitHub; a plain quote is set back.
+            style.color = alert == nil ? .secondaryLabelColor : .textColor
+            quotes.append((x: indent, openedAt: blockCount, alert: alert))
             indent += 18
+            pendingAlert = alert
+            alertTitled = false
             for child in blockQuote.children { visit(child) }
             quotes.removeLast()
             style = saved.0
@@ -688,7 +697,7 @@ public struct MarkdownRenderer {
             switch name {
             case "blockquote":
                 style.color = .secondaryLabelColor
-                quotes.append((x: indent, openedAt: blockCount))
+                quotes.append((x: indent, openedAt: blockCount, alert: nil))
                 indent += 18
             case "ul":
                 listNumbers.append(nil)
@@ -1194,6 +1203,18 @@ public struct MarkdownRenderer {
         // MARK: Inlines
 
         mutating func visitText(_ text: Text) {
+            if let alert = pendingAlert {
+                // The marker's text, shown as the alert's title; generated, so it maps to no source.
+                if !alertTitled {
+                    let saved = style
+                    style.bold = true
+                    style.color = alert.color
+                    appendGenerated(alert.title)
+                    style = saved
+                    alertTitled = true
+                }
+                return
+            }
             let (range, exact) = exactness(text, rendered: text.string)
             append(text.string, source: range, exact: exact)
         }
@@ -1403,11 +1424,21 @@ public struct MarkdownRenderer {
         }
 
         mutating func visitSoftBreak(_ softBreak: SoftBreak) {
+            if pendingAlert != nil {
+                pendingAlert = nil
+                appendGenerated(MarkdownRenderer.lineSeparator)
+                return
+            }
             let (range, _) = exactness(softBreak, rendered: " ")
             append(" ", source: range, exact: false)
         }
 
         mutating func visitLineBreak(_ lineBreak: LineBreak) {
+            if pendingAlert != nil {
+                pendingAlert = nil
+                appendGenerated(MarkdownRenderer.lineSeparator)
+                return
+            }
             let (range, _) = exactness(lineBreak, rendered: "\n")
             append(MarkdownRenderer.lineSeparator, source: range, exact: false)
         }
@@ -1429,6 +1460,8 @@ public nonisolated final class MarkdownBlockDecoration: NSObject, Sendable {
         public var x: CGFloat
         /// False on a quote's first paragraph, so the bar starts at the text instead of in the gap above it.
         public var continuesFromAbove: Bool
+        /// The bar of a GitHub alert is drawn in its colour.
+        public var alert: MarkdownAlert? = nil
     }
 
     public let kind: Kind
@@ -1573,6 +1606,38 @@ nonisolated final class FittedImageAttachment: NSTextAttachment {
             NSColor.labelColor.withAlphaComponent(0.14).setStroke()
             edge.stroke()
             return true
+        }
+    }
+}
+
+/// A GitHub alert: a quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`, drawn
+/// with a coloured bar and its title in place of the marker. Without it the marker showed as text in a grey quote.
+nonisolated public enum MarkdownAlert: String, CaseIterable, Sendable {
+    case note, tip, important, warning, caution
+
+    /// The alert a quote is, when its first paragraph's first line is the marker alone (case aside), as GitHub reads it.
+    init?(quote: BlockQuote) {
+        guard let paragraph = quote.child(at: 0) as? Paragraph else { return nil }
+        var marker = ""
+        for child in paragraph.children {
+            if child is SoftBreak || child is LineBreak { break }
+            guard let text = child as? Text else { return nil }
+            marker += text.string
+        }
+        let trimmed = marker.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("[!"), trimmed.hasSuffix("]") else { return nil }
+        self.init(rawValue: trimmed.dropFirst(2).dropLast().lowercased())
+    }
+
+    public var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+
+    public var color: NSColor {
+        switch self {
+        case .note: .systemBlue
+        case .tip: .systemGreen
+        case .important: .systemPurple
+        case .warning: .systemOrange
+        case .caution: .systemRed
         }
     }
 }

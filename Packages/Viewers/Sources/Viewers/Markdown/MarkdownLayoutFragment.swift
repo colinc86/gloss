@@ -133,8 +133,10 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
             }
             context.setFillColor(NSColor.separatorColor.cgColor)
             for line in shapes.lines { context.fill(line) }
-            context.setFillColor(Self.quoteBar.cgColor)
-            for bar in shapes.bars {
+            for (index, bar) in shapes.bars.enumerated() {
+                // An alert's bar in its colour; the bars are in `quoteBars` order.
+                let alert = index < decoration.quoteBars.count ? decoration.quoteBars[index].alert : nil
+                context.setFillColor((alert?.color ?? Self.quoteBar).cgColor)
                 context.addPath(CGPath(roundedRect: bar, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil))
                 context.fillPath()
             }

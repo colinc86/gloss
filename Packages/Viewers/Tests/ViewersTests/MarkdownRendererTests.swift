@@ -192,6 +192,31 @@ struct MarkdownRendererTests {
         #expect(cached(edited)?.isEmpty == false, "an edited block is parsed and kept under its new text")
     }
 
+    /// A GitHub alert: the `[!NOTE]` marker shows as a coloured title on its own line, the bar takes the alert's
+    /// colour, and the text after it maps to its source as in any quote.
+    @Test func gitHubAlertsShowTheirTitleAndColour() {
+        let source = "> [!WARNING]\n> Back up first.\n"
+        let output = MarkdownRenderer.render(source)
+        let text = output.text.string as NSString
+        #expect(!text.contains("[!WARNING]"))
+        #expect(text.contains("Warning\u{2028}Back up first."), "\(text)")
+        let title = text.range(of: "Warning")
+        #expect(output.text.attribute(.foregroundColor, at: title.location, effectiveRange: nil) as? NSColor == .systemOrange)
+        #expect(output.map.sourceRange(forRendered: title)?.exact != true, "the title is generated, not the marker's text")
+        #expect(decoration(output, at: "Back up")?.quoteBars.first?.alert == .warning)
+        let body = output.map.sourceRange(forRendered: text.range(of: "Back up first."))
+        #expect(body.map { (source as NSString).substring(with: $0.source) } == "Back up first.")
+
+        let alone = MarkdownRenderer.render("> [!tip]\n>\n> Second paragraph.\n")
+        #expect((alone.text.string as NSString).contains("Tip"), "case aside, alone in its paragraph")
+        #expect(decoration(alone, at: "Second")?.quoteBars.first?.alert == .tip)
+        for plain in ["> [!FOO]\n> x\n", "> [!NOTE] extra\n> x\n", "> Note: [!NOTE]\n"] {
+            let rendered = MarkdownRenderer.render(plain)
+            #expect(rendered.text.string.contains("[!"), "not an alert: \(plain)")
+            #expect(decoration(rendered, at: "[!")?.quoteBars.first?.alert == nil)
+        }
+    }
+
     @Test func fenceInfoStringsMapToGrammars() {
         #expect(MarkdownRenderer.grammarName(forFence: "swift") == "swift")
         #expect(MarkdownRenderer.grammarName(forFence: "sh") == "bash")
