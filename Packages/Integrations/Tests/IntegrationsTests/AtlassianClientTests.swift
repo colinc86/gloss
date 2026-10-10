@@ -9,6 +9,8 @@ struct AtlassianClientTests {
         #expect(AtlassianClient.siteURL(from: "example") == URL(string: "https://example.atlassian.net"))
         #expect(AtlassianClient.siteURL(from: "") == nil)
         #expect(AtlassianClient.siteURL(from: "not a site") == nil)
+        #expect(AtlassianClient.siteURL(from: "https://me:secret@Acme.Atlassian.net/jira") == URL(string: "https://acme.atlassian.net"), "no user or password kept, host lowercased")
+        #expect(AtlassianClient.siteURL(from: "Acme") == URL(string: "https://acme.atlassian.net"))
     }
 
     @Test func statusUsesBasicAuthAndOnlyGets() async throws {

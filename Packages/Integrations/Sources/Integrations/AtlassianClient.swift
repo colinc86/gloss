@@ -33,10 +33,15 @@ public actor AtlassianClient {
         if !trimmed.contains("://") { trimmed = "https://" + trimmed }
         guard var components = URLComponents(string: trimmed), let host = components.host, !host.isEmpty else { return nil }
         components.scheme = "https"
+        // A pasted address may carry a user and password ("me:secret@site"): the key goes in its own field, and
+        // the site, shown in Settings and kept with the key, never holds one.
+        components.user = nil
+        components.password = nil
+        components.host = (components.host ?? host).lowercased()
         components.path = ""
         components.query = nil
         components.fragment = nil
-        if !host.contains(".") { components.host = host + ".atlassian.net" }
+        if !host.contains(".") { components.host = host.lowercased() + ".atlassian.net" }
         return components.url
     }
 
