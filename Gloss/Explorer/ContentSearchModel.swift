@@ -125,13 +125,11 @@ final class ContentSearchModel {
     }
 
     nonisolated private static func runGrep(pattern: String, root: String, regex: Bool) async -> ([SearchHit], Bool) {
-        let arguments = ["-rnIs", "--exclude-dir=.git"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "--", root]
+        let arguments = ["-rnIs"] + RemoteSearch.grepOutputFlags + ["--exclude-dir=.git"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "--", root]
         guard let (data, status) = await output(of: "/usr/bin/grep", arguments: arguments) else { return ([], false) }
         let rejected = status == 2 ? await output(of: "/usr/bin/grep", arguments: ["-s"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "/dev/null"])?.1 == 2 : false
-        let hits: [SearchHit] = String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
-            let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-            guard parts.count == 3, let number = Int(parts[1]) else { return nil }
-            return SearchHit(path: String(parts[0]), line: number, text: String(parts[2]))
+        let hits: [SearchHit] = data.split(separator: 0x0A).compactMap { line in
+            RemoteSearch.parse(line: Data(line), ripgrep: false).map { SearchHit(path: $0.path, line: $0.line, text: $0.text) }
         }
         return (hits, rejected)
     }

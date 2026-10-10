@@ -8,14 +8,37 @@ struct RemoteSearchParsingTests {
         let json = #"{"type":"match","data":{"path":{"text":"/p/a.swift"},"lines":{"text":"let needle = 1\n"},"line_number":12,"absolute_offset":0,"submatches":[]}}"#
         #expect(RemoteSearch.parse(line: Data(json.utf8), ripgrep: true) == RemoteSearchHit(path: "/p/a.swift", line: 12, text: "let needle = 1"))
         #expect(RemoteSearch.parse(line: Data(#"{"type":"begin","data":{}}"#.utf8), ripgrep: true) == nil)
-        #expect(RemoteSearch.parse(line: Data("/p/b.md:3:needle: here".utf8), ripgrep: false) == RemoteSearchHit(path: "/p/b.md", line: 3, text: "needle: here"))
+        #expect(RemoteSearch.parse(line: Data("/p/b.md\u{0}3:needle: here".utf8), ripgrep: false) == RemoteSearchHit(path: "/p/b.md", line: 3, text: "needle: here"))
+        #expect(RemoteSearch.parse(line: Data("/p/a:b/notes 10:30.md\u{0}1:needle".utf8), ripgrep: false) == RemoteSearchHit(path: "/p/a:b/notes 10:30.md", line: 1, text: "needle"),
+                "grep ends the path with a NUL, so a colon in it is part of the name")
+        #expect(RemoteSearch.parse(line: Data("/p/b.md:3:needle".utf8), ripgrep: false) == nil, "a line without the NUL is not a hit")
         var tools = RemoteTools()
         tools.rg = true
         #expect(RemoteSearch.script(pattern: "it's", root: "/r", tools: tools) == #"rg --json -n --no-messages --max-count 200 --max-filesize 2M --fixed-strings --smart-case -e 'it'\''s' -- '/r'"#)
         #expect(RemoteSearch.script(pattern: "a.*b", root: "/r", tools: tools, regex: true).contains("--smart-case -e 'a.*b'"), "regex mode drops --fixed-strings")
         tools.rg = false
-        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools).hasPrefix("grep -rnI --exclude-dir=.git -F -i -e"))
+        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools).hasPrefix("grep -rnI --null -m 200 --exclude-dir=.git -F -i -e"),
+                "grep stops at 200 matches a file, as rg does")
         #expect(RemoteSearch.grepFlags(pattern: "Foo", regex: true) == ["-E"], "a capital letter makes the search case-sensitive")
+    }
+}
+
+struct GrepFallbackTests {
+    /// The grep script a host without rg runs, run here by this Mac's grep (BSD; GNU takes the same flags): a colon in
+    /// a folder or file name stays in the path, and a file stops at the match limit.
+    @Test func grepsScriptKeepsColonsInPathsAndCapsMatches() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-grep-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(root)/a:b", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "intro\nneedle: one\n".write(toFile: "\(root)/a:b/notes 10:30.md", atomically: true, encoding: .utf8)
+        try String(repeating: "needle\n", count: RemoteSearch.maxMatchesPerFile + 50).write(toFile: "\(root)/many.txt", atomically: true, encoding: .utf8)
+        let script = RemoteSearch.script(pattern: "needle", root: root, tools: RemoteTools())
+        let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", script]))
+        let output = await process.collectStdout()
+        let hits = output.split(separator: 0x0A).compactMap { RemoteSearch.parse(line: Data($0), ripgrep: false) }
+        let colon = hits.filter { $0.path.hasSuffix("notes 10:30.md") }
+        #expect(colon == [RemoteSearchHit(path: "\(root)/a:b/notes 10:30.md", line: 2, text: "needle: one")])
+        #expect(hits.filter { $0.path.hasSuffix("many.txt") }.count == RemoteSearch.maxMatchesPerFile)
     }
 }
 

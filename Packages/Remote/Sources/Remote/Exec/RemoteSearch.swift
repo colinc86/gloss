@@ -18,8 +18,12 @@ public enum RemoteSearch {
         if tools.rg {
             return "rg --json -n --no-messages --max-count \(maxMatchesPerFile) --max-filesize 2M \(ripgrepFlags(regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
         }
-        return "grep -rnI --exclude-dir=.git \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+        return "grep -rnI \(grepOutputFlags.joined(separator: " ")) --exclude-dir=.git \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
     }
+
+    /// How grep reports hits, here and on this Mac: the path ends with a NUL (a colon may be part of a file name,
+    /// `notes 10:30.md`), and a file stops at as many matches as rg's `--max-count`. BSD and GNU grep both take these.
+    public static let grepOutputFlags = ["--null", "-m", "\(maxMatchesPerFile)"]
 
     /// rg and grep exit 2 both for a bad pattern and when any file under the root is unreadable, so a search that
     /// found nothing with status 2 is checked again against `/dev/null`: only a 2 from that means the pattern
@@ -80,7 +84,7 @@ public enum RemoteSearch {
         }
     }
 
-    static func parse(line: Data, ripgrep: Bool) -> RemoteSearchHit? {
+    public static func parse(line: Data, ripgrep: Bool) -> RemoteSearchHit? {
         if ripgrep {
             guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
                   object["type"] as? String == "match",
@@ -90,9 +94,11 @@ public enum RemoteSearch {
                   let text = (payload["lines"] as? [String: Any])?["text"] as? String else { return nil }
             return RemoteSearchHit(path: path, line: number, text: text.trimmingCharacters(in: .newlines))
         }
-        let text = String(decoding: line, as: UTF8.self)
-        let parts = text.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
-        guard parts.count == 3, let number = Int(parts[1]) else { return nil }
-        return RemoteSearchHit(path: String(parts[0]), line: number, text: String(parts[2]))
+        // `path NUL line:text` (`grepOutputFlags`).
+        guard let nul = line.firstIndex(of: 0) else { return nil }
+        let rest = String(decoding: line[line.index(after: nul)...], as: UTF8.self)
+        let parts = rest.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, let number = Int(parts[0]) else { return nil }
+        return RemoteSearchHit(path: String(decoding: line[..<nul], as: UTF8.self), line: number, text: String(parts[1]))
     }
 }
