@@ -27,6 +27,19 @@ struct CSVParserTests {
         #expect(CSVParser.delimiter(for: "plain\n", fileName: "x.csv") == ",")
     }
 
+    /// A quote opens a quoted field only as its first character; elsewhere it is part of the text, as in RFC 4180 and
+    /// Excel. `5'10"` used to open a quote that swallowed every later row.
+    @Test func aQuoteInsideAnUnquotedFieldIsText() {
+        let text = "name,height,note\nAda,5'10\",tall\nBob,6',\"said \"\"hi\"\"\"\nCy,5'2\",x\n"
+        let table = CSVParser.parse(text, delimiter: ",")
+        #expect(table.rows.map(\.fields) == [["Ada", "5'10\"", "tall"], ["Bob", "6'", "said \"hi\""], ["Cy", "5'2\"", "x"]])
+        #expect(table.rows.map(\.firstLine) == [2, 3, 4])
+    }
+
+    @Test func theDelimiterIsCountedOutsideQuotes() {
+        #expect(CSVParser.delimiter(for: "\"Last, First\";\"Age, years\";City\n", fileName: "x.csv") == ";")
+    }
+
     @Test func emptyAndHeaderless() {
         #expect(CSVParser.parse("", delimiter: ",").rows.isEmpty)
         let table = CSVParser.parse("1,2\n3,4", delimiter: ",", hasHeader: false)

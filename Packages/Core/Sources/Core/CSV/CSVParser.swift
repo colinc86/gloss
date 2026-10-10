@@ -31,11 +31,17 @@ public struct CSVTable: Equatable, Sendable {
 public enum CSVParser {
     public static let maximumRows = 100_000
 
-    /// Picks tab for `.tsv`, else the most frequent of `,` `;` `\t` on the first line.
+    /// Picks tab for `.tsv`, else the most frequent of `,` `;` `\t` on the first line, outside quoted fields (a
+    /// header `"Last, First";Age` is split by semicolons).
     public static func delimiter(for text: String, fileName: String) -> Character {
         if fileName.lowercased().hasSuffix(".tsv") { return "\t" }
         let firstLine = text.prefix { !$0.isNewline }
-        let counts: [(Character, Int)] = [",", ";", "\t"].map { delimiter in (delimiter, firstLine.filter { $0 == delimiter }.count) }
+        var unquoted: [Character] = []
+        var inQuotes = false
+        for character in firstLine {
+            if character == "\"" { inQuotes.toggle() } else if !inQuotes { unquoted.append(character) }
+        }
+        let counts: [(Character, Int)] = [",", ";", "\t"].map { delimiter in (delimiter, unquoted.filter { $0 == delimiter }.count) }
         return counts.max { $0.1 < $1.1 }.flatMap { $0.1 > 0 ? $0.0 : nil } ?? ","
     }
 
@@ -49,6 +55,8 @@ public enum CSVParser {
         var line = 1
         var recordStart = 1
         var recordHasContent = false
+        // Nothing of the current field read yet: only there does a quote open a quoted field.
+        var fieldIsFresh = true
         var iterator = text.makeIterator()
         var pending: Character?
 
@@ -97,19 +105,24 @@ public enum CSVParser {
                 continue
             }
             switch character {
-            case "\"":
+            case "\"" where fieldIsFresh:
                 inQuotes = true
                 recordHasContent = true
+                fieldIsFresh = false
             case delimiter:
                 endField()
                 recordHasContent = true
+                fieldIsFresh = true
             case _ where character.isNewline:
                 endRecord(lastLine: line)
                 line += 1
                 recordStart = line
+                fieldIsFresh = true
             default:
+                // A quote inside an unquoted field (`5'10"`) is text, as in RFC 4180 and Excel.
                 field.append(character)
                 recordHasContent = true
+                fieldIsFresh = false
             }
         }
         if !field.isEmpty || !fields.isEmpty || recordHasContent { endRecord(lastLine: line) }
