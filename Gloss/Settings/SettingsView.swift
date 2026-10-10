@@ -572,7 +572,7 @@ private struct HostsSettings: View {
         }
         .sheet(item: $editing) { draft in
             HostEditor(draft: draft, taken: Set(model.hosts.entries.filter { $0.id != draft.hostID }.map(\.name))) { name, options in
-                Task { try? await model.hosts.save(id: draft.hostID, name: name, options: options) }
+                try await model.hosts.save(id: draft.hostID, name: name, options: options)
             }
         }
     }
@@ -612,13 +612,16 @@ private struct HostEditor: View {
     let draft: HostDraft
     /// Other hosts' names: a host can't take one.
     let taken: Set<String>
-    let save: (String, HostOptions) -> Void
+    /// Throws when the host could not be saved: the sheet stays open and says why.
+    let save: (String, HostOptions) async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var hostName = ""
     @State private var user = ""
     @State private var port = ""
     @State private var identityFile = ""
+    @State private var saving = false
+    @State private var saveError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -636,7 +639,7 @@ private struct HostEditor: View {
             .formStyle(.columns)
             Text("The name is what the sidebar shows and what `ssh` is given as the destination, so a name that is also an alias in ~/.ssh/config inherits that alias's settings.")
                 .font(.caption).foregroundStyle(.secondary)
-            if let problem {
+            if let problem = problem ?? saveError {
                 Label(problem, systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
@@ -645,11 +648,22 @@ private struct HostEditor: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") {
-                    save(name.trimmingCharacters(in: .whitespaces), HostOptions(hostName: hostName.trimmingCharacters(in: .whitespaces), user: user.trimmingCharacters(in: .whitespaces), port: Int(port.trimmingCharacters(in: .whitespaces)), identityFile: identityFile.trimmingCharacters(in: .whitespaces)))
-                    dismiss()
+                    let options = HostOptions(hostName: hostName.trimmingCharacters(in: .whitespaces), user: user.trimmingCharacters(in: .whitespaces), port: Int(port.trimmingCharacters(in: .whitespaces)), identityFile: identityFile.trimmingCharacters(in: .whitespaces))
+                    saving = true
+                    Task {
+                        // Closed only once saved: a failure (the database refusing it) used to close the sheet as if
+                        // it had worked, and the host was simply not there.
+                        do {
+                            try await save(name.trimmingCharacters(in: .whitespaces), options)
+                            dismiss()
+                        } catch {
+                            saveError = "Couldn't save the host: \(error.userMessage)"
+                        }
+                        saving = false
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || problem != nil)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || problem != nil || saving)
             }
         }
         .padding(20)
