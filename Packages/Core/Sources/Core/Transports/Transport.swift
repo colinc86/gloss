@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public enum TransportKind: String, Codable, Sendable, CaseIterable {
     case herdr
@@ -27,7 +28,7 @@ public enum TransportKind: String, Codable, Sendable, CaseIterable {
 }
 
 /// One agent session a packet can be delivered to. `identityJSON` is what the transport needs to reach it
-/// (a Herdr pane id, a tmux target, an OpenCode session); it is also the stable key in the `target` table.
+/// (a Herdr pane id, a tmux target, an OpenCode session); `id` is which agent that is.
 public struct AgentTarget: Identifiable, Hashable, Codable, Sendable {
     public var transport: TransportKind
     public var hostID: HostID
@@ -46,7 +47,23 @@ public struct AgentTarget: Identifiable, Hashable, Codable, Sendable {
         self.status = status
     }
 
-    public var id: String { "\(transport.rawValue):\(hostID.rawValue):\(identityJSON)" }
+    /// Which agent this is, from the identity's decoded fields rather than its text: the same agent must match across
+    /// launches and discoveries, and neither the JSON's key order nor the fields that change while an agent keeps
+    /// running (a Herdr agent's name, a tmux pane's command and folder) say anything about which agent it is.
+    public var id: String { "\(transport.rawValue):\(hostID.rawValue):\(Self.identityKey(transport: transport, json: identityJSON))" }
+
+    static func identityKey(transport: TransportKind, json: String) -> String {
+        let fields = ((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any]) ?? [:]
+        func value(_ key: String) -> String { fields[key].map { "\($0)" } ?? "" }
+        let key: String? = switch transport {
+        case .herdr: fields["pane_id"] == nil ? nil : "\(value("pane_id")) \(value("agent"))"
+        case .tmux: fields["target"] == nil ? nil : value("target")
+        case .opencode: fields["session_id"] == nil ? nil : "\(value("base_url")) \(value("session_id"))"
+        default: nil
+        }
+        // Anything else is the whole identity, its keys in a fixed order.
+        return key ?? fields.keys.sorted().map { "\($0)=\(value($0))" }.joined(separator: " ")
+    }
 }
 
 /// A crop or page render on this Mac, before staging.
@@ -107,7 +124,53 @@ extension DeliveryError: CustomStringConvertible, LocalizedError {
 public protocol Transport: Sendable {
     var kind: TransportKind { get }
     func discoverTargets() async throws -> [AgentTarget]
+    /// The agents on every host this transport reaches, each host given `deadline` of its own, so one slow host
+    /// holds up only its own agents.
+    func discover(within deadline: Duration) async -> TargetDiscovery
     func deliver(_ packet: Packet, attachments: [StagedAttachment], to target: AgentTarget) async throws -> DeliveryReceipt
+}
+
+/// What a discovery found, and which hosts answered in time. A host that didn't say nothing about its agents, so
+/// whatever it listed before still stands.
+public struct TargetDiscovery: Sendable {
+    public var targets: [AgentTarget]
+    /// Nil when every host the transport covers answered.
+    public var answered: Set<HostID>?
+
+    public init(targets: [AgentTarget], answered: Set<HostID>?) {
+        self.targets = targets
+        self.answered = answered
+    }
+
+    /// Whether this discovery speaks for `hostID`.
+    public func answered(_ hostID: HostID) -> Bool { answered?.contains(hostID) ?? true }
+}
+
+extension Transport {
+    /// One listing for all hosts: it answers for every host, or (failing or too slow) for none.
+    public func discover(within deadline: Duration) async -> TargetDiscovery {
+        let listed = await withDeadline(deadline) { try? await self.discoverTargets() }
+        return listed.map { TargetDiscovery(targets: $0, answered: nil) } ?? TargetDiscovery(targets: [], answered: [])
+    }
+}
+
+/// `operation`'s result, or nil once `deadline` passes. Returns at the deadline even when the operation ignores
+/// cancellation (an ssh exec with its own longer timeout), which a task group would wait out; it carries on alone.
+public func withDeadline<T: Sendable>(_ deadline: Duration, _ operation: @escaping @Sendable () async -> T?) async -> T? {
+    let resumed = Mutex(false)
+    return await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
+        let work = Task {
+            let value = await operation()
+            if resumed.withLock({ done in defer { done = true }; return !done }) { continuation.resume(returning: value) }
+        }
+        Task {
+            try? await Task.sleep(for: deadline)
+            if resumed.withLock({ done in defer { done = true }; return !done }) {
+                work.cancel()
+                continuation.resume(returning: nil)
+            }
+        }
+    }
 }
 
 public struct StagingResult: Sendable, Equatable {
@@ -132,4 +195,14 @@ public protocol AttachmentStager: Sendable {
 
 extension AttachmentStager {
     public func discard(_ remoteDirectories: [String]) async {}
+}
+
+extension Transport {
+    /// Writes a target's identity with its keys in a fixed order (`JSONEncoder`'s own order is not fixed), so an
+    /// identity that hasn't changed is the same text from one launch to the next.
+    public static var identityEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return encoder
+    }
 }

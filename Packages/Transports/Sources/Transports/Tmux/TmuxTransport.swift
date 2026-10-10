@@ -82,17 +82,43 @@ public actor TmuxTransport: Transport {
     // MARK: Transport
 
     public func discoverTargets() async throws -> [AgentTarget] {
-        var targets: [AgentTarget] = []
-        if localTmuxPath != nil {
-            let output = try await runLocal(Self.listScript(tmux: tmuxInvocation), stdin: nil)
-            targets += Self.parsePanes(output.stdoutText).map { Self.target(for: $0, hostID: .local, hostLabel: nil) }
+        await discover(within: .seconds(15)).targets
+    }
+
+    /// This Mac and every connected host at once, each with its own deadline, so one slow host holds up only its
+    /// own panes. A local listing that fails answers for nothing, keeping what was listed before.
+    public func discover(within deadline: Duration) async -> TargetDiscovery {
+        let entries = await registry.all()
+        let found = await withTaskGroup(of: (HostID, [AgentTarget])?.self) { group in
+            group.addTask { await withDeadline(deadline) { await self.localPanes() }.map { (.local, $0) } }
+            for entry in entries {
+                group.addTask { await withDeadline(deadline) { await self.panes(on: entry) }.map { (entry.hostID, $0) } }
+            }
+            var found = TargetDiscovery(targets: [], answered: [])
+            for await case let (hostID, targets)? in group {
+                found.targets += targets
+                found.answered?.insert(hostID)
+            }
+            return found
         }
-        for entry in await registry.all() {
-            guard let tools = try? await entry.connection.tools(), tools.tmux else { continue }
-            guard let result = try? await entry.connection.exec(Self.listScript(tmux: tmuxInvocation), timeout: .seconds(10)), result.exitStatus == 0 else { continue }
-            targets += Self.parsePanes(result.stdoutText).map { Self.target(for: $0, hostID: entry.hostID, hostLabel: entry.alias) }
-        }
-        return targets.sorted { lhs, rhs in
+        return TargetDiscovery(targets: Self.sorted(found.targets), answered: found.answered)
+    }
+
+    private func localPanes() async -> [AgentTarget]? {
+        guard localTmuxPath != nil else { return [] }
+        guard let output = try? await runLocal(Self.listScript(tmux: tmuxInvocation), stdin: nil) else { return nil }
+        return Self.parsePanes(output.stdoutText).map { Self.target(for: $0, hostID: .local, hostLabel: nil) }
+    }
+
+    private func panes(on entry: ConnectionRegistry.Entry) async -> [AgentTarget] {
+        guard let tools = try? await entry.connection.tools(), tools.tmux,
+              let result = try? await entry.connection.exec(Self.listScript(tmux: tmuxInvocation), timeout: .seconds(10)), result.exitStatus == 0
+        else { return [] }
+        return Self.parsePanes(result.stdoutText).map { Self.target(for: $0, hostID: entry.hostID, hostLabel: entry.alias) }
+    }
+
+    private static func sorted(_ targets: [AgentTarget]) -> [AgentTarget] {
+        targets.sorted { lhs, rhs in
             let lhsAgent = Self.pane(from: lhs)?.looksLikeAgent ?? false
             let rhsAgent = Self.pane(from: rhs)?.looksLikeAgent ?? false
             if lhsAgent != rhsAgent { return lhsAgent }
@@ -122,7 +148,7 @@ public actor TmuxTransport: Transport {
     // MARK: Helpers
 
     static func target(for pane: TmuxPane, hostID: HostID, hostLabel: String?) -> AgentTarget {
-        let identity = (try? JSONEncoder().encode(pane)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let identity = (try? Self.identityEncoder.encode(pane)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let where_ = hostLabel.map { "\($0): " } ?? ""
         return AgentTarget(transport: .tmux, hostID: hostID, label: "\(where_)\(pane.target) · \(pane.command)", detail: pane.path, identityJSON: identity)
     }

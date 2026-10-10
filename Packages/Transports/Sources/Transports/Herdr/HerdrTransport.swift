@@ -49,18 +49,38 @@ public actor HerdrTransport: Transport {
     // MARK: Discovery
 
     public func discoverTargets() async throws -> [AgentTarget] {
-        var targets: [AgentTarget] = []
-        if FileManager.default.fileExists(atPath: localSocketPath),
-           let agents = try? await HerdrClient(socketPath: localSocketPath).agentList() {
-            routes[.local] = .socket(path: localSocketPath)
-            targets += agents.compactMap { Self.target(for: $0, hostID: .local, hostLabel: nil) }
+        await discover(within: .seconds(15)).targets
+    }
+
+    /// This Mac and every connected host at once, each with its own deadline: a host whose exec hangs no longer
+    /// holds up (or empties) the agents on the others.
+    public func discover(within deadline: Duration) async -> TargetDiscovery {
+        let entries = await registry.all()
+        return await withTaskGroup(of: (HostID, [AgentTarget])?.self) { group in
+            group.addTask { await withDeadline(deadline) { await self.localAgents() }.map { (.local, $0) } }
+            for entry in entries {
+                group.addTask { await withDeadline(deadline) { await self.agents(on: entry) }.map { (entry.hostID, $0) } }
+            }
+            var found = TargetDiscovery(targets: [], answered: [])
+            for await case let (hostID, targets)? in group {
+                found.targets += targets
+                found.answered?.insert(hostID)
+            }
+            return found
         }
-        for entry in await registry.all() {
-            guard let (route, agents) = await discover(on: entry) else { continue }
-            routes[entry.hostID] = route
-            targets += agents.compactMap { Self.target(for: $0, hostID: entry.hostID, hostLabel: entry.alias) }
-        }
-        return targets
+    }
+
+    private func localAgents() async -> [AgentTarget] {
+        guard FileManager.default.fileExists(atPath: localSocketPath),
+              let agents = try? await HerdrClient(socketPath: localSocketPath).agentList() else { return [] }
+        routes[.local] = .socket(path: localSocketPath)
+        return agents.compactMap { Self.target(for: $0, hostID: .local, hostLabel: nil) }
+    }
+
+    private func agents(on entry: ConnectionRegistry.Entry) async -> [AgentTarget] {
+        guard let (route, agents) = await discover(on: entry) else { return [] }
+        routes[entry.hostID] = route
+        return agents.compactMap { Self.target(for: $0, hostID: entry.hostID, hostLabel: entry.alias) }
     }
 
     /// Tries the forwarded socket, then the CLI over exec, then a local machine profile.
@@ -118,7 +138,7 @@ public actor HerdrTransport: Transport {
     public nonisolated static func target(for agent: HerdrAgentInfo, hostID: HostID, hostLabel: String?) -> AgentTarget? {
         guard let kind = agent.agent, !kind.isEmpty else { return nil }
         let identity = HerdrTargetIdentity(paneID: agent.paneID, agent: kind, name: agent.name)
-        let json = (try? JSONEncoder().encode(identity)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let json = (try? Self.identityEncoder.encode(identity)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let title = agent.name ?? agent.terminalTitleStripped ?? agent.currentDirectory.map { PathUtilities.name(of: $0) } ?? ""
         let prefix = hostLabel.map { "\($0): " } ?? ""
         let label = "\(prefix)\(kind) · \(title.isEmpty ? agent.paneID : "\(title) (\(agent.paneID))")"

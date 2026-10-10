@@ -180,7 +180,7 @@ public actor OpenCodeTransport: Transport {
 
     nonisolated static func target(server: OpenCodeServer, sessionID: String, label: String, detail: String?) -> AgentTarget {
         let identity = OpenCodeIdentity(baseURL: server.baseURL.absoluteString, sessionID: sessionID)
-        let json = (try? JSONEncoder().encode(identity)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let json = (try? Self.identityEncoder.encode(identity)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return AgentTarget(transport: .opencode, hostID: .local, label: label, detail: detail, identityJSON: json)
     }
 

@@ -278,6 +278,9 @@ final class AppModel {
                 }
                 await self.forwardMCPPort(to: connection, alias: alias)
                 if self.followHerdr { self.startFollowing() }
+                // The host's agents join the list now, not at the next hover or Refresh, so one chosen there (or
+                // remembered for a folder on it) isn't shown as unavailable meanwhile.
+                if firstRegistration { await self.send.refreshTargets() }
                 // The host's agents (#10), once its home and the forwarded MCP address are known.
                 if firstRegistration { await self.hooks.refresh(hosts: [hostID], agents: HooksModel.launchCheckedAgents) }
             }
@@ -529,8 +532,11 @@ final class AppModel {
 
     /// Makes a target the one packets go to, discovering again when the list does not show it yet.
     private func adopt(target: AgentTarget) {
-        send.rememberTarget(target)
-        if !send.targets.contains(where: { $0.id == target.id }) {
+        // The listed agent when there is one: a pane's details carry less than the agent list (no name, no status).
+        if let listed = send.targets.first(where: { $0.id == target.id }) {
+            send.rememberTarget(listed)
+        } else {
+            send.rememberTarget(target)
             Task { await send.refreshTargets() }
         }
     }

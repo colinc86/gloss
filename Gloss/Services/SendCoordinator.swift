@@ -132,23 +132,29 @@ final class SendCoordinator {
             isDiscovering = false
             discoveredAt = Date()
         }
+        // Each host gets a few seconds of its own. A host that fails or runs out of time keeps the agents it listed
+        // last time: an agent counts as gone only when a listing that finished leaves it out, so a running agent never
+        // shows as unavailable because a check (its own host's, or another's) was slow.
+        let previous = targets
         var found: [AgentTarget] = []
-        await withTaskGroup(of: [AgentTarget].self) { group in
+        await withTaskGroup(of: (TransportKind, TargetDiscovery).self) { group in
             for transport in transports {
                 group.addTask {
-                    await withTaskGroup(of: [AgentTarget]?.self) { race in
-                        race.addTask { (try? await transport.discoverTargets()) ?? [] }
-                        race.addTask { try? await Task.sleep(for: .seconds(3)); return nil }
-                        let first = await race.next() ?? nil
-                        race.cancelAll()
-                        return first ?? []
-                    }
+                    let discovery = await withDeadline(.seconds(3)) { await transport.discover(within: .milliseconds(2500)) }
+                    return (transport.kind, discovery ?? TargetDiscovery(targets: [], answered: []))
                 }
             }
-            for await targets in group { found.append(contentsOf: targets) }
+            for await (kind, discovery) in group {
+                found += discovery.targets
+                found += previous.filter { $0.transport == kind && !discovery.answered($0.hostID) }
+            }
         }
         // Transport order is the delivery priority (Herdr first, clipboard last); agents sort by label within one.
         targets = found.sorted { (Self.priority($0.transport), $0.label) < (Self.priority($1.transport), $1.label) }
+        // The chosen agent as it is now (its name, folder and status), so the chip and the next send see it current.
+        if let current = lastTarget, let live = targets.first(where: { $0.id == current.id }), live != current {
+            lastTarget = live
+        }
         // The folder in front beats the target used last, which may belong to another folder.
         await selectFolderTarget()
     }
@@ -231,7 +237,7 @@ final class SendCoordinator {
         // Read after the load, with no wait before the write, so another remember isn't lost.
         var map = await loadFolderTargets()
         if let folderTargets { map = folderTargets }
-        guard map[key]?.id != target.id else { return }
+        guard map[key] != target else { return }
         map[key] = target
         folderTargets = map
         if let data = try? JSONEncoder().encode(map), let json = String(data: data, encoding: .utf8) {

@@ -325,3 +325,84 @@ struct SendCoordinatorTests {
         #expect(await relaunched.preferredTarget(hostID: .local, path: "/work/project")?.id == FakeTransport.target.id, "kept in the database")
     }
 }
+
+/// Lists agents until told to hang (a slow ssh host) or fail.
+final class FlakyTransport: Transport, @unchecked Sendable {
+    let kind = TransportKind.herdr
+    var listed: [AgentTarget]
+    var hangs = false
+    var fails = false
+    init(_ listed: [AgentTarget]) { self.listed = listed }
+
+    func discoverTargets() async throws -> [AgentTarget] {
+        if hangs { try await Task.sleep(for: .seconds(30)) }
+        if fails { throw DeliveryError.failed("unreachable") }
+        return listed
+    }
+
+    func deliver(_ packet: Packet, attachments: [StagedAttachment], to target: AgentTarget) async throws -> DeliveryReceipt {
+        DeliveryReceipt(detail: "ok")
+    }
+}
+
+/// Issue #21: a running agent showed as unavailable.
+@MainActor
+struct AgentAvailabilityTests {
+    let agent = AgentTarget(transport: .herdr, hostID: .local, label: "claude · playground (w6:p1)", identityJSON: #"{"pane_id":"w6:p1","agent":"claude"}"#)
+
+    @Test func aSlowOrFailedCheckKeepsTheAgentsListedLastTime() async throws {
+        let transport = FlakyTransport([agent])
+        let send = SendCoordinator(noteStore: NoteStore(database: try AppDatabase.inMemory()), transports: [transport], stagers: [:])
+        await send.refreshTargets()
+        send.rememberTarget(agent)
+        #expect(send.isTargetAvailable)
+        transport.fails = true
+        await send.refreshTargets()
+        #expect(send.isTargetAvailable, "a check that failed says nothing about the agent")
+        transport.fails = false
+        transport.hangs = true
+        await send.refreshTargets()
+        #expect(send.isTargetAvailable, "nor does one that ran out of time")
+        transport.hangs = false
+        transport.listed = []
+        await send.refreshTargets()
+        #expect(!send.isTargetAvailable, "a listing that finished without it does")
+    }
+
+    @Test func theChosenAgentMatchesWhateverOrderItsIdentityWasWrittenIn() async throws {
+        // Listed this launch with the keys the other way round, and a name since.
+        let listed = AgentTarget(transport: .herdr, hostID: .local, label: "claude · reviewer (w6:p1)", identityJSON: #"{"agent":"claude","name":"reviewer","pane_id":"w6:p1"}"#)
+        let send = SendCoordinator(noteStore: NoteStore(database: try AppDatabase.inMemory()), transports: [FlakyTransport([listed])], stagers: [:])
+        send.rememberTarget(agent)
+        await send.refreshTargets()
+        #expect(send.isTargetAvailable)
+        #expect(send.lastTarget?.label == listed.label, "the chosen agent is brought up to date from the list")
+    }
+}
+
+/// Answers for the hosts it is told to; the others were too slow.
+final class PerHostTransport: Transport, @unchecked Sendable {
+    let kind = TransportKind.herdr
+    var discovery: TargetDiscovery
+    init(_ discovery: TargetDiscovery) { self.discovery = discovery }
+    func discoverTargets() async throws -> [AgentTarget] { discovery.targets }
+    func discover(within deadline: Duration) async -> TargetDiscovery { discovery }
+    func deliver(_ packet: Packet, attachments: [StagedAttachment], to target: AgentTarget) async throws -> DeliveryReceipt {
+        DeliveryReceipt(detail: "ok")
+    }
+}
+
+extension AgentAvailabilityTests {
+    @Test func aSlowHostKeepsOnlyItsOwnAgents() async throws {
+        let box = HostID(rawValue: "h_box")
+        let remote = AgentTarget(transport: .herdr, hostID: box, label: "box: claude", identityJSON: #"{"pane_id":"w1:p1","agent":"claude"}"#)
+        let quit = AgentTarget(transport: .herdr, hostID: .local, label: "claude · gone", identityJSON: #"{"pane_id":"w9:p1","agent":"claude"}"#)
+        let transport = PerHostTransport(TargetDiscovery(targets: [agent, quit, remote], answered: nil))
+        let send = SendCoordinator(noteStore: NoteStore(database: try AppDatabase.inMemory()), transports: [transport], stagers: [:])
+        await send.refreshTargets()
+        // This Mac answered without one of its agents; the remote host didn't answer at all.
+        transport.discovery = TargetDiscovery(targets: [agent], answered: [.local])
+        await send.refreshTargets()
+        #expect(Set(send.targets.map(\.id)) == Set([agent.id, remote.id]), "the quiet host keeps its agent; this Mac's list is current")
+    }
+}
