@@ -29,7 +29,7 @@ final class FileNameRequest: Identifiable {
         defer { isSubmitting = false }
         do { try await operation(value); return true }
         catch FileSystemError.alreadyExists { error = "That name already exists. Choose a different name." }
-        catch FileSystemError.permissionDenied { error = "You don’t have permission to change this folder." }
+        catch FileSystemError.permissionDenied { error = "You don't have permission to change this folder." }
         catch { self.error = "Could not \(actionTitle.lowercased()): \(error.localizedDescription)" }
         return false
     }

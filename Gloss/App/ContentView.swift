@@ -83,7 +83,7 @@ struct ContentView: View {
             .sheet(item: Binding(get: { model.explorer.fileNameRequest }, set: { model.explorer.fileNameRequest = $0 })) { request in
                 FileOperationSheet(request: request) { model.explorer.fileNameRequest = nil }
             }
-            .alert("Couldn’t Complete the Action", isPresented: Binding(get: { model.explorer.lastError != nil }, set: { if !$0 { model.explorer.lastError = nil } })) {
+            .alert("Couldn't Complete the Action", isPresented: Binding(get: { model.explorer.lastError != nil }, set: { if !$0 { model.explorer.lastError = nil } })) {
                 Button("OK", role: .cancel) { model.explorer.lastError = nil }
             } message: { Text(model.explorer.lastError ?? "") }
             .safeAreaInset(edge: .bottom) {

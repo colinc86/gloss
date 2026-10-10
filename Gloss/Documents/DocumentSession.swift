@@ -972,7 +972,7 @@ final class DocumentSession: Identifiable {
         // A tab that never got a record (too large to show, or failed to load) has no review history to follow.
         if document != nil {
             guard let relocated = try await noteStore.document(hostID: hostID, path: newPath) else {
-                throw FileSystemError.io("The renamed document’s review record is unavailable.")
+                throw FileSystemError.io("The renamed document's review record is unavailable.")
             }
             document = relocated
         }
