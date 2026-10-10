@@ -358,7 +358,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         guard let model = AppDelegate.model else { return nil }
         let menu = NSMenu()
-        let questions = model.notesPanel.groups.reduce(0) { $0 + $1.notes.filter(\.waitingOnUser).count }
+        // Every question, as the Dock badge counts them, not only those under the folder in front.
+        let questions = model.notesPanel.allGroups.reduce(0) { $0 + $1.notes.filter(\.waitingOnUser).count }
         if questions > 0 {
             let item = NSMenuItem(title: questions == 1 ? "1 Question from an Agent…" : "\(questions) Questions from Agents…",
                                   action: #selector(showQuestions), keyEquivalent: "")
@@ -386,10 +387,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showQuestions() {
         guard let model = AppDelegate.model else { return }
         showMainWindow(model)
-        // The questions the menu counted, not whatever colour or search was left on.
-        model.notesPanel.clearFilters()
-        model.notesPanel.filter = .attention
-        model.showNotesPanel = true
+        model.showQuestionsFromAgents()
     }
 
     @objc private func openRecent(_ sender: NSMenuItem) {

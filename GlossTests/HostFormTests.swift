@@ -42,3 +42,29 @@ struct HostRemovalWarningTests {
         await model.shutDown()
     }
 }
+
+/// The Dock's "Questions from Agents…" lands on a question even when none is under the folder in front.
+@MainActor
+struct DockQuestionsTests {
+    @Test func aQuestionElsewhereIsOpened() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-dock-questions-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(base)/here", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(base)/there", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        try "plan\n".write(toFile: "\(base)/there/plan.md", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", "\(base)/here"]))
+        await model.start()
+        let document = try await model.noteStore.upsertDocument(hostID: .local, path: "\(base)/there/plan.md", kind: .markdown, fingerprint: Fingerprint())
+        let note = try await model.noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: "", color: .orange)
+        _ = try await model.noteStore.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "", noteIDs: [note.id], outcome: .delivered)
+        try await model.noteStore.agentReply(note.id, body: "Which cache?", asks: true, agent: "claude")
+        for _ in 0..<100 where !model.notesPanel.allGroups.contains(where: { $0.notes.contains(where: \.waitingOnUser) }) { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(!model.notesPanel.groups.contains { $0.notes.contains(where: \.waitingOnUser) }, "nothing waiting under the folder in front")
+
+        model.showQuestionsFromAgents()
+        for _ in 0..<150 where model.activeSession?.path != "\(base)/there/plan.md" { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(model.activeSession?.path == "\(base)/there/plan.md", "the question's document opens")
+        #expect(model.notesPanel.filter == .attention && model.showNotesPanel)
+        await model.shutDown()
+    }
+}

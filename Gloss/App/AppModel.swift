@@ -2113,6 +2113,19 @@ final class AppModel {
         await send.copy(noteIDs: noteIDs)
     }
 
+    /// The Dock's "Questions from Agents…": the notes panel's Attention list, without whatever color or search was left
+    /// on; when none of the questions is under the folder in front, the newest one's document opens, so the click
+    /// lands on a question rather than an empty list.
+    func showQuestionsFromAgents() {
+        notesPanel.clearFilters()
+        notesPanel.filter = .attention
+        showNotesPanel = true
+        guard !notesPanel.groups.contains(where: { $0.notes.contains(where: \.waitingOnUser) }) else { return }
+        let waiting = notesPanel.allGroups.flatMap { group in group.notes.filter(\.waitingOnUser).map { (note: $0, document: group.document) } }
+        guard let newest = waiting.max(by: { $0.note.updatedAt < $1.note.updatedAt }) else { return }
+        reveal(note: newest.note, in: newest.document)
+    }
+
     /// Opens the note's document and scrolls to it. A note the panel's filters hide is brought into the list first,
     /// so what's shown on the page always has its card.
     func reveal(note: Note, in document: Core.Document, select: Bool = true) {
