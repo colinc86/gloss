@@ -218,12 +218,24 @@ public struct SFTPFileSystem: FileSystemProvider {
 
     public func rename(_ path: String, to newPath: String) async throws {
         let client = try await channel.client()
-        if (try? await client.lstat(newPath)) != nil { throw FileSystemError.alreadyExists(newPath) }
+        if (try? await client.lstat(newPath)) != nil, !(await Self.onlyCaseChanges(path, to: newPath, client: client)) {
+            throw FileSystemError.alreadyExists(newPath)
+        }
         do {
             try await client.rename(path, to: newPath)
         } catch let status as SFTPStatus {
             throw Self.map(status, path: path)
         }
+    }
+
+    /// Whether a name found at `newPath` is only the file itself seen through a case-insensitive volume (a Mac at the
+    /// other end): same folder, the names differ only in case, and no entry is named exactly `newPath`.
+    private static func onlyCaseChanges(_ path: String, to newPath: String, client: SFTPClient) async -> Bool {
+        let name = PathUtilities.name(of: path), newName = PathUtilities.name(of: newPath)
+        guard PathUtilities.parent(of: path) == PathUtilities.parent(of: newPath), name != newName,
+              name.lowercased() == newName.lowercased(),
+              let entries = try? await client.listDirectory(PathUtilities.parent(of: newPath)) else { return false }
+        return !entries.contains { $0.name == newName }
     }
 
     /// Unlinks files; removes directories recursively.

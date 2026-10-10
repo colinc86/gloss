@@ -35,6 +35,8 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
     let incoming: AsyncStream<Data>
     let shuffleReplies: Bool
     let extensions: [String: String]
+    /// Finds a file whatever the case of its name, as a Mac's default volume does.
+    var caseInsensitive = false
 
     init(shuffleReplies: Bool = false, extensions: [String: String] = ["posix-rename@openssh.com": "1", "fsync@openssh.com": "1", "limits@openssh.com": "1"]) {
         self.shuffleReplies = shuffleReplies
@@ -138,6 +140,10 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
     private func handle(_ request: Request, _ state: inout State) -> [Data] {
         var reader = request.reader
         let id = request.id
+        func key(_ path: String) -> String {
+            guard caseInsensitive else { return path }
+            return state.files.keys.first { $0.lowercased() == path.lowercased() } ?? path
+        }
         func open(_ path: String, isDirectory: Bool) -> Data {
             let handle = "h\(state.nextHandle)"
             state.nextHandle += 1
@@ -172,7 +178,7 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
                 return [reply(.name, id: id) { $0.append(UInt32(1)); $0.append(resolved); $0.append(resolved); $0.append(SFTPAttributes()) }]
             case .stat, .lstat:
                 let path = try reader.string()
-                if let file = state.files[path] { return [reply(.attrs, id: id) { $0.append(self.attrs(file)) }] }
+                if let file = state.files[key(path)] { return [reply(.attrs, id: id) { $0.append(self.attrs(file)) }] }
                 if state.directories.contains(path) { return [reply(.attrs, id: id) { $0.append(self.directoryAttrs()) }] }
                 return [status(id, .noSuchFile, "No such file")]
             case .open:
@@ -264,7 +270,7 @@ final class FakeSFTPServer: SFTPTransport, @unchecked Sendable {
                 return [status(id, .ok)]
             case .rename:
                 let old = try reader.string(); let new = try reader.string()
-                if state.files[new] != nil { return [status(id, .failure, "exists")] }
+                if state.files[key(new)] != nil, key(new) != old { return [status(id, .failure, "exists")] }
                 guard let file = state.files.removeValue(forKey: old) else { return [status(id, .noSuchFile)] }
                 state.files[new] = file
                 return [status(id, .ok)]
