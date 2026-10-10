@@ -65,7 +65,7 @@ final class HostsModel {
             let stderr = await connection.capturedStderr.split(whereSeparator: \.isNewline).suffix(25)
             if !stderr.isEmpty {
                 lines.append("")
-                lines.append("ssh output (last \(stderr.count) lines):")
+                lines.append("ssh output (last \(stderr.count.counted("line"))):")
                 lines.append(contentsOf: stderr.map(String.init))
             }
         }

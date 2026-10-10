@@ -1742,7 +1742,7 @@ private struct SendDraftsButton<MenuItems: View>: View {
         .disabled(!hasTarget || count == 0 || isSending)
         .animation(DS.Motion.smooth, value: count)
         .animation(DS.Motion.bouncy, value: colors)
-        .help(!hasTarget ? "Choose an available agent first" : count == 0 ? "No eligible notes in this scope" : "Send the \(count) shown notes in the selected scope (⌘↩)")
+        .help(!hasTarget ? "Choose an available agent first" : count == 0 ? "No eligible notes in this scope" : count == 1 ? "Send the shown note in the selected scope (⌘↩)" : "Send the \(count) shown notes in the selected scope (⌘↩)")
     }
 }
 
