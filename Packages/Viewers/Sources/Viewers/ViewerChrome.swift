@@ -320,3 +320,71 @@ public struct CopiedBadge: View {
         }
     }
 }
+
+/// What a find bar searches: a viewer with no find bar of its own (a web page, a PDF).
+@MainActor
+public protocol FindBarModel: AnyObject, Observable {
+    var findText: String { get set }
+    /// The last search found nothing.
+    var findMissed: Bool { get }
+    /// The next (or previous) match, wrapping at either end, case aside; the viewer selects it and scrolls to it.
+    func find(backwards: Bool) async
+    func endFind()
+}
+
+/// Find in a viewer: a field under its toolbar that searches as it is typed. Return finds the next match,
+/// Shift-Return the previous, Escape or Done closes it.
+struct FindBar<Model: FindBarModel>: View {
+    @Bindable var model: Model
+    let prompt: String
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(prompt, text: $model.findText)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .onSubmit {
+                    let backwards = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
+                    Task { await model.find(backwards: backwards) }
+                }
+                .onChange(of: model.findText) { _, _ in Task { await model.find(backwards: false) } }
+            if model.findMissed {
+                Text("Not found")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .transition(.opacity)
+            }
+            ToolGroup {
+                Button { Task { await model.find(backwards: true) } } label: { Image(systemName: "chevron.up") }
+                    .help("Previous match (⇧⌘G)")
+                    .accessibilityLabel("Previous match")
+                Button { Task { await model.find(backwards: false) } } label: { Image(systemName: "chevron.down") }
+                    .help("Next match (⌘G)")
+                    .accessibilityLabel("Next match")
+            }
+            .disabled(model.findText.isEmpty)
+            Button("Done") { model.endFind() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+        .animation(Motion.snappy, value: model.findMissed)
+        .onAppear { focused = true }
+        .onExitCommand { model.endFind() }
+    }
+}
+
+/// The find actions a viewer that answers Edit › Find itself handles, from a menu item's tag.
+enum FindMenuAction {
+    static let handled: Set<NSTextFinder.Action> = [.showFindInterface, .nextMatch, .previousMatch, .hideFindInterface]
+
+    static func action(of sender: Any?) -> NSTextFinder.Action? {
+        guard let tag = (sender as? any NSValidatedUserInterfaceItem)?.tag, let action = NSTextFinder.Action(rawValue: tag),
+              handled.contains(action) else { return nil }
+        return action
+    }
+}

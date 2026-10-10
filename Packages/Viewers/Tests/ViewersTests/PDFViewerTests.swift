@@ -52,6 +52,54 @@ struct PDFViewerTests {
         #expect(controller.selection(matching: "Revenue", onPage: 0, occurrence: highlight.occurrence)?.bounds(for: page) == second)
     }
 
+    /// Edit › Find in a PDF: PDFView takes no find actions, so the viewer answers them with its own bar.
+    @Test @MainActor func findStepsThroughMatchesAndWraps() async throws {
+        let data = NSMutableData()
+        var box = CGRect(x: 0, y: 0, width: 400, height: 200)
+        let context = CGContext(consumer: CGDataConsumer(data: data)!, mediaBox: &box, nil)!
+        for text in ["Revenue rose, then Revenue fell", "No figures here", "Revenue held"] {
+            context.beginPDFPage(nil)
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 18), .foregroundColor: NSColor.black]))
+            context.textPosition = CGPoint(x: 20, y: 100)
+            CTLineDraw(line, context)
+            context.endPDFPage()
+        }
+        context.closePDF()
+        let controller = PDFViewerController(document: try #require(PDFDocument(data: data as Data)))
+        let view = RegionCopyingPDFView()
+        view.document = controller.document
+        view.regionController = controller
+        let item = NSMenuItem(title: "", action: #selector(NSResponder.performTextFinderAction(_:)), keyEquivalent: "")
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        #expect(view.validateMenuItem(item), "Edit › Find is offered on a PDF")
+        view.performTextFinderAction(item)
+        #expect(controller.isFinding)
+
+        controller.findText = "revenue"
+        func step(backwards: Bool = false) async -> (page: Int, x: CGFloat)? {
+            await controller.find(backwards: backwards)
+            guard let found = controller.foundSelection, let page = found.pages.first else { return nil }
+            return (controller.document.index(for: page), found.bounds(for: page).minX)
+        }
+        let first = try #require(await step())
+        let second = try #require(await step())
+        let third = try #require(await step())
+        let wrapped = try #require(await step())
+        #expect(first.page == 0 && second.page == 0 && second.x > first.x, "both matches on the first page, in order")
+        #expect(third.page == 2, "the page without one is passed over")
+        #expect(wrapped.page == first.page && wrapped.x == first.x, "past the last match it wraps to the first")
+        let back = try #require(await step(backwards: true))
+        #expect(back.page == 2, "back from the first goes round to the last")
+        #expect(!controller.findMissed)
+        #expect(controller.foundVersion == 5)
+
+        controller.findText = "nowhere"
+        await controller.find(backwards: false)
+        #expect(controller.findMissed)
+        controller.endFind()
+        #expect(!controller.isFinding && !controller.findMissed)
+    }
+
     @Test func textSourceFindsTextAcrossPages() {
         let source = PDFDocumentTextSource(document: makePDF())
         #expect(source.pageCount == 2)

@@ -95,8 +95,14 @@ final class RegionCopyingPDFView: PDFView {
         return unsafeBitCast(method_getImplementation(method), to: Validate.self)
     }()
 
+    /// Edit › Find, Find Next and Find Previous: PDFView takes no find actions itself.
+    override func performTextFinderAction(_ sender: Any?) {
+        if let action = FindMenuAction.action(of: sender) { regionController?.perform(action) }
+    }
+
     @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(copy(_:)) { return regionController?.region != nil || currentSelection != nil }
+        if menuItem.action == #selector(performTextFinderAction(_:)) { return FindMenuAction.action(of: menuItem) != nil }
         return Self.pdfKitValidate?(self, NSSelectorFromString("validateMenuItem:"), menuItem).boolValue ?? true
     }
 }
@@ -172,6 +178,7 @@ public struct PDFViewerView: NSViewRepresentable {
         private var notePageRects: [NoteID: (page: Int, rects: [CGRect])] = [:]
         private var notePageRectsFor: [PDFHighlight]?
         private var appliedScroll = 0
+        private var appliedFind = 0
 
         init(controller: PDFViewerController) {
             self.controller = controller
@@ -222,6 +229,12 @@ public struct PDFViewerView: NSViewRepresentable {
             container.overlay.needsDisplay = true
             applyTextHighlights()
             controller.noteGeometry.changed()
+            _ = controller.foundVersion
+            if appliedFind != controller.foundVersion, let found = controller.foundSelection {
+                appliedFind = controller.foundVersion
+                container.pdfView.setCurrentSelection(found, animate: true)
+                container.pdfView.go(to: found)
+            }
             if appliedScroll != controller.pendingScrollVersion, let target = controller.pendingScroll {
                 appliedScroll = controller.pendingScrollVersion
                 if let page = controller.document.page(at: target.page) {
@@ -338,6 +351,10 @@ public struct PDFViewerPane: View {
             .animation(Motion.smooth, value: controller.currentPage)
             .animation(Motion.smooth, value: controller.regionMode)
             .animation(Motion.smooth, value: controller.region == nil)
+            if controller.isFinding {
+                FindBar(model: controller, prompt: "Find in document")
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             HStack(spacing: 0) {
                 if controller.showsThumbnails && controller.pageCount > 1 {
                     PDFThumbnailColumn(controller: controller)
@@ -348,6 +365,7 @@ public struct PDFViewerPane: View {
                     .overlay(alignment: .bottom) { PagePill(page: controller.currentPage, count: controller.pageCount) }
             }
             .animation(Motion.smooth, value: controller.showsThumbnails)
+            .animation(Motion.smooth, value: controller.isFinding)
         }
     }
 }

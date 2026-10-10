@@ -295,10 +295,10 @@ struct WebBridgeTests {
         web.performTextFinderAction(item(.showFindInterface))
         #expect(harness.browser.isFinding)
         harness.browser.findText = "target paragraph"
-        await harness.browser.find()
+        await harness.browser.find(backwards: false)
         #expect(!harness.browser.findMissed, "found, case aside")
         harness.browser.findText = "nowhere on this page"
-        await harness.browser.find()
+        await harness.browser.find(backwards: false)
         #expect(harness.browser.findMissed)
         harness.browser.findText = "Second section"
         web.performTextFinderAction(item(.nextMatch))

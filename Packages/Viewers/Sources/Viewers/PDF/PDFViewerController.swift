@@ -137,6 +137,46 @@ public final class PDFViewerController {
         return anchor
     }
 
+    // MARK: Find
+
+    /// The find field over the document is showing (Edit › Find; PDFView has no find bar of its own).
+    public var isFinding = false
+    public var findText = ""
+    public private(set) var findMissed = false
+    /// The match found last, which the view selects and scrolls to; the next search starts from it.
+    @ObservationIgnored public private(set) var foundSelection: PDFSelection?
+    public private(set) var foundVersion = 0
+
+    func perform(_ action: NSTextFinder.Action) {
+        switch action {
+        case .showFindInterface: isFinding = true
+        case .nextMatch: Task { await find(backwards: false) }
+        case .previousMatch: Task { await find(backwards: true) }
+        case .hideFindInterface: endFind()
+        default: break
+        }
+    }
+
+    public func find(backwards: Bool) async {
+        guard !findText.isEmpty else {
+            findMissed = false
+            return
+        }
+        let options: NSString.CompareOptions = backwards ? [.caseInsensitive, .backwards] : [.caseInsensitive]
+        // From the last match; past the end (or the start, going back) it wraps.
+        var found = document.findString(findText, fromSelection: foundSelection, withOptions: options)
+        if found == nil, foundSelection != nil { found = document.findString(findText, fromSelection: nil, withOptions: options) }
+        findMissed = found == nil
+        guard let found else { return }
+        foundSelection = found
+        foundVersion += 1
+    }
+
+    public func endFind() {
+        isFinding = false
+        findMissed = false
+    }
+
     public func clearSelection() {
         region = nil
         textSelection = nil
@@ -211,3 +251,5 @@ public struct PDFDocumentTextSource: PDFTextSource {
         return hits
     }
 }
+
+extension PDFViewerController: FindBarModel {}

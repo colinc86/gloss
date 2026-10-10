@@ -91,7 +91,7 @@ public struct HTMLViewerView: View {
             .animation(Motion.snappy, value: controller.isNoteMode)
             .animation(Motion.smooth, value: browser.isFinding)
             if controller.mode == .rendered, browser.isFinding {
-                PageFindBar(browser: browser)
+                FindBar(model: browser, prompt: "Find on page")
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
             switch controller.mode {
@@ -103,50 +103,6 @@ public struct HTMLViewerView: View {
         }
         // Escape leaves Pick Element wherever focus is (the page catches it too, but only while it has focus).
         .onExitCommand(perform: controller.isNoteMode ? { controller.isNoteMode = false } : nil)
-    }
-}
-
-/// Find on the page: a field under the toolbar. Return finds the next match, Shift-Return the previous, Escape closes.
-struct PageFindBar: View {
-    @Bindable var browser: WebBrowserController
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Find on page", text: $browser.findText)
-                .textFieldStyle(.plain)
-                .focused($focused)
-                .onSubmit {
-                    let backwards = NSApp.currentEvent?.modifierFlags.contains(.shift) ?? false
-                    Task { await browser.find(backwards: backwards) }
-                }
-                .onChange(of: browser.findText) { _, _ in Task { await browser.find() } }
-            if browser.findMissed {
-                Text("Not found")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .transition(.opacity)
-            }
-            ToolGroup {
-                Button { Task { await browser.find(backwards: true) } } label: { Image(systemName: "chevron.up") }
-                    .help("Previous match (⇧⌘G)")
-                    .accessibilityLabel("Previous match")
-                Button { Task { await browser.find() } } label: { Image(systemName: "chevron.down") }
-                    .help("Next match (⌘G)")
-                    .accessibilityLabel("Next match")
-            }
-            .disabled(browser.findText.isEmpty)
-            Button("Done") { browser.endFind() }
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 30)
-        .background(.bar)
-        .overlay(alignment: .bottom) { Divider() }
-        .animation(Motion.snappy, value: browser.findMissed)
-        .onAppear { focused = true }
-        .onExitCommand { browser.endFind() }
     }
 }
 

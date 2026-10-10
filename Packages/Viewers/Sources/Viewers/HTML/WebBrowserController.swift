@@ -79,7 +79,7 @@ public final class WebBrowserController {
 
     /// Finds the next (or previous) match of `findText` on the page, wrapping at either end, case aside; WebKit
     /// selects it and scrolls it into view.
-    public func find(backwards: Bool = false) async {
+    public func find(backwards: Bool) async {
         guard !findText.isEmpty else {
             findMissed = false
             return
@@ -1006,18 +1006,15 @@ private extension URL {
 /// The app's web view, answering Edit › Find (⌘F, ⌘G, ⇧⌘G) itself: WKWebView takes no find actions on the Mac.
 final class FindingWebView: WKWebView {
     var onFindAction: (NSTextFinder.Action) -> Void = { _ in }
-    private static let handled: Set<NSTextFinder.Action> = [.showFindInterface, .nextMatch, .previousMatch, .hideFindInterface]
 
     override func performTextFinderAction(_ sender: Any?) {
-        guard let tag = (sender as? any NSValidatedUserInterfaceItem)?.tag, let action = NSTextFinder.Action(rawValue: tag),
-              Self.handled.contains(action) else { return }
-        onFindAction(action)
+        if let action = FindMenuAction.action(of: sender) { onFindAction(action) }
     }
 
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
-        if item.action == #selector(performTextFinderAction(_:)) {
-            return NSTextFinder.Action(rawValue: item.tag).map(Self.handled.contains) ?? false
-        }
+        if item.action == #selector(performTextFinderAction(_:)) { return FindMenuAction.action(of: item) != nil }
         return super.validateUserInterfaceItem(item)
     }
 }
+
+extension WebBrowserController: FindBarModel {}
