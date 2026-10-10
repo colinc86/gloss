@@ -417,6 +417,15 @@ struct ZoomControls: View {
                 .keyboardShortcut("=", modifiers: [.command])
                 .help("Zoom in")
                 .accessibilityLabel("Zoom in")
+                // ⌘+ too, as most people press it (⌘⇧= on a US keyboard), and where `+` is a key of its own
+                // (German, Swiss) ⌘= needs Shift: an invisible twin that takes no room and isn't read out.
+                .background {
+                    Button("") { zoom(.zoomIn) }
+                        .keyboardShortcut("+", modifiers: [.command])
+                        .opacity(0)
+                        .frame(width: 0, height: 0)
+                        .accessibilityHidden(true)
+                }
         }
         .animation(Motion.snappy, value: magnification)
         if let fitHelp {

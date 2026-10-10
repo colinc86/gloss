@@ -24,7 +24,7 @@ nonisolated struct ShortcutGroup: Identifiable {
         ]),
         ShortcutGroup(title: "Viewers", symbol: "photo", items: [
             ("Put the Add Note button away", ["esc"]),
-            ("Zoom in / out (images, PDFs, pages)", ["⌘", "=", "/", "⌘", "−"]),
+            ("Zoom in / out (images, PDFs, pages)", ["⌘", "+", "/", "⌘", "−"]),
             ("Actual size / fit (images, PDFs)", ["⌘", "1", "/", "⌘", "0"]),
             ("Move between cells (spreadsheets)", ["←", "→", "↑", "↓"]),
             ("Extend the cell selection", ["⇧", "←", "→", "↑", "↓"]),
@@ -160,7 +160,7 @@ private struct ShortcutKey: View {
 
     var body: some View {
         if key == "/" {
-            // Between two alternatives, so ⌘= / ⌘− never reads as one four-key chord.
+            // Between two alternatives, so ⌘+ / ⌘− never reads as one four-key chord.
             Text("or").font(.caption).foregroundStyle(.tertiary).padding(.horizontal, 3)
         } else {
             cap
