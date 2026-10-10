@@ -251,7 +251,7 @@ struct MarkdownRendererTests {
         #expect(color("-old") == .systemRed && color("+new") == .systemGreen && color("@@") == .systemPurple)
         #expect(color("--- a/x") == .secondaryLabelColor && color("+++ b/x") == .secondaryLabelColor, "file headers are not a removal and an addition")
         #expect(color(" same") != .systemRed && color(" same") != .systemGreen)
-        #expect(MarkdownRenderer.isDiff(fence: "patch") && !MarkdownRenderer.isDiff(fence: "swift"))
+        #expect(MarkdownRenderer.grammarName(forFence: "patch") == "diff", "the editor's diff colours, one set for both")
     }
 
     @Test func fenceInfoStringsMapToGrammars() {
