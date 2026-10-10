@@ -405,6 +405,7 @@ final class AppModel {
         iterations.fileSystem = { [weak self] hostID in self?.fileSystems[hostID] }
         iterations.liveSession = { [weak self] documentID in self?.sessions.values.first { $0.document?.id == documentID } }
         iterations.onViewedIterationChange = { [weak self] document, number in self?.notesPanel.showIteration(number, of: document) }
+        iterations.onFailure = { [weak self] message in self?.notesPanel.lastError = message }
         notesPanel.onRestored = { [weak self] restored in
             Task { await self?.reanchorRestored(restored) }
         }

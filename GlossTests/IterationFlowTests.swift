@@ -140,6 +140,23 @@ struct IterationFlowTests {
         await model.shutDown()
     }
 
+    /// Bringing forward a note that went meanwhile says so in the notes panel's alert, instead of nothing happening.
+    @Test func aFailedBringForwardSaysSo() async throws {
+        let folder = try makeFolder()
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let path = "\(folder)/a.md"
+        try "one\n".write(toFile: path, atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        await model.explorer.openRoot(hostID: .local, path: folder)
+        let document = try await model.noteStore.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        let note = try await model.noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: "n", color: .yellow)
+        await model.iterations.start(document, openNotes: .leave)
+        try await model.noteStore.deleteForever([note.id])
+        await model.iterations.bringForward(note, in: document)
+        #expect(model.notesPanel.lastError == "Couldn't bring the note forward: it was deleted.")
+        await model.shutDown()
+    }
+
     /// A document's header in the notes panel shows an earlier iteration, opening the document first, and its menu
     /// starts the next one.
     @Test func aDocumentsHeaderShowsAndStartsIterations() async throws {

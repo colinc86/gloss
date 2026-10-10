@@ -32,6 +32,8 @@ final class IterationsModel {
     @ObservationIgnored var liveSession: (DocumentID) -> DocumentSession? = { _ in nil }
     /// Tells the notes panel which iteration of a document to list (nil: the current one).
     @ObservationIgnored var onViewedIterationChange: (Core.Document, Int?) -> Void = { _, _ in }
+    /// Why something the user asked for failed, in a sentence, for the notes panel's alert.
+    @ObservationIgnored var onFailure: (String) -> Void = { _ in }
 
     /// The earlier iteration shown for a live session, by session id.
     private(set) var past: [String: PastView] = [:]
@@ -78,14 +80,22 @@ final class IterationsModel {
     }
 
     /// Ends the current iteration on the content as it is now (and the commit it is at), and opens the next.
-    func start(_ document: Core.Document, openNotes: OpenNotesChoice) async {
+    /// `byHand`: the user asked for it, so a failure is said, not only logged (one started on its own stays quiet).
+    func start(_ document: Core.Document, openNotes: OpenNotesChoice, byHand: Bool = true) async {
         let snapshot = await currentContent(of: document)
         let commit = await gitCommit(of: document)
         do {
             try await noteStore.startIteration(documentID: document.id, openNotes: openNotes, snapshot: snapshot, gitCommit: commit)
-            if settings.snapshotsKept > 0 { try await noteStore.pruneSnapshots(keepingLast: settings.snapshotsKept) }
         } catch {
             Log.notes.error("starting an iteration failed: \(error, privacy: .public)")
+            if byHand { onFailure("Couldn't start a new iteration: \(error.userMessage)") }
+            return
+        }
+        // The iteration began; old snapshots that stay are only disk space.
+        if settings.snapshotsKept > 0 {
+            do { try await noteStore.pruneSnapshots(keepingLast: settings.snapshotsKept) } catch {
+                Log.notes.error("pruning snapshots failed: \(error, privacy: .public)")
+            }
         }
     }
 
@@ -94,7 +104,7 @@ final class IterationsModel {
     func startIfAllResolved(_ documentID: DocumentID) async {
         guard settings.iteratesAfterResolved, let document = try? await noteStore.document(documentID),
               let notes = try? await noteStore.notes(for: documentID), Self.allResolved(notes) else { return }
-        await start(document, openNotes: .leave)
+        await start(document, openNotes: .leave, byHand: false)
     }
 
     /// The current iteration remembers the commit its file was at when it began (its first note, for iteration 0),
@@ -245,6 +255,7 @@ final class IterationsModel {
             _ = try await noteStore.bringForward(note.id, anchor: anchor, found: found, origin: "Brought forward from \(label)")
         } catch {
             Log.notes.error("bring forward failed: \(error, privacy: .public)")
+            onFailure("Couldn't bring the note forward: \(NotesPanelModel.reason(error))")
         }
     }
 
@@ -257,6 +268,7 @@ final class IterationsModel {
     func rename(_ iteration: Iteration, to name: String) async {
         do { try await noteStore.renameIteration(documentID: iteration.documentID, number: iteration.number, name: name) } catch {
             Log.notes.error("rename iteration failed: \(error, privacy: .public)")
+            onFailure("Couldn't rename the iteration: \(error.userMessage)")
         }
     }
 }

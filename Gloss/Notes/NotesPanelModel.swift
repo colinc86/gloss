@@ -589,14 +589,17 @@ final class NotesPanelModel {
             return true
         } catch {
             Log.notes.error("\(what, privacy: .public) failed: \(error, privacy: .public)")
-            // The store's own words are for agents and name note ids; a note gone meanwhile (deleted in another
-            // window, say) is said plainly.
-            let reason = switch error as? NoteStoreError {
-            case .noteNotFound?, .noteDeleted?: "it was deleted."
-            default: error.userMessage
-            }
-            lastError = "Couldn't \(what): \(reason)"
+            lastError = "Couldn't \(what): \(Self.reason(error))"
             return false
+        }
+    }
+
+    /// A failed note action's cause for the user. The store's own words are for agents and name note ids; a note
+    /// gone meanwhile (deleted in another window, say) is said plainly.
+    nonisolated static func reason(_ error: any Error) -> String {
+        switch error as? NoteStoreError {
+        case .noteNotFound?, .noteDeleted?: "it was deleted."
+        default: error.userMessage
         }
     }
 
