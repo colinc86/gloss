@@ -20,6 +20,8 @@ struct PullRequestPathTests {
 
     @Test func parsesReferences() {
         #expect(PullRequestPath.parse(reference: "https://github.com/o/r/pull/12") == PullRequestPath(owner: "o", repo: "r", number: 12))
+        #expect(PullRequestPath.parse(reference: "https://www.github.com/o/r/pull/12") == PullRequestPath(owner: "o", repo: "r", number: 12), "a www. link is the same pull request")
+        #expect(PullRequestPath.parse(reference: "https://gist.github.com/o/r/pull/12") == nil)
         #expect(PullRequestPath.parse(reference: "github.com/o/r/pull/12/files") == PullRequestPath(owner: "o", repo: "r", number: 12))
         #expect(PullRequestPath.parse(reference: "https://github.com/o/r/pull/12/files/Sources/A.swift")?.changedFile == "Sources/A.swift")
         #expect(PullRequestPath.parse(reference: " o/r#12 ") == PullRequestPath(owner: "o", repo: "r", number: 12))

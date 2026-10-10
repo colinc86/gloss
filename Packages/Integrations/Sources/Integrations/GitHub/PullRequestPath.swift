@@ -61,7 +61,8 @@ public struct PullRequestPath: Equatable, Sendable {
         }
         var candidate = trimmed
         if !candidate.contains("://") { candidate = "https://" + candidate }
-        guard let url = URL(string: candidate), url.host()?.lowercased() == "github.com" else { return nil }
+        // `www.github.com` too: GitHub serves the same pages there (it redirects), and links are copied with it.
+        guard let url = URL(string: candidate), ["github.com", "www.github.com"].contains(url.host()?.lowercased() ?? "") else { return nil }
         let parts = url.pathComponents.filter { $0 != "/" }
         guard parts.count >= 4, parts[2] == "pull", let number = Int(parts[3]), number > 0 else { return nil }
         var rest = ""
