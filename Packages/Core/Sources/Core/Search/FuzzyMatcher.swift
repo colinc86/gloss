@@ -1,23 +1,38 @@
 import Foundation
 
 /// Ranks file paths against a typed query for Open Quickly. Every query character must appear in order
-/// (case-insensitively). Matches score higher at the start of a path component or a word (`Model` in
+/// (ignoring case and accents). Matches score higher at the start of a path component or a word (`Model` in
 /// `AppModel`, `m` after `_`), in runs of consecutive characters, and in the file name rather than its folders;
 /// shorter paths win ties.
 public enum FuzzyMatcher {
     /// Nil when `query` is not a subsequence of `path`. Higher is better.
     public static func score(query: String, path: String) -> Int? {
-        let needle = Array(query.lowercased().filter { !$0.isWhitespace })
+        let needle = folded(query.filter { !$0.isWhitespace })
         guard !needle.isEmpty else { return 0 }
         let original = Array(path)
-        let haystack = Array(path.lowercased())
-        guard haystack.count == original.count else { return nil }   // case folding changed the length; skip
+        let haystack = folded(path)
         let nameStart = (path.lastIndex(of: "/").map { path.distance(from: path.startIndex, to: $0) + 1 }) ?? 0
 
         // Prefer an alignment inside the file name: try matching the query within the name first.
         if let inName = align(needle, haystack, original, from: nameStart) { return inName.score + 1_000 - path.count }
         guard let anywhere = align(needle, haystack, original, from: 0) else { return nil }
         return anywhere.score - path.count
+    }
+
+    /// A string's characters as they are compared. Most paths are ASCII, where lowercasing the whole string is all
+    /// folding does, and much quicker than a character at a time.
+    static func folded(_ text: String) -> [Character] {
+        text.utf8.allSatisfy { $0 < 0x80 } ? Array(text.lowercased()) : text.map(fold)
+    }
+
+    /// One character as it is compared: lowercase, and without its accents (`resume` finds `Résumé.md`, as the notes
+    /// panel's search does), always one character so positions in the path keep their meaning.
+    static func fold(_ character: Character) -> Character {
+        if character.isASCII { return Character(character.lowercased()) }
+        let folded = String(character).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        if folded.count == 1, let only = folded.first { return only }
+        let lowered = character.lowercased()
+        return lowered.count == 1 ? Character(lowered) : character
     }
 
     /// The best `limit` paths for `query`, best first; all paths (shortest first) when the query is empty.

@@ -28,6 +28,13 @@ struct FuzzyMatcherTests {
         #expect(FuzzyMatcher.rank("hl", in: paths).first == "Packages/Viewers/Sources/Viewers/Highlighting/Highlighter.swift")
     }
 
+    @Test func accentsAreIgnoredBothWays() {
+        #expect(FuzzyMatcher.rank("resume", in: ["docs/Résumé.md", "docs/other.md"]) == ["docs/Résumé.md"])
+        #expect(FuzzyMatcher.rank("crème", in: ["Creme.txt"]) == ["Creme.txt"])
+        #expect(FuzzyMatcher.rank("strasse", in: ["Straße.md"]).isEmpty, "a letter that folds to two stays itself")
+        #expect(FuzzyMatcher.rank("straße", in: ["Straße.md"]) == ["Straße.md"])
+    }
+
     @Test func anEmptyQueryListsShortPathsFirst() {
         #expect(FuzzyMatcher.rank("  ", in: paths, limit: 1) == ["docs/PRODUCT.md"])
         #expect(FuzzyMatcher.rank("store", in: paths) == ["Packages/Core/Sources/Core/Notes/NoteStore.swift"])
