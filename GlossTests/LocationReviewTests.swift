@@ -302,3 +302,22 @@ extension RenameAndSendScopeTests {
         await model.shutDown()
     }
 }
+
+extension RenameAndSendScopeTests {
+    /// A rename that changes only the case of the name moves the file and its notes, though the Mac's volume finds
+    /// the file at both names.
+    @Test func aCaseOnlyRenameMovesTheFileAndItsDocument() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-case-rename-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let old = root + "/readme.md", new = root + "/README.md"
+        try Data("keep".utf8).write(to: URL(fileURLWithPath: old))
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        let doc = try await model.noteStore.upsertDocument(hostID: .local, path: old, kind: .markdown, fingerprint: Fingerprint())
+        try await model.renameFile(DocumentRelocation(hostID: .local, from: old, to: new, directory: false))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root) == ["README.md"])
+        #expect(try await model.noteStore.document(doc.id)?.path == new)
+        #expect(try await model.noteStore.pendingRelocation(hostID: .local) == nil)
+        await model.shutDown()
+    }
+}

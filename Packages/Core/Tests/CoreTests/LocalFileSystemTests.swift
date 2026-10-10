@@ -127,6 +127,19 @@ struct LocalFileSystemTests {
         }
     }
 
+    /// Changing only a name's case is a rename even where the volume ignores case and finds the file at both.
+    @Test func aCaseOnlyRenameIsNotAClash() async throws {
+        try await withTemporaryDirectory { directory, fs in
+            try "x".write(toFile: "\(directory)/readme.md", atomically: true, encoding: .utf8)
+            try await fs.rename("\(directory)/readme.md", to: "\(directory)/README.md")
+            #expect(try await fs.list(directory).map(\.name) == ["README.md"])
+            try "y".write(toFile: "\(directory)/other.md", atomically: true, encoding: .utf8)
+            await #expect(throws: FileSystemError.alreadyExists("\(directory)/README.md")) {
+                try await fs.rename("\(directory)/other.md", to: "\(directory)/README.md")
+            }
+        }
+    }
+
     @Test func watcherReportsCreatedFileAndStopsOnCancel() async throws {
         try await withTemporaryDirectory { directory, fs in
             let resolved = URL(fileURLWithPath: directory).resolvingSymlinksInPath().path

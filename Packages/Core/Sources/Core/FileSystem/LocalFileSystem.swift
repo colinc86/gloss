@@ -121,12 +121,20 @@ public struct LocalFileSystem: FileSystemProvider {
     }
 
     public func rename(_ path: String, to newPath: String) async throws {
-        if FileManager.default.fileExists(atPath: newPath) { throw FileSystemError.alreadyExists(newPath) }
+        // On a case-insensitive volume `a.txt` → `A.txt` finds the file itself at the new name; that is a rename, not
+        // a clash.
+        if FileManager.default.fileExists(atPath: newPath), !Self.isSameItem(path, newPath) { throw FileSystemError.alreadyExists(newPath) }
         do {
             try FileManager.default.moveItem(atPath: path, toPath: newPath)
         } catch {
             throw Self.map(error, path: path)
         }
+    }
+
+    private static func isSameItem(_ a: String, _ b: String) -> Bool {
+        var first = emptyStatBuffer(), second = emptyStatBuffer()
+        guard posixLstat(a, &first) == 0, posixLstat(b, &second) == 0 else { return false }
+        return first.st_dev == second.st_dev && first.st_ino == second.st_ino
     }
 
     public func delete(_ path: String) async throws {
