@@ -125,24 +125,32 @@ public nonisolated enum GrammarCatalog {
     }
 
     /// Looks in the main bundle, then beside every loaded bundle (where SwiftPM puts resource bundles for tests).
-    /// Grammars whose highlights only add to another's, as their own configuration lists them: TypeScript's queries
-    /// name the types and leave keywords, strings and functions to JavaScript's. Alone, a .ts file showed its types
-    /// coloured and nothing else.
-    nonisolated private static let inheritedHighlights: [String: String] = ["typescript": "javascript", "tsx": "javascript"]
+    /// Highlight files a grammar's own configuration joins to its `highlights.scm` (grammar, file): TypeScript's
+    /// queries name the types and leave keywords, strings and functions to JavaScript's, and JSX tags and
+    /// attributes are in JavaScript's `highlights-jsx.scm`. Alone, a .ts file showed only its types coloured and a
+    /// .jsx or .tsx file its tags not at all. Plain TypeScript has no JSX nodes, so it takes no JSX queries.
+    nonisolated private static let joinedHighlights: [String: [(grammar: String, file: String)]] = [
+        "typescript": [("javascript", "highlights.scm")],
+        "tsx": [("javascript", "highlights.scm"), ("javascript", "highlights-jsx.scm")],
+        "javascript": [("javascript", "highlights-jsx.scm")],
+    ]
 
-    /// `configuration` with its highlights followed by the inherited grammar's, as one query; unchanged when there
-    /// is none or the joined query does not load.
+    /// `configuration` with its highlights followed by the joined files', as one query; unchanged when there are none
+    /// or the joined query does not load.
     nonisolated private static func withInheritedHighlights(_ configuration: LanguageConfiguration, name: String, grammar: Grammar, queries: URL) -> LanguageConfiguration {
-        guard let base = inheritedHighlights[name], let baseGrammar = grammars[base], let baseQueries = queriesURL(bundleName: baseGrammar.bundleName),
-              let own = try? Data(contentsOf: queries.appendingPathComponent("highlights.scm")),
-              let inherited = try? Data(contentsOf: baseQueries.appendingPathComponent("highlights.scm")) else { return configuration }
+        guard let joins = joinedHighlights[name], var data = try? Data(contentsOf: queries.appendingPathComponent("highlights.scm")) else { return configuration }
+        for join in joins {
+            guard let other = grammars[join.grammar], let folder = queriesURL(bundleName: other.bundleName),
+                  let more = try? Data(contentsOf: folder.appendingPathComponent(join.file)) else { return configuration }
+            data += Data("\n".utf8) + more
+        }
         let language = Language(grammar.language())
         do {
             var joined = configuration.queries
-            joined[.highlights] = try Query(language: language, data: own + Data("\n".utf8) + inherited)
+            joined[.highlights] = try Query(language: language, data: data)
             return LanguageConfiguration(language, name: configuration.name, queries: joined)
         } catch {
-            log.error("Joining \(base, privacy: .public) highlights into \(name, privacy: .public) failed: \(error, privacy: .public)")
+            log.error("Joining highlights into \(name, privacy: .public) failed: \(error, privacy: .public)")
             return configuration
         }
     }

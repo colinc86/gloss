@@ -14,6 +14,15 @@ struct HighlighterTests {
         }
     }
 
+    /// JSX tags and attributes are coloured in .jsx (the JavaScript grammar) and .tsx files.
+    @Test func jsxTagsAndAttributesAreColoured() throws {
+        let code = "const x = <div className=\"a\">{y}</div>\n"
+        for language in ["javascript", "tsx"] {
+            let names = Set(try #require(Highlighter(languageName: language, text: code)).captures.map(\.name))
+            #expect(names.isSuperset(of: ["tag", "attribute", "keyword", "string"]), "\(language): \(names.sorted())")
+        }
+    }
+
     /// A code block in Markdown source is coloured under the short names fences use (`py`, `sh`, `ts`, `js`), as the
     /// rendered view colours it; only the full names were.
     @Test func markdownCodeBlocksUnderShortFenceNamesAreColoured() throws {
