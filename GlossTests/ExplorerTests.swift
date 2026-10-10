@@ -34,6 +34,8 @@ struct FileNodeTests {
         _ = root.merge(entries: [entry("src", directory: true), entry("Résumé.md"), DirectoryEntry(name: "CP-7.md", path: "/root/CP-7.md", kind: .file, title: "Move the legend")])
         #expect(root.visibleChildren(showDotfiles: false, filter: "resume").map(\.name) == ["src", "Résumé.md"], "accents aside, as Open Quickly")
         #expect(root.visibleChildren(showDotfiles: false, filter: "legend").map(\.name) == ["src", "CP-7.md"], "an issue by the summary its row shows")
+        #expect(root.visibleChildren(showDotfiles: false, filter: "cp-7.md").map(\.name) == ["src", "CP-7.md"], "or by its file name")
+        #expect(root.children!.first { $0.name == "CP-7.md" }!.matches(filter: "LEGEND"), "Reveal asks the same question the tree does")
     }
 
     @Test func descendantLookup() {

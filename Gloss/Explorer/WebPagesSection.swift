@@ -116,10 +116,10 @@ struct WebPagesSection: View {
         }
     }
 
-    /// The pages whose title or address holds `query` (case-insensitive), in their order; all for an empty query.
+    /// The pages whose title or address holds `query` (case and accents aside), in their order; all for an empty query.
     static func filtered(_ pages: [WebPage], by query: String) -> [WebPage] {
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty else { return pages }
-        return pages.filter { ($0.title ?? "").lowercased().contains(needle) || $0.url.lowercased().contains(needle) }
+        return pages.filter { ($0.title ?? "").localizedStandardContains(needle) || $0.url.localizedStandardContains(needle) }
     }
 }

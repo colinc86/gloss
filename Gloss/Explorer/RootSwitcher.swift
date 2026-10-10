@@ -184,11 +184,12 @@ nonisolated struct SwitcherEntry: Identifiable, Equatable {
             .map { SwitcherEntry(id: $0.id, hostID: $0.hostID, path: $0.path, pinned: false, section: .open, isOpen: true) }
         let others = recents.filter { !favoriteKeys.contains(key($0.hostID, $0.path)) && tabsByKey[key($0.hostID, $0.path)] == nil }
             .map { SwitcherEntry(id: $0.id, hostID: $0.hostID, path: $0.path, pinned: false, section: .recent, isOpen: false) }
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        // Case and accents aside, as Open Quickly and the explorer's filter match.
+        let needle = query.trimmingCharacters(in: .whitespaces)
         func filtered(_ entries: [SwitcherEntry]) -> [SwitcherEntry] {
             guard !needle.isEmpty else { return entries }
-            let byName = entries.filter { $0.title.lowercased().contains(needle) }
-            let byPath = entries.filter { !$0.title.lowercased().contains(needle) && $0.path.lowercased().contains(needle) }
+            let byName = entries.filter { $0.title.localizedStandardContains(needle) }
+            let byPath = entries.filter { !$0.title.localizedStandardContains(needle) && $0.path.localizedStandardContains(needle) }
             return byName + byPath
         }
         let recent = filtered(others)

@@ -62,9 +62,9 @@ enum HostMenu {
 
     /// The hosts whose name holds `query` (all of them without one).
     static func matching(_ entries: [HostsModel.Entry], query: String) -> [HostsModel.Entry] {
-        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty else { return entries }
-        return entries.filter { label($0.id, name: $0.name).lowercased().contains(needle) }
+        return entries.filter { label($0.id, name: $0.name).localizedStandardContains(needle) }
     }
 
     /// What the dropdown says with nothing open on the host.

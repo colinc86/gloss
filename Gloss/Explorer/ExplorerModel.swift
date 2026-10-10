@@ -425,7 +425,7 @@ final class ExplorerModel {
             guard let child = node.children?.first(where: { ($0.path as NSString).lastPathComponent == component }) else { break }
             if child.entry.isHidden, !showDotfiles { showDotfiles = true }
             // The tree shows only names matching the filter; a filter hiding the target would make the reveal a no-op.
-            if !filter.isEmpty, !child.isDirectory, !child.name.localizedCaseInsensitiveContains(filter) { filter = "" }
+            if !child.isDirectory, !child.matches(filter: filter) { filter = "" }
             chain.append(child)
             node = child
         }
