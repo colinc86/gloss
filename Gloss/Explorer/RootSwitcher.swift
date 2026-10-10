@@ -448,6 +448,9 @@ private struct RootRow: View {
     let togglePin: () -> Void
     let close: (() -> Void)?
     @State private var hovering = false
+    // Keyboard navigation can land on either control: it shows while focused, or Tab would rest on nothing visible.
+    @FocusState private var pinFocused: Bool
+    @FocusState private var closeFocused: Bool
 
     var body: some View {
         HStack(spacing: DS.Space.s) {
@@ -491,7 +494,8 @@ private struct RootRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0)
+            .focused($pinFocused)
+            .opacity(hovering || pinFocused ? 1 : 0)
             .allowsHitTesting(hovering)
             .help(pinned ? "Remove from Favorites" : "Add to Favorites")
             .accessibilityLabel(pinned ? "Remove \(title) from Favorites" : "Add \(title) to Favorites")
@@ -506,7 +510,8 @@ private struct RootRow: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .opacity(hovering && close != nil ? 1 : 0)
+            .focused($closeFocused)
+            .opacity((hovering || closeFocused) && close != nil ? 1 : 0)
             .allowsHitTesting(hovering && close != nil)
             .accessibilityHidden(close == nil)
             .help("Close \(title)")
