@@ -523,6 +523,8 @@ private struct HostsSettings: View {
     @Environment(AppModel.self) private var model
     @State private var editing: HostDraft?
     @State private var removing: HostsModel.Entry?
+    /// Why a host could not be removed: it stays listed, and this says so rather than only the log.
+    @State private var removalError: String?
 
     var body: some View {
         @Bindable var hosts = model.hosts
@@ -558,7 +560,10 @@ private struct HostsSettings: View {
             Button("Remove Host", role: .destructive) {
                 if let entry = removing {
                     Task {
-                        do { try await model.hosts.remove(entry.id) } catch { Log.app.error("removing host failed: \(error, privacy: .public)") }
+                        do { try await model.hosts.remove(entry.id) } catch {
+                            Log.app.error("removing host failed: \(error, privacy: .public)")
+                            removalError = "Couldn't remove \(entry.name): \(error.userMessage)"
+                        }
                     }
                 }
                 removing = nil
@@ -569,6 +574,11 @@ private struct HostsSettings: View {
             Text(notes == 0
                  ? "Its settings and recent folders are deleted from the app. Your ssh config is not touched."
                  : "Its settings, recent folders, and \(notes) note\(notes == 1 ? "" : "s") on its files are deleted from the app. This can't be undone. Your ssh config is not touched.")
+        }
+        .alert("Host not removed", isPresented: Binding(get: { removalError != nil }, set: { if !$0 { removalError = nil } })) {
+            Button("OK") { removalError = nil }
+        } message: {
+            Text(removalError ?? "")
         }
         .sheet(item: $editing) { draft in
             HostEditor(draft: draft, taken: Set(model.hosts.entries.filter { $0.id != draft.hostID }.map(\.name))) { name, options in
@@ -637,6 +647,8 @@ private struct HostEditor: View {
                 }
             }
             .formStyle(.columns)
+            // A refusal is about what was asked; editing asks something else.
+            .onChange(of: [name, hostName, user, port, identityFile]) { saveError = nil }
             Text("The name is what the sidebar shows and what `ssh` is given as the destination, so a name that is also an alias in ~/.ssh/config inherits that alias's settings.")
                 .font(.caption).foregroundStyle(.secondary)
             if let problem = problem ?? saveError {
