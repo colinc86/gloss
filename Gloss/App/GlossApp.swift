@@ -337,7 +337,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = sessions.count == 1
             ? "Save changes to \(sessions[0].fileName) before quitting?"
             : "Save changes to \(sessions.count) documents before quitting?"
-        let names = sessions.prefix(8).map(\.fileName).joined(separator: "\n")
+        // Two unsaved README.md files say which is which.
+        let names = PathDisambiguator.titles(for: sessions.map(\.path)).prefix(8).joined(separator: "\n")
         alert.informativeText = (sessions.count > 1 ? names + (sessions.count > 8 ? "\n…" : "") + "\n\n" : "") + "Your changes are lost if you don't save them."
         alert.addButton(withTitle: sessions.count == 1 ? "Save" : "Save All")
         alert.addButton(withTitle: "Cancel")
