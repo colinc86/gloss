@@ -28,4 +28,15 @@ struct SettingsStoreTests {
         await fresh.load()
         #expect(fresh.mcpPort == 47_831, "a saved port out of range falls back to the default")
     }
+
+    /// A font size or expiry saved outside what the controls offer is brought into their range when loaded.
+    @Test func savedValuesOutOfRangeAreBroughtIn() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        try await store.setSetting("editor.fontSize", "300")
+        try await store.setSetting("attachments.expiryDays", "0")
+        let settings = SettingsStore(noteStore: store)
+        await settings.load()
+        #expect(settings.editorFontSize == 20)
+        #expect(settings.stagedFileExpiryDays == 1)
+    }
 }

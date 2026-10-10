@@ -50,7 +50,7 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("Font size") {
                         HStack(spacing: DS.Space.m) {
-                            Slider(value: $settings.editorFontSize, in: 9...20, step: 0.5)
+                            Slider(value: $settings.editorFontSize, in: SettingsStore.editorFontSizeRange, step: 0.5)
                                 .frame(width: 200)
                             Text("\(settings.editorFontSize, specifier: "%.1f") pt")
                                 .monospacedDigit()
@@ -940,7 +940,7 @@ private struct AttachmentsSettings: View {
             }
             Section {
                 StorageRow(title: "Copies made for agents", size: sentSize, folder: AttachmentCache.root)
-                Stepper(value: $settings.stagedFileExpiryDays, in: 1...90) {
+                Stepper(value: $settings.stagedFileExpiryDays, in: SettingsStore.stagedExpiryRange) {
                     HStack {
                         Text("Keep for")
                         Spacer()

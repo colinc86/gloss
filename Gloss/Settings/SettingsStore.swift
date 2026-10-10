@@ -101,6 +101,9 @@ final class SettingsStore {
             persist("mcp.port", String(mcpPort))
         }
     }
+    /// The font size slider's range, and the attachment expiry stepper's.
+    static let editorFontSizeRange: ClosedRange<Double> = 9...20
+    static let stagedExpiryRange = 1...90
     /// Ports an unprivileged server may take; 0 would ask for any port, which agents registered on this one can't find.
     static let mcpPortRange = 1024...65535
     private(set) var loaded = false
@@ -120,11 +123,12 @@ final class SettingsStore {
         if let value = await read("general.appIcon"), let style = AppIconStyle(rawValue: value) { appIcon = style }
         if let value = await read("general.showDotfiles") { showDotfilesByDefault = value == "1" }
         if let value = await read("general.dockQuestions") { showsQuestionsOnDock = value == "1" }
-        if let value = await read("editor.fontSize"), let size = Double(value) { editorFontSize = size }
+        // Kept to what the controls offer: a value from elsewhere (an older build, a hand edit) is brought in range.
+        if let value = await read("editor.fontSize"), let size = Double(value), size.isFinite { editorFontSize = min(max(size, Self.editorFontSizeRange.lowerBound), Self.editorFontSizeRange.upperBound) }
         if let value = await read("editor.wrap") { wrapLines = value == "1" }
         if let value = await read("editor.guides") { showIndentGuides = value == "1" }
         if let value = await read("editor.minimap") { showMinimap = value == "1" }
-        if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = days }
+        if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = min(max(days, Self.stagedExpiryRange.lowerBound), Self.stagedExpiryRange.upperBound) }
         if let value = await read("notes.trashDays"), let days = Int(value), Self.trashRetentionChoices.contains(days) { trashRetentionDays = days }
         if let value = await read("iterations.openNotes"), let choice = IterationOpenNotes(rawValue: value) { iterationOpenNotes = choice }
         if let value = await read("iterations.afterResolved") { iteratesAfterResolved = value == "1" }
