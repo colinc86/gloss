@@ -311,3 +311,21 @@ struct DeleteConfirmationTests {
         #expect(ExplorerModel.deleteConfirmation(name: "a.txt", isDirectory: false, hostName: nil).message == "Move \"a.txt\" to the Trash?")
     }
 }
+
+struct DuplicateTests {
+    /// A copy already on disk, whether or not the tree has listed it, is skipped rather than written over.
+    @Test func aDuplicateNeverWritesOverAFileAlreadyThere() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-duplicate-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "original".write(toFile: "\(root)/a.txt", atomically: true, encoding: .utf8)
+        try "keep me".write(toFile: "\(root)/a copy.txt", atomically: true, encoding: .utf8)
+        let fileSystem = LocalFileSystem(deleteBehavior: .permanent)
+        let made = try await ExplorerModel.duplicate("\(root)/a.txt", in: root, using: fileSystem)
+        #expect(made == "\(root)/a copy 2.txt")
+        #expect(try String(contentsOfFile: "\(root)/a copy.txt", encoding: .utf8) == "keep me")
+        #expect(try String(contentsOfFile: made, encoding: .utf8) == "original")
+        try "plain".write(toFile: "\(root)/Makefile", atomically: true, encoding: .utf8)
+        #expect(try await ExplorerModel.duplicate("\(root)/Makefile", in: root, using: fileSystem) == "\(root)/Makefile copy")
+    }
+}

@@ -34,22 +34,37 @@ extension ExplorerModel {
 
     func duplicate(_ node: FileNode) {
         guard let parent = node.parent, !node.isDirectory else { return }
-        let base = (node.name as NSString).deletingPathExtension
-        let ext = (node.name as NSString).pathExtension
-        var candidate = ext.isEmpty ? "\(base) copy" : "\(base) copy.\(ext)"
-        var counter = 2
-        let siblings = Set((parent.children ?? []).map(\.name))
-        while siblings.contains(candidate) {
-            candidate = ext.isEmpty ? "\(base) copy \(counter)" : "\(base) copy \(counter).\(ext)"
-            counter += 1
-        }
-        let target = PathUtilities.join(parent.path, candidate)
         perform("duplicate") { fileSystem in
-            let data = try await fileSystem.read(node.path)
-            let attributes = try await fileSystem.stat(node.path)
-            _ = try await fileSystem.writeAtomically(data, to: target, preservingModeFrom: attributes)
+            _ = try await Self.duplicate(node.path, in: parent.path, using: fileSystem)
             await self.loadChildren(of: parent)
         }
+    }
+
+    /// Copies a file beside itself as "name copy.ext", then "name copy 2.ext" and on. Each name is claimed by
+    /// creating it exclusively, so a file already there (one the tree hasn't listed yet, say) is never written over.
+    nonisolated static func duplicate(_ path: String, in directory: String, using fileSystem: any FileSystemProvider) async throws -> String {
+        let name = (path as NSString).lastPathComponent
+        let base = (name as NSString).deletingPathExtension
+        let ext = (name as NSString).pathExtension
+        let data = try await fileSystem.read(path)
+        let attributes = try await fileSystem.stat(path)
+        for counter in 1...1000 {
+            let copy = counter == 1 ? "\(base) copy" : "\(base) copy \(counter)"
+            let target = PathUtilities.join(directory, ext.isEmpty ? copy : "\(copy).\(ext)")
+            do {
+                _ = try await fileSystem.createFile(at: target)
+            } catch FileSystemError.alreadyExists {
+                continue
+            }
+            do {
+                _ = try await fileSystem.writeAtomically(data, to: target, preservingModeFrom: attributes)
+            } catch {
+                try? await fileSystem.delete(target)   // not an empty file left where the copy was meant to be
+                throw error
+            }
+            return target
+        }
+        throw FileSystemError.alreadyExists(PathUtilities.join(directory, "\(base) copy"))
     }
 
     func delete(_ node: FileNode) {
