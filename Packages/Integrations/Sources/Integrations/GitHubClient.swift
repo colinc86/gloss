@@ -63,6 +63,8 @@ public struct GitHubComment: Codable, Sendable, Equatable {
     public var line: Int?
     public var originalLine: Int?
     public var side: String?
+    /// Review comments only: the comment that started the thread this one replies to.
+    public var inReplyToId: Int?
 }
 
 public struct GitHubPullRequestSummary: Codable, Sendable, Equatable {

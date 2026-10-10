@@ -63,6 +63,18 @@ struct PatchHunksTests {
         #expect(PatchHunks.parse("@@ -1,2 +1,1 @@\n a\n-b\n") == LineChanges(added: [], deletions: [2]))
     }
 
+    /// A file's review comments read thread by thread: a reply comes under the comment it answers, not after a later,
+    /// unrelated one; a reply whose first comment isn't listed still shows.
+    @Test func reviewRepliesStayWithTheirThread() throws {
+        func comment(_ id: Int, minute: Int, replyTo: Int? = nil) -> GitHubComment {
+            GitHubComment(id: id, htmlUrl: URL(string: "https://github.com/o/r/pull/2#c\(id)")!, user: GitHubUser(login: "u\(id)"), body: "c\(id)",
+                          createdAt: Date(timeIntervalSince1970: Double(minute * 60)), path: "a.swift", line: id, inReplyToId: replyTo)
+        }
+        let ordered = PullRequestMarkdown.threadOrder([comment(1, minute: 0), comment(2, minute: 5), comment(3, minute: 10, replyTo: 1),
+                                                       comment(4, minute: 12, replyTo: 2), comment(5, minute: 1, replyTo: 99)])
+        #expect(ordered.map(\.id) == [1, 3, 5, 2, 4])
+    }
+
     @Test func deletionAtTheEndAndNoNewlineMarkers() {
         let patch = """
         @@ -1,3 +1,2 @@

@@ -58,7 +58,7 @@ enum PullRequestMarkdown {
             lines.append("## Reviews")
             let byFile = Dictionary(grouping: reviewComments) { $0.path ?? "" }
             for file in byFile.keys.sorted() {
-                for comment in byFile[file]!.sorted(by: { $0.createdAt < $1.createdAt }) {
+                for comment in threadOrder(byFile[file]!) {
                     lines.append("")
                     let start = lines.count + 1
                     let where_ = comment.line ?? comment.originalLine
@@ -70,6 +70,16 @@ enum PullRequestMarkdown {
         }
         lines.append("")
         return (lines.joined(separator: "\n"), bodyRange, reviews)
+    }
+
+    /// A file's review comments thread by thread, each thread where its first comment falls in time and its replies
+    /// after it: by time alone, a reply to an earlier thread came after a later, unrelated comment.
+    static func threadOrder(_ comments: [GitHubComment]) -> [GitHubComment] {
+        let ids = Set(comments.map(\.id))
+        // GitHub points every reply at the thread's first comment; one whose first comment isn't here leads its own.
+        func root(_ comment: GitHubComment) -> Int { comment.inReplyToId.flatMap { ids.contains($0) ? $0 : nil } ?? comment.id }
+        let threads = Dictionary(grouping: comments, by: root).values.map { $0.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) } }
+        return threads.sorted { ($0[0].createdAt, $0[0].id) < ($1[0].createdAt, $1[0].id) }.flatMap { $0 }
     }
 
     /// `Conversation.md` and, per comment, the 1-based lines it occupies, so a note inside one can name it.
