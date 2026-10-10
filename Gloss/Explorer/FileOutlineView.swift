@@ -64,9 +64,11 @@ struct FileOutlineView: NSViewRepresentable {
 
     /// What a row drags out as; nil for an integration's document (a pull request's file, an issue), which is a file
     /// nowhere.
-    nonisolated static func dragItem(hostID: HostID, path: String) -> (any NSPasteboardWriting)? {
+    /// `webURL` is a pull request's, issue's or page's address: their paths are the app's own, so they drag as the
+    /// link Copy URL gives (a browser opens it, a prompt takes it).
+    nonisolated static func dragItem(hostID: HostID, path: String, webURL: URL? = nil) -> (any NSPasteboardWriting)? {
         if hostID == .local { return URL(fileURLWithPath: path) as NSURL }
-        guard !hostID.isVirtual else { return nil }
+        guard !hostID.isVirtual else { return webURL as NSURL? }
         return path as NSString
     }
 
@@ -113,7 +115,7 @@ struct FileOutlineView: NSViewRepresentable {
         /// agent's prompt takes its path), one on an ssh host as its path there, which is where the agent reads it.
         func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
             guard let node = item as? FileNode else { return nil }
-            return FileOutlineView.dragItem(hostID: node.hostID, path: node.path)
+            return FileOutlineView.dragItem(hostID: node.hostID, path: node.path, webURL: node.hostID.isVirtual ? model.webURL(node.hostID, node.path) : nil)
         }
 
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
