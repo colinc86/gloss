@@ -65,7 +65,7 @@ struct SSHConfigTests {
         Include \(directory)/conf.d/*.conf
         Host *
           ServerAliveInterval 10
-        Host asus work-?
+        Host asus work-? # the desktop
           HostName asus.example
         Host "quoted"
         Match host asus
@@ -76,6 +76,8 @@ struct SSHConfigTests {
         #expect(aliases == ["extra1", "extra2", "asus", "quoted"])
         #expect(SSHConfig.split("HostName=foo.example") == ("HostName", "foo.example"))
         #expect(SSHConfig.split("Host \"a b\"") == ("Host", "a b"))
+        #expect(SSHConfig.words("box # old one") == ["box"], "a # word starts a comment, as ssh reads it")
+        #expect(SSHConfig.words("box#1 other") == ["box#1", "other"], "a # inside a word is part of it")
     }
 
     @Test func resolvesThroughSSH() async throws {

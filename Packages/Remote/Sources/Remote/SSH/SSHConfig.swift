@@ -41,13 +41,13 @@ public enum SSHConfig {
             let (keyword, value) = split(line)
             switch keyword.lowercased() {
             case "host":
-                for pattern in value.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
+                for pattern in words(value) {
                     let alias = String(pattern)
                     guard !alias.contains("*"), !alias.contains("?"), !alias.hasPrefix("!"), seen.insert(alias).inserted else { continue }
                     result.append(SSHConfigHost(alias: alias, sourceFile: path))
                 }
             case "include":
-                for pattern in value.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
+                for pattern in words(value) {
                     var expanded = String(pattern)
                     if expanded.hasPrefix("~") { expanded = NSHomeDirectory() + expanded.dropFirst() }
                     if !expanded.hasPrefix("/") { expanded = (NSHomeDirectory() as NSString).appendingPathComponent(".ssh/" + expanded) }
@@ -59,6 +59,12 @@ public enum SSHConfig {
                 continue
             }
         }
+    }
+
+    /// A value's words, up to a `#` that starts one: ssh reads `Host box # the old one` as the alias `box` and a
+    /// comment, not three aliases.
+    static func words(_ value: String) -> [Substring] {
+        Array(value.split(whereSeparator: { $0 == " " || $0 == "\t" }).prefix { !$0.hasPrefix("#") })
     }
 
     /// `Keyword value`, `Keyword=value`, with optional quotes around the value.
