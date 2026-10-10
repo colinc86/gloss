@@ -128,6 +128,9 @@ public final class HTMLViewerController: RenderedDocumentController {
     /// 0…1 while the page loads; nil when it is idle.
     public internal(set) var loadProgress: Double?
     /// Set by the view as the page's selection changes.
+    /// Add Note in this viewer's context menu; set by the app.
+    @ObservationIgnored public var addNote: AddNoteHook?
+
     public var selection: HTMLSelection?
     /// Set by the view after each load.
     @ObservationIgnored public var alignment: HTMLTextProjection.Alignment?

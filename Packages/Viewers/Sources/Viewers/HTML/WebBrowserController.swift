@@ -130,6 +130,7 @@ public final class WebBrowserController {
         self.delegate = delegate
         self.schemeHandler = schemeHandler
         findingView.onFindAction = { [weak self] action in self?.perform(action) }
+        findingView.addNoteHook = { [weak self] in self?.current?.addNote }
         delegate.browser = self
         schemeHandler.browser = self
         webView.navigationDelegate = delegate
@@ -1024,6 +1025,8 @@ private extension URL {
 /// The app's web view, answering Edit › Find (⌘F, ⌘G, ⇧⌘G) itself: WKWebView takes no find actions on the Mac.
 final class FindingWebView: WKWebView {
     var onFindAction: (NSTextFinder.Action) -> Void = { _ in }
+    /// The shown page's Add Note, for its context menu.
+    var addNoteHook: () -> AddNoteHook? = { nil }
 
     override func performTextFinderAction(_ sender: Any?) {
         if let action = FindMenuAction.action(of: sender) { onFindAction(action) }
@@ -1039,7 +1042,10 @@ final class FindingWebView: WKWebView {
         // WebKit fills the menu first; then the items it can't serve here come out.
         super.willOpenMenu(menu, with: event)
         Self.removeUnavailableItems(from: menu)
+        AddNoteMenuItem.insert(into: menu, when: addNoteHook()?.canAdd() ?? false, target: self, action: #selector(addNoteFromMenu(_:)))
     }
+
+    @objc func addNoteFromMenu(_ sender: Any?) { addNoteHook()?.add() }
 
     static let unavailableMenuItems: Set<String> = [
         "WKMenuItemIdentifierOpenLinkInNewWindow", "WKMenuItemIdentifierOpenImageInNewWindow", "WKMenuItemIdentifierOpenMediaInNewWindow",

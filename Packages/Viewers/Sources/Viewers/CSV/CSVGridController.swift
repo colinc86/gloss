@@ -113,6 +113,9 @@ public final class CSVGridController {
         }
     }()
 
+    /// Add Note in this viewer's context menu; set by the app.
+    @ObservationIgnored public var addNote: AddNoteHook?
+
     // MARK: Find
 
     /// The find field over the grid is showing (Edit › Find; a table view has no find bar of its own).

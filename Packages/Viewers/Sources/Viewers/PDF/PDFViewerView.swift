@@ -95,6 +95,15 @@ final class RegionCopyingPDFView: PDFView {
         return unsafeBitCast(method_getImplementation(method), to: Validate.self)
     }()
 
+    /// PDFKit's menu, led by Add Note while a region or text is selected.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event) ?? NSMenu()
+        AddNoteMenuItem.insert(into: menu, when: regionController?.addNote?.canAdd() ?? false, target: self, action: #selector(addNoteFromMenu(_:)))
+        return menu.items.isEmpty ? nil : menu
+    }
+
+    @objc func addNoteFromMenu(_ sender: Any?) { regionController?.addNote?.add() }
+
     /// Edit › Find, Find Next and Find Previous: PDFView takes no find actions itself.
     override func performTextFinderAction(_ sender: Any?) {
         if let action = FindMenuAction.action(of: sender) { regionController?.perform(action) }

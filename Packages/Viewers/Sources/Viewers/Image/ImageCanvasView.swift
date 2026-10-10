@@ -139,6 +139,17 @@ final class ImageCanvasView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    /// Add Note on the region drawn, and Copy: the canvas has no other menu.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let controller else { return nil }
+        let menu = NSMenu()
+        menu.addItem(withTitle: controller.selection == nil ? "Copy Image" : "Copy Region", action: #selector(copy(_:)), keyEquivalent: "").target = self
+        AddNoteMenuItem.insert(into: menu, when: controller.addNote?.canAdd() ?? false, target: self, action: #selector(addNoteFromMenu(_:)))
+        return menu
+    }
+
+    @objc func addNoteFromMenu(_ sender: Any?) { controller?.addNote?.add() }
+
     override func selectAll(_ sender: Any?) {
         controller?.selectAll()
         needsDisplay = true

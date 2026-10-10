@@ -138,6 +138,9 @@ public final class PDFViewerController {
         return anchor
     }
 
+    /// Add Note in this viewer's context menu; set by the app.
+    @ObservationIgnored public var addNote: AddNoteHook?
+
     // MARK: Zoom
 
     /// The page's scale (1 = actual size), as the view reports it, for the toolbar's readout.

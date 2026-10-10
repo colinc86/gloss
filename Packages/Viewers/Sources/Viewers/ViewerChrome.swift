@@ -442,16 +442,33 @@ enum AddNoteMenuItem {
 
     /// Text views hand back the same menu each time: an item put there for an earlier selection comes out first.
     static func insert(into menu: NSMenu, selection: NSRange, target: AnyObject, action: Selector) {
+        insert(into: menu, when: selection.length > 0, target: target, action: action)
+    }
+
+    /// The same for any viewer: the item leads the menu while `offered` (something is selected that a note can be on).
+    static func insert(into menu: NSMenu, when offered: Bool, target: AnyObject, action: Selector) {
         if let index = menu.items.firstIndex(where: { $0.identifier == identifier }) {
             menu.removeItem(at: index)
             if index < menu.items.count, menu.items[index].isSeparatorItem { menu.removeItem(at: index) }
         }
-        guard selection.length > 0 else { return }
+        guard offered else { return }
         let item = NSMenuItem(title: "Add Note", action: action, keyEquivalent: "")
         item.identifier = identifier
         item.target = target
         item.image = NSImage(systemSymbolName: "note.text.badge.plus", accessibilityDescription: nil)
         menu.insertItem(.separator(), at: 0)
         menu.insertItem(item, at: 0)
+    }
+}
+
+/// Add Note from a viewer's context menu, as the app offers it: whether the selection takes a note now (the floating
+/// button would show) and how to start one. Set by the app on each viewer's controller; nil offers none.
+public struct AddNoteHook {
+    public var canAdd: () -> Bool
+    public var add: () -> Void
+
+    public init(canAdd: @escaping () -> Bool, add: @escaping () -> Void) {
+        self.canAdd = canAdd
+        self.add = add
     }
 }

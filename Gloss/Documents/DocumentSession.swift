@@ -60,11 +60,27 @@ final class DocumentSession: Identifiable {
     let pastIteration: Int?
 
     private(set) var document: Document?
-    private(set) var state: State = .loading
+    private(set) var state: State = .loading {
+        didSet { offerAddNoteInMenus() }
+    }
     /// Rendered/source toggle for markdown documents; nil for every other kind.
     private(set) var markdown: MarkdownViewerController?
     /// Rendered/source toggle for HTML documents; nil for every other kind.
-    private(set) var html: HTMLViewerController?
+    private(set) var html: HTMLViewerController? {
+        didSet { offerAddNoteInMenus() }
+    }
+
+    /// Add Note in each viewer's context menu, offered when the floating button would be (the iteration in progress,
+    /// something selected that a note can be on). Text views take theirs from `TextEditorController.onAddNote`.
+    private func offerAddNoteInMenus() {
+        let hook = pastIteration == nil
+            ? AddNoteHook(canAdd: { [weak self] in self?.selectionAffordanceRect != nil }, add: { [weak self] in self?.beginNote() })
+            : nil
+        pdfController?.addNote = hook
+        imageController?.addNote = hook
+        csvController?.addNote = hook
+        html?.addNote = hook
+    }
     /// Whichever rendered view this document has.
     var rendered: (any RenderedDocumentController)? { markdown ?? html }
     private(set) var fingerprintAtOpen: Fingerprint?

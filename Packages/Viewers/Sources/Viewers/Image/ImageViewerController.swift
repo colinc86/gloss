@@ -62,6 +62,9 @@ public final class ImageViewerController {
         pendingZoomVersion += 1
     }
 
+    /// Add Note in this viewer's context menu; set by the app.
+    @ObservationIgnored public var addNote: AddNoteHook?
+
     /// A region to bring into sight, in pixels, with a version so the same one twice still scrolls.
     public private(set) var pendingReveal: CGRect?
     public private(set) var pendingRevealVersion = 0

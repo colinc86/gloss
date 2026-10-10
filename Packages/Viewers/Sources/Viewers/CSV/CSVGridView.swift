@@ -319,6 +319,17 @@ final class CSVTableView: NSTableView {
         coordinator?.controller.copyCount += 1
     }
 
+    /// Add Note on the cells, columns or rows selected, and Copy: the grid has no other menu.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let controller = coordinator?.controller, controller.hasSelection else { return nil }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "").target = self
+        AddNoteMenuItem.insert(into: menu, when: controller.addNote?.canAdd() ?? false, target: self, action: #selector(addNoteFromMenu(_:)))
+        return menu
+    }
+
+    @objc func addNoteFromMenu(_ sender: Any?) { coordinator?.controller.addNote?.add() }
+
     /// Edit › Select All: the grid's own selection of every record (the table view's row selection is off).
     override func selectAll(_ sender: Any?) {
         coordinator?.controller.selectAll()
