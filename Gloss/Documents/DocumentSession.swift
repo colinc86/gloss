@@ -1849,8 +1849,8 @@ final class DocumentSession: Identifiable {
         guard let index = Self.step(from: from, current: currentSteppedHunk, in: changeHunks, forward: forward) else { NSSound.beep(); return false }
         steppedHunk = index
         selectionAtHunkStep = controller.selection
-        let hunk = changes.hunks[index]
-        controller.scroll(to: controller.lineIndex.contentRange(ofLine: hunk.lowerBound), select: false)
+        // In the view that is showing: a rendered Markdown file tints its changes too.
+        show(line: changes.hunks[index].lowerBound)
         return true
     }
 
@@ -1906,16 +1906,36 @@ final class DocumentSession: Identifiable {
             if let rendered { rendered.scroll(toSource: range, select: true) } else { controller.scroll(to: range) }
             return
         }
-        // The rendered view maps only text that is shown: a caret, a blank line, or markup that renders to nothing
-        // maps to no rendered range, and the jump did nothing. Use the character at the caret, else the next line
-        // that renders.
-        var target = range.length == 0 && range.location < content.location + content.length ? NSRange(location: range.location, length: 1) : range
+        // A caret maps by the character at it.
+        let target = range.length == 0 && range.location < content.location + content.length ? NSRange(location: range.location, length: 1) : range
+        markdown.scroll(toSource: Self.renderedTarget(target, fromLine: line, in: markdown, index: index))
+    }
+
+    /// The rendered view maps only text that is shown: a blank line, or markup that renders to nothing, maps to no
+    /// rendered range, and a jump there did nothing. Then the next line that renders.
+    private static func renderedTarget(_ range: NSRange, fromLine line: Int, in markdown: MarkdownViewerController, index: LineIndex) -> NSRange {
+        var target = range
         var current = line
-        while markdown.map.renderedRanges(forSource: target).isEmpty, current < index.lineCount {
+        // An empty line maps to a point between paragraphs, not to text: it counts as not rendering.
+        while target.length == 0 || markdown.map.renderedRanges(forSource: target).isEmpty, current < index.lineCount {
             current += 1
             target = index.contentRange(ofLine: current)
         }
-        markdown.scroll(toSource: target)
+        return target
+    }
+
+    /// Scrolls whichever view is showing to a line, without selecting it: the source editor, a rendered page, or a
+    /// rendered Markdown file (at the next line that renders, when this one doesn't).
+    private func show(line: Int) {
+        guard let controller = textController else { return }
+        let content = controller.lineIndex.contentRange(ofLine: line)
+        if let html, html.isShowingRendered {
+            html.scroll(toSource: content, select: false)
+        } else if let markdown, markdown.mode == .rendered {
+            markdown.scroll(toSource: Self.renderedTarget(content, fromLine: line, in: markdown, index: controller.lineIndex), select: false)
+        } else {
+            controller.scroll(to: content, select: false)
+        }
     }
 
     func toggleMarkdownMode() {

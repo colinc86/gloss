@@ -47,6 +47,31 @@ struct ChangeSteppingTests {
         await model.shutDown()
     }
 
+    /// A Markdown file read rendered tints its changes, so stepping scrolls the rendered page, not the hidden source.
+    @Test func steppingScrollsARenderedMarkdownFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-hunkmd-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try "# Plan\n\nFirst step.\n\nSecond step.\n".write(toFile: "\(root)/plan.md", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        model.openDocument(hostID: .local, path: "\(root)/plan.md")
+        let session = try #require(model.activeSession)
+        await waitUntil { session.markdown != nil }
+        let markdown = try #require(session.markdown)
+        if markdown.mode != .rendered { markdown.toggle() }
+        let controller = try #require(session.textController)
+        // Line 4 is blank: the step lands on the next line that renders, "Second step."
+        controller.lineChanges = LineChanges(added: [4...5])
+        let before = markdown.pendingRenderedScrollVersion
+        #expect(session.stepChange(forward: true))
+        #expect(markdown.pendingRenderedScrollVersion == before + 1, "the rendered page scrolls")
+        let shown = markdown.pendingRenderedScroll.map { (markdown.rendered.string as NSString).substring(with: $0) }
+        #expect(shown?.hasPrefix("Second step") == true)
+        #expect(markdown.pendingRenderedScrollSelects == false, "a step shows the change without selecting it")
+        await model.shutDown()
+    }
+
     @Test func theFirstNextCountsAHunkOnTheCaretsLine() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-hunk1-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
