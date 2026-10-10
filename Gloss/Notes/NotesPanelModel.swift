@@ -272,6 +272,15 @@ final class NotesPanelModel {
         groups = Self.merged(liveGroups, past: viewedIteration.map { (DocumentNotes(document: $0.document, notes: pastNotes)) }).filter { location?.contains($0.document) == true }
     }
 
+    /// Documents as the explorer lists their files: by host, then by path with numbers in order and case aside
+    /// (`docs/` beside `Docs/`, `file2` before `file10`), where the database's order put capitals first.
+    nonisolated static func inPathOrder(_ groups: [DocumentNotes]) -> [DocumentNotes] {
+        groups.sorted { lhs, rhs in
+            if lhs.document.hostID != rhs.document.hostID { return lhs.document.hostID.rawValue < rhs.document.hostID.rawValue }
+            return lhs.document.path.localizedStandardCompare(rhs.document.path) == .orderedAscending
+        }
+    }
+
     /// `live` with `past`'s document listing `past`'s notes instead, in path order. Kept when it has none: its header
     /// names the iteration on screen and says it has no notes.
     nonisolated static func merged(_ live: [DocumentNotes], past: DocumentNotes?) -> [DocumentNotes] {
@@ -390,7 +399,7 @@ final class NotesPanelModel {
             // Open work leads: documents with anything still open come first, finished ones after, each in path order.
             let open = filtered.filter { $0.notes.contains(where: Self.isOpen) }
             let settled = filtered.filter { !$0.notes.contains(where: Self.isOpen) }
-            return open + settled
+            return Self.inPathOrder(open) + Self.inPathOrder(settled)
         }
         return filtered.sorted { lhs, rhs in
             guard let a = lhs.notes.first, let b = rhs.notes.first else { return false }

@@ -77,6 +77,15 @@ struct IterationTests {
         #expect(NotesPanelModel.merged(live, past: nil) == live)
     }
 
+    /// The panel lists documents as the explorer lists files: case aside, numbers in order.
+    @Test func thePanelListsDocumentsInTheExplorersOrder() {
+        func group(_ path: String) -> DocumentNotes {
+            DocumentNotes(document: Core.Document(id: .new(), hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint()), notes: [])
+        }
+        let byDatabase = ["/r/Sources/a.md", "/r/docs/file10.md", "/r/docs/file2.md"].map(group)
+        #expect(NotesPanelModel.inPathOrder(byDatabase).map(\.document.path) == ["/r/docs/file2.md", "/r/docs/file10.md", "/r/Sources/a.md"])
+    }
+
     @Test func theSnapshotProviderServesItsBytesReadOnly() async throws {
         let (directory, path) = try makeFile("now\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }
