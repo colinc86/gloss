@@ -4,6 +4,14 @@ import Testing
 @testable import Remote
 
 struct RemoteSearchParsingTests {
+    @Test func smartCaseLooksOnlyAtThePatternsOwnCapitals() {
+        #expect(!RemoteSearch.matchesCase("route", regex: false))
+        #expect(RemoteSearch.matchesCase("Route", regex: false))
+        #expect(!RemoteSearch.matchesCase(#"\Sroute\W"#, regex: true), "escapes are classes")
+        #expect(RemoteSearch.matchesCase(#"\sRoute"#, regex: true))
+        #expect(RemoteSearch.grepFlags(pattern: #"\bfoo"#, regex: true) == ["-E", "-i"])
+    }
+
     @Test func parsesRipgrepAndGrepLines() {
         let json = #"{"type":"match","data":{"path":{"text":"/p/a.swift"},"lines":{"text":"let needle = 1\n"},"line_number":12,"absolute_offset":0,"submatches":[]}}"#
         #expect(RemoteSearch.parse(line: Data(json.utf8), ripgrep: true) == RemoteSearchHit(path: "/p/a.swift", line: 12, text: "let needle = 1"))

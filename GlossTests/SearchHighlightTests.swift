@@ -21,6 +21,9 @@ struct SearchHighlightTests {
     @Test func regexQueriesHighlightTheirMatches() {
         #expect(lit("let a = 12, b = 345", "[0-9]+", regex: true) == ["12", "345"])
         #expect(lit("abc", "(", regex: true).isEmpty, "an invalid pattern highlights nothing instead of failing")
+        #expect(lit("enum Route { case route }", "rout[e]", regex: true) == ["Route", "route"], "smart case: a lowercase regex matches any case, as rg found it")
+        #expect(lit("enum Route { case route }", "Rout[e]", regex: true) == ["Route"])
+        #expect(lit("a Route", "\\sroute", regex: true) == [" Route"], "an escape's letter is not a capital")
     }
 
     @Test func codeKeepsItsColoursAndTheMatchStaysOnTop() {

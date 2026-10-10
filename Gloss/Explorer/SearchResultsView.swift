@@ -1,5 +1,6 @@
 import AppKit
 import Core
+import Remote
 import SwiftUI
 import UniformTypeIdentifiers
 import Viewers
@@ -219,12 +220,13 @@ struct SearchHitRow: View {
     private static func matches(in text: String, pattern: (text: String, regex: Bool)?) -> [NSRange] {
         guard let pattern, !pattern.text.isEmpty else { return [] }
         let ns = text as NSString
+        // ripgrep's smart case, for a regex as for text: no capital of its own matches any case.
         if pattern.regex {
-            guard let expression = try? NSRegularExpression(pattern: pattern.text) else { return [] }
+            let options: NSRegularExpression.Options = RemoteSearch.matchesCase(pattern.text, regex: true) ? [] : [.caseInsensitive]
+            guard let expression = try? NSRegularExpression(pattern: pattern.text, options: options) else { return [] }
             return expression.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range).filter { $0.length > 0 }
         }
-        // ripgrep's smart case: an all-lowercase query matches any case.
-        let options: NSString.CompareOptions = pattern.text == pattern.text.lowercased() ? [.caseInsensitive] : []
+        let options: NSString.CompareOptions = RemoteSearch.matchesCase(pattern.text, regex: false) ? [] : [.caseInsensitive]
         var ranges: [NSRange] = []
         var search = NSRange(location: 0, length: ns.length)
         while search.length > 0 {

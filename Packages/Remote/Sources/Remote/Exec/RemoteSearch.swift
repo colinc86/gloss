@@ -64,7 +64,20 @@ public enum RemoteSearch {
     }
 
     public static func grepFlags(pattern: String, regex: Bool) -> [String] {
-        [regex ? "-E" : "-F"] + (pattern.contains(where: \.isUppercase) ? [] : ["-i"])
+        [regex ? "-E" : "-F"] + (matchesCase(pattern, regex: regex) ? [] : ["-i"])
+    }
+
+    /// Smart case, as rg decides it: case matters only when the pattern has a capital letter of its own. In a
+    /// regex an escape's letter (`\S`, `\W`, `\D`) is a class, not a capital, so `\Sroute` still ignores case.
+    public static func matchesCase(_ pattern: String, regex: Bool) -> Bool {
+        guard regex else { return pattern.contains(where: \.isUppercase) }
+        var escaped = false
+        for character in pattern {
+            if escaped { escaped = false; continue }
+            if character == "\\" { escaped = true; continue }
+            if character.isUppercase { return true }
+        }
+        return false
     }
 
     /// Streams hits as they arrive; cancelling the consumer terminates the remote command.
