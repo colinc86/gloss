@@ -30,6 +30,11 @@ nonisolated struct ShortcutGroup: Identifiable {
             ("Extend the cell selection", ["⇧", "←", "→", "↑", "↓"]),
             ("Clear the selection", ["esc"]),
         ]),
+        ShortcutGroup(title: "Find bar (pages, PDFs, spreadsheets)", symbol: "magnifyingglass", items: [
+            ("Next match", ["↩"]),
+            ("Previous match", ["⇧", "↩"]),
+            ("Close it", ["esc"]),
+        ]),
         ShortcutGroup(title: "Pick Element on Page", symbol: "rectangle.dashed", items: [
             ("Step out to the enclosing element / back in", ["↑", "/", "↓"]),
             ("Stop picking", ["esc"]),

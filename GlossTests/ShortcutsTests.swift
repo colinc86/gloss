@@ -48,5 +48,6 @@ struct ShortcutsTests {
         #expect(ShortcutGroup.filtered("zzz", in: groups).isEmpty)
         #expect(ShortcutGroup.filtered("delete", in: groups).map(\.title) == ["Notes panel"], "the notes list's own keys are listed")
         #expect(ShortcutGroup.filtered("pick", in: groups).first?.items.count == 2)
+        #expect(ShortcutGroup.filtered("previous match", in: groups).flatMap { $0.items.map(\.keys) } == [["⇧", "↩"]], "the find bar's own keys are listed")
     }
 }
