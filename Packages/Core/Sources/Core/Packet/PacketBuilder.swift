@@ -454,11 +454,9 @@ public enum CellExcerpt {
     public static func make(anchor: TextAnchor, cells: CellSelection, content: String, fileName: String) -> (description: String, lines: [String]) {
         let table = CSVParser.parse(content, delimiter: CSVParser.delimiter(for: content, fileName: fileName))
         func header(_ column: Int) -> String { column < table.header.count ? table.header[column] : "" }
-        func value(_ row: CSVRow, _ column: Int) -> String {
-            let field = column < row.fields.count ? row.fields[column] : ""
-            // A quoted CSV field may hold any line break; it stays on its own line in the packet.
-            return PacketBuilder.quotedLines(field).joined(separator: "\\n")
-        }
+        // A quoted CSV field may hold any line break; it stays on its own line in the packet.
+        func oneLine(_ field: String) -> String { PacketBuilder.quotedLines(field).joined(separator: "\\n") }
+        func value(_ row: CSVRow, _ column: Int) -> String { oneLine(column < row.fields.count ? row.fields[column] : "") }
         if cells.isColumns {
             let names = cells.columns.map { column in
                 let name = header(column)
@@ -474,7 +472,7 @@ public enum CellExcerpt {
             let line = anchor.start.line + cell.lineOffset
             let reference = "\(CellSelection.columnName(cell.column))\(line)"
             let name = header(cell.column)
-            let label = name.isEmpty ? reference : "\(reference) (\(name))"
+            let label = name.isEmpty ? reference : "\(reference) (\(oneLine(name)))"
             return "\(label): " + (byLine[line].map { value($0, cell.column) } ?? "")
         }
         return (cells.references(startLine: anchor.start.line), lines)

@@ -72,6 +72,18 @@ struct CellAnchorTests {
         #expect(PacketBuilder.summaryLine(note).contains("/p/segments.csv:cells B2,E4 "))
     }
 
+    @Test func aHeaderWithALineBreakStaysOnItsCellsLine() {
+        let csv = "segment,\"distance\nkm\"\nLot to fence,1.2\n"
+        let index = LineIndex(csv)
+        let row = index.contentRange(ofLine: 3)
+        var cells = ReAnchorer.make(from: row, in: csv, index: index, hash: "h")
+        cells.cells = CellSelection(cells: [CellRef(lineOffset: 0, column: 1)])
+        let made = CellExcerpt.make(anchor: cells, cells: cells.cells!, content: csv, fileName: "x.csv")
+        #expect(made.lines == ["B3 (distance\\nkm): 1.2"], "the header's line break is spelled, as a value's is")
+        let column = CellExcerpt.make(anchor: cells, cells: CellSelection(columns: [1]), content: csv, fileName: "x.csv")
+        #expect(column.description == "Column B \"distance\\nkm\"")
+    }
+
     @Test func reanchoringKeepsTheCells() {
         let cells = CellSelection(cells: [CellRef(lineOffset: 1, column: 4)])
         let original = anchor(lines: 2...3, cells: cells)
