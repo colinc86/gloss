@@ -71,7 +71,14 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             switch MarkdownLink.classify(link, documentDirectory: controller.documentDirectory) {
             case .external(let url): NSWorkspace.shared.open(url)
             case .document(let path): controller.onOpenDocument(path)
-            case .sameDocument: break
+            case .sameDocument(let fragment):
+                // A table of contents: the heading it names, at the top, as a browser scrolls to an anchor.
+                let source = controller.source
+                if let line = MarkdownAnchors.line(of: fragment, in: source.text) {
+                    controller.scroll(toSource: source.lineIndex.contentRange(ofLine: line), select: false, atTop: true)
+                } else if !fragment.isEmpty {
+                    NSSound.beep()
+                }
             case .refused: NSSound.beep()
             }
             return true

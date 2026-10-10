@@ -15,7 +15,8 @@ struct MarkdownLinkTests {
         #expect(classify("guide%20one.md#setup") == .document("/repo/docs/guide one.md"))
         #expect(classify("file:///System/Applications/Utilities/Terminal.app") == .document("/System/Applications/Utilities/Terminal.app"),
                 "a file link only opens as a document in the viewer, never launches")
-        #expect(classify("#heading") == .sameDocument)
+        #expect(classify("#heading") == .sameDocument("heading"))
+        #expect(classify("#caf%C3%A9") == .sameDocument("café"), "the fragment decoded")
         #expect(classify("a%2525.md") == .document("/repo/docs/a%25.md"), "decoded once")
         guard case .refused = classify("//intranet/docs/spec.md") else { Issue.record("scheme-relative"); return }
         guard case .refused = classify("file:notes.md") else { Issue.record("relative file:"); return }
@@ -24,5 +25,14 @@ struct MarkdownLinkTests {
     @Test func withoutAFolderRelativeAndFileLinksAreRefused() {
         guard case .refused = MarkdownLink.classify("notes.md", documentDirectory: nil) else { Issue.record("relative"); return }
         guard case .refused = MarkdownLink.classify("file:///etc/hosts", documentDirectory: nil) else { Issue.record("file"); return }
+    }
+
+    /// `#anchor` links find their heading as GitHub names it, so a README's table of contents works.
+    @Test func anchorsNameHeadingsAsGitHubDoes() {
+        let source = "# Gloss\n\n## Getting Started!\n\ntext\n\n## Notes & Links\n\n## Notes & Links\n\n```\n# not a heading\n```\n"
+        #expect(MarkdownAnchors.headings(in: source).map(\.anchor) == ["gloss", "getting-started", "notes--links", "notes--links-1"])
+        #expect(MarkdownAnchors.line(of: "getting-started", in: source) == 3)
+        #expect(MarkdownAnchors.line(of: "Notes--Links-1", in: source) == 9, "case aside, the repeat")
+        #expect(MarkdownAnchors.line(of: "not-a-heading", in: source) == nil, "code is not a heading")
     }
 }
