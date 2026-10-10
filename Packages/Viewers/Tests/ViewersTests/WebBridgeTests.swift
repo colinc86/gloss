@@ -280,6 +280,33 @@ struct WebBridgeTests {
         #expect(harness.page.elementRects[id]?.width ?? 0 > 0)
     }
 
+    /// Edit › Find on a page: WKWebView takes no find actions on the Mac, so the app's web view answers them itself.
+    @Test func findWorksOnThePage() async throws {
+        let harness = Harness(html: Self.fixture)
+        try await harness.ready()
+        let web = harness.browser.webView
+        func item(_ action: NSTextFinder.Action) -> NSMenuItem {
+            let item = NSMenuItem(title: "", action: #selector(NSResponder.performTextFinderAction(_:)), keyEquivalent: "")
+            item.tag = action.rawValue
+            return item
+        }
+        #expect(web.validateUserInterfaceItem(item(.showFindInterface)), "Edit › Find is offered on the page")
+        #expect(!web.validateUserInterfaceItem(item(.replace)), "nothing on a page can be replaced")
+        web.performTextFinderAction(item(.showFindInterface))
+        #expect(harness.browser.isFinding)
+        harness.browser.findText = "target paragraph"
+        await harness.browser.find()
+        #expect(!harness.browser.findMissed, "found, case aside")
+        harness.browser.findText = "nowhere on this page"
+        await harness.browser.find()
+        #expect(harness.browser.findMissed)
+        harness.browser.findText = "Second section"
+        web.performTextFinderAction(item(.nextMatch))
+        try await harness.wait("the next match") { !harness.browser.findMissed }
+        harness.browser.endFind()
+        #expect(!harness.browser.isFinding && !harness.browser.findMissed)
+    }
+
     @Test func pushStateBecomesANewDocument() async throws {
         let harness = Harness(html: Self.fixture)
         try await harness.ready()

@@ -58,6 +58,45 @@ public final class WebBrowserController {
     /// The page draws a chosen picture; once the app's selection is cleared, the drawing goes too.
     @ObservationIgnored private var pageShowsPicture = false
 
+    // MARK: Find
+
+    /// The find field over the page is showing: Edit › Find (⌘F) on the page, which has no find bar of its own.
+    public var isFinding = false
+    /// What the field searches for; kept when it closes, as a find bar keeps it.
+    public var findText = ""
+    /// The last search found nothing.
+    public private(set) var findMissed = false
+
+    func perform(_ action: NSTextFinder.Action) {
+        switch action {
+        case .showFindInterface: isFinding = true
+        case .nextMatch: Task { await find(backwards: false) }
+        case .previousMatch: Task { await find(backwards: true) }
+        case .hideFindInterface: endFind()
+        default: break
+        }
+    }
+
+    /// Finds the next (or previous) match of `findText` on the page, wrapping at either end, case aside; WebKit
+    /// selects it and scrolls it into view.
+    public func find(backwards: Bool = false) async {
+        guard !findText.isEmpty else {
+            findMissed = false
+            return
+        }
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.caseSensitive = false
+        configuration.wraps = true
+        findMissed = !((try? await webView.find(findText, configuration: configuration))?.matchFound ?? false)
+    }
+
+    public func endFind() {
+        isFinding = false
+        findMissed = false
+        if let window = webView.window { window.makeFirstResponder(webView) }
+    }
+
     public init() {
         let configuration = WKWebViewConfiguration()
         let delegate = Delegate()
@@ -66,11 +105,13 @@ public final class WebBrowserController {
         let content = configuration.userContentController
         content.addUserScript(WKUserScript(source: WebBridge.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         content.add(delegate, contentWorld: .defaultClient, name: WebBridge.handlerName)
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        let findingView = FindingWebView(frame: .zero, configuration: configuration)
+        webView = findingView
         webView.allowsMagnification = true
         webView.allowsBackForwardNavigationGestures = true
         self.delegate = delegate
         self.schemeHandler = schemeHandler
+        findingView.onFindAction = { [weak self] action in self?.perform(action) }
         delegate.browser = self
         schemeHandler.browser = self
         webView.navigationDelegate = delegate
@@ -959,5 +1000,24 @@ private extension URL {
         guard var components = URLComponents(url: self, resolvingAgainstBaseURL: true) else { return self }
         components.fragment = nil
         return components.url
+    }
+}
+
+/// The app's web view, answering Edit › Find (⌘F, ⌘G, ⇧⌘G) itself: WKWebView takes no find actions on the Mac.
+final class FindingWebView: WKWebView {
+    var onFindAction: (NSTextFinder.Action) -> Void = { _ in }
+    private static let handled: Set<NSTextFinder.Action> = [.showFindInterface, .nextMatch, .previousMatch, .hideFindInterface]
+
+    override func performTextFinderAction(_ sender: Any?) {
+        guard let tag = (sender as? any NSValidatedUserInterfaceItem)?.tag, let action = NSTextFinder.Action(rawValue: tag),
+              Self.handled.contains(action) else { return }
+        onFindAction(action)
+    }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(performTextFinderAction(_:)) {
+            return NSTextFinder.Action(rawValue: item.tag).map(Self.handled.contains) ?? false
+        }
+        return super.validateUserInterfaceItem(item)
     }
 }

@@ -646,6 +646,10 @@ path. Dropping on the Dock icon is not supported yet.
   keeping the scroll place), then the Rendered/Source switch; a live page's Source is its current DOM, read-only.
   While the page loads, a 2 pt accent line (`LoadProgressLine`) grows along the toolbar's bottom edge; at the end it
   fills, then fades after 350 ms, instead of vanishing mid-way.
+  Edit › Find (⌘F) on a rendered page opens a 30 pt find bar under the toolbar (WebKit has no find bar of its own on
+  the Mac): `magnifyingglass`, a "Find on page" field searching as it is typed, case aside and wrapping, an orange
+  "Not found" when nothing matches, previous/next chevrons (⇧⌘G, ⌘G; Return and Shift-Return in the field), and
+  Done (Escape too).
 - **Pictures on a page** (decided 2026-10-06): no mode, as in rendered Markdown. A press on an `img`, `picture` or
   `svg` (found through transparent wrappers and links laid over it, never through text or through something that
   paints its own background) starts a picture gesture, except on one inside a button, label or other control, or
