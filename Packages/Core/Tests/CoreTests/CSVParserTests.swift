@@ -47,4 +47,15 @@ struct CSVParserTests {
         #expect(table.rows.map(\.fields) == [["1", "2"], ["3", "4"]])
         #expect(table.columnCount == 2)
     }
+
+    /// The limit counts data rows, not the header, and the table says when the file had more.
+    @Test func aTableSaysWhenItStoppedAtTheLimit() {
+        let rows = (1...CSVParser.maximumRows).map { "r\($0),\($0)" }
+        let full = CSVParser.parse("id,value\n" + rows.joined(separator: "\n") + "\n\n", delimiter: ",")
+        #expect(full.rows.count == CSVParser.maximumRows && !full.isTruncated, "exactly the limit, trailing blank lines and all")
+        let more = CSVParser.parse("id,value\n" + rows.joined(separator: "\n") + "\nlast,1\n", delimiter: ",")
+        #expect(more.rows.count == CSVParser.maximumRows && more.isTruncated)
+        let headless = CSVParser.parse(rows.joined(separator: "\n") + "\nlast,1", delimiter: ",", hasHeader: false)
+        #expect(headless.rows.count == CSVParser.maximumRows && headless.isTruncated)
+    }
 }

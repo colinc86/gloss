@@ -17,11 +17,14 @@ public struct CSVTable: Equatable, Sendable {
     public var header: [String]
     public var rows: [CSVRow]
     public var delimiter: Character
+    /// The file has more rows than `CSVParser.maximumRows`; only the first are here.
+    public var isTruncated: Bool
 
-    public init(header: [String], rows: [CSVRow], delimiter: Character) {
+    public init(header: [String], rows: [CSVRow], delimiter: Character, isTruncated: Bool = false) {
         self.header = header
         self.rows = rows
         self.delimiter = delimiter
+        self.isTruncated = isTruncated
     }
 
     public var columnCount: Int { max(header.count, rows.map(\.fields.count).max() ?? 0) }
@@ -29,6 +32,7 @@ public struct CSVTable: Equatable, Sendable {
 
 /// RFC 4180 parser: quoted fields, doubled quotes, embedded newlines, CR, LF, and CRLF.
 public enum CSVParser {
+    /// Data rows kept; the header, when there is one, is not counted.
     public static let maximumRows = 100_000
 
     /// Picks tab for `.tsv`, else the most frequent of `,` `;` `\t` on the first line, outside quoted fields (a
@@ -59,6 +63,8 @@ public enum CSVParser {
         var fieldIsFresh = true
         var iterator = text.makeIterator()
         var pending: Character?
+        let limit = maximumRows + (hasHeader ? 1 : 0)
+        var truncated = false
 
         func endField() {
             fields.append(field)
@@ -85,7 +91,11 @@ public enum CSVParser {
             } else {
                 break
             }
-            if records.count >= maximumRows { break }
+            if records.count >= limit {
+                if character.isNewline { continue }   // blank lines after the last row are not more rows
+                truncated = true
+                break
+            }
             if inQuotes {
                 if character == "\"" {
                     if let next = iterator.next() {
@@ -128,8 +138,8 @@ public enum CSVParser {
         if !field.isEmpty || !fields.isEmpty || recordHasContent { endRecord(lastLine: line) }
 
         if hasHeader, let first = records.first {
-            return CSVTable(header: first.fields, rows: Array(records.dropFirst()), delimiter: delimiter)
+            return CSVTable(header: first.fields, rows: Array(records.dropFirst()), delimiter: delimiter, isTruncated: truncated)
         }
-        return CSVTable(header: [], rows: records, delimiter: delimiter)
+        return CSVTable(header: [], rows: records, delimiter: delimiter, isTruncated: truncated)
     }
 }

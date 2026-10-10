@@ -71,7 +71,7 @@ public final class CSVGridController {
         table = CSVParser.parse(text, delimiter: CSVParser.delimiter(for: text, fileName: fileName))
     }
 
-    public var isTruncated: Bool { table.rows.count >= CSVParser.maximumRows }
+    public var isTruncated: Bool { table.isTruncated }
 
     /// A grid wider than this isn't a table anyone reads: one line of 2 million commas made 2 million columns
     /// measured and built on the main thread. Such files open as text instead.
