@@ -53,6 +53,16 @@ struct PatchHunksTests {
         #expect(changes.hunks == [2...3, 5...5, 22...22])
     }
 
+    /// A blank context line without its leading space (git's diff.suppressBlankEmpty) still counts as a line, so
+    /// the tints after it stay on their lines; a patch ending in a newline changes nothing.
+    @Test func aBlankContextLineWithoutItsSpaceIsStillALine() {
+        let trimmed = "@@ -1,4 +1,5 @@\n a\n\n b\n+c\n d\n"
+        let spaced = "@@ -1,4 +1,5 @@\n a\n \n b\n+c\n d"
+        #expect(PatchHunks.parse(trimmed) == LineChanges(added: [4...4]))
+        #expect(PatchHunks.parse(spaced) == PatchHunks.parse(trimmed))
+        #expect(PatchHunks.parse("@@ -1,2 +1,1 @@\n a\n-b\n") == LineChanges(added: [], deletions: [2]))
+    }
+
     @Test func deletionAtTheEndAndNoNewlineMarkers() {
         let patch = """
         @@ -1,3 +1,2 @@

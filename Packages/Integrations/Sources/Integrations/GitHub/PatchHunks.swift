@@ -27,8 +27,9 @@ public enum PatchHunks {
                 newLine = Int(start) ?? 0
                 continue
             }
-            guard let first = line.first else { continue }
-            switch first {
+            // An empty line is a blank context line whose leading space was dropped (git's diff.suppressBlankEmpty,
+            // trimming editors): skipping it put every tint after it a line early.
+            switch line.first ?? " " {
             case "+":
                 if deletedRun > 0 { addedAfterDeletion = true }
                 added.append(newLine)
