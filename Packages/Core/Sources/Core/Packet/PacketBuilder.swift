@@ -351,7 +351,9 @@ public enum PacketBuilder {
         return ["Excerpt:"] + quoted
     }
 
-    /// What may end a line for whoever reads the packet: LineIndex, editors and agents treat all of these as breaks.
+    /// What may end a line for whoever reads the packet. Wider than `LineIndex` (CR, LF, NEL, U+2028, U+2029, as
+    /// NSString counts lines): a terminal or an agent may also break at a vertical tab or form feed, so those are
+    /// split or escaped too. Only quoting and escaping use it, never line numbers.
     static func isLineBreak(_ scalar: Unicode.Scalar) -> Bool {
         scalar == "\n" || scalar == "\r" || scalar == "\u{0B}" || scalar == "\u{0C}" || scalar == "\u{85}" || scalar == "\u{2028}" || scalar == "\u{2029}"
     }
