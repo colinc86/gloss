@@ -36,6 +36,41 @@ struct ContentSearchTests {
         #expect(ContentSearchModel.ordered(hits).map { "\($0.path):\($0.line)" } == ["/r/b/a.md:2", "/r/b/a.md:9", "/r/file2.md:4", "/r/file10.md:1"])
     }
 
+    /// Output is read as it comes, a line split across chunks put back together, and reading stops at the limit.
+    @Test func hitsAreReadLineByLineUpToTheLimit() {
+        var reader = HitReader(ripgrep: false, limit: 3)
+        reader.append(Data("/r/a.md\u{0}1:one\n/r/a.md\u{0}2:t".utf8))
+        #expect(reader.hits.map(\.text) == ["one"])
+        reader.append(Data("wo\nnot a hit\n/r/b.md\u{0}7:three\n/r/b.md\u{0}8:four\n".utf8))
+        #expect(reader.hits.map(\.text) == ["one", "two", "three"])
+        #expect(reader.isFull)
+        reader.append(Data("/r/c.md\u{0}1:five\n".utf8))
+        #expect(reader.hits.count == 3, "nothing more once full")
+
+        var unterminated = HitReader(ripgrep: false, limit: 10)
+        unterminated.append(Data("/r/a.md\u{0}4:last".utf8))
+        unterminated.finish()
+        #expect(unterminated.hits.map(\.line) == [4], "a last line without a newline still counts")
+    }
+
+    /// A word on every line of a large folder stops the tool once enough are in, and says there are more.
+    @Test func aCommonWordStopsTheSearchEarly() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-search-many-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let body = String(repeating: "a needle here\n", count: 150)
+        for index in 0..<60 { try body.write(toFile: "\(directory)/file\(index).txt", atomically: true, encoding: .utf8) }
+        let model = ContentSearchModel()
+        model.query = "needle"
+        model.search(in: directory)
+        for _ in 0..<200 where model.isSearching { try await Task.sleep(for: .milliseconds(30)) }
+        #expect(!model.isSearching)
+        #expect(model.hits.count == ContentSearchModel.shownLimit)
+        #expect(model.truncated)
+        #expect(model.errorMessage == nil, "a stopped search is not a failed one")
+        #expect(model.hits == ContentSearchModel.ordered(model.hits))
+    }
+
     /// A match in a file that isn't UTF-8 (Latin-1, as old Windows projects have) is listed, read as the viewer reads it.
     @Test func findsMatchesInALatin1File() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-search-latin1-\(UUID().uuidString)").path

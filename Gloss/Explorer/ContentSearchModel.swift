@@ -31,6 +31,13 @@ final class ContentSearchModel {
     var focusRequest = 0
     @ObservationIgnored private var task: Task<Void, Never>?
 
+    /// Hits shown at most.
+    nonisolated static let shownLimit = 500
+    /// Hits read at most before the tool is stopped. Well above `shownLimit` so the hits shown are the same each
+    /// time for any search with fewer than this many, without reading all of a common word's matches in a large
+    /// folder (`e` in a 3,000-file SDK was 136 MB of output, all held and parsed to show 500).
+    nonisolated static let collectionLimit = 5_000
+
     nonisolated static let ripgrepPath: String? = {
         ["/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/rg"].first { FileManager.default.isExecutableFile(atPath: $0) }
     }()
@@ -68,7 +75,7 @@ final class ContentSearchModel {
                 do {
                     for try await hit in RemoteSearch.run(pattern: pattern, root: root, regex: regex, hidden: hidden, over: connection) {
                         results.append(SearchHit(path: hit.path, line: hit.line, text: hit.text))
-                        if results.count > 500 { break }
+                        if results.count >= Self.collectionLimit { break }
                     }
                 } catch {
                     Log.explorer.error("remote search failed: \(error, privacy: .public)")
@@ -82,8 +89,8 @@ final class ContentSearchModel {
             }
             guard !Task.isCancelled, let self else { return }
             if failed, results.isEmpty { self.errorMessage = regex ? "Not a valid regular expression" : "Search failed" }
-            self.hits = Array(Self.ordered(results).prefix(500))
-            self.truncated = results.count > 500
+            self.hits = Array(Self.ordered(results).prefix(Self.shownLimit))
+            self.truncated = results.count > Self.shownLimit
             self.isSearching = false
         }
     }
@@ -119,37 +126,75 @@ final class ContentSearchModel {
     nonisolated private static func runRipgrep(_ rg: String, pattern: String, root: String, regex: Bool, hidden: Bool) async -> ([SearchHit], Bool) {
         let arguments = ["--json", "-n", "--no-messages", "--max-count", "200", "--max-filesize", "2M"] + RemoteSearch.ripgrepFlags(regex: regex)
             + RemoteSearch.ripgrepHiddenFlags(hidden) + ["-e", pattern, "--", root]
-        guard let (data, status) = await output(of: rg, arguments: arguments) else { return ([], false) }
+        guard let (hits, status) = await hits(of: rg, arguments: arguments, ripgrep: true) else { return ([], false) }
         // Status 2 also means "some file was unreadable"; only a pattern the tool rejects on its own is an error.
-        let rejected = status == 2 ? await output(of: rg, arguments: ["--no-messages"] + RemoteSearch.ripgrepFlags(regex: regex) + ["-e", pattern, "--", "/dev/null"])?.1 == 2 : false
-        // Read as a remote search reads it, so a line in a Latin-1 file is found here too.
-        let hits: [SearchHit] = data.split(separator: 0x0A).compactMap { line in
-            RemoteSearch.parse(line: Data(line), ripgrep: true).map { SearchHit(path: $0.path, line: $0.line, text: $0.text) }
-        }
+        let rejected = status == 2 ? await self.hits(of: rg, arguments: ["--no-messages"] + RemoteSearch.ripgrepFlags(regex: regex) + ["-e", pattern, "--", "/dev/null"], ripgrep: true)?.1 == 2 : false
         return (hits, rejected)
     }
 
     nonisolated private static func runGrep(pattern: String, root: String, regex: Bool, hidden: Bool) async -> ([SearchHit], Bool) {
         let arguments = ["-rnIs"] + RemoteSearch.grepOutputFlags + ["--exclude-dir=.git"] + RemoteSearch.grepHiddenFlags(hidden, root: root)
             + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "--", root]
-        guard let (data, status) = await output(of: "/usr/bin/grep", arguments: arguments) else { return ([], false) }
-        let rejected = status == 2 ? await output(of: "/usr/bin/grep", arguments: ["-s"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "/dev/null"])?.1 == 2 : false
-        let hits: [SearchHit] = data.split(separator: 0x0A).compactMap { line in
-            RemoteSearch.parse(line: Data(line), ripgrep: false).map { SearchHit(path: $0.path, line: $0.line, text: $0.text) }
-        }
+        guard let (hits, status) = await hits(of: "/usr/bin/grep", arguments: arguments, ripgrep: false) else { return ([], false) }
+        let rejected = status == 2 ? await self.hits(of: "/usr/bin/grep", arguments: ["-s"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "/dev/null"], ripgrep: false)?.1 == 2 : false
         return (hits, rejected)
     }
 
-    /// Everything the tool wrote to stdout by the time it exited, or nil when it could not start or the search was
-    /// cancelled. rg and grep exit 1 when nothing matched, so the exit status is not an error here; stderr is dropped.
-    nonisolated private static func output(of executable: String, arguments: [String]) async -> (Data, Int32)? {
+    /// The hits the tool wrote, read line by line as it writes them (as a remote search reads them, so a line in a
+    /// Latin-1 file is found here too), and its exit status; nil when it could not start or the search was cancelled.
+    /// It is stopped once `collectionLimit` hits are in, and its status is then 0. rg and grep exit 1 when nothing
+    /// matched, so the exit status is not an error here; stderr is dropped.
+    nonisolated private static func hits(of executable: String, arguments: [String], ripgrep: Bool) async -> ([SearchHit], Int32)? {
         guard let process = try? ChildProcess.launch(ChildProcessSpec(executable: executable, arguments: arguments)) else { return nil }
-        let data = await withTaskCancellationHandler {
-            await process.collectStdout()
+        let reader = await withTaskCancellationHandler {
+            var reader = HitReader(ripgrep: ripgrep, limit: collectionLimit)
+            for await chunk in process.stdout where !reader.isFull {
+                reader.append(chunk)
+                if reader.isFull { process.terminate() }
+            }
+            reader.finish()
+            return reader
         } onCancel: {
             process.terminate()
         }
         let status = (try? await process.exitCode) ?? 0
-        return Task.isCancelled ? nil : (data, status)
+        return Task.isCancelled ? nil : (reader.hits, reader.isFull ? 0 : status)
+    }
+}
+
+/// Splits a search tool's output into lines as it arrives and parses each into a hit, up to `limit` hits.
+nonisolated struct HitReader {
+    let ripgrep: Bool
+    let limit: Int
+    private(set) var hits: [SearchHit] = []
+    private var pending = Data()
+
+    init(ripgrep: Bool, limit: Int) {
+        self.ripgrep = ripgrep
+        self.limit = limit
+    }
+
+    var isFull: Bool { hits.count >= limit }
+
+    mutating func append(_ chunk: Data) {
+        pending.append(chunk)
+        var start = pending.startIndex
+        while !isFull, let newline = pending[start...].firstIndex(of: 0x0A) {
+            parse(pending[start..<newline])
+            start = newline + 1
+        }
+        pending = isFull ? Data() : Data(pending[start...])
+    }
+
+    /// The last line, when the output did not end with a newline.
+    mutating func finish() {
+        if !isFull, !pending.isEmpty { parse(pending) }
+        pending = Data()
+    }
+
+    private mutating func parse(_ line: Data) {
+        if let hit = RemoteSearch.parse(line: Data(line), ripgrep: ripgrep) {
+            hits.append(SearchHit(path: hit.path, line: hit.line, text: hit.text))
+        }
     }
 }
