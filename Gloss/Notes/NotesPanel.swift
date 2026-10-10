@@ -1481,6 +1481,16 @@ private struct DocumentGroupHeader: View {
 /// Tells same-named files apart the way editors label tabs: only names that collide get a place, and each gets the
 /// shortest run of parent folders that no other file with that name shares ("docs" or "…/app/docs").
 enum PathDisambiguator {
+    /// Each path's name, with the folders that tell it apart when another has the same name (`app — work/app`), for
+    /// a list that shows names alone, such as the Dock menu's recent folders.
+    nonisolated static func titles(for paths: [String]) -> [String] {
+        let places = places(for: paths)
+        return paths.map { path in
+            let name = (path as NSString).lastPathComponent
+            return places[path].map { "\(name) — \($0)" } ?? name
+        }
+    }
+
     nonisolated static func places(for paths: [String]) -> [String: String] {
         let unique = Array(Set(paths))
         var result: [String: String] = [:]

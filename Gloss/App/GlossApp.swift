@@ -368,8 +368,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(.separator())
         }
         let recents = (model.explorer.recentsByHost[.local] ?? model.explorer.recentRoots.filter { $0.hostID == .local }).prefix(5)
-        for root in recents {
-            let item = NSMenuItem(title: (root.path as NSString).lastPathComponent, action: #selector(openRecent(_:)), keyEquivalent: "")
+        // Two recent folders named alike ("app") say which is which.
+        for (root, title) in zip(recents, PathDisambiguator.titles(for: recents.map(\.path))) {
+            let item = NSMenuItem(title: title, action: #selector(openRecent(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = root.path
             item.toolTip = root.path

@@ -19,4 +19,10 @@ struct PathDisambiguatorTests {
         let places = PathDisambiguator.places(for: ["/p/a/README.md", "/p/b/README.md", "/p/a/README.md"])
         #expect(places == ["/p/a/README.md": "…/a", "/p/b/README.md": "…/b"])
     }
+
+    /// The Dock's recent folders: a name alone, or with where it is when another recent folder shares it.
+    @Test func titlesTellLikeNamedFoldersApart() {
+        #expect(PathDisambiguator.titles(for: ["/Users/c/work/app", "/Users/c/play/app", "/Users/c/notes"])
+                == ["app — …/work", "app — …/play", "notes"])
+    }
 }
