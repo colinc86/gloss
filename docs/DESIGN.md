@@ -6,30 +6,30 @@ the tokens and components there instead of literals.
 
 ## Principles
 
-1. **Content first, chrome quiet.** Files and notes carry the colour and weight; controls sit back until the
+1. **Content first, chrome quiet.** Files and notes carry the color and weight; controls sit back until the
    pointer or the selection arrives, then brighten. Nothing is hidden that has to be discovered: quiet, not absent.
 2. **One meaning, one look.** A note state always shows the same symbol and tint (`NoteState.style`) in pills,
    filters, and highlights. Symbols carry meaning for people who cannot tell the tints apart.
 3. **Open work leads.** Drafts and questions from agents stand at full contrast; everything else steps back (#12).
-   In text a draft fills its words; a sent note is only a solid underline in its colour, a resolved one a faint
+   In text a draft fills its words; a sent note is only a solid underline in its color, a resolved one a faint
    dotted underline, an orphan a dashed one (`Theme.mark`). Every other surface uses one ladder (`Theme.strength`:
    draft 1, sent 0.55, resolved 0.3): gutter bars, minimap marks, image and PDF regions, spreadsheet rows, a web page's
    element boxes, and the paths. The note under the pointer, or whose card is selected, fills again whatever its
    state, so it can always be found.
-4. **The next step is obvious.** Each surface emphasises one primary action (a draft's Send) and keeps the rest
+4. **The next step is obvious.** Each surface emphasizes one primary action (a draft's Send) and keeps the rest
    secondary.
 5. **Motion explains change.** Animate what moved or changed state, briefly; never decorate.
-6. **Native first.** System materials, SF Symbols, system colours (light and dark), continuous corners, standard
+6. **Native first.** System materials, SF Symbols, system colors (light and dark), continuous corners, standard
    controls where they exist. Custom views only where the system has none.
 7. **Code stays code.** Wherever a file's text is quoted (the composer, note cards, search results, the Go to Line
-   preview, rendered markdown), code keeps the editor's syntax colours
+   preview, rendered markdown), code keeps the editor's syntax colors
    (`SyntaxTheme.highlighted`, worked out once, never per redraw); a command people copy, or a card's excerpt,
-   stays on one line rather than wrapping mid-token. Prose stays plain: a lone markdown line out of context colours as noise. The one exception is a diff,
-   where colour already means added and removed.
+   stays on one line rather than wrapping mid-token. Prose stays plain: a lone markdown line out of context colors as noise. The one exception is a diff,
+   where color already means added and removed.
 8. **Glass for controls, a page for reading.** Bare `glassEffect` is for controls floating over content (buttons,
    pills, the Add Note button). A floating surface people read (a peek, a toast with a sentence) uses
    `readableGlass`, so the content behind never crosses its words.
-9. **Empty says why.** An empty view names what made it empty (the search, the colour, the tab), says what belongs
+9. **Empty says why.** An empty view names what made it empty (the search, the color, the tab), says what belongs
    there and how it arrives, and offers the one way back. Emptiness that is good news says so ("All clear").
 10. **Say what a risky action touches.** Where the app writes outside itself (hooks, settings files), the screen
     says what changes, where the backup goes, and how to undo it, before anything is pressed.
@@ -52,9 +52,9 @@ the tokens and components there instead of literals.
 raw `.smooth(duration:)` or `.snappy(duration:)`. When Reduce Motion is on (System Settings > Accessibility >
 Display) all three become a 0.12 s ease with no spring or overshoot, the Add Note button fades instead of springing
 out of the selection, and `Motion.allowsLooping` is false, so a working agent's dot stops pulsing and relies on its
-colour. Every transition that slides, grows, or offsets a view is written `.transition(AnyTransition….calmed)`:
+color. Every transition that slides, grows, or offsets a view is written `.transition(AnyTransition….calmed)`:
 with Reduce Motion it becomes a plain fade, so toasts, banners, bubbles, and the thumbnail column arrive in place
-instead of travelling (Apple's guidance: replace motion, don't just shorten it). Never write a moving transition
+instead of traveling (Apple's guidance: replace motion, don't just shorten it). Never write a moving transition
 without `.calmed`. Tests set `Motion.reducedOverride`.
 
 ## Type
@@ -72,7 +72,7 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
 - **Every mark that carries meaning is spoken.** Tree rows add their note count, "needs attention", "open notes
   inside" for folders, and "contains the open file" for the path dot (`FileCellView.spokenLabel`).
 - **Selected options say so** (`.isSelected` on filter chips, mode switches, swatches); icon-only buttons have
-  labels as well as tooltips; colour never carries meaning alone (state symbols beside tints).
+  labels as well as tooltips; color never carries meaning alone (state symbols beside tints).
 - **Focus starts in the content, and focus rings are never hidden.** With keyboard navigation on (System Settings ›
   Keyboard), every control shows a ring when it has focus; that ring is how people who use the keyboard know where
   they are, so nothing suppresses it (no `.focusEffectDisabled()`, no `.focusable(false)` on controls people use).
@@ -126,7 +126,7 @@ would mean writing into the signed bundle. The pictures are 512 px renders of ea
 `Gloss/Assets.xcassets/AppIconStyles`, made by `docs/icon/render-styles.sh` (Icon Composer's `ictool`); the Dock image
 sets one into the standard grid (824 of 1024, with a shadow).
 
-The About panel is the standard one with credits (`AboutPanel`): one line on what the app does, in label colour,
+The About panel is the standard one with credits (`AboutPanel`): one line on what the app does, in label color,
 then what it is built on, smaller and secondary.
 
 ## Dock
@@ -207,7 +207,7 @@ path. Dropping on the Dock icon is not supported yet.
   sentence, up to three numbered steps (arriving 110 ms apart, each fading up 6 pt) on a faint rounded card, and an
   optional action. Never let it size the window: it fills the pane with zero minimums.
 - **Notice**: the in-context banner above a viewer. A rounded card tinted by kind (info blue, warning orange, a
-  temporary mode in the accent colour) with the symbol in a tinted circle, a bold title, one line of detail, and
+  temporary mode in the accent color) with the symbol in a tinted circle, a bold title, one line of detail, and
   actions at the trailing edge (the one that resolves it prominent). It slides down from the top with
   `DS.Motion.smooth`; a mode (placing a note) pulses its symbol. Titles name the situation ("Changed on disk",
   "Read-only", "Placing a note"), details say what it means or what to do.
@@ -252,7 +252,7 @@ path. Dropping on the Dock icon is not supported yet.
   keeps its fill, so the two never blur), Return picks, Escape closes (`SwitcherEntry.sections`, `SwitcherItem`).
   An ssh host row tells VoiceOver how its connection is (Connected, Connecting, Not connected, Couldn't connect).
 - **Tree note marker**: on a file row, a 14 pt capsule at the row's trailing edge with up to three overlapping
-  7 pt dots in the colours of its open notes (most used first, each ringed in the window background so they
+  7 pt dots in the colors of its open notes (most used first, each ringed in the window background so they
   separate) and the count; orange-tinted when something needs attention (an orphan, or an agent's question).
   Folders show only a tertiary count of open notes inside them. Only open work counts: resolved notes vanish from
   the tree. Changes pop in with a short spring. The tree's single column always spans the sidebar so marks align.
@@ -262,9 +262,9 @@ path. Dropping on the Dock icon is not supported yet.
 - **Find in Files results**: before a search, an `EmptyState` hint; then a summary ("6 lines in 2 files", Collapse
   All); one pinned, collapsible group per file (rotating chevron, file icon, name, dimmed folder, count) and one row
   per matching line with its number in a tertiary gutter and every match on an accent wash in bold (smart case for
-  text, the pattern itself for regex). Code lines keep the editor's syntax colours under the wash, as Xcode's Find
+  text, the pattern itself for regex). Code lines keep the editor's syntax colors under the wash, as Xcode's Find
   navigator shows them (worked out once per row); markdown and plain text stay monochrome, since a lone prose line
-  colours as noise. Rows brighten under the pointer. Failures use `Notice`, nothing found uses
+  colors as noise. Rows brighten under the pointer. Failures use `Notice`, nothing found uses
   `EmptyState`.
   Choosing Find in Files puts the caret in its field (even when the search is already showing), so typing starts
   the search at once; Escape in the field closes it and the tree returns.
@@ -277,7 +277,7 @@ path. Dropping on the Dock icon is not supported yet.
   document is on an ssh host; a query that may be a file name, `README.md`, gets the row after the files instead); visited pages matching it follow under a "Web Pages" caption (a clock, or a pin for a pinned one,
   the title lit like a file name, the address dimmed), then "Files". Arrows and Return cover every row. With no folder
   open, or an integration root in front, the panel still opens, offering addresses and up to 30 pages.
-  Files with open notes carry the tree's marker in the row (`NoteMarkBadge`: their colours as overlapping dots and
+  Files with open notes carry the tree's marker in the row (`NoteMarkBadge`: their colors as overlapping dots and
   the count, orange when one needs attention), so the files worth jumping to stand out in the list.
 - **Connection notice** (sidebar, remote hosts): Not connected (info, Connect); Connecting to asus (info, ssh's
   current stage as the detail, spinner, Details, Cancel); Waiting for your key agent (mode, pulsing key, "Approve
@@ -320,12 +320,12 @@ path. Dropping on the Dock icon is not supported yet.
 
 ### Notes
 
-- **A selected card** (2026-10-07): the list draws no selection band of its own (no accent or grey fill; its table's
+- **A selected card** (2026-10-07): the list draws no selection band of its own (no accent or gray fill; its table's
   highlight style is none, set by `NoSystemSelectionHighlight`). A selected card, alone or among several, is outlined
-  1.5 pt in its note's own colour on a lifted ground (`Color.primary` at 6%, light and dark), with its rail at full
+  1.5 pt in its note's own color on a lifted ground (`Color.primary` at 6%, light and dark), with its rail at full
   strength and 4 pt wide, as the note's highlight and path strengthen on the page. Text, pills, bubbles and fields
-  keep their own colours. The outline is at full strength while the list has the keyboard in the key window and at
-  half otherwise, as a system selection greys, so it still says where typing goes. The list's keyboard focus ring is
+  keep their own colors. The outline is at full strength while the list has the keyboard in the key window and at
+  half otherwise, as a system selection grays, so it still says where typing goes. The list's keyboard focus ring is
   left as the system draws it. A click into a card's own field keeps the keyboard there; a click anywhere else in the
   list, or selecting another card, gives it to the list.
 - **Adjacent selected cards** (issue #19, 2026-10-08): two or more selected cards next to each other in the list are
@@ -335,12 +335,12 @@ path. Dropping on the Dock icon is not supported yet.
   vertical gradient with a stop at each card's middle in its note's color; one color is drawn flat. A document's
   header, the rule before resolved notes, or an unselected card ends a run; a lone selected card keeps its own
   outline. Each card in a run keeps its lifted ground and wide rail.
-- **Note card**: colour rail (3 pt, 4 pt when selected, faded when settled unless selected; hover only lights its glow), anchor label
+- **Note card**: color rail (3 pt, 4 pt when selected, faded when settled unless selected; hover only lights its glow), anchor label
   with the anchor kind's symbol, the comment, the latest turn of its thread, the delivery line, then the action row
   with Send first and Delete apart at the trailing edge.
   Under the anchor label, a text note quotes what it is about, as GitHub review comments show their line: the first
   non-blank line of the anchored text, trimmed, in `.caption` monospaced on a faint rounded well, one line with a
-  tail ellipsis (the whole line in its tooltip), in the editor's syntax colours when the file has a grammar. Hidden
+  tail ellipsis (the whole line in its tooltip), in the editor's syntax colors when the file has a grammar. Hidden
   on compact settled cards; regions, cells, and whole-file notes have none.
   The pointer never changes a card's size: a card that grows under it pushes the one below and flickers in and out
   of hover. Hover lights the rail's glow, the action icons and the note's path on the page, nothing more.
@@ -358,8 +358,8 @@ path. Dropping on the Dock icon is not supported yet.
   card without selecting it, and a card the toggle opened stays open when another is selected. Open, the card ends
   with the follow-up field (below). Edit… and the pencil edit only the comment; the turns are
   their own messages.
-- **The user's turn in a thread**: a follow-up is a block in the accent colour at 6%, inset from the leading edge
-  so the two voices read apart, headed "You" in the accent colour and nothing more: what kind of turn it is, its
+- **The user's turn in a thread**: a follow-up is a block in the accent color at 6%, inset from the leading edge
+  so the two voices read apart, headed "You" in the accent color and nothing more: what kind of turn it is, its
   words say (the user's call, 2026-10-07). Until it is sent, a quiet secondary "Not sent" follows the name, with a
   10% fill and a dashed accent outline (a draft's dash), and it carries its own Edit (in place; Return saves, an
   emptied one is deleted, Escape cancels) and Delete. Sent, it is plain.
@@ -393,20 +393,20 @@ path. Dropping on the Dock icon is not supported yet.
   ones by document in the same document order (a document with both kinds heads both runs), with one thin untitled
   `Divider` row between, not selectable. When only one kind is listed (the Resolved tab, a search, every note open)
   there is one run and no rule (`NotesPanelModel.sections`).
-- **The page draws what the panel lists**: the panel's tab, colours and search choose the highlights on the page
+- **The page draws what the panel lists**: the panel's tab, colors and search choose the highlights on the page
   too, so the Drafts tab leaves only drafts on the page. With the panel closed, nothing is filtered on screen and
   every note is drawn. Show Resolved Notes (the sort menu, and View) off takes resolved notes out of every tab but
   Resolved, open or closed; a question back from an agent stays. A note revealed from elsewhere that the filters
   hide brings itself into the list (All, resolved shown), so a selected note is never invisible.
 - **A note arrives**: a card for a note that just appeared (made anywhere, or brought back by Undo) glows in its
-  own colour at 20% for 1.6 s, then fades over 0.9 s, so the panel answers "where did it go?" the way Things and
+  own color at 20% for 1.6 s, then fades over 0.9 s, so the panel answers "where did it go?" the way Things and
   Linear light a new item. Nothing glows on the first load, when everything is new and nothing arrived
   (`NotesPanelModel.arrivals`).
 - **The agent's turn** (`AgentMessageBubble`): each of an agent's messages is a bubble, its small tail pointing up
   at what it answers, headed only by who spoke ("Claude Code", "Codex"; "Agent" when the note was never sent from
   here), with no kind word or icon: whether it asks or reports, its words say (the user's call, 2026-10-07). What
   reading can't tell is kept: the question still waiting on the user is tinted orange with the text in primary;
-  everything else is a quiet grey. VoiceOver reads the name, the words, and "waiting for your answer" for that open
+  everything else is a quiet gray. VoiceOver reads the name, the words, and "waiting for your answer" for that open
   question. The latest arrives on the bouncy curve, growing from its tail, and its text is selectable.
 - **Sending takes off** (`LaunchingPlane`): when a send starts, from the button or ⌘↩, the Send button's paper plane
   flies up and away, tilting 14° and shrinking as it fades (an ease-in over 0.32 s, like something thrown). A small
@@ -415,7 +415,7 @@ path. Dropping on the Dock icon is not supported yet.
   back. A send that finishes at once (the clipboard) still lets the takeoff play out before the return. Under Reduce
   Motion the plane and the spinner simply cross-fade.
 - **Empty filtered lists say why** (`NotesPanelModel.emptyCopy`): a search with no match names the words and offers
-  Clear Search (which clears only the search); a colour filter names the colour ("No blue or pink notes"); each tab
+  Clear Search (which clears only the search); a color filter names the color ("No blue or pink notes"); each tab
   says what belongs there and how notes arrive (Drafts: how to make one; Sent: "Nothing waiting on an agent";
   Resolved: what lands there). An empty Attention tab is good news and says so: "All clear" under a green seal.
   All use `EmptyState`, so they match "No notes yet"; the message cross-fades as the tab changes.
@@ -430,8 +430,8 @@ path. Dropping on the Dock icon is not supported yet.
   window's corner when it isn't: "Claude Code needs an update", the reason in `.caption`, ✕, and Open Settings, which
   opens Settings on its Agents tab, where Update fixes it. ✕ holds until something else needs updating.
 - **Editing in the card** (#14): the pencil and Edit… turn the card's comment into the composer's own field, in
-  place, with the colour swatches, Cancel and Save under it; Return saves, Shift-Return adds a line, Escape cancels,
-  and the field's border takes the note's colour. It doesn't depend on the note being on screen in the viewer (the
+  place, with the color swatches, Cancel and Save under it; Return saves, Shift-Return adds a line, Escape cancels,
+  and the field's border takes the note's color. It doesn't depend on the note being on screen in the viewer (the
   composer popover is for new notes and re-anchoring). If the comment changed while it was open (an agent's answer was
   added), Save refuses with an orange line and keeps the typing; a second Save then means it.
 - **Document group header**: the file's system icon, its name (middle-truncated), a count capsule, and the host
@@ -441,19 +441,19 @@ path. Dropping on the Dock icon is not supported yet.
 - **Same-named files**: when two groups share a file name, each header adds, in `.caption` secondary after the name,
   the shortest run of parent folders that sets it apart ("…/docs", "…/proj"), as editors do for tabs
   (`PathDisambiguator`). Unique names stay bare, and the full path is in the tooltip.
-- **Note composer**: title, then an anchor chip tinted with the note's colour, naming the characters too when only
+- **Note composer**: title, then an anchor chip tinted with the note's color, naming the characters too when only
   part of one line is selected ("Line 12, chars 5–20", UTF-16 columns as the editor counts them); a quote of up to three lines of the
-  selected text under a colour rail, so the comment is written against what it is about (code keeps the editor's
-  syntax colours, `SyntaxTheme.highlighted`, worked out once per quote; plain text and prose stay a quiet grey); the field with a
-  placeholder prompt and a colour-tinted border; the swatches; Cancel and one prominent action ("Add Note" for new
-  notes, "Save" when editing). No key hints: Return to save and Shift-Return for a new line are standard. Choosing a colour re-tints the chip, rail, and border
+  selected text under a color rail, so the comment is written against what it is about (code keeps the editor's
+  syntax colors, `SyntaxTheme.highlighted`, worked out once per quote; plain text and prose stay a quiet gray); the field with a
+  placeholder prompt and a color-tinted border; the swatches; Cancel and one prominent action ("Add Note" for new
+  notes, "Save" when editing). No key hints: Return to save and Shift-Return for a new line are standard. Choosing a color re-tints the chip, rail, and border
   together, and the selection ring slides between swatches with `DS.Motion.bouncy`.
   While a new note is empty, starter chips sit under the field (`StarterPhrases`: Explain, Fix, Add a test, Why):
   one click writes the start of the sentence ("Fix this: ") with the caret after it and the field focused, and the
   chips fade up out of the way once there is text.
 - **ColorSwatches**: 14 pt gradient dots that grow slightly under the pointer; the selected one wears a ring in its
-  own colour, shared across swatches with `matchedGeometryEffect`.
-- **Add Note button**: glass pill beside the selection with a dot in the colour the note will get (the last colour
+  own color, shared across swatches with `matchedGeometryEffect`.
+- **Add Note button**: glass pill beside the selection with a dot in the color the note will get (the last color
   used), the label, and its key, ⌘↩ (which is the button's while it shows; Send has ⌘↩ otherwise). It grows out
   of the selected line to where it rests (`DS.Motion.bouncy`, scale from 0.2 anchored on the point where the
   selection's edge meets it, `AddNoteButton.emergence`), follows a growing selection with `DS.Motion.smooth`,
@@ -467,10 +467,10 @@ path. Dropping on the Dock icon is not supported yet.
 - **Agent chip wraps instead of clipping**: the task sits beside the agent only when it fits whole; otherwise the
   chip grows to two lines (agent, pane, folder badge; then the task in `.caption` secondary). A one-word stub such as
   "Reor…" tells nothing, so it is never shown.
-- **Selection bar** (issue #8): select two or more cards (⌘-click, ⇧-click, ⌘A) and a bar slides in under the colour
+- **Selection bar** (issue #8): select two or more cards (⌘-click, ⇧-click, ⌘A) and a bar slides in under the color
   strip (one selected card relies on its own buttons, so a click never brings the bar or pushes the list down;
   the user's call, 2026-10-07), tinted accent: "3 selected", then `.glassProminent` Send with the count (the paper plane takes off as the
-  send starts), Resolve, Reopen as Drafts, a ⋯ menu (Copy as Packet, Colour, everything again in words), Delete, and ✕
+  send starts), Resolve, Reopen as Drafts, a ⋯ menu (Copy as Packet, Color, everything again in words), Delete, and ✕
   to clear the selection. Each action counts only the notes it applies to (Send takes drafts and sent notes, Reopen
   resolved ones) and is absent when none apply. Right-clicking a selected card offers the same, worded for the
   selection ("Send 3 Notes to claude"). With none or one selected, the row beside the agent chip holds the panel's own
@@ -525,26 +525,26 @@ path. Dropping on the Dock icon is not supported yet.
   "to claude · task", and a hairline that drains over 4 s (hovering pauses it) before it leaves on its own.
   Failed: a red mark, the reason, Retry (same notes, same agent), and it stays until dismissed.
 - **Note peek**: resting the pointer on highlighted text for 450 ms shows that note in a 320 pt glass card beside
-  it (below the text, above when there is no room): colour rail, anchor label, state pill, the comment, the agent's
+  it (below the text, above when there is no room): color rail, anchor label, state pill, the comment, the agent's
   latest word in its thread (orange while it is a question waiting on you), and Edit / Resolve (or Reopen) / Show in
   notes panel. Moving to another note switches at once; the card
   stays while the pointer is on it and leaves 250 ms after the pointer leaves both; scrolling, typing, or a
   selection dismisses it. Orphaned and invalidated highlights never peek. A removal point peeks when the pointer is
   within 3 pt of its caret.
-  The card is read over busy code, so its glass sits on a 88% window-colour fill: the lines behind never cross the
+  The card is read over busy code, so its glass sits on a 88% window-color fill: the lines behind never cross the
   note's words (glass alone suits controls, not content). A draft or sent note's peek leads with Send to the current
   agent (prominent), then Edit, Resolve, and Show in Notes Panel, matching the panel's cards.
 - **Notes search row**: a rounded field (5% fill, hairline border) whose clear button scales in, and a sort
   button whose symbol names the order (numbered list, arrows, palette, dashed circle). Below it, `ColorFilterStrip`:
-  one chip per colour in use with its count (shown when two or more colours exist); a chip fills with its colour and
-  rings when on, the others dim to 45%, and "Clear" appears. Several colours may be on together.
+  one chip per color in use with its count (shown when two or more colors exist); a chip fills with its color and
+  rings when on, the others dim to 45%, and "Clear" appears. Several colors may be on together.
 
 ### Viewers
 
 - **Viewer status bar**: leading, an accent dot while edited, then a breadcrumb from the explorer root to the file
   (host first when remote); each step reveals itself in the tree and brightens under the pointer, and the file
   step reads as primary. Trailing: the selection as "3 lines · 117 characters" (cursor position when nothing is
-  selected; exact Ln/Col in the tooltip), the file's open notes as colour dots and a count that opens the notes
+  selected; exact Ln/Col in the tooltip), the file's open notes as color dots and a count that opens the notes
   panel, the note steppers, the link and path toggles, a lock when read-only, and a language chip ("Swift",
   "Markdown", "HTML").
   Right-clicking a breadcrumb segment offers what Finder's path bar does: Reveal in Finder and, for the file, Open With
@@ -559,19 +559,19 @@ path. Dropping on the Dock icon is not supported yet.
   each a symbol or key caps plus two or three words, in `.caption` tertiary. Most important first; when the bar
   narrows, hints drop from the end instead of truncating mid-sentence. At most two show inline (`inline:`); the rest wait
   behind a quiet "?" that opens a Tips card listing every hint as a whole sentence (`explained:`, e.g. "Click a
-  column header to select the column"), so the bar teaches the next step without becoming a wall of grey text. The
+  column header to select the column"), so the bar teaches the next step without becoming a wall of gray text. The
   key caps carry the keys; the sentences never repeat them. Hints follow the state: before a selection
   they teach how to select; with one they show the keys that act on it (esc Clear, ⇧↓ Extend), crossfading
   between the two. Never a full sentence. Used by the CSV grid, the image viewer (Drag a region; esc Clear, Drag again to redraw;
   Click a note to open it once there are notes) and the PDF viewer in Region mode.
 - **Rendered code blocks** carry their language in the fill's top-right corner ("Swift", "Python", "Shell"): 10 pt
-  medium in the tertiary label colour, spelled the way each community spells it, the fence's word as written when
-  unknown, nothing on a bare fence. Quote bars are an opaque grey, so where two paragraphs' pieces of one bar meet
+  medium in the tertiary label color, spelled the way each community spells it, the fence's word as written when
+  unknown, nothing on a bare fence. Quote bars are an opaque gray, so where two paragraphs' pieces of one bar meet
   the bar stays even instead of darkening at the seam.
 - **HTML in rendered Markdown** is drawn when every tag in it is on GitHub's allowlist and TextKit can draw it (`p`
   and `div` with `align`, `h1`–`h6`, `details` and `summary`, tables, `ul`/`ol`/`li`, `blockquote`, `pre`, `hr`,
   `dl`, `picture`, `img`, `b`, `i`, `a`, `code`, `kbd`, `sup`, `sub`, `s`, `ins`, `span`, `br`); a block with any
-  other tag, or a shape it can't lay out (a list in a table cell), stays grey source, so a script or form is never
+  other tag, or a shape it can't lay out (a list in a table cell), stays gray source, so a script or form is never
   half drawn. Each element is drawn as its Markdown twin is: tables with the same tab stops and header fill, lists
   with the same markers, quotes with the same bar, `pre` as a code block. Whitespace collapses as a browser collapses
   it, a summary reads bold behind a ▾ with its details always open, `kbd` is monospaced on the inline-code fill, and
@@ -606,24 +606,24 @@ path. Dropping on the Dock icon is not supported yet.
 - **PDF page thumbnails** (`PDFThumbnailColumn`): for documents with more than one page, a sidebar toggle at the start
   of the PDF toolbar slides in a 120 pt column that maps the document and its notes, as Preview's sidebar maps pages.
   Each page is a small sheet with a soft shadow, lifting a little under the pointer; the current page is ringed in the
-  accent colour with its number in accent, and the column keeps it in view. A page with open notes carries a badge in
-  its corner: up to three of the notes' colours as overlapping dots and their count, popping in on the bouncy curve
+  accent color with its number in accent, and the column keeps it in view. A page with open notes carries a badge in
+  its corner: up to three of the notes' colors as overlapping dots and their count, popping in on the bouncy curve
   as notes are added. A click goes to the page. Thumbnails render lazily as they scroll in. Off until asked for; the
   toggle draws filled while the column shows.
-- **Image viewer canvas**: the picture lies on the under-page grey like a sheet, with a soft shadow (10 pt blur, 2 pt
+- **Image viewer canvas**: the picture lies on the under-page gray like a sheet, with a soft shadow (10 pt blur, 2 pt
   drop, 24% black) that stays the same on screen at any zoom. A picture with transparency sits on a quiet
-  checkerboard (8-point squares at any zoom; white and 93% grey in light, 20% and 25% in dark), clipped to the
+  checkerboard (8-point squares at any zoom; white and 93% gray in light, 20% and 25% in dark), clipped to the
   picture, so its transparent areas are visible instead of blending into the canvas.
 - **Rendered images** are set into the page as Bear and Craft set theirs: continuous rounded corners (8 pt, or an eighth
-  of the short side for small pictures, so icons stay crisp) and a 0.5 pt hairline in 14% of the label colour, so a
+  of the short side for small pictures, so icons stay crisp) and a 0.5 pt hairline in 14% of the label color, so a
   pale image keeps its edge on a white page. Drawn at display time, so the hairline follows light and dark.
 - **Notes on rendered images**: a drag that starts on a picture draws a region over it in the image viewer's selection
   style, and a click selects the whole picture; either shows the Add Note button. The note is drawn on the picture as
   the image viewer draws regions (`RegionStyle`), not as tinted text, and its path starts from that box. Regions are
   kept in the picture's own pixels, so they stay put at any pane width.
 - **Rendered tables** never start a row with a tab: TextKit draws a faint sliver for a tab at the very start of a
-  line, which showed as grey marks down the table's left edge. A left-aligned first column is placed by the row's
-  first-line indent; only a right- or centre-aligned first column keeps the leading tab its stop needs.
+  line, which showed as gray marks down the table's left edge. A left-aligned first column is placed by the row's
+  first-line indent; only a right- or center-aligned first column keeps the leading tab its stop needs.
 - **Markdown toolbar**: the leading label is what a reader wants at a glance, "412 words · 2 min read", counted on
   the rendered text (no markup) at 230 words a minute, as writing apps show it.
 - **Review browser** (milestone 2): one web view (`WebBrowserController`) shows every HTML file and live page, so
@@ -666,13 +666,13 @@ path. Dropping on the Dock icon is not supported yet.
   it and follow it as the page scrolls. The first click on a linked picture chooses it instead of following the
   link; a second click on the chosen picture goes on to the page; a click elsewhere, or a text selection, puts it
   away. A drag that starts on text still selects text.
-- **Element notes**: in Pick Element mode the pointer outlines the element under it in the accent colour, the
+- **Element notes**: in Pick Element mode the pointer outlines the element under it in the accent color, the
   picture under the pointer before its wrappers, with a label naming it and its parent (`div.card › img`; an overlay
   above the page that takes no clicks and adds no text, so text offsets never move); ↑ steps to the parent and ↓
   back down (or to the first child). A click opens the note editor at that element at once, no Add Note pill in
   between, and a drag across a picture picks a region of it (the way to a region on a picture the page itself makes
   draggable); Escape leaves the mode, a pick leaves it too. A committed element note draws as a 2 pt outline in its
-  colour with a 12% fill, over just its region on a picture (the stored pixels scaled to the picture's size now)
+  color with a 12% fill, over just its region on a picture (the stored pixels scaled to the picture's size now)
   (drafts full, sent 70%, resolved 35%, orphaned dashed, a `?` badge while it needs a glance), and carries a 2x crop
   of the element (of the chosen part, on a picture) taken before the outline exists and with the choice's dimming
   put away. The note card reads `Element [data-testid="save"]`, or `Image img, region 300×150` on a picture: the last
@@ -712,14 +712,14 @@ path. Dropping on the Dock icon is not supported yet.
   caret and wrap, landing each with the find indicator. A reload after a new commit shows "Pull request updated" for
   eight seconds (an Atlassian document says "Updated in Jira or Confluence").
 - **Minimap** (`MinimapView`, 2026-10-09; replaced the 12 pt overview ruler): a 100 pt picture of the whole file at
-  the editor's trailing edge, as VS Code draws one. Each run of characters is a block in its syntax colour (55%),
+  the editor's trailing edge, as VS Code draws one. Each run of characters is a block in its syntax color (55%),
   two points to a line and 0.8 pt to a column, tabs to four-column stops, clipped past the width. Geometry is in real
   points, so a short file is a short picture at the top with marks a line tall (the ruler stretched a five-line file
   over the pane, a one-line note a fifth of the window); a file taller than the view scrolls in step with the editor.
   Notes tint their lines across the picture with a 3 pt bar at the trailing edge, on the state ladder (drafts over
   settled work, orphans outlined, a removal a hairline); hunks keep a lane at the left. A slider covers the source
   lines on screen (a wrapped line counts once) and is hidden while the whole file shows. A click on a note scrolls to
-  it as browsing the notes panel does (the keyboard stays put); a click elsewhere centres that line and a drag moves
+  it as browsing the notes panel does (the keyboard stays put); a click elsewhere centers that line and a drag moves
   the slider. Shown for every file in the editor (text, code, Markdown and HTML source); Settings › Editor › Show
   minimap turns it off, and then it takes no room. A highlight whose text was replaced while editing (invalidated)
   leaves it, as it leaves the gutter.
@@ -732,7 +732,7 @@ path. Dropping on the Dock icon is not supported yet.
   than pixels, since the view's own height is partly TextKit's estimate. Both minimaps draw their chrome through
   `MinimapStyle`.
 - **Removal points** (2026-10-07): a note whose text an agent or an edit removed is a point where the text was
-  (a zero-length anchor), at the start of what now sits there (never the end of a heading above it), drawn as a caret: a 2 pt bar in the note's colour, the line's height, with a small round
+  (a zero-length anchor), at the start of what now sits there (never the end of a heading above it), drawn as a caret: a 2 pt bar in the note's color, the line's height, with a small round
   cap at its top, at the state ladder's strength (full when focused). The gutter marks its row with a hollow dot in
   the note's lane, the minimap with a hairline, and the path ribbon reaches the caret (`NoteGeometry` gives a
   2 pt rect for a point). Rendered Markdown maps the point to one rendered point (the start of an inexact run, never
@@ -752,7 +752,7 @@ path. Dropping on the Dock icon is not supported yet.
   edge, then the one higher on the page) has its card scrolled to the middle of the list (smooth, instant with
   Reduce Motion). It is one way, and it waits while the pointer is over the list, so the list never moves under the
   reader; turning it on opens the panel. **Paths** (`point.bottomleft.forward.to.point.topright.scurvepath`), only
-  while linked, joins each visible note to its card in the note's colour:
+  while linked, joins each visible note to its card in the note's color:
   - *Outline*: 1.5 pt out from the highlight, built rather than merged: the highlight's pieces on one line (cells,
     inline code, styled runs) are one span, wrapped lines and a paragraph gap join into one staircase, and every
     corner, convex or concave, is rounded (3 pt, less where an edge is short), as macOS draws a multi-line
@@ -760,10 +760,10 @@ path. Dropping on the Dock icon is not supported yet.
   - *Path* (#11, drawn to the user's wireframe): it leaves the middle of the outline's rightmost edge, level (on
     the line that reaches furthest right, so nothing of the note lies beyond it), runs a short level stub (8 % of the
     way, 8–40 pt), then one S with level handles half the span long carries it the whole rest of the way, gentle
-    however far it climbs or drops, and arrives level at the middle of the card's colour rail, meeting the bar at a
+    however far it climbs or drops, and arrives level at the middle of the card's color rail, meeting the bar at a
     right angle.
   - *Ribbon*: filled, not stroked: 1.5 pt (2.5 strong), a round start and a square end flush against the rail's
-    side, coloured from 75 % to the note's full colour. Settled notes at 45 %, as the rail. The hovered card's, the
+    side, colored from 75 % to the note's full color. Settled notes at 45 %, as the rail. The hovered card's, the
     selected card's, and the note under the pointer on the page draw strong (2.5 pt, the rail's glow) and over the
     others.
   - *Motion*: drawn by AppKit layers in the window's frame view above the content, updated from the viewer's own
@@ -779,7 +779,7 @@ path. Dropping on the Dock icon is not supported yet.
   two-space YAML gets two-column guides), spanning all of a line's wrapped rows. Blank lines inside a block take the
   shallower neighbour, so guides run through gaps. The block around the caret (or the block a line like `func x() {`
   opens) is drawn stronger, the way Nova and VS Code mark the active scope. Quiet enough to sit under text: 7–8%
-  of the label colour, the active one 22–24%. Settings › Editor turns them off; its preview draws a guide and wraps
+  of the label color, the active one 22–24%. Settings › Editor turns them off; its preview draws a guide and wraps
   with the editor's hanging indent, so it shows exactly what the editor will do.
   Guides are built for the lines on screen plus 200 either side, read through the editor's own line index
   (`IndentGuides(window:…)`), and rebuilt only after an edit or when scrolling nears that window's edge: about
@@ -788,7 +788,7 @@ path. Dropping on the Dock icon is not supported yet.
   full-width neutral band (4% black, 5% white in dark), carried across the gutter so number and line read as one
   row; the number turns `labelColor`. No band while text is selected (the selection marks the place) or while the
   window or editor is not focused. It follows the caret instantly, without animation.
-- **Gutter note bars**: each note is a 3 pt rounded bar in its colour beside the line numbers, spanning every line
+- **Gutter note bars**: each note is a 3 pt rounded bar in its color beside the line numbers, spanning every line
   it covers. Overlapping notes take side-by-side lanes (up to three, 2 pt apart). Strength follows state: open
   notes 85%, resolved 30%, orphaned a dashed outline. Hovering a bar widens it, shows a pointing hand, and opens the
   note's peek; clicking edits the note. The current line's number is primary, the rest tertiary.
@@ -798,16 +798,16 @@ path. Dropping on the Dock icon is not supported yet.
   the input ("Past the end, so it goes to the last line, 24"; orange when it cannot be read) with key caps.
 - **Conflict sheet**: a tinted icon tile (accent "merge" when the edits don't overlap, orange when they do), the
   file name, one sentence on what happened, and a count ("1 change of yours · 1 change from disk"). The merge view
-  folds long unchanged stretches; each change has a coloured side bar and a label (Yours blue, On disk green, Both
+  folds long unchanged stretches; each change has a colored side bar and a label (Yours blue, On disk green, Both
   teal); a conflict is an orange card with Yours and On disk side by side, never git markers. Buttons say what they
   do (Save Mine As…, Use Disk Version, Keep Mine, Merge and Save) with tooltips on the consequence. Merge is the
   default when it is safe; with a real conflict nothing is the default, because overwriting someone else's change
   must be a deliberate choice. `ConflictContent` renders without a session for review.
-- **Image viewer**: the picture sits centred on the under-page backdrop (`CenteringClipView`). On open, a large
+- **Image viewer**: the picture sits centered on the under-page backdrop (`CenteringClipView`). On open, a large
   image shrinks to fit and a small one shows at actual size; the view keeps fitting as the pane settles or
   resizes until the user zooms (pinch, +/−, 100%). Choosing a region looks like a crop tool: the rest of the image
   dims to 42%, the edge is white over a dark outline, white L-handles mark the corners, and a dark pill below the
-  region gives its size in pixels (Add Note owns the space above). Note regions are rounded tints with a coloured
+  region gives its size in pixels (Add Note owns the space above). Note regions are rounded tints with a colored
   border and a tab at the top-left corner; the note selected in the panel gets an accent halo. Strokes, handles,
   and labels are sized in screen points at any zoom.
   Edit › Copy (⌘C) copies the selected region (or the whole picture with nothing selected) as PNG and TIFF, so it
@@ -820,15 +820,15 @@ path. Dropping on the Dock icon is not supported yet.
   through the send toast.
 - **PDF pages are sheets**: on the under-page backdrop like images, with page breaks, page shadows and 20 pt
   margins, so where a page ends is visible (it read as a text file edge to edge before).
-  While the pages move, a glass `PagePill` ("2 / 5") floats over the bottom centre, counting with numeric text and
+  While the pages move, a glass `PagePill` ("2 / 5") floats over the bottom center, counting with numeric text and
   fading 1.2 s after the last page change; never on open and never for a single page.
 - **Regions are one style everywhere** (`RegionStyle`, Viewers package): images and PDF pages draw note regions
-  and the region being chosen with the same code — rounded tinted notes with a colour tab and a selection halo; the
+  and the region being chosen with the same code — rounded tinted notes with a color tab and a selection halo; the
   crop-tool selection (dimmed surroundings, white edge over a dark outline, outlined white L-handles, a size pill
   below in px for images and pt for PDFs). The PDF overlay is flipped so both share it.
 - **CSV grid**: values in the system font; columns whose every value is a number are right-aligned in monospaced
   digits (header too) so magnitudes line up. Headers show the column letter in tertiary monospace and the name in
-  semibold. A row note tints its row softly (12%; 5% resolved) and puts a 3 pt colour bar beside the line number,
+  semibold. A row note tints its row softly (12%; 5% resolved) and puts a 3 pt color bar beside the line number,
   the same mark as the editor gutter; cell and column notes tint only their cells.
 - **CSV grid sizing**: each column starts as wide as its header or the widest of its first 200 values, plus padding,
   between 64 and 320 pt (`CSVGridController.columnWidths`); people can still drag it wider. Zebra stripes sit behind
@@ -865,7 +865,7 @@ path. Dropping on the Dock icon is not supported yet.
   (attention orange, drafts, sent blue); a chevron slides in under the pointer. Rows fade up one after another
   (40 ms apart) on arrival; with Reduce Motion they simply appear. Hidden when nothing is open.
 
-### Colour and motion
+### Color and motion
 
 - **Motion budget**: nothing animates forever while the app is idle. Symbols breathe twice on arrival; only a live
   state (an agent working, a mode in progress) may loop, and then only in Core Animation (`PulseRing`), which the
@@ -900,7 +900,7 @@ path. Dropping on the Dock icon is not supported yet.
   restyle every open editor as they change (`Theme.editorSettingsDidChange`), keeping the line at the top of the view
   in place, so the slider can be dragged while watching real code. Attributes only: text, undo, and anchors stay.
   Sections have a header and a footer that explains them; explanations never sit as rows of their own. Live state
-  reads as a status line with a coloured dot (MCP: green listening, red with the error). Text people copy into a
+  reads as a status line with a colored dot (MCP: green listening, red with the error). Text people copy into a
   terminal or config is a `SnippetCard`: name (and file, if any) with a Copy button that turns into a green
   "Copied" check for 1.6 s, then the text in a monospaced code box. A command is never wrapped (a break mid-URL
   read as two commands): each line stays whole, the box scrolls sideways, and its trailing edge fades over 20 pt
@@ -909,7 +909,7 @@ path. Dropping on the Dock icon is not supported yet.
   renders"), shows the size ("Empty" at zero) and a Show in Finder button with the path in its tooltip. Clearing
   anything an agent might still read asks first and says what stays.
   A host is a `HostRow`: a server symbol with its connection state as a dot (green connected, orange connecting,
-  red failed, grey idle), the name, and a second line with the address and state (ssh config aliases show only the
+  red failed, gray idle), the name, and a second line with the address and state (ssh config aliases show only the
   state, with an "ssh config" tag, since their address lives in that file). Hosts added in the app can be edited
   and removed; removal asks first.
 - **General › Updates** (release builds): "Check for updates automatically" (Sparkle's own setting), "Last checked"

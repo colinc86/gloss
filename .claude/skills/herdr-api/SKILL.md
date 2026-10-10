@@ -100,7 +100,7 @@ Herdr's own `[remote] manage_ssh_config` only affects Herdr's attach connection;
 The socket API has no machine methods: each server knows only its own panes, and switching machines in the client
 fires nothing on the local socket. The client persists its choice under `~/.local/state/herdr/client/`
 (`$XDG_STATE_HOME/herdr/client` when set): `endpoint-selection.json` is `{"version":1,"selected_profile":null}` for
-this Mac or a profile naming the machine id (serialised from a Rust enum, `{"ssh":"<id>"}` or `"ssh:<id>"`), and
+this Mac or a profile naming the machine id (serialized from a Rust enum, `{"ssh":"<id>"}` or `"ssh:<id>"`), and
 `endpoints.json` lists `{"id","label","target","session","enabled"}` per saved ssh machine, where `target` is the
 ssh destination (the alias from `~/.ssh/config`). `herdr machine list --json` prints the same with a `selected`
 flag. `HerdrMachineWatcher` watches that directory; follow mode connects the app host named like `target` and
