@@ -14,11 +14,27 @@ public enum RemoteSearch {
 
     /// The pattern is literal text unless `regex` is set (typing `foo(` or `[String]` used to be a regex error
     /// that showed as no matches). Case is ignored unless the pattern has a capital letter (smart case).
-    public static func script(pattern: String, root: String, tools: RemoteTools, regex: Bool = false) -> String {
+    public static func script(pattern: String, root: String, tools: RemoteTools, regex: Bool = false, hidden: Bool = false) -> String {
         if tools.rg {
-            return "rg --json -n --no-messages --max-count \(maxMatchesPerFile) --max-filesize 2M \(ripgrepFlags(regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+            // Constant flags as they are; the glob is quoted, as the shell would read `!` and `*` in it.
+            let flags = (ripgrepFlags(regex: regex) + ripgrepHiddenFlags(hidden).map { $0.hasPrefix("-") ? $0 : ShellQuote.single($0) }).joined(separator: " ")
+            return "rg --json -n --no-messages --max-count \(maxMatchesPerFile) --max-filesize 2M \(flags) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
         }
-        return "grep -rnI \(grepOutputFlags.joined(separator: " ")) --exclude-dir=.git \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+        let excludes = (["--exclude-dir=.git"] + grepHiddenFlags(hidden, root: root).map(ShellQuote.single)).joined(separator: " ")
+        return "grep -rnI \(grepOutputFlags.joined(separator: " ")) \(excludes) \(grepFlags(pattern: pattern, regex: regex).joined(separator: " ")) -e \(ShellQuote.single(pattern)) -- \(ShellQuote.single(root))"
+    }
+
+    /// Hidden files and folders (dotfiles: `.github/`, `.env.example`) are searched when the explorer shows them,
+    /// and left out when it hides them, by either tool; `.git` never is. rg skips them unless told; grep searches
+    /// them unless told.
+    public static func ripgrepHiddenFlags(_ hidden: Bool) -> [String] {
+        hidden ? ["--hidden", "--glob", "!.git"] : []
+    }
+
+    /// A root that is itself a dot-folder (`~/.config`) is still searched: only what is inside it is left out.
+    public static func grepHiddenFlags(_ hidden: Bool, root: String) -> [String] {
+        guard !hidden else { return [] }
+        return PathUtilities.name(of: root).hasPrefix(".") ? ["--exclude=.*"] : ["--exclude=.*", "--exclude-dir=.*"]
     }
 
     /// How grep reports hits, here and on this Mac: the path ends with a NUL (a colon may be part of a file name,
@@ -52,13 +68,13 @@ public enum RemoteSearch {
     }
 
     /// Streams hits as they arrive; cancelling the consumer terminates the remote command.
-    public static func run(pattern: String, root: String, regex: Bool = false, over connection: SSHConnection) -> AsyncThrowingStream<RemoteSearchHit, any Error> {
+    public static func run(pattern: String, root: String, regex: Bool = false, hidden: Bool = false, over connection: SSHConnection) -> AsyncThrowingStream<RemoteSearchHit, any Error> {
         AsyncThrowingStream { continuation in
             let running = Mutex<ChildProcess?>(nil)
             let task = Task {
                 do {
                     let tools = try await connection.tools()
-                    let process = try await connection.execStreaming(script(pattern: pattern, root: root, tools: tools, regex: regex))
+                    let process = try await connection.execStreaming(script(pattern: pattern, root: root, tools: tools, regex: regex, hidden: hidden))
                     running.withLock { $0 = process }
                     if Task.isCancelled { process.terminate() }
                     var pending = Data()

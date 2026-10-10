@@ -17,9 +17,17 @@ struct RemoteSearchParsingTests {
         #expect(RemoteSearch.script(pattern: "it's", root: "/r", tools: tools) == #"rg --json -n --no-messages --max-count 200 --max-filesize 2M --fixed-strings --smart-case -e 'it'\''s' -- '/r'"#)
         #expect(RemoteSearch.script(pattern: "a.*b", root: "/r", tools: tools, regex: true).contains("--smart-case -e 'a.*b'"), "regex mode drops --fixed-strings")
         tools.rg = false
-        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools).hasPrefix("grep -rnI --null -m 200 --exclude-dir=.git -F -i -e"),
+        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools).hasPrefix("grep -rnI --null -m 200 --exclude-dir=.git '--exclude=.*' '--exclude-dir=.*' -F -i -e"),
                 "grep stops at 200 matches a file, as rg does")
         #expect(RemoteSearch.grepFlags(pattern: "Foo", regex: true) == ["-E"], "a capital letter makes the search case-sensitive")
+        // Hidden files follow the explorer: rg leaves them out unless told, grep searches them unless told; never `.git`.
+        tools.rg = true
+        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools, hidden: true).contains("--smart-case --hidden --glob '!.git' -e"))
+        #expect(!RemoteSearch.script(pattern: "x", root: "/r", tools: tools).contains("--hidden"))
+        tools.rg = false
+        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools).contains("--exclude-dir=.git '--exclude=.*' '--exclude-dir=.*' -F"))
+        #expect(RemoteSearch.script(pattern: "x", root: "/r", tools: tools, hidden: true).contains("--exclude-dir=.git -F"))
+        #expect(RemoteSearch.grepHiddenFlags(false, root: "/home/me/.config") == ["--exclude=.*"], "a dot-folder searched on purpose is still searched")
     }
 }
 
@@ -36,6 +44,15 @@ struct GrepFallbackTests {
         let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", script]))
         let output = await process.collectStdout()
         let hits = output.split(separator: 0x0A).compactMap { RemoteSearch.parse(line: Data($0), ripgrep: false) }
+        // Hidden files: left out unless asked for, as the explorer hides them.
+        try FileManager.default.createDirectory(atPath: "\(root)/.github", withIntermediateDirectories: true)
+        try "needle in a workflow\n".write(toFile: "\(root)/.github/ci.yml", atomically: true, encoding: .utf8)
+        func run(hidden: Bool) async throws -> [RemoteSearchHit] {
+            let process = try ChildProcess.launch(ChildProcessSpec(executable: "/bin/sh", arguments: ["-c", RemoteSearch.script(pattern: "workflow", root: root, tools: RemoteTools(), hidden: hidden)]))
+            return await process.collectStdout().split(separator: 0x0A).compactMap { RemoteSearch.parse(line: Data($0), ripgrep: false) }
+        }
+        #expect(try await run(hidden: false).isEmpty)
+        #expect(try await run(hidden: true).map(\.path) == ["\(root)/.github/ci.yml"])
         let colon = hits.filter { $0.path.hasSuffix("notes 10:30.md") }
         #expect(colon == [RemoteSearchHit(path: "\(root)/a:b/notes 10:30.md", line: 2, text: "needle: one")])
         #expect(hits.filter { $0.path.hasSuffix("many.txt") }.count == RemoteSearch.maxMatchesPerFile)

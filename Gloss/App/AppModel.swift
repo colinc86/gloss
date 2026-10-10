@@ -1229,7 +1229,7 @@ final class AppModel {
         guard let tab = shownTab, !tab.hostID.isVirtual else { return }
         let search = explorer.contentSearch
         guard tab.hostID != .local else {
-            search.search(in: tab.path)
+            search.search(in: tab.path, hidden: explorer.showDotfiles)
             return
         }
         Task {
@@ -1237,7 +1237,7 @@ final class AppModel {
                 search.fail("Not connected to this folder's host")
                 return
             }
-            search.search(in: tab.path, connection: connection)
+            search.search(in: tab.path, connection: connection, hidden: self.explorer.showDotfiles)
         }
     }
 

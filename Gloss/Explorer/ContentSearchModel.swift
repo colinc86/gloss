@@ -48,7 +48,8 @@ final class ContentSearchModel {
         isSearching = false
     }
 
-    func search(in root: String, connection: SSHConnection? = nil) {
+    /// `hidden`: search hidden files and folders too, as the explorer shows them (`.git` never).
+    func search(in root: String, connection: SSHConnection? = nil, hidden: Bool = false) {
         cancel()
         let pattern = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !pattern.isEmpty else {
@@ -65,7 +66,7 @@ final class ContentSearchModel {
             var failed = false
             if let connection {
                 do {
-                    for try await hit in RemoteSearch.run(pattern: pattern, root: root, regex: regex, over: connection) {
+                    for try await hit in RemoteSearch.run(pattern: pattern, root: root, regex: regex, hidden: hidden, over: connection) {
                         results.append(SearchHit(path: hit.path, line: hit.line, text: hit.text))
                         if results.count > 500 { break }
                     }
@@ -77,7 +78,7 @@ final class ContentSearchModel {
                     failed = true
                 }
             } else {
-                (results, failed) = await Self.run(pattern: pattern, root: root, regex: regex)
+                (results, failed) = await Self.run(pattern: pattern, root: root, regex: regex, hidden: hidden)
             }
             guard !Task.isCancelled, let self else { return }
             if failed, results.isEmpty { self.errorMessage = regex ? "Not a valid regular expression" : "Search failed" }
@@ -99,15 +100,16 @@ final class ContentSearchModel {
 
     /// Runs the search tool off the main actor and parses its output; cancelling the task terminates the child.
     /// The hits, and whether the tool reported an error (exit status 2: a bad pattern, an unreadable root).
-    @concurrent nonisolated private static func run(pattern: String, root: String, regex: Bool) async -> ([SearchHit], Bool) {
+    @concurrent nonisolated private static func run(pattern: String, root: String, regex: Bool, hidden: Bool) async -> ([SearchHit], Bool) {
         if let rg = ripgrepPath {
-            return await runRipgrep(rg, pattern: pattern, root: root, regex: regex)
+            return await runRipgrep(rg, pattern: pattern, root: root, regex: regex, hidden: hidden)
         }
-        return await runGrep(pattern: pattern, root: root, regex: regex)
+        return await runGrep(pattern: pattern, root: root, regex: regex, hidden: hidden)
     }
 
-    nonisolated private static func runRipgrep(_ rg: String, pattern: String, root: String, regex: Bool) async -> ([SearchHit], Bool) {
-        let arguments = ["--json", "-n", "--no-messages", "--max-count", "200", "--max-filesize", "2M"] + RemoteSearch.ripgrepFlags(regex: regex) + ["-e", pattern, "--", root]
+    nonisolated private static func runRipgrep(_ rg: String, pattern: String, root: String, regex: Bool, hidden: Bool) async -> ([SearchHit], Bool) {
+        let arguments = ["--json", "-n", "--no-messages", "--max-count", "200", "--max-filesize", "2M"] + RemoteSearch.ripgrepFlags(regex: regex)
+            + RemoteSearch.ripgrepHiddenFlags(hidden) + ["-e", pattern, "--", root]
         guard let (data, status) = await output(of: rg, arguments: arguments) else { return ([], false) }
         // Status 2 also means "some file was unreadable"; only a pattern the tool rejects on its own is an error.
         let rejected = status == 2 ? await output(of: rg, arguments: ["--no-messages"] + RemoteSearch.ripgrepFlags(regex: regex) + ["-e", pattern, "--", "/dev/null"])?.1 == 2 : false
@@ -124,8 +126,9 @@ final class ContentSearchModel {
         return (hits, rejected)
     }
 
-    nonisolated private static func runGrep(pattern: String, root: String, regex: Bool) async -> ([SearchHit], Bool) {
-        let arguments = ["-rnIs"] + RemoteSearch.grepOutputFlags + ["--exclude-dir=.git"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "--", root]
+    nonisolated private static func runGrep(pattern: String, root: String, regex: Bool, hidden: Bool) async -> ([SearchHit], Bool) {
+        let arguments = ["-rnIs"] + RemoteSearch.grepOutputFlags + ["--exclude-dir=.git"] + RemoteSearch.grepHiddenFlags(hidden, root: root)
+            + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "--", root]
         guard let (data, status) = await output(of: "/usr/bin/grep", arguments: arguments) else { return ([], false) }
         let rejected = status == 2 ? await output(of: "/usr/bin/grep", arguments: ["-s"] + RemoteSearch.grepFlags(pattern: pattern, regex: regex) + ["-e", pattern, "/dev/null"])?.1 == 2 : false
         let hits: [SearchHit] = data.split(separator: 0x0A).compactMap { line in

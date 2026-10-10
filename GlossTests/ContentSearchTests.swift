@@ -29,6 +29,27 @@ struct ContentSearchTests {
         #expect(model.hits.isEmpty)
     }
 
+    /// Hidden files and folders are searched when the explorer shows them, and left out when it hides them;
+    /// `.git` never is.
+    @Test func hiddenFilesFollowTheExplorer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-search-hidden-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: "\(directory)/.github", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(directory)/.git", withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        try "needle in a workflow\n".write(toFile: "\(directory)/.github/ci.yml", atomically: true, encoding: .utf8)
+        try "needle in git\n".write(toFile: "\(directory)/.git/config", atomically: true, encoding: .utf8)
+        try "needle in plain sight\n".write(toFile: "\(directory)/a.txt", atomically: true, encoding: .utf8)
+        let model = ContentSearchModel()
+        model.query = "needle"
+        func names(hidden: Bool) async -> [String] {
+            model.search(in: directory, hidden: hidden)
+            for _ in 0..<100 where model.isSearching { try? await Task.sleep(for: .milliseconds(30)) }
+            return model.hits.map { ($0.path as NSString).lastPathComponent }.sorted()
+        }
+        #expect(await names(hidden: false) == ["a.txt"])
+        #expect(await names(hidden: true) == ["a.txt", "ci.yml"])
+    }
+
     private func runSearch(_ model: ContentSearchModel, _ query: String, in directory: String, regex: Bool = false) async throws -> [String] {
         model.query = query
         model.isRegex = regex
