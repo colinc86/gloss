@@ -1034,14 +1034,23 @@ final class AppModel {
     }
 
     /// A typed path: a directory opens as a root, anything else as a document with its folder in the explorer.
-    private func openPath(_ path: String, on hostID: HostID) async {
+    /// `path:line` (as agents print a location) opens the file at that line when no file is named so: a name that
+    /// really ends in `:30` still opens as it is.
+    private func openPath(_ typed: String, on hostID: HostID) async {
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { return }
+        var path = typed
+        var line: Int?
+        let split = QuickOpenModel.splitLine(typed)
+        if let wanted = split.line, (try? await fileSystem.stat(typed)) == nil, (try? await fileSystem.stat(split.text)) != nil {
+            path = split.text
+            line = wanted
+        }
         if let attributes = try? await fileSystem.stat(path), attributes.kind == .directory {
             pickedHost = hostID
             await explorer.openRoot(hostID: hostID, path: path)
             return
         }
-        await URLRouter.open(hostID: hostID, path: path, line: nil, model: self)
+        await URLRouter.open(hostID: hostID, path: path, line: line, model: self)
     }
 
     /// Opens a page from the explorer's Web section or Open Quickly, on the host it was visited on.

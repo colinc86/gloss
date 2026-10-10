@@ -1,6 +1,7 @@
 import Core
 import Foundation
 import Testing
+import Viewers
 @testable import Gloss
 
 /// The window title's address field, the explorer's Web section, and Open Quickly's address and page rows.
@@ -205,6 +206,25 @@ struct AddressBarTests {
         #expect(TitleAddressBar.address(of: model.activeSession, model: model) == "https://example.com/a?b=1")
         #expect(model.addressHost == .local, "a page on the open web is opened from this Mac")
         #expect(!model.openAddress("not an address", on: .local))
+        await model.shutDown()
+    }
+
+    /// A location typed as `path:line` opens its file at the line; a file really named with `:30` opens as itself.
+    @Test func aTypedLocationOpensAtItsLine() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-address-line-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try (1...20).map { "line \($0)" }.joined(separator: "\n").write(toFile: "\(root)/a.swift", atomically: true, encoding: .utf8)
+        try "x".write(toFile: "\(root)/notes 10:30", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        #expect(model.openAddress("\(root)/a.swift:12", on: .local))
+        await waitUntil { model.session(hostID: .local, path: "\(root)/a.swift")?.textController?.pendingScroll != nil }
+        let controller = try #require(model.session(hostID: .local, path: "\(root)/a.swift")?.textController)
+        #expect(controller.pendingScroll == controller.lineIndex.contentRange(ofLine: 12))
+        #expect(model.openAddress("\(root)/notes 10:30", on: .local))
+        await waitUntil { model.session(hostID: .local, path: "\(root)/notes 10:30") != nil }
+        #expect(model.session(hostID: .local, path: "\(root)/notes 10:30") != nil, "a file named so opens as itself")
         await model.shutDown()
     }
 }
