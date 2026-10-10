@@ -40,6 +40,26 @@ struct ImageDecoderTests {
         return data as Data
     }
 
+    func square(_ side: Int) -> CGImage {
+        let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+        return context.makeImage()!
+    }
+
+    @Test func anAVIFDecodesAndAnIconShowsItsLargestSize() throws {
+        let avif = try ImageDecoder.decode(encode(makeImage(), type: .init("public.avif")!), fileName: "photo.avif")
+        #expect(avif.cgImage.width == 4 && avif.cgImage.height == 2)
+        // An icon file holding 16, 64 and 32 point sizes, smallest first as icon files often are.
+        let data = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(data, "com.microsoft.ico" as CFString, 3, nil)!
+        for side in [16, 64, 32] { CGImageDestinationAddImage(destination, square(side), nil) }
+        #expect(CGImageDestinationFinalize(destination))
+        let icon = try ImageDecoder.decode(data as Data, fileName: "favicon.ico")
+        #expect(icon.cgImage.width == 64 && icon.cgImage.height == 64, "the largest size, not the first")
+    }
+
     @Test func decodesPNGAndCropsWithTopLeftOrigin() throws {
         let data = encode(makeImage(), type: .png)
         let decoded = try ImageDecoder.decode(data, fileName: "x.png")

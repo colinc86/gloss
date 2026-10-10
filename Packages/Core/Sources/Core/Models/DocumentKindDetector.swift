@@ -3,7 +3,9 @@ import Foundation
 /// Maps a file name to the viewer that opens it. Pure, so every host uses the same rules.
 public enum DocumentKindDetector {
     public static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd", "mdx"]
-    public static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "heif", "gif", "webp", "svg", "tiff", "tif", "bmp"]
+    /// What the image viewer opens: ImageIO decodes all but SVG, which AppKit draws.
+    public static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "heif", "gif", "webp", "svg", "tiff", "tif", "bmp",
+                                                      "avif", "jxl", "jp2", "ico", "icns"]
     public static let csvExtensions: Set<String> = ["csv", "tsv"]
     public static let codeExtensions: Set<String> = [
         "swift", "m", "mm", "h", "c", "cc", "cpp", "cxx", "hpp", "rs", "go", "py", "rb", "js", "jsx", "ts", "tsx", "mjs", "cjs",

@@ -6,6 +6,9 @@ struct DocumentKindDetectorTests {
     @Test func classifiesByExtensionAndName() {
         #expect(DocumentKindDetector.kind(forPath: "/a/PLAN.md") == .markdown)
         #expect(DocumentKindDetector.kind(forPath: "/a/dashboard.PNG") == .image)
+        for name in ["photo.avif", "scan.jxl", "map.jp2", "favicon.ico", "AppIcon.icns"] {
+            #expect(DocumentKindDetector.kind(forPath: "/a/\(name)") == .image, "\(name) opens in the image viewer, which ImageIO decodes for")
+        }
         #expect(DocumentKindDetector.kind(forPath: "/a/spec.pdf") == .pdf)
         #expect(DocumentKindDetector.kind(forPath: "/a/data.tsv") == .csv)
         #expect(DocumentKindDetector.kind(forPath: "/a/main.swift") == .code)

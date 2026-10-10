@@ -48,7 +48,7 @@ A transport is how a packet reaches a target: Herdr socket, the OpenCode HTTP AP
 | --- | --- | --- | --- |
 | Text and code | TextKit 2 editor with tree-sitter highlighting | Character range, shown as line and column | Yes |
 | Markdown | Toggle between rendered and source | Source range, mapped from either view | Yes, in source view |
-| Images (PNG, JPEG, HEIC, GIF, WebP, SVG) | Zoomable image view with region overlay | Rectangle in original pixel space | No |
+| Images (PNG, JPEG, HEIC, GIF, WebP, SVG, TIFF, BMP, AVIF, JPEG XL, JPEG 2000, ICO and ICNS at their largest size) | Zoomable image view with region overlay | Rectangle in original pixel space | No |
 | PDF | PDFKit | Text selection or page region | No |
 | CSV and TSV | Grid view | Rows (line range), a cell, a block, scattered cells, or whole columns; stored as a text anchor over the records' lines plus a cell list | No in milestone 1 |
 | Everything else | QuickLook | Whole file | No |

@@ -38,7 +38,8 @@ public nonisolated enum ImageDecoder {
         }
     }
 
-    /// Decodes PNG, JPEG, HEIC, GIF (first frame), WebP, TIFF, BMP through ImageIO and SVG through AppKit at 1x.
+    /// Decodes PNG, JPEG, HEIC, GIF (first frame), WebP, TIFF, BMP, AVIF, JPEG XL, JPEG 2000 and icons (their largest
+    /// size) through ImageIO, and SVG through AppKit at 1x.
     /// The size is checked from the header before any pixels are decoded, and the image is decoded once here (not
     /// on every redraw), so call it off the main actor.
     public static func decode(_ data: Data, fileName: String, maximumPixels limit: Int = maximumPixels) throws -> DecodedImage {
@@ -52,16 +53,33 @@ public nonisolated enum ImageDecoder {
             return DecodedImage(cgImage: cgImage, hash: hash)
         }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { throw ImageDecodeError.unreadable }
-        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let index = shownIndex(source)
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
         if let width = properties?[kCGImagePropertyPixelWidth] as? Int, let height = properties?[kCGImagePropertyPixelHeight] as? Int {
             try checkPixels(width: width, height: height, limit: limit)
         }
-        guard let raw = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
+        guard let raw = CGImageSourceCreateImageAtIndex(source, index, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
             throw ImageDecodeError.unreadable
         }
         try checkPixels(width: raw.width, height: raw.height, limit: limit)
         let orientation = (properties?[kCGImagePropertyOrientation] as? UInt32).flatMap(CGImagePropertyOrientation.init(rawValue:)) ?? .up
         return DecodedImage(cgImage: upright(raw, orientation: orientation), hash: hash)
+    }
+
+    /// Icon formats: one file holds the same picture at several sizes.
+    static let iconTypes: Set<String> = ["com.microsoft.ico", "com.apple.icns"]
+
+    /// Which image of a file the viewer shows: an icon's largest size (its first is often 16x16), else the file's
+    /// primary image. Sizes come from the headers; nothing is decoded.
+    static func shownIndex(_ source: CGImageSource) -> Int {
+        let count = CGImageSourceGetCount(source)
+        guard count > 1 else { return 0 }
+        guard let type = CGImageSourceGetType(source) as String?, iconTypes.contains(type) else { return CGImageSourceGetPrimaryImageIndex(source) }
+        func area(_ index: Int) -> Int {
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+            return ((properties?[kCGImagePropertyPixelWidth] as? Int) ?? 0) * ((properties?[kCGImagePropertyPixelHeight] as? Int) ?? 0)
+        }
+        return (0..<count).max { area($0) < area($1) } ?? 0
     }
 
     /// Most frames an animated picture may have, and its frames' pixels all told as a multiple of `maximumPixels`.
