@@ -70,7 +70,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         public func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             switch MarkdownLink.classify(link, documentDirectory: controller.documentDirectory) {
             case .external(let url): NSWorkspace.shared.open(url)
-            case .document(let path): controller.onOpenDocument(path)
+            case .document(let path, let fragment): controller.onOpenDocument(path, fragment)
             case .sameDocument(let fragment):
                 // A table of contents: the heading it names, at the top, as a browser scrolls to an anchor.
                 let source = controller.source

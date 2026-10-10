@@ -142,7 +142,7 @@ final class DocumentSession: Identifiable {
     /// The explorer root holding this file, when one is open; rendered HTML may read files only inside it.
     @ObservationIgnored var resourceRoot: () -> String? = { nil }
     /// Opens another document on this host, for a relative link clicked in rendered Markdown.
-    @ObservationIgnored var openLinkedDocument: (String) -> Void = { _ in }
+    @ObservationIgnored var openLinkedDocument: (String, String?) -> Void = { _, _ in }
     /// For a web page reached through an ssh host's loopback: the tunnels to use. Set before `open`.
     var proxy: WebProxyMap?
     /// The lines a change touched in this document (a pull request's file), asked for on open and after a reload.
@@ -435,7 +435,7 @@ final class DocumentSession: Identifiable {
                         return data
                     }
                 }
-                markdown?.onOpenDocument = { [weak self] target in self?.openLinkedDocument(target) }
+                markdown?.onOpenDocument = { [weak self] target, heading in self?.openLinkedDocument(target, heading) }
             } else if HTMLViewerController.handles(path: path) {
                 let fileSystem = fileSystem
                 let viewer = HTMLViewerController(source: controller, documentPath: path, resourceRoot: { [weak self] in self?.resourceRoot() }) { resource in

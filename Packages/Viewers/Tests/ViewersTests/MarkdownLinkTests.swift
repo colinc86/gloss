@@ -12,7 +12,8 @@ struct MarkdownLinkTests {
             guard case .refused = classify(hostile) else { Issue.record("\(hostile) was not refused"); continue }
         }
         #expect(classify("../README.md") == .document("/repo/README.md"))
-        #expect(classify("guide%20one.md#setup") == .document("/repo/docs/guide one.md"))
+        #expect(classify("guide%20one.md#setup") == .document("/repo/docs/guide one.md", fragment: "setup"), "the heading travels with the path")
+        #expect(classify("guide.md#") == .document("/repo/docs/guide.md"), "an empty fragment is none")
         #expect(classify("file:///System/Applications/Utilities/Terminal.app") == .document("/System/Applications/Utilities/Terminal.app"),
                 "a file link only opens as a document in the viewer, never launches")
         #expect(classify("#heading") == .sameDocument("heading"))

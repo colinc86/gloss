@@ -71,7 +71,8 @@ public final class MarkdownViewerController {
     /// request's or a ticket's Markdown).
     @ObservationIgnored public var documentDirectory: String?
     /// Opens a relative or file: link's target as a document on the same host.
-    @ObservationIgnored public var onOpenDocument: (String) -> Void = { _ in }
+    /// A link to another document: its path, and the heading its `#fragment` names, if any.
+    @ObservationIgnored public var onOpenDocument: (String, String?) -> Void = { _, _ in }
     /// Fetches a relative picture from the document's own host (a remote file system, a ticket's attachments);
     /// nil where images are local or not served. Set it before the first render that needs it.
     @ObservationIgnored public var loadImage: (@Sendable (String) async -> Data?)? {

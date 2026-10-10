@@ -246,4 +246,25 @@ struct AddressBarTests {
         #expect(model.session(hostID: .local, path: "\(root)/a.swift:7") == nil, "no tab for a file that does not exist")
         await model.shutDown()
     }
+
+    /// A Markdown link to a heading in another file (`guide.md#set-up`) opens the file with that heading at the top.
+    @Test func aLinkToAnotherFilesHeadingShowsTheHeading() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-anchor-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let guide = "# Guide\n\n" + (1...40).map { "Line \($0).\n" }.joined(separator: "\n") + "\n## Set up\n\nSteps.\n"
+        try guide.write(toFile: "\(root)/guide.md", atomically: true, encoding: .utf8)
+        let model = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db", "--root", root]))
+        await model.start()
+        model.openDocument(hostID: .local, path: "\(root)/guide.md", heading: "set-up")
+        // Opening asks for a scroll of its own (where reading stopped); the heading's comes once the file is loaded.
+        func atHeading() -> Bool {
+            guard let markdown = model.session(hostID: .local, path: "\(root)/guide.md")?.markdown, let scroll = markdown.pendingRenderedScroll else { return false }
+            return NSIntersectionRange(scroll, (markdown.rendered.string as NSString).range(of: "Set up")).length > 0
+        }
+        await waitUntil { atHeading() }
+        #expect(atHeading())
+        #expect(model.session(hostID: .local, path: "\(root)/guide.md")?.markdown?.pendingRenderedScrollAtTop == true)
+        await model.shutDown()
+    }
 }

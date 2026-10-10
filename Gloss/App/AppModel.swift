@@ -639,7 +639,7 @@ final class AppModel {
             guard let self, let session else { return }
             Task { await self.iterations.checkCommit(session) }
         }
-        session.openLinkedDocument = { [weak self] target in self?.openDocument(hostID: hostID, path: target) }
+        session.openLinkedDocument = { [weak self] target, heading in self?.openDocument(hostID: hostID, path: target, heading: heading) }
         // The deepest open root holding the file bounds what a rendered HTML page may read; looked up per request,
         // since the root can open after the document (launch with --open, a jump from a note).
         let home = hostID == .local ? NSHomeDirectory() : hostHomes[hostID]
@@ -1124,6 +1124,22 @@ final class AppModel {
         openDocument(hostID: hostID, path: path)
         guard let session = self.session(hostID: hostID, path: path) else { return }
         Task { await Self.jump(session, line: line, endLine: endLine, select: select) }
+    }
+
+    /// A Markdown link to another document (`guide.md#setup`): opens it, then shows the heading its fragment names
+    /// at the top once the file has loaded, as a browser does; without a fragment, or one no heading has, it opens
+    /// as it would.
+    func openDocument(hostID: HostID, path: String, heading: String?) {
+        openDocument(hostID: hostID, path: path)
+        guard let heading, let session = session(hostID: hostID, path: path) else { return }
+        Task {
+            await Self.untilLoaded(session)
+            // The heading's whole line, as a click on an anchor in the same file scrolls: an empty range at its
+            // start has no rendered text to land on.
+            guard let markdown = session.markdown, let source = session.textController,
+                  let line = MarkdownAnchors.line(of: heading, in: source.text) else { return }
+            markdown.scroll(toSource: source.lineIndex.contentRange(ofLine: line), select: false, atTop: true)
+        }
     }
 
     /// Waits until a document has its record and its viewer, however long its host takes to send it (a fixed few

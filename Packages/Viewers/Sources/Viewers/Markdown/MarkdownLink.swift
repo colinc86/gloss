@@ -7,8 +7,9 @@ import Markdown
 public enum MarkdownLink: Equatable, Sendable {
     /// http, https or mailto: opened by the system.
     case external(URL)
-    /// A relative or file: link to another document on the same host, by absolute path.
-    case document(String)
+    /// A relative or file: link to another document on the same host, by absolute path, with the heading its
+    /// `#fragment` names (percent escapes undone) when it has one.
+    case document(String, fragment: String? = nil)
     /// `#heading` in this document: the fragment, percent escapes undone (empty for a bare `#`).
     case sameDocument(String)
     /// Any other scheme, or a relative link with no folder to resolve against.
@@ -29,14 +30,14 @@ public enum MarkdownLink: Equatable, Sendable {
             guard documentDirectory != nil, url.host == nil || url.host == "" || url.host == "localhost", url.path.hasPrefix("/") else {
                 return .refused(trimmed)
             }
-            return .document((url.path as NSString).standardizingPath)
+            return .document((url.path as NSString).standardizingPath, fragment: url.fragment(percentEncoded: false).flatMap { $0.isEmpty ? nil : $0 })
         case nil:
             // `//server/path` names another machine, not a file beside this one.
             guard let documentDirectory, url.host == nil || url.host == "" else { return .refused(trimmed) }
             let path = url.path   // already percent-decoded; decoding again turned %2541 into A
             if path.isEmpty { return .sameDocument(url.fragment(percentEncoded: false) ?? "") }
             let absolute = path.hasPrefix("/") ? path : (documentDirectory as NSString).appendingPathComponent(path)
-            return .document((absolute as NSString).standardizingPath)
+            return .document((absolute as NSString).standardizingPath, fragment: url.fragment(percentEncoded: false).flatMap { $0.isEmpty ? nil : $0 })
         default:
             return .refused(trimmed)
         }
