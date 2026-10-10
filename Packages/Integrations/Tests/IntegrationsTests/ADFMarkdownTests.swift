@@ -72,6 +72,15 @@ struct ADFMarkdownTests {
         #expect(ADFMarkdown.codeSpan("plain") == "`plain`")
     }
 
+    /// A ticket's summary, names and labels are text, not Markdown: "Fix __init__" stays as written.
+    @Test func anIssuesHeaderTextIsEscaped() {
+        let issue = JiraIssue(key: "CP-7", id: "1", summary: "Fix __init__ and *args #", issueType: "Bug", status: "To Do", assignee: "Ana_Lee",
+                              labels: ["needs_review"], created: Date(timeIntervalSince1970: 0), updated: Date(timeIntervalSince1970: 0), projectKey: "CP")
+        let text = AtlassianMarkdown.issue(issue, url: URL(string: "https://example.atlassian.net/browse/CP-7")!).text
+        #expect(text.hasPrefix("# CP-7: Fix \\_\\_init\\_\\_ and \\*args \\#\n"))
+        #expect(text.contains("Assignee: Ana\\_Lee") && text.contains("Labels: needs\\_review"))
+    }
+
     @Test func renderingIsDeterministic() {
         let adf = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"same"}]}]}"#
         #expect(render(adf) == render(adf))

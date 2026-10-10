@@ -9,13 +9,15 @@ enum AtlassianMarkdown {
     /// The issue as Markdown, with the lines its description and each comment take (1-based), so a note can say
     /// which part of the ticket it is about.
     static func issue(_ issue: JiraIssue, url: URL) -> (text: String, description: ClosedRange<Int>, comments: [(range: ClosedRange<Int>, id: String)]) {
-        var lines: [String] = ["# \(issue.key): \(issue.summary)", ""]
-        lines.append("- **\(issue.issueType)** · \(issue.status)" + (issue.priority.map { " · \($0)" } ?? ""))
+        // Text from the ticket is text: a summary "Fix __init__" must not turn bold, nor a name with `*` in it.
+        let plain = ADFMarkdown.escapeInline
+        var lines: [String] = ["# " + ADFMarkdown.headingText("\(issue.key): \(plain(issue.summary))"), ""]
+        lines.append("- **\(plain(issue.issueType))** · \(plain(issue.status))" + (issue.priority.map { " · \(plain($0))" } ?? ""))
         var people: [String] = []
-        if let assignee = issue.assignee { people.append("Assignee: \(assignee)") }
-        if let reporter = issue.reporter { people.append("Reporter: \(reporter)") }
+        if let assignee = issue.assignee { people.append("Assignee: \(plain(assignee))") }
+        if let reporter = issue.reporter { people.append("Reporter: \(plain(reporter))") }
         if !people.isEmpty { lines.append("- " + people.joined(separator: " · ")) }
-        if !issue.labels.isEmpty { lines.append("- Labels: " + issue.labels.joined(separator: ", ")) }
+        if !issue.labels.isEmpty { lines.append("- Labels: " + issue.labels.map(plain).joined(separator: ", ")) }
         if let parent = issue.parentKey { lines.append("- Parent: \(parent)") }
         lines.append("- Updated \(stamp(issue.updated)) · created \(stamp(issue.created))")
         lines.append("- <\(url.absoluteString)>")
@@ -49,7 +51,7 @@ enum AtlassianMarkdown {
             for comment in issue.comments {
                 lines.append("")
                 let start = lines.count + 1
-                lines.append("### \(comment.author) · \(stamp(comment.created))")
+                lines.append("### " + ADFMarkdown.headingText("\(plain(comment.author)) · \(stamp(comment.created))"))
                 lines.append(contentsOf: bodyLines(comment.body))
                 map.append((start...lines.count, comment.id))
             }
@@ -60,8 +62,8 @@ enum AtlassianMarkdown {
 
     /// `<Title>.md`: a fact list, then the body.
     static func page(_ page: ConfluencePage, spaceKey: String, url: URL) -> String {
-        var lines: [String] = ["# \(page.title)", ""]
-        lines.append("- **Confluence** · \(spaceKey) · version \(page.version)" + (page.versionDate.map { " · \(stamp($0))" } ?? ""))
+        var lines: [String] = ["# " + ADFMarkdown.headingText(ADFMarkdown.escapeInline(page.title)), ""]
+        lines.append("- **Confluence** · \(ADFMarkdown.escapeInline(spaceKey)) · version \(page.version)" + (page.versionDate.map { " · \(stamp($0))" } ?? ""))
         lines.append("- <\(url.absoluteString)>")
         lines.append("")
         lines.append(contentsOf: bodyLines(page.body ?? "_No content._"))

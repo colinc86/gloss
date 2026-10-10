@@ -62,12 +62,7 @@ public enum ADFMarkdown {
             return inline(children).components(separatedBy: "  \n").map(escapeLineStart).joined(separator: "  \n")
         case "heading":
             let level = min(max(attrs["level"] as? Int ?? 1, 1), 6)
-            // One line, as a Markdown heading is; a closing run of `#` would be read as the heading's optional
-            // closing sequence and dropped ("Fix issue #"), so the run is escaped.
-            var text = inline(children).replacingOccurrences(of: "  \n", with: " ")
-            let hashes = text.reversed().prefix { $0 == "#" }.count
-            if hashes > 0 { text.insert("\\", at: text.index(text.endIndex, offsetBy: -hashes)) }
-            return String(repeating: "#", count: level) + " " + text
+            return String(repeating: "#", count: level) + " " + headingText(inline(children))
         case "bulletList":
             return list(children, ordered: false, context: context)
         case "orderedList":
@@ -288,6 +283,15 @@ public enum ADFMarkdown {
         // Script and data links, and file: (the viewer opens links with the system), are not followed.
         if trimmed.contains(":"), ["javascript", "vbscript", "data", "file"].contains(scheme) { return nil }
         return trimmed.replacingOccurrences(of: " ", with: "%20").replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
+    }
+
+    /// Inline Markdown as a heading's text: one line, as a Markdown heading is, and a closing run of `#` escaped, as
+    /// it would otherwise be read as the heading's optional closing sequence and dropped ("Fix issue #").
+    static func headingText(_ markdown: String) -> String {
+        var text = markdown.replacingOccurrences(of: "  \n", with: " ").replacingOccurrences(of: "\n", with: " ")
+        let hashes = text.reversed().prefix { $0 == "#" }.count
+        if hashes > 0 { text.insert("\\", at: text.index(text.endIndex, offsetBy: -hashes)) }
+        return text
     }
 
     /// Characters that would turn plain text into emphasis, strikethrough (one `~` is enough: `~3h~ish`), code,
