@@ -169,37 +169,31 @@ struct SearchHitRow: View {
         }
     }
 
-    /// The line without its indentation, with each match of the searched text (or pattern) on an accent wash.
+    /// Characters of a long line shown before its first match, and at most in all.
+    static let leadIn = 40, excerptLength = 240
+
+    /// The line without its indentation, with each match of the searched text (or pattern) on an accent wash. A long
+    /// line (minified code, say) is cut to a stretch around its first match, "…" where text is left out, so the
+    /// match is in view and only that stretch is drawn and colored.
     static func highlighted(_ line: String, pattern: (text: String, regex: Bool)?, language: String? = nil) -> AttributedString {
-        let trimmed = String(line.drop { $0 == " " || $0 == "\t" })
+        var trimmed = String(line.drop { $0 == " " || $0 == "\t" })
+        var cut = false
+        if (trimmed as NSString).length > excerptLength {
+            let first = matches(in: trimmed, pattern: pattern).first?.location ?? 0
+            trimmed = excerpt(of: trimmed, around: first)
+            cut = true
+        }
         var result = AttributedString(trimmed)
-        // Syntax colours first, as SwiftUI colours so the match can override them; the match wash goes on top.
-        if var syntax = SyntaxTheme.highlighted(trimmed, language: language), String(syntax.characters) == trimmed {
+        // Syntax colors first, as SwiftUI colors so the match can override them; the match wash goes on top. A cut
+        // stretch starts mid-token, so it stays plain.
+        if !cut, var syntax = SyntaxTheme.highlighted(trimmed, language: language), String(syntax.characters) == trimmed {
             for run in syntax.runs {
                 guard let color = run.appKit.foregroundColor else { continue }
                 syntax[run.range].foregroundColor = Color(nsColor: color)
             }
             result = syntax
         }
-        guard let pattern, !pattern.text.isEmpty else { return result }
-        let ns = trimmed as NSString
-        var ranges: [NSRange] = []
-        if pattern.regex {
-            if let expression = try? NSRegularExpression(pattern: pattern.text) {
-                ranges = expression.matches(in: trimmed, range: NSRange(location: 0, length: ns.length)).map(\.range).filter { $0.length > 0 }
-            }
-        } else {
-            // ripgrep's smart case: an all-lowercase query matches any case.
-            let options: NSString.CompareOptions = pattern.text == pattern.text.lowercased() ? [.caseInsensitive] : []
-            var search = NSRange(location: 0, length: ns.length)
-            while search.length > 0 {
-                let found = ns.range(of: pattern.text, options: options, range: search)
-                guard found.location != NSNotFound, found.length > 0 else { break }
-                ranges.append(found)
-                search = NSRange(location: found.location + found.length, length: ns.length - found.location - found.length)
-            }
-        }
-        for range in ranges {
+        for range in matches(in: trimmed, pattern: pattern) {
             guard let swiftRange = Range(range, in: trimmed),
                   let lower = AttributedString.Index(swiftRange.lowerBound, within: result),
                   let upper = AttributedString.Index(swiftRange.upperBound, within: result) else { continue }
@@ -208,5 +202,37 @@ struct SearchHitRow: View {
             result[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
         }
         return result
+    }
+
+    /// `excerptLength` characters of `text` from `leadIn` before `location`, never splitting a character, with "…"
+    /// on each side that leaves text out.
+    static func excerpt(of text: String, around location: Int) -> String {
+        let ns = text as NSString
+        var start = max(0, min(location - leadIn, ns.length - excerptLength))
+        if start > 0 { start = ns.rangeOfComposedCharacterSequence(at: start).location }
+        var end = min(ns.length, start + excerptLength)
+        if end < ns.length { end = ns.rangeOfComposedCharacterSequence(at: end).location }
+        return (start > 0 ? "…" : "") + ns.substring(with: NSRange(location: start, length: end - start)) + (end < ns.length ? "…" : "")
+    }
+
+    /// Where the searched text (or pattern) matches `text`, in order.
+    private static func matches(in text: String, pattern: (text: String, regex: Bool)?) -> [NSRange] {
+        guard let pattern, !pattern.text.isEmpty else { return [] }
+        let ns = text as NSString
+        if pattern.regex {
+            guard let expression = try? NSRegularExpression(pattern: pattern.text) else { return [] }
+            return expression.matches(in: text, range: NSRange(location: 0, length: ns.length)).map(\.range).filter { $0.length > 0 }
+        }
+        // ripgrep's smart case: an all-lowercase query matches any case.
+        let options: NSString.CompareOptions = pattern.text == pattern.text.lowercased() ? [.caseInsensitive] : []
+        var ranges: [NSRange] = []
+        var search = NSRange(location: 0, length: ns.length)
+        while search.length > 0 {
+            let found = ns.range(of: pattern.text, options: options, range: search)
+            guard found.location != NSNotFound, found.length > 0 else { break }
+            ranges.append(found)
+            search = NSRange(location: found.location + found.length, length: ns.length - found.location - found.length)
+        }
+        return ranges
     }
 }
