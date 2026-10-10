@@ -209,3 +209,7 @@ final class KeyStaysHome: NSObject, URLSessionTaskDelegate, Sendable {
         return a.scheme?.lowercased() == b.scheme?.lowercased() && a.host()?.lowercased() == b.host()?.lowercased() && port(a) == port(b)
     }
 }
+
+extension IntegrationError: LocalizedError {
+    public var errorDescription: String? { message }
+}

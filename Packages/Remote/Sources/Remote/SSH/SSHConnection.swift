@@ -666,3 +666,21 @@ final class StderrAccumulator: Sendable {
         }
     }
 }
+
+/// What a failed connection says to the reader (the hosts list, an error alert, an agent's tool answer).
+extension SSHError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .hostKeyProblem: "Host key not known"
+        case .hostKeyChanged: "Host key changed; check known_hosts"
+        case .authenticationFailed: "Authentication failed: no key was accepted. Check the key, your agent, or the user name."
+        case .unreachable: "Host unreachable"
+        case .timedOut: "Timed out waiting for ssh"
+        case .agentUnresponsive: "Your SSH key agent did not respond. If it is a password manager, it may be locked or waiting for an approval prompt behind other windows. Details shows which agent ssh is using; Settings → Hosts can add this host with a key file so the agent is skipped."
+        case .notConnected: "Not connected"
+        case .commandFailed(let status, let stderr): stderr.isEmpty ? "A command on the host failed (exit \(status))" : stderr
+        case .forwardFailed(let message): "Forward failed: \(message)"
+        case .other(let message): message
+        }
+    }
+}

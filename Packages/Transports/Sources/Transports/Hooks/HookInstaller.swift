@@ -423,3 +423,13 @@ public enum LocalShell {
         return ExecResult(exitStatus: code, stdout: await out, stderr: await err)
     }
 }
+
+extension HookInstallerError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unparsable(let path, let reason): "\(path) couldn't be read, so it was left alone: \(reason)"
+        case .bundledPluginMissing: "The Herdr plugin is missing from this copy of Gloss"
+        case .commandFailed(let message): message
+        }
+    }
+}

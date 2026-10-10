@@ -280,3 +280,11 @@ private final class RequestHandler: ChannelInboundHandler, @unchecked Sendable {
         }
     }
 }
+
+extension HTTPListenerError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .bindFailed(let detail): detail
+        }
+    }
+}

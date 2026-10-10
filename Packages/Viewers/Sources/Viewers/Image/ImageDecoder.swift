@@ -175,3 +175,12 @@ public nonisolated enum ImageDecoder {
         return data as Data
     }
 }
+
+extension ImageDecodeError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .unreadable: "The picture couldn't be read"
+        case .tooManyPixels(let width, let height): "The picture is too large to show (\(width) × \(height) pixels)"
+        }
+    }
+}

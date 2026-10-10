@@ -257,20 +257,8 @@ final class HostsModel {
         }
     }
 
-    private func describe(_ error: SSHError) -> String {
-        switch error {
-        case .hostKeyProblem: "Host key not known"
-        case .hostKeyChanged: "Host key changed; check known_hosts"
-        case .authenticationFailed: "Authentication failed: no key was accepted. Check the key, your agent, or the user name."
-        case .unreachable: "Host unreachable"
-        case .timedOut: "Timed out waiting for ssh"
-        case .agentUnresponsive: "Your SSH key agent did not respond. If it is a password manager, it may be locked or waiting for an approval prompt behind other windows. Details shows which agent ssh is using; Settings → Hosts can add this host with a key file so the agent is skipped."
-        case .notConnected: "Not connected"
-        case .commandFailed(_, let stderr): stderr
-        case .forwardFailed(let message): "Forward failed: \(message)"
-        case .other(let message): message
-        }
-    }
+    /// SSHError says itself (`LocalizedError` in Remote), wherever it surfaces.
+    private func describe(_ error: SSHError) -> String { error.userMessage }
 }
 
 /// What the Add Host form accepts. ssh is given the name as its destination and the port as `-o Port=`, so a name with

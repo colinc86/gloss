@@ -397,3 +397,20 @@ public struct BinaryReader {
         return attributes
     }
 }
+
+/// The server's own words when it sent any, else what the status code means.
+extension SFTPStatus: LocalizedError {
+    public var errorDescription: String? {
+        if !message.isEmpty { return message }
+        return switch code {
+        case .ok: "Done"
+        case .eof: "End of file"
+        case .noSuchFile: "No such file or folder"
+        case .permissionDenied: "Permission denied"
+        case .failure: "The host couldn't do that"
+        case .badMessage: "The host didn't understand the request"
+        case .noConnection, .connectionLost: "The connection to the host was lost"
+        case .opUnsupported: "The host doesn't support that"
+        }
+    }
+}

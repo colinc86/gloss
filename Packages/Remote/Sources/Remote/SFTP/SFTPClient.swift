@@ -413,3 +413,15 @@ public actor SFTPClient {
         return entries
     }
 }
+
+extension SFTPClientError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .connectionLost: "The connection to the host was lost"
+        case .protocolError(let detail): "The host's file service answered unexpectedly: \(detail)"
+        case .unsupportedVersion(let version): "The host's file service speaks SFTP version \(version); Gloss needs version 3"
+        case .subsystemFailed(let stderr): stderr.isEmpty ? "The host's file service didn't start" : "The host's file service didn't start: \(stderr)"
+        case .fileTooLarge(let limit): "The file is larger than \(ByteCountFormatter.string(fromByteCount: Int64(clamping: limit), countStyle: .file))"
+        }
+    }
+}

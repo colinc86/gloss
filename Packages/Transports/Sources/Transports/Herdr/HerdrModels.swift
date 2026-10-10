@@ -132,3 +132,18 @@ public struct HerdrEndpoint: Sendable, Hashable {
         return (NSHomeDirectory() as NSString).appendingPathComponent(".config/herdr/herdr.sock")
     }
 }
+
+extension HerdrError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .requestTooLarge(let bytes): "The message is too large for Herdr (\(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)))"
+        case .emptyReply: "Herdr closed the connection without answering"
+        case .server(_, let message): message
+        case .decoding(let detail): "Herdr answered unexpectedly: \(detail)"
+        case .eventsLost: "Herdr's updates fell behind"
+        case .connection(let detail): "Couldn't reach Herdr: \(detail)"
+        case .subscriptionRefused(let detail): "Herdr refused updates: \(detail)"
+        case .timedOut: "Herdr didn't answer in time"
+        }
+    }
+}
