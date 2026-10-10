@@ -312,4 +312,23 @@ struct LineJumpTests {
         #expect(controller.pendingScroll == controller.lineIndex.contentRange(ofLine: 30))
         session.close()
     }
+
+    /// Revealing a note waits the same way (its card clicked while a slow host is still sending the file).
+    @Test func aRevealWaitsForASlowDocument() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-reveal-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = "\(directory)/a.swift"
+        let text = (1...40).map { "line \($0)" }.joined(separator: "\n")
+        try text.write(toFile: path, atomically: true, encoding: .utf8)
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let session = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store)
+        let waited = Task { await AppModel.untilLoaded(session) }
+        try await Task.sleep(for: .seconds(3))
+        #expect(session.document == nil, "not opened yet")
+        await session.open()
+        await waited.value
+        #expect(session.document != nil && session.isLoaded)
+        session.close()
+    }
 }

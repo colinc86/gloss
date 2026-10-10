@@ -1087,12 +1087,24 @@ final class AppModel {
         Task { await Self.jump(session, line: line, endLine: endLine, select: select) }
     }
 
+    /// Waits until a document has its record and its viewer, however long its host takes to send it (a fixed few
+    /// seconds dropped what was asked of a slow host's file: revealing a note, editing it, jumping to a line), giving
+    /// up after `timeout` for a load that never ends.
+    static func untilLoaded(_ session: DocumentSession, timeout: Duration = .seconds(120)) async {
+        let deadline = ContinuousClock.now + timeout
+        func done() -> Bool {
+            // A load that failed has its answer: there is no record to wait for.
+            if case .failed = session.state { return true }
+            return session.document != nil && session.isLoaded
+        }
+        while !done(), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+
     /// Shows lines once the document has loaded, however long its host takes to send it: a fixed 2.5 s let a slow
     /// host's file open at the top with the jump lost. Gives up after two minutes (a load that never ends) and does
     /// nothing for a document without text (a picture, a PDF).
     static func jump(_ session: DocumentSession, line: Int, endLine: Int?, select: Bool, timeout: Duration = .seconds(120)) async {
-        let deadline = ContinuousClock.now + timeout
-        while !session.isLoaded, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+        await untilLoaded(session, timeout: timeout)
         guard let controller = session.textController else { return }
         let first = controller.lineIndex.contentRange(ofLine: line)
         let last = controller.lineIndex.contentRange(ofLine: max(line, endLine ?? line))
@@ -1164,7 +1176,7 @@ final class AppModel {
     private func openedSession(for document: Core.Document) async -> DocumentSession? {
         openDocument(hostID: document.hostID, path: document.path)
         guard let session = session(hostID: document.hostID, path: document.path) else { return nil }
-        for _ in 0..<100 where session.document == nil || !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
+        await Self.untilLoaded(session)
         return session.document == nil ? nil : session
     }
 
@@ -2018,7 +2030,7 @@ final class AppModel {
         notesPanel.makeListed(note)
         withSession(for: document, iteration: note.iteration) { session in
             // The session may still be opening.
-            for _ in 0..<50 where !session.isLoaded { try? await Task.sleep(for: .milliseconds(50)) }
+            await Self.untilLoaded(session)
             session.reveal(note, select: select)
         }
     }
@@ -2065,14 +2077,14 @@ final class AppModel {
 
     func reanchor(note: Note, in document: Core.Document) {
         withSession(for: document, iteration: note.iteration) { session in
-            for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            await Self.untilLoaded(session)
             session.beginReanchor(note)
         }
     }
 
     func edit(note: Note, in document: Core.Document) {
         withSession(for: document, iteration: note.iteration) { session in
-            for _ in 0..<50 where session.document == nil { try? await Task.sleep(for: .milliseconds(50)) }
+            await Self.untilLoaded(session)
             session.editNote(note)
         }
     }
