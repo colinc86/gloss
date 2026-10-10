@@ -31,6 +31,8 @@ final class QuickOpenModel {
     }
     /// The files matching, relative to the root.
     private(set) var results: [String] = []
+    /// The line the results open at: the query's `:line` when they were found without it.
+    private(set) var resultsLine: Int?
     /// The query as an address to open, when it reads as one.
     private(set) var address: URL?
     /// Whether the address row leads (the query can only be an address, or there are no files to put first) or
@@ -122,8 +124,13 @@ final class QuickOpenModel {
         }
     }
 
-    @concurrent nonisolated private static func rank(_ query: String, _ candidates: [String]) async -> [String] {
-        FuzzyMatcher.rank(query, in: candidates)
+    /// Files for the query as typed; when it ends in `:line` and nothing matches it whole, files for what comes
+    /// before, with that line (a file really named `notes 10:30` is found by its name, not split).
+    @concurrent nonisolated private static func rank(_ query: String, _ candidates: [String]) async -> (files: [String], line: Int?) {
+        let split = splitLine(query)
+        let whole = FuzzyMatcher.rank(query, in: candidates)
+        guard let line = split.line, whole.isEmpty else { return (whole, nil) }
+        return (FuzzyMatcher.rank(split.text, in: candidates), line)
     }
 
     /// Every row in order.
@@ -175,7 +182,7 @@ final class QuickOpenModel {
             guard let path = selectedPath else { return }
             let hostID = hostID
             dismiss()
-            if let line = Self.splitLine(query).line { onOpenAtLine(hostID, path, line) } else { onOpen(hostID, path) }
+            if let line = resultsLine { onOpenAtLine(hostID, path, line) } else { onOpen(hostID, path) }
         case nil:
             break
         }
@@ -204,15 +211,16 @@ final class QuickOpenModel {
     private func rerank() {
         rankTask?.cancel()
         guard root != nil else { return }
-        let query = Self.splitLine(query).text
+        let query = query
         let candidates = candidates
         isRanking = true
         rankTask = Task { [weak self] in
-            let ranked = await Self.rank(query, candidates)
+            let (ranked, line) = await Self.rank(query, candidates)
             guard !Task.isCancelled, let self else { return }
             let before = self.rows
             let onFile = !before.indices.contains(self.selectedIndex) || { if case .file = before[self.selectedIndex] { true } else { false } }()
             self.results = ranked
+            self.resultsLine = line
             self.isRanking = false
             if self.submitWhenReady, !self.isLoading {
                 // Return was pressed on a file row (or before there were rows): it opens the best file, never an

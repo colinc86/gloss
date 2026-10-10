@@ -197,5 +197,18 @@ struct QuickOpenTests {
         quick.selectedIndex = quick.rows.firstIndex { if case .file = $0 { true } else { false } } ?? 0
         quick.submit()
         #expect(opened?.0 == "\(root)/Notes/NotesPanelModel.swift" && opened?.1 == 12)
+
+        // A file really named so is found by its name and opens without a line.
+        try "x".write(toFile: "\(root)/notes 10:30", atomically: true, encoding: .utf8)
+        var plain: String?
+        quick.onOpen = { _, path in plain = path }
+        quick.present(root: root, hostID: .local, connection: nil)
+        for _ in 0..<100 where quick.isLoading { try await Task.sleep(for: .milliseconds(20)) }
+        quick.query = "notes 10:30"
+        for _ in 0..<100 where quick.results.first != "notes 10:30" { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(quick.results.first == "notes 10:30" && quick.resultsLine == nil)
+        quick.selectedIndex = quick.rows.firstIndex { if case .file = $0 { true } else { false } } ?? 0
+        quick.submit()
+        #expect(plain == "\(root)/notes 10:30")
     }
 }
