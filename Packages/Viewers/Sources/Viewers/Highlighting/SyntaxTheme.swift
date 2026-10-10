@@ -42,6 +42,8 @@ public nonisolated enum SyntaxTheme {
         "punctuation": .secondaryLabelColor,
         "punctuation.bracket": .secondaryLabelColor,
         "punctuation.delimiter": .secondaryLabelColor,
+        // C's grammar names its `;` and `,` plainly `delimiter`, without the `punctuation.` the others use.
+        "delimiter": .secondaryLabelColor,
         "punctuation.special": .systemPink,
         "attribute": .systemBrown,
         "label": .systemBrown,

@@ -14,6 +14,14 @@ struct HighlighterTests {
         }
     }
 
+    /// Every capture the bundled grammars name for something visible has a colour: C's `delimiter` was left plain.
+    @Test func everyVisibleCaptureHasAColour() {
+        for name in ["delimiter", "text.reference", "keyword.conditional.ternary", "comment.documentation", "string.regexp", "number.float",
+                     "variable.member", "function.macro", "constant.macro", "character.special", "string.special.key", "tag", "attribute"] {
+            #expect(SyntaxTheme.color(forCapture: name) != nil, "\(name)")
+        }
+    }
+
     /// JSX tags and attributes are coloured in .jsx (the JavaScript grammar) and .tsx files.
     @Test func jsxTagsAndAttributesAreColoured() throws {
         let code = "const x = <div className=\"a\">{y}</div>\n"
