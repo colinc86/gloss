@@ -136,4 +136,12 @@ struct IntegrationsModelTests {
         }
         Issue.record("timed out")
     }
+
+    /// A site saved with a user and password in it, before the site was cleaned on entry, is read back without them.
+    @Test func aSavedSitesUserAndPasswordAreDroppedOnRead() throws {
+        let json = #"{"site":"https:\/\/me:secret@Acme.atlassian.net","email":"me@example.com","token":"t"}"#
+        let credentials = try JSONDecoder().decode(AtlassianCredentials.self, from: Data(json.utf8))
+        #expect(credentials.site == URL(string: "https://acme.atlassian.net"))
+        #expect(credentials.email == "me@example.com" && credentials.token == "t")
+    }
 }

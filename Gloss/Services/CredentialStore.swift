@@ -1,4 +1,5 @@
 import Foundation
+import Integrations
 import Security
 
 /// Where integration keys live. The real store is the login Keychain; a test host or a throwaway run keeps them in
@@ -69,4 +70,16 @@ nonisolated struct AtlassianCredentials: Codable, Equatable, Sendable {
     var site: URL
     var email: String
     var token: String
+}
+
+nonisolated extension AtlassianCredentials {
+    /// A site saved before it was cleaned on entry may hold a user and password ("me:secret@site"): it is read back
+    /// as the host alone, as one entered now is.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let site = try container.decode(URL.self, forKey: .site)
+        self.site = AtlassianClient.siteURL(from: site.absoluteString) ?? site
+        email = try container.decode(String.self, forKey: .email)
+        token = try container.decode(String.self, forKey: .token)
+    }
 }
