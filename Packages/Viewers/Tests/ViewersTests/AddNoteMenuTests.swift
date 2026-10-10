@@ -47,4 +47,18 @@ struct AddNoteMenuTests {
         controller.addNote = hook(false)
         #expect(view.menu(for: event)?.items.contains { $0.title == "Add Note" } != true)
     }
+
+    /// A region chosen on a picture in rendered Markdown selects no text, but takes a note: the menu offers it.
+    @Test func aRenderedPicturesRegionOffersAddNote() {
+        let source = TextEditorController(text: "![chart](chart.png)\n", languageName: "markdown")
+        source.onAddNote = {}
+        let controller = MarkdownViewerController(source: source)
+        let textView = RenderedTextView(usingTextLayoutManager: true)
+        textView.controller = controller
+        // No text to select (a right-click selects the word under the pointer), only the picture.
+        #expect(textView.menu(for: event)?.items.contains { $0.title == "Add Note" } != true, "nothing chosen")
+        controller.imageSelection = .init(image: .init(source: "chart.png", occurrence: 0), region: CGRect(x: 0, y: 0, width: 10, height: 10),
+                                          pixelSize: CGSize(width: 100, height: 100), embedSource: NSRange(location: 0, length: 19))
+        #expect(textView.menu(for: event)?.items.first?.title == "Add Note")
+    }
 }

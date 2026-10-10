@@ -310,7 +310,9 @@ final class RenderedTextView: NSTextView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
         if let menu {
-            AddNoteMenuItem.insert(into: menu, selection: controller?.source.onAddNote == nil ? NSRange() : selectedRange(), target: self, action: #selector(addNoteFromMenu(_:)))
+            // Selected text, or a region chosen on a picture (which selects no text).
+            let offered = controller?.source.onAddNote != nil && (selectedRange().length > 0 || controller?.imageSelection != nil)
+            AddNoteMenuItem.insert(into: menu, when: offered, target: self, action: #selector(addNoteFromMenu(_:)))
         }
         return menu
     }
