@@ -45,16 +45,26 @@ struct RecentlyDeletedView: View {
                            message: retentionMessage) {}
             } else {
                 List {
-                    ForEach(Self.grouped(panel.trashed), id: \.document.id) { group in
+                    ForEach(Self.sections(panel.trashed), id: \.document.id) { group in
                         Section {
                             ForEach(group.notes) { trashed in
                                 TrashedNoteCard(trashed: trashed)
                             }
                         } header: {
-                            Text(group.document.fileName)
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            HStack(spacing: DS.Space.s) {
+                                Text(group.document.fileName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .layoutPriority(1)
+                                if let place = group.place {
+                                    Text(place)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.head)
+                                }
+                            }
                         }
                     }
                 }
@@ -78,6 +88,14 @@ struct RecentlyDeletedView: View {
     private var retentionMessage: String {
         let days = model.settings.trashRetentionDays
         return days == 0 ? "Deleted notes stay here until you empty it." : "Deleted notes stay here for \(days) days, then go for good."
+    }
+
+    /// `grouped`, each document with the folders that tell it from another of the same name in the list (nil when
+    /// its name is unique), as the notes list labels them: two README.md headers read alike.
+    static func sections(_ trashed: [TrashedNote]) -> [(document: Core.Document, notes: [TrashedNote], place: String?)] {
+        let groups = grouped(trashed)
+        let places = PathDisambiguator.places(for: groups.map(\.document.path))
+        return groups.map { ($0.document, $0.notes, places[$0.document.path]) }
     }
 
     /// The trashed notes by document, documents in the order their newest deletion comes.
