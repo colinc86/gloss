@@ -65,10 +65,31 @@ public final class CSVGridController {
         return result
     }()
 
-    public init(text: String, fileName: String) {
+    public convenience init(text: String, fileName: String) {
+        self.init(text: text, parsed: Self.prepare(text, fileName: fileName))
+    }
+
+    /// A grid from text already parsed, by `parse(_:fileName:)` off the main thread.
+    public init(text: String, parsed: Parsed) {
         self.text = text
-        lineIndex = LineIndex(text)
-        table = CSVParser.parse(text, delimiter: CSVParser.delimiter(for: text, fileName: fileName))
+        lineIndex = parsed.lineIndex
+        table = parsed.table
+    }
+
+    /// What building a grid reads from its text: the records and the line index.
+    public struct Parsed: Sendable {
+        let lineIndex: LineIndex
+        let table: CSVTable
+    }
+
+    /// Parses off the main thread: a full sheet (100,000 rows, 6 MB) took 0.2 s in a release build, at open and again
+    /// on every reload while an agent rewrites the file.
+    @concurrent public nonisolated static func parse(_ text: String, fileName: String) async -> Parsed {
+        prepare(text, fileName: fileName)
+    }
+
+    nonisolated private static func prepare(_ text: String, fileName: String) -> Parsed {
+        Parsed(lineIndex: LineIndex(text), table: CSVParser.parse(text, delimiter: CSVParser.delimiter(for: text, fileName: fileName)))
     }
 
     public var isTruncated: Bool { table.isTruncated }

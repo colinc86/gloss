@@ -368,7 +368,8 @@ final class DocumentSession: Identifiable {
             }
             if kind == .csv, attributes.size <= Self.readOnlyThreshold {
                 let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
-                let controller = CSVGridController(text: TextEncoding.decode(data).text, fileName: fileName)
+                let decoded = TextEncoding.decode(data).text
+                let controller = CSVGridController(text: decoded, parsed: await CSVGridController.parse(decoded, fileName: fileName))
                 if controller.isTooWide {
                     // Thousands of columns: shown as text, which the code below reads from these same bytes.
                     kind = .text
@@ -645,7 +646,7 @@ final class DocumentSession: Identifiable {
         do {
             let (data, fingerprint) = try await fileSystem.readWithFingerprint(path)
             let text = adopt(data)
-            let controller = CSVGridController(text: text, fileName: fileName)
+            let controller = CSVGridController(text: text, parsed: await CSVGridController.parse(text, fileName: fileName))
             // Grown too wide since it opened: keep the grid it had rather than build thousands of columns.
             guard !controller.isTooWide else {
                 lastError = "This file now has more than \(CSVGridController.maximumColumns) columns; reopen it to see it as text."
