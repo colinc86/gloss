@@ -214,16 +214,17 @@ struct QuickOpenSheet: View {
 
     /// "12 files · 3 pages"; only pages without a folder, only files when no page matches. "50 of 3,214 files" when
     /// only the best of more matches are listed: a bare "50 files" read as all the folder had.
-    static func countLine(files: Int?, of total: Int? = nil, pages: Int) -> String {
+    /// `more`: the folder's listing stopped at its limit, so there are more files than were counted.
+    static func countLine(files: Int?, of total: Int? = nil, more: Bool = false, pages: Int) -> String {
         let pageText = "\(pages) \(pages == 1 ? "page" : "pages")"
         guard let files else { return pageText }
-        let fileText = if let total, total > files { "\(files) of \(total.formatted()) files" } else { "\(files) \(files == 1 ? "file" : "files")" }
+        let fileText = if let total, total > files || more { "\(files) of \(total.formatted())\(more ? "+" : "") files" } else { "\(files) \(files == 1 ? "file" : "files")" }
         return pages == 0 ? fileText : fileText + " · " + pageText
     }
 
     private func footer(_ quick: QuickOpenModel) -> some View {
         HStack(spacing: DS.Space.s) {
-            Text(quick.isLoading ? "Listing files…" : Self.countLine(files: quick.root == nil ? nil : quick.results.count, of: quick.matchCount, pages: quick.pageResults.count))
+            Text(quick.isLoading ? "Listing files…" : Self.countLine(files: quick.root == nil ? nil : quick.results.count, of: quick.matchCount, more: quick.isListingCut, pages: quick.pageResults.count))
                 .contentTransition(.numericText(value: Double(quick.results.count + quick.pageResults.count)))
             Spacer()
             KeyCap("↑"); KeyCap("↓"); Text("move")

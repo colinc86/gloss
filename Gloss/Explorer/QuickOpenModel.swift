@@ -35,6 +35,8 @@ final class QuickOpenModel {
     private(set) var resultsLine: Int?
     /// How many files matched, of which `results` holds only the best.
     private(set) var matchCount = 0
+    /// The listing stopped at `FileListing.limit`: the folder has more files than were listed.
+    private(set) var isListingCut = false
     /// The query as an address to open, when it reads as one.
     private(set) var address: URL?
     /// Whether the address row leads (the query can only be an address, or there are no files to put first) or
@@ -86,6 +88,7 @@ final class QuickOpenModel {
         selectedIndex = 0
         results = []
         candidates = []
+        isListingCut = false
         errorMessage = nil
         submitWhenReady = false
         visited = pages()
@@ -110,6 +113,7 @@ final class QuickOpenModel {
             if paths.isEmpty, let failure { self.errorMessage = failure }
             let prefix = root.hasSuffix("/") ? root : root + "/"
             self.candidates = paths.map { $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : $0 }
+            self.isListingCut = paths.count >= FileListing.limit
             self.isLoading = false
             self.rerank()
         }
