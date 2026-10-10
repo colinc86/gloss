@@ -180,34 +180,36 @@ struct CSVCopyTests {
 struct CSVGridFindTests {
     static let csv = "name,city,note\nAda,London,likes tea\nBob,Paris,\nCy,london,TEA too\n"
 
+    static let bigSheet = "a,b,c,d,e,f,g,h,i,j\n" + (0..<100_000).map { "row \($0),alpha,beta,gamma,delta,epsilon,zeta,eta,theta,iota" }.joined(separator: "\n")
+
+    /// Runs `work` while the main thread is held: it finishes only if it never needs the main thread, so the check
+    /// can't be thrown by other suites keeping the main actor busy, as a timing could.
+    private func finishesWithoutTheMainThread(timeout: Double = 30, _ work: @escaping @Sendable () async -> Void) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            await work()
+            done.signal()
+        }
+        return done.wait(timeout: .now() + timeout) == .success
+    }
+
     /// A full sheet is parsed off the main thread, into the same grid the text alone builds.
     @Test func aBigSheetIsParsedOffTheMainThread() async {
-        let text = "a,b,c,d,e,f,g,h,i,j\n" + (0..<100_000).map { "row \($0),alpha,beta,gamma,delta,epsilon,zeta,eta,theta,iota" }.joined(separator: "\n")
-        let asked = ContinuousClock.now
-        let parsing = Task { await CSVGridController.parse(text, fileName: "big.csv") }
-        try? await Task.sleep(for: .milliseconds(20))
-        let woke = ContinuousClock.now - asked
-        let parsed = await parsing.value
-        let took = ContinuousClock.now - asked
-        #expect(woke < took / 2, "the main actor woke (\(woke)) long before the parse ended (\(took))")
-        let grid = CSVGridController(text: text, parsed: parsed)
+        let text = Self.bigSheet
+        #expect(!finishesWithoutTheMainThread(timeout: 0.5) { await MainActor.run {} }, "the check itself: work on the main thread can't finish")
+        #expect(finishesWithoutTheMainThread { _ = await CSVGridController.parse(text, fileName: "big.csv") })
+        let grid = CSVGridController(text: text, parsed: await CSVGridController.parse(text, fileName: "big.csv"))
         #expect(grid.table == CSVGridController(text: text, fileName: "big.csv").table)
         #expect(grid.table.rows.count == 100_000 && grid.lineIndex.lineCount == 100_001)
     }
 
     /// A miss on a full sheet reads every cell: off the main thread, so the app keeps answering meanwhile.
     @Test func aSearchOfABigSheetLeavesTheMainThreadFree() async {
-        let text = "a,b,c,d,e,f,g,h,i,j\n" + (0..<100_000).map { "row \($0),alpha,beta,gamma,delta,epsilon,zeta,eta,theta,iota" }.joined(separator: "\n")
-        let controller = CSVGridController(text: text, fileName: "big.csv")
+        let controller = CSVGridController(text: Self.bigSheet, fileName: "big.csv")
+        let rows = controller.table.rows
+        #expect(finishesWithoutTheMainThread { _ = await CSVGridController.search("nothing here", in: rows, columns: 10, after: nil, backwards: false) })
         controller.findText = "nothing here"
-        let asked = ContinuousClock.now
-        let search = Task { await controller.find(backwards: false) }
-        try? await Task.sleep(for: .milliseconds(20))
-        let woke = ContinuousClock.now - asked
-        await search.value
-        let searched = ContinuousClock.now - asked
-        // Relative, as other suites share the main actor: searching on it held it for the whole search.
-        #expect(woke < searched / 2, "the main actor woke (\(woke)) long before the search ended (\(searched))")
+        await controller.find(backwards: false)
         #expect(controller.findMissed)
         controller.findText = "row 99999"
         await controller.find(backwards: false)

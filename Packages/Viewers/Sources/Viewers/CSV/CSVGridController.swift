@@ -183,7 +183,7 @@ public final class CSVGridController {
         onScroll(cell)
     }
 
-    @concurrent nonisolated private static func search(_ needle: String, in rows: [CSVRow], columns: Int, after start: Int?, backwards: Bool) async -> GridCell? {
+    @concurrent nonisolated static func search(_ needle: String, in rows: [CSVRow], columns: Int, after start: Int?, backwards: Bool) async -> GridCell? {
         let total = rows.count * columns
         let origin = start ?? (backwards ? total : -1)
         for step in 1...total {
