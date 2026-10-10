@@ -355,7 +355,8 @@ public enum Anchor: Hashable, Sendable {
         switch self {
         case .text(let anchor): SortKey(primary: anchor.start.line, secondary: anchor.start.col)
         case .image(let anchor): SortKey(primary: anchor.y, secondary: anchor.x)
-        case .pdf(let anchor): SortKey(primary: anchor.page, secondary: Int(-(anchor.bounds?.y ?? 0)))
+        // Page space runs up from the bottom: a region reads from its top edge, the higher first.
+        case .pdf(let anchor): SortKey(primary: anchor.page, secondary: Int(-((anchor.bounds.map { $0.y + $0.h }) ?? 0)))
         case .wholeFile: SortKey(primary: Int.max, secondary: 0)
         case .element(let anchor): SortKey(primary: Int(anchor.rect.y.rounded()), secondary: Int(anchor.rect.x.rounded()))
         case .embeddedImage(let anchor): SortKey(primary: anchor.embed.start.line, secondary: anchor.embed.start.col)

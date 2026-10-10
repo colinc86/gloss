@@ -101,6 +101,10 @@ struct AnchorJSONTests {
         #expect(Anchor.text(TextAnchor(start: .init(line: 3, col: 1), end: .init(line: 5, col: 9), text: "", before: "", after: "")).summary == "Lines 3-5")
         #expect(Anchor.pdf(PDFAnchor(page: 2, bounds: nil, text: nil, pageCount: 3)).summary == "Page 3")
         #expect(Anchor.wholeFile.summary == "Whole file")
+        // A PDF's regions read from their top edges: a tall one starting higher comes before a short one below it.
+        let tall = Anchor.pdf(PDFAnchor(page: 0, bounds: PDFBounds(x: 0, y: 100, w: 50, h: 600), text: nil, pageCount: 1))
+        let short = Anchor.pdf(PDFAnchor(page: 0, bounds: PDFBounds(x: 0, y: 500, w: 50, h: 100), text: nil, pageCount: 1))
+        #expect(tall.sortKey < short.sortKey)
         #expect(Anchor.wholeFile.sortKey > Anchor.text(TextAnchor(start: .init(line: 999, col: 1), end: .init(line: 999, col: 1), text: "", before: "", after: "")).sortKey)
     }
 }
