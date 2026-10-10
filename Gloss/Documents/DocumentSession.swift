@@ -1740,7 +1740,7 @@ final class DocumentSession: Identifiable {
             if providerBeforeIterationChanges == nil { providerBeforeIterationChanges = .some(lineChangesProvider) }
             changesSinceIteration = iteration
             lineChangesProvider = { [weak self] _ in
-                guard let text = await self?.textController?.text else { return nil }
+                guard let text = self?.textController?.text else { return nil }
                 return await IterationDiff.computed(from: snapshot, to: text)
             }
         } else {

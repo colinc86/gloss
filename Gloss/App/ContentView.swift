@@ -172,8 +172,8 @@ struct ContentView: View {
                 Task { await URLRouter.open(hostID: pending.hostID, path: pending.path, line: pending.line, model: model) }
             }
         } message: { pending in
-            Text(pending.hostName.map { "A link asked to connect to \($0) and open \(pending.path)." } ?? "A link asked to open \(pending.path).")
-                + Text(" Open it only if you followed this link yourself.")
+            Text((pending.hostName.map { "A link asked to connect to \($0) and open \(pending.path)." } ?? "A link asked to open \(pending.path).")
+                 + " Open it only if you followed this link yourself.")
         }
         .dropToOpen()
         .overlay(alignment: .bottom) { CopyHUD() }
