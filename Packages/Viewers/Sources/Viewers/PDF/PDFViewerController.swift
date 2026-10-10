@@ -138,6 +138,19 @@ public final class PDFViewerController {
         return anchor
     }
 
+    // MARK: Zoom
+
+    /// The page's scale (1 = actual size), as the view reports it, for the toolbar's readout.
+    public internal(set) var magnification: CGFloat = 1
+    public private(set) var pendingZoom: ImageViewerController.ZoomCommand?
+    public private(set) var pendingZoomVersion = 0
+
+    /// ⌘−, ⌘1, ⌘=, ⌘0 and the toolbar's zoom buttons, as the image viewer has them.
+    public func zoom(_ command: ImageViewerController.ZoomCommand) {
+        pendingZoom = command
+        pendingZoomVersion += 1
+    }
+
     // MARK: Find
 
     /// The find field over the document is showing (Edit › Find; PDFView has no find bar of its own).

@@ -2,6 +2,7 @@ import AppKit
 import Core
 import Foundation
 import PDFKit
+import SwiftUI
 import Testing
 @testable import Viewers
 
@@ -99,6 +100,38 @@ struct PDFViewerTests {
         #expect(controller.findMissed)
         controller.endFind()
         #expect(!controller.isFinding && !controller.findMissed)
+    }
+
+    /// A PDF zooms as a picture does: ⌘=, ⌘−, ⌘1 and ⌘0, and the toolbar shows the scale.
+    @Test @MainActor func zoomCommandsScaleTheDocument() async throws {
+        let controller = PDFViewerController(document: makePDF())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        let hosting = NSHostingView(rootView: PDFViewerView(controller: controller))
+        hosting.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T { return match }
+            for subview in view.subviews { if let found = find(type, in: subview) { return found } }
+            return nil
+        }
+        let pdfView = try #require(find(RegionCopyingPDFView.self, in: hosting))
+        func apply(_ command: ImageViewerController.ZoomCommand) async throws {
+            let version = controller.pendingZoomVersion
+            controller.zoom(command)
+            _ = version
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try await apply(.actualSize)
+        #expect(!pdfView.autoScales && abs(pdfView.scaleFactor - 1) < 0.001)
+        #expect(abs(controller.magnification - 1) < 0.001, "the toolbar reads 100%")
+        try await apply(.zoomIn)
+        #expect(pdfView.scaleFactor > 1 && abs(controller.magnification - pdfView.scaleFactor) < 0.001)
+        try await apply(.zoomOut)
+        try await apply(.zoomOut)
+        #expect(pdfView.scaleFactor < 1)
+        try await apply(.fit)
+        #expect(pdfView.autoScales)
     }
 
     @Test func textSourceFindsTextAcrossPages() {

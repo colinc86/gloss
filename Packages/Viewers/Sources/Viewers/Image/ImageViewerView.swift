@@ -203,36 +203,7 @@ public struct ImageViewerPane: View {
                             .transition(.opacity)
                     }
                 }
-                ToolGroup {
-                    Button { controller.zoom(.zoomOut) } label: { Image(systemName: "minus") }
-                        .keyboardShortcut("-", modifiers: [.command])
-                        .help("Zoom out")
-                    ToolDivider()
-                    Button { controller.zoom(.actualSize) } label: {
-                        Text("\(Int((controller.magnification * 100).rounded()))%")
-                            .monospacedDigit()
-                            .frame(minWidth: 38)
-                            .contentTransition(.numericText(value: controller.magnification))
-                    }
-                    .keyboardShortcut("1", modifiers: [.command])
-                    .help("Actual size")
-                    ToolDivider()
-                    Button { controller.zoom(.zoomIn) } label: { Image(systemName: "plus") }
-                        .keyboardShortcut("=", modifiers: [.command])
-                        .help("Zoom in")
-                }
-                .animation(Motion.snappy, value: controller.magnification)
-                ToolGroup {
-                    Button { controller.zoom(.fit) } label: {
-                        ViewThatFits(in: .horizontal) {
-                            Label("Fit", systemImage: "arrow.down.right.and.arrow.up.left").fixedSize()
-                            Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        }
-                    }
-                    .accessibilityLabel("Fit")
-                        .keyboardShortcut("0", modifiers: [.command])
-                        .help("Fit the image to the pane")
-                }
+                ZoomControls(magnification: controller.magnification, fitHelp: "Fit the image to the pane") { controller.zoom($0) }
             }
             .animation(Motion.smooth, value: controller.selection == nil)
             ImageViewerView(controller: controller)

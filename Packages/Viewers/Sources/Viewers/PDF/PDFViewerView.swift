@@ -179,6 +179,7 @@ public struct PDFViewerView: NSViewRepresentable {
         private var notePageRectsFor: [PDFHighlight]?
         private var appliedScroll = 0
         private var appliedFind = 0
+        private var appliedZoom = 0
 
         init(controller: PDFViewerController) {
             self.controller = controller
@@ -229,6 +230,19 @@ public struct PDFViewerView: NSViewRepresentable {
             container.overlay.needsDisplay = true
             applyTextHighlights()
             controller.noteGeometry.changed()
+            if appliedZoom != controller.pendingZoomVersion, let command = controller.pendingZoom {
+                appliedZoom = controller.pendingZoomVersion
+                let pdfView = container.pdfView
+                switch command {
+                case .fit: pdfView.autoScales = true
+                case .actualSize:
+                    pdfView.autoScales = false
+                    pdfView.scaleFactor = 1
+                case .zoomIn: pdfView.zoomIn(nil)
+                case .zoomOut: pdfView.zoomOut(nil)
+                }
+                controller.magnification = pdfView.scaleFactor
+            }
             _ = controller.foundVersion
             if appliedFind != controller.foundVersion, let found = controller.foundSelection {
                 appliedFind = controller.foundVersion
@@ -275,6 +289,7 @@ public struct PDFViewerView: NSViewRepresentable {
         private func viewChanged() {
             guard let pdfView = container?.pdfView else { return }
             if let page = pdfView.currentPage { controller.currentPage = controller.document.index(for: page) }
+            if abs(controller.magnification - pdfView.scaleFactor) > 0.001 { controller.magnification = pdfView.scaleFactor }
             container?.overlay.needsDisplay = true
             controller.noteGeometry.changed()
         }
@@ -342,6 +357,7 @@ public struct PDFViewerPane: View {
                             .transition(.opacity)
                     }
                 }
+                ZoomControls(magnification: controller.magnification, fitHelp: "Fit the page to the pane") { controller.zoom($0) }
                 ModeSwitch([
                     .init(false, "Text", symbol: "text.cursor"),
                     .init(true, "Region", symbol: "rectangle.dashed"),

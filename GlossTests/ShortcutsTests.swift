@@ -43,7 +43,7 @@ struct ShortcutsTests {
         let groups = ShortcutGroup.contextual
         #expect(ShortcutGroup.filtered("", in: groups).count == groups.count)
         let zoom = ShortcutGroup.filtered("zoom", in: groups)
-        #expect(zoom.flatMap { $0.items.map(\.action) } == ["Zoom in / out (images)"])
+        #expect(zoom.flatMap { $0.items.map(\.action) } == ["Zoom in / out (images, PDFs)"])
         #expect(ShortcutGroup.filtered("viewers", in: groups).first?.items.count == groups.first { $0.title == "Viewers" }?.items.count)
         #expect(ShortcutGroup.filtered("zzz", in: groups).isEmpty)
         #expect(ShortcutGroup.filtered("delete", in: groups).map(\.title) == ["Notes panel"], "the notes list's own keys are listed")

@@ -24,8 +24,8 @@ nonisolated struct ShortcutGroup: Identifiable {
         ]),
         ShortcutGroup(title: "Viewers", symbol: "photo", items: [
             ("Put the Add Note button away", ["esc"]),
-            ("Zoom in / out (images)", ["⌘", "=", "/", "⌘", "−"]),
-            ("Actual size / fit (images)", ["⌘", "1", "/", "⌘", "0"]),
+            ("Zoom in / out (images, PDFs)", ["⌘", "=", "/", "⌘", "−"]),
+            ("Actual size / fit (images, PDFs)", ["⌘", "1", "/", "⌘", "0"]),
             ("Move between cells (spreadsheets)", ["←", "→", "↑", "↓"]),
             ("Extend the cell selection", ["⇧", "←", "→", "↑", "↓"]),
             ("Clear the selection", ["esc"]),
