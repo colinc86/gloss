@@ -1,4 +1,5 @@
 import Foundation
+import Core
 
 /// The two documents a pull request is read through, rendered the same way every time from the same facts, so note
 /// anchors in them survive a re-render that changes nothing they point at.
@@ -31,7 +32,7 @@ enum PullRequestMarkdown {
         lines.append("- **\(path.repository) #\(pull.number)** · \(state(of: pull)) · by @\(pull.user.login)")
         var branches = "- `\(pull.base.ref)` ← `\(pull.head.ref)` (\(short))"
         if let additions = pull.additions, let deletions = pull.deletions {
-            branches += " · +\(additions) −\(deletions) in \(pull.changedFiles ?? files.count) files"
+            branches += " · +\(additions) −\(deletions) in \((pull.changedFiles ?? files.count).counted("file"))"
         }
         lines.append(branches)
         if !pull.labels.isEmpty { lines.append("- Labels: " + pull.labels.map(\.name).joined(separator: ", ")) }

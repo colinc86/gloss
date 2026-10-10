@@ -2130,7 +2130,7 @@ private struct BulkActionBar: View {
                 }
                 .buttonStyle(.glassProminent)
                 .disabled(!model.send.isTargetAvailable || model.send.isSending)
-                .help(model.send.lastTarget.map { "Send the \(sendable.count) drafts and sent notes to \($0.label)" } ?? "Choose an agent above first")
+                .help(model.send.lastTarget.map { sendable.count == 1 ? "Send the note to \($0.label)" : "Send the \(sendable.count) drafts and sent notes to \($0.label)" } ?? "Choose an agent above first")
             }
             if !resolvable.isEmpty {
                 InlineIconButton(title: "Resolve \(resolvable.count)", symbol: "checkmark.circle", emphasized: true) {
@@ -2165,6 +2165,6 @@ private struct BulkActionBar: View {
         .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.accentColor.opacity(0.25)))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(notes.count) notes selected")
+        .accessibilityLabel("\(notes.count.counted("note")) selected")
     }
 }
