@@ -29,6 +29,13 @@ struct ContentSearchTests {
         #expect(model.hits.isEmpty)
     }
 
+    /// Results come back in the same order every time: by path as the explorer sorts, then by line.
+    @Test func hitsAreInPathAndLineOrder() {
+        let hits = [SearchHit(path: "/r/file10.md", line: 1, text: ""), SearchHit(path: "/r/b/a.md", line: 9, text: ""),
+                    SearchHit(path: "/r/file2.md", line: 4, text: ""), SearchHit(path: "/r/b/a.md", line: 2, text: "")]
+        #expect(ContentSearchModel.ordered(hits).map { "\($0.path):\($0.line)" } == ["/r/b/a.md:2", "/r/b/a.md:9", "/r/file2.md:4", "/r/file10.md:1"])
+    }
+
     /// A match in a file that isn't UTF-8 (Latin-1, as old Windows projects have) is listed, read as the viewer reads it.
     @Test func findsMatchesInALatin1File() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-search-latin1-\(UUID().uuidString)").path

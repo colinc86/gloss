@@ -82,9 +82,18 @@ final class ContentSearchModel {
             }
             guard !Task.isCancelled, let self else { return }
             if failed, results.isEmpty { self.errorMessage = regex ? "Not a valid regular expression" : "Search failed" }
-            self.hits = Array(results.prefix(500))
+            self.hits = Array(Self.ordered(results).prefix(500))
             self.truncated = results.count > 500
             self.isSearching = false
+        }
+    }
+
+    /// Hits in the explorer's order, by path (numbers in order, as `file2` before `file10`) and then line: rg searches
+    /// files in parallel and reports them as they finish, so the same search came back in a different order each time.
+    nonisolated static func ordered(_ hits: [SearchHit]) -> [SearchHit] {
+        hits.sorted { lhs, rhs in
+            if lhs.path != rhs.path { return lhs.path.localizedStandardCompare(rhs.path) == .orderedAscending }
+            return lhs.line < rhs.line
         }
     }
 
