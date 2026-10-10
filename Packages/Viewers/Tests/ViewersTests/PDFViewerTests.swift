@@ -116,21 +116,21 @@ struct PDFViewerTests {
             return nil
         }
         let pdfView = try #require(find(RegionCopyingPDFView.self, in: hosting))
-        func apply(_ command: ImageViewerController.ZoomCommand) async throws {
-            let version = controller.pendingZoomVersion
+        // Each command waits until the view has applied it (a fixed wait was too short under a full run).
+        func apply(_ command: ImageViewerController.ZoomCommand, until applied: () -> Bool) async throws {
             controller.zoom(command)
-            _ = version
-            try await Task.sleep(for: .milliseconds(100))
+            for _ in 0..<100 where !applied() { try await Task.sleep(for: .milliseconds(20)) }
         }
-        try await apply(.actualSize)
+        try await apply(.actualSize) { !pdfView.autoScales && abs(pdfView.scaleFactor - 1) < 0.001 }
         #expect(!pdfView.autoScales && abs(pdfView.scaleFactor - 1) < 0.001)
         #expect(abs(controller.magnification - 1) < 0.001, "the toolbar reads 100%")
-        try await apply(.zoomIn)
+        try await apply(.zoomIn) { pdfView.scaleFactor > 1 }
         #expect(pdfView.scaleFactor > 1 && abs(controller.magnification - pdfView.scaleFactor) < 0.001)
-        try await apply(.zoomOut)
-        try await apply(.zoomOut)
+        let zoomedIn = pdfView.scaleFactor
+        try await apply(.zoomOut) { pdfView.scaleFactor < zoomedIn }
+        try await apply(.zoomOut) { pdfView.scaleFactor < 1 }
         #expect(pdfView.scaleFactor < 1)
-        try await apply(.fit)
+        try await apply(.fit) { pdfView.autoScales }
         #expect(pdfView.autoScales)
     }
 
