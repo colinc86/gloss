@@ -164,6 +164,34 @@ struct MarkdownRendererTests {
         #expect(RenderedTextView.plainText(output.text.string).contains("let a = \"x\"\nfunc f() {}"), "copy turns separators into newlines")
     }
 
+    /// A render after an edit elsewhere reuses an unchanged code block's colours instead of parsing it again, with
+    /// the same result; an edited block is parsed afresh.
+    @Test func unchangedCodeBlocksKeepTheirColoursWithoutAParse() {
+        let name = "token_\(UUID().uuidString.prefix(8).lowercased())"
+        let code = "let \(name) = \"x\"\nfunc f() {}\n"
+        let source = "Intro\n\n```swift\n\(code)```\n"
+        func cached(_ code: String) -> [HighlightCapture]? {
+            MarkdownRenderer.highlightCache.withLock { $0.captures(for: .init(grammar: "swift", code: code)) }
+        }
+        #expect(cached(code) == nil)
+        let first = MarkdownRenderer.render(source)
+        let stored = cached(code)
+        #expect(stored?.isEmpty == false, "the block's captures are kept")
+        #expect(stored == Highlighter(languageName: "swift", text: code)?.captures, "as a fresh parse finds them")
+
+        let again = MarkdownRenderer.render(source + "\nMore text.\n")
+        let range = (first.text.string as NSString).range(of: "func f() {}")
+        func colours(_ output: MarkdownRenderer.Output) -> [NSColor?] {
+            (0..<range.length).map { output.text.attribute(.foregroundColor, at: range.location + $0, effectiveRange: nil) as? NSColor }
+        }
+        #expect(colours(again) == colours(first), "the same colours from the cache")
+        #expect(colours(first).contains(SyntaxTheme.color(forCapture: "keyword")))
+
+        let edited = code.replacingOccurrences(of: "func f", with: "func g")
+        _ = MarkdownRenderer.render(source.replacingOccurrences(of: code, with: edited))
+        #expect(cached(edited)?.isEmpty == false, "an edited block is parsed and kept under its new text")
+    }
+
     @Test func fenceInfoStringsMapToGrammars() {
         #expect(MarkdownRenderer.grammarName(forFence: "swift") == "swift")
         #expect(MarkdownRenderer.grammarName(forFence: "sh") == "bash")

@@ -2,6 +2,7 @@ import AppKit
 import Core
 import Foundation
 import Markdown
+import Synchronization
 
 /// Renders markdown source into an attributed string whose runs remember where they came from.
 ///
@@ -71,6 +72,42 @@ public struct MarkdownRenderer {
     nonisolated static let lineSeparator = "\u{2028}"
     /// Code blocks longer than this are shown without syntax colours.
     static let highlightLimit = 20_000
+
+    /// Code blocks' highlight captures by grammar and code. A document renders again 150 ms after each edit and
+    /// whenever a picture or diagram arrives, and each render parsed every code block anew: half of a 360 KB
+    /// document's two-second render. An unchanged block now reuses its captures.
+    nonisolated static let highlightCache = Mutex(HighlightCache())
+
+    nonisolated struct HighlightCache: ~Copyable {
+        struct Key: Hashable { let grammar: String; let code: String }
+        private var entries: [Key: [HighlightCapture]] = [:]
+        private var size = 0
+        /// Code held at most, in UTF-16 units; past it the cache starts over rather than tracking use.
+        static let capacity = 4_000_000
+
+        func captures(for key: Key) -> [HighlightCapture]? { entries[key] }
+
+        mutating func store(_ captures: [HighlightCapture], for key: Key) {
+            let length = key.code.utf16.count
+            if size + length > Self.capacity {
+                entries = [:]
+                size = 0
+            }
+            entries[key] = captures
+            size += length
+        }
+
+        var count: Int { entries.count }
+    }
+
+    /// The captures for `code` in `grammar`, from the cache or a fresh parse; nil when the grammar can't be loaded.
+    static func highlightCaptures(grammar: String, code: String) -> [HighlightCapture]? {
+        let key = HighlightCache.Key(grammar: grammar, code: code)
+        if let cached = highlightCache.withLock({ $0.captures(for: key) }) { return cached }
+        guard let captures = Highlighter(languageName: grammar, text: code)?.captures else { return nil }
+        highlightCache.withLock { $0.store(captures, for: key) }
+        return captures
+    }
 
     struct Style {
         var font: NSFont = MarkdownRenderer.bodyFont
@@ -425,9 +462,9 @@ public struct MarkdownRenderer {
         /// one-unit line separator, so capture offsets carry over unchanged.
         private mutating func colorCode(_ code: String, language: String?, renderedStart: Int) {
             guard code.utf16.count <= MarkdownRenderer.highlightLimit, let name = MarkdownRenderer.grammarName(forFence: language),
-                  let highlighter = Highlighter(languageName: name, text: code) else { return }
+                  let captures = MarkdownRenderer.highlightCaptures(grammar: name, code: code) else { return }
             let renderedLength = output.length - renderedStart
-            for capture in highlighter.captures {
+            for capture in captures {
                 guard let color = SyntaxTheme.color(forCapture: capture.name) else { continue }
                 let location = capture.range.location
                 let end = min(location + capture.range.length, renderedLength)
