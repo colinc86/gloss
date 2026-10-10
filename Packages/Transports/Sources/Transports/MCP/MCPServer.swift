@@ -344,7 +344,7 @@ public actor MCPServer {
         Tool(
             name: "list_pending_notes",
             description: "Notes the user has sent you that are not resolved yet, each with whose turn it is (waiting: user when you asked something they haven't answered) and how many messages its thread has. Filter by host (\"local\", an ssh alias, or \"github\", \"atlassian\" or \"web\" for notes on pull requests, Jira issues and Confluence pages, and web pages) and/or an absolute path prefix.",
-            inputSchema: ["type": "object", "properties": ["host": ["type": "string"], "path": ["type": "string", "description": "absolute file path or directory prefix"]], "additionalProperties": false],
+            inputSchema: ["type": "object", "properties": ["host": ["type": "string"], "path": ["type": "string", "description": "absolute file path or directory prefix (a file:// link works too)"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true)
         ),
         Tool(
@@ -378,14 +378,14 @@ public actor MCPServer {
         Tool(
             name: "open_in_viewer",
             description: "Show a file in Gloss's viewer, scrolled to a line, so the user can look at what you are pointing at. The path is on the machine you run on unless host names another. Give url instead for a GitHub pull request (https://github.com/o/r/pull/12, optionally /files/<path>), a Jira issue (https://<site>/browse/KEY) or Confluence page (https://<site>/wiki/spaces/KEY/pages/<id>) of the user's saved site, or any web page; a file:// link is read as its path.",
-            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path"], "url": ["type": "string", "description": "a pull request, Jira issue, Confluence page or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "end_line": ["type": "integer", "minimum": 1, "description": "selects line through end_line"], "host": ["type": "string", "description": "\"local\", an ssh alias, \"github\" or \"atlassian\"; defaults to your machine"]], "additionalProperties": false],
+            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute path, or a file:// link; path:line opens at the line"], "url": ["type": "string", "description": "a pull request, Jira issue, Confluence page or web page URL, instead of path"], "line": ["type": "integer", "minimum": 1], "end_line": ["type": "integer", "minimum": 1, "description": "selects line through end_line"], "host": ["type": "string", "description": "\"local\", an ssh alias, \"github\" or \"atlassian\"; defaults to your machine"]], "additionalProperties": false],
             annotations: .init(readOnlyHint: true, idempotentHint: true, openWorldHint: false)
         ),
         Tool(
             name: "ask_user",
             description: "Ask the user something about a place in a file: content you made or changed that they should review, or a decision only they can make. The question appears in Gloss beside that text, under Attention; the user's answer comes back to you as a note when they send it. Give the lines, or the exact text, it is about; neither means the whole file. Don't use it for progress reports.",
             inputSchema: ["type": "object", "properties": [
-                "path": ["type": "string", "description": "absolute path on your machine (or on host)"],
+                "path": ["type": "string", "description": "absolute path on your machine (or on host), or a file:// link; path:line asks about that line"],
                 "question": ["type": "string"],
                 "line": ["type": "integer", "minimum": 1],
                 "end_line": ["type": "integer", "minimum": 1],
@@ -397,7 +397,7 @@ public actor MCPServer {
         Tool(
             name: "add_favorite",
             description: "Keep a project folder at hand: adds it to the favorites in Gloss's explorer (if it isn't one) and opens it.",
-            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute folder path"], "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"]], "required": ["path"], "additionalProperties": false],
+            inputSchema: ["type": "object", "properties": ["path": ["type": "string", "description": "absolute folder path, or a file:// link"], "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"]], "required": ["path"], "additionalProperties": false],
             annotations: .init(readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false)
         ),
         Tool(
