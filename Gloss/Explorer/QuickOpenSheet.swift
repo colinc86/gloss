@@ -158,7 +158,7 @@ struct QuickOpenSheet: View {
                 Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (name as NSString).pathExtension) ?? .data))
                     .resizable()
                     .frame(width: 18, height: 18)
-                Text(Self.highlighted(name, query: query))
+                Text(Self.highlighted(name, query: QuickOpenModel.nameQuery(query, root: model.quickOpen.root ?? "/")))
                     .lineLimit(1)
                 if !folder.isEmpty {
                     Text(folder)
@@ -191,17 +191,17 @@ struct QuickOpenSheet: View {
         }
     }
 
-    /// The name with the query's characters (matched in order, case-insensitively) in the accent colour and bold;
-    /// the rest at regular weight, so the eye sees why each file matched.
+    /// The name with the query's characters (matched in order, ignoring case and accents as the ranking does) in the
+    /// accent color and bold; the rest at regular weight, so the eye sees why each file matched.
     static func highlighted(_ name: String, query: String) -> AttributedString {
         var result = AttributedString(name)
-        let needle = Array(query.lowercased().filter { !$0.isWhitespace })
+        let needle = FuzzyMatcher.folded(query.filter { !$0.isWhitespace })
         guard !needle.isEmpty else { return result }
         var index = result.startIndex
         var next = 0
         for character in name {
             let end = result.index(afterCharacter: index)
-            if next < needle.count, Character(String(character).lowercased()) == needle[next] {
+            if next < needle.count, FuzzyMatcher.fold(character) == needle[next] {
                 result[index..<end].foregroundColor = .accentColor
                 result[index..<end].inlinePresentationIntent = .stronglyEmphasized
                 next += 1

@@ -143,6 +143,15 @@ final class QuickOpenModel {
         return path.hasPrefix(prefix) ? String(path.dropFirst(prefix.count)) : query
     }
 
+    /// The part of a query a file's name is lit by: as ranked (a path inside the root made relative), without a
+    /// `:line`, and from its last `/` on, since only the name is lit (`src/main` lights `main`).
+    static func nameQuery(_ query: String, root: String) -> String {
+        let relative = withinRoot(query, root: root)
+        let split = splitLine(relative)
+        let text = split.line == nil ? relative : split.text
+        return text.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? text
+    }
+
     /// Every row in order.
     var rows: [Row] {
         let addressRow = address.map { [Row.address($0)] } ?? []

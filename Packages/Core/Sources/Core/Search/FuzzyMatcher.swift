@@ -21,13 +21,13 @@ public enum FuzzyMatcher {
 
     /// A string's characters as they are compared. Most paths are ASCII, where lowercasing the whole string is all
     /// folding does, and much quicker than a character at a time.
-    static func folded(_ text: String) -> [Character] {
+    public static func folded(_ text: String) -> [Character] {
         text.utf8.allSatisfy { $0 < 0x80 } ? Array(text.lowercased()) : text.map(fold)
     }
 
     /// One character as it is compared: lowercase, and without its accents (`resume` finds `Résumé.md`, as the notes
     /// panel's search does), always one character so positions in the path keep their meaning.
-    static func fold(_ character: Character) -> Character {
+    public static func fold(_ character: Character) -> Character {
         if character.isASCII { return Character(character.lowercased()) }
         let folded = String(character).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
         if folded.count == 1, let only = folded.first { return only }
