@@ -394,6 +394,7 @@ final class AppModel {
             Task { await self?.createWholeFileNote(hostID: hostID, path: path, body: body, color: color) }
         }
         quickOpen.onOpen = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+        quickOpen.onOpenAtLine = { [weak self] hostID, path, line in self?.openDocument(hostID: hostID, path: path, line: line) }
         quickOpen.onOpenAddress = { [weak self] url in
             guard let self else { return }
             openWebPage(url, via: via(for: url, on: addressHost, chosen: false))

@@ -46,6 +46,17 @@ final class QuickOpenModel {
     @ObservationIgnored private var submitWhenReady = false
     /// Opens a path on `hostID`; set by the app.
     @ObservationIgnored var onOpen: (HostID, String) -> Void = { _, _ in }
+    /// Opens a path at a line, for a query ending in `:line` (as agents print locations); set by the app.
+    @ObservationIgnored var onOpenAtLine: (HostID, String, Int) -> Void = { _, _, _ in }
+
+    /// `Sources/App.swift:42` (or `:42:7`) is that file at line 42: the files are matched on what comes before.
+    nonisolated static func splitLine(_ query: String) -> (text: String, line: Int?) {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard let match = trimmed.wholeMatch(of: /(.*?[^:\s]):(\d{1,7})(?::\d{1,7})?/), let line = Int(match.output.2), line > 0 else {
+            return (query, nil)
+        }
+        return (String(match.output.1), line)
+    }
     /// Opens a typed address; set by the app.
     @ObservationIgnored var onOpenAddress: (URL) -> Void = { _ in }
     /// Opens a visited page; set by the app.
@@ -164,7 +175,7 @@ final class QuickOpenModel {
             guard let path = selectedPath else { return }
             let hostID = hostID
             dismiss()
-            onOpen(hostID, path)
+            if let line = Self.splitLine(query).line { onOpenAtLine(hostID, path, line) } else { onOpen(hostID, path) }
         case nil:
             break
         }
@@ -193,7 +204,7 @@ final class QuickOpenModel {
     private func rerank() {
         rankTask?.cancel()
         guard root != nil else { return }
-        let query = query
+        let query = Self.splitLine(query).text
         let candidates = candidates
         isRanking = true
         rankTask = Task { [weak self] in

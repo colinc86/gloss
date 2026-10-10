@@ -174,4 +174,28 @@ struct QuickOpenTests {
         #expect(quick.errorMessage == "Not connected to this folder's host")
         #expect(!quick.isLoading && quick.results.isEmpty)
     }
+
+    /// A location as agents print it, `path:line`, finds the file and opens it at that line.
+    @Test func aLocationOpensItsFileAtTheLine() async throws {
+        #expect(QuickOpenModel.splitLine("Sources/App.swift:42") == ("Sources/App.swift", 42))
+        #expect(QuickOpenModel.splitLine("App.swift:42:7") == ("App.swift", 42))
+        #expect(QuickOpenModel.splitLine("App.swift").line == nil)
+        #expect(QuickOpenModel.splitLine("notes 10:30") == ("notes 10", 30), "a trailing number after a colon is a line")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-quick-line-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try FileManager.default.createDirectory(atPath: "\(root)/Notes", withIntermediateDirectories: true)
+        try "x".write(toFile: "\(root)/Notes/NotesPanelModel.swift", atomically: true, encoding: .utf8)
+        try "x".write(toFile: "\(root)/README.md", atomically: true, encoding: .utf8)
+        let quick = QuickOpenModel()
+        var opened: (String, Int)?
+        quick.onOpenAtLine = { _, path, line in opened = (path, line) }
+        quick.present(root: root, hostID: .local, connection: nil)
+        for _ in 0..<100 where quick.isLoading { try await Task.sleep(for: .milliseconds(20)) }
+        quick.query = "NotesPanelModel.swift:12"
+        for _ in 0..<100 where quick.results.first != "Notes/NotesPanelModel.swift" { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(quick.results.first == "Notes/NotesPanelModel.swift")
+        quick.selectedIndex = quick.rows.firstIndex { if case .file = $0 { true } else { false } } ?? 0
+        quick.submit()
+        #expect(opened?.0 == "\(root)/Notes/NotesPanelModel.swift" && opened?.1 == 12)
+    }
 }
