@@ -4,16 +4,29 @@ import Remote
 
 /// One tmux pane, locally or on a host.
 public struct TmuxPane: Sendable, Hashable, Codable {
-    /// `session:window.pane`, the form every tmux `-t` accepts.
+    /// `session:window.pane`, the form every tmux `-t` accepts, as the pane is named to the user.
     public var target: String
     public var command: String
     public var path: String
+    /// tmux's own id for the pane (`%12`): it stays the pane's while the server runs, where `session:window.pane`
+    /// moves on to another pane when windows or panes are closed and renumbered. Nil for a pane remembered by an
+    /// older build.
+    public var paneID: String?
 
-    public init(target: String, command: String, path: String) {
+    public init(target: String, command: String, path: String, paneID: String? = nil) {
         self.target = target
         self.command = command
         self.path = path
+        self.paneID = paneID
     }
+
+    enum CodingKeys: String, CodingKey {
+        case target, command, path
+        case paneID = "pane_id"
+    }
+
+    /// What a packet is sent to: the pane's id when known, so it never lands in whatever pane took this one's number.
+    public var sendTarget: String { paneID ?? target }
 
     /// Commands that usually mean an agent is running in the pane; those targets sort first.
     public static let agentCommands: Set<String> = ["claude", "node", "codex", "opencode", "gemini", "pi", "amp", "aider"]
@@ -31,7 +44,7 @@ public actor TmuxTransport: Transport {
     /// `-L <name>`: a private server, used by the tests so no user session or buffer is ever touched.
     private let socketName: String?
 
-    public static let listFormat = "#{session_name}:#{window_index}.#{pane_index}\t#{pane_current_command}\t#{pane_current_path}"
+    public static let listFormat = "#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_current_command}\t#{pane_current_path}"
 
     public init(registry: ConnectionRegistry, localTmuxPath: String? = TmuxTransport.locateTmux(), socketName: String? = nil) {
         self.registry = registry
@@ -73,9 +86,10 @@ public actor TmuxTransport: Transport {
 
     nonisolated static func parsePanes(_ text: String) -> [TmuxPane] {
         text.split(separator: "\n").compactMap { line in
-            let parts = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
-            guard parts.count == 3, !parts[0].isEmpty else { return nil }
-            return TmuxPane(target: parts[0], command: parts[1], path: parts[2])
+            // The path last: it may hold a tab of its own.
+            let parts = line.split(separator: "\t", maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 4, parts[0].hasPrefix("%"), !parts[1].isEmpty else { return nil }
+            return TmuxPane(target: parts[1], command: parts[2], path: parts[3], paneID: parts[0])
         }
     }
 
@@ -128,7 +142,7 @@ public actor TmuxTransport: Transport {
 
     public func deliver(_ packet: Packet, attachments: [StagedAttachment], to target: AgentTarget) async throws -> DeliveryReceipt {
         guard let pane = Self.pane(from: target) else { throw DeliveryError.targetUnavailable("not a tmux pane") }
-        let script = Self.deliverScript(tmux: tmuxInvocation, target: pane.target)
+        let script = Self.deliverScript(tmux: tmuxInvocation, target: pane.sendTarget)
         let stdin = Data(packet.text.utf8)
         let result: ExecResult
         if target.hostID == .local {

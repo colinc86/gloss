@@ -57,7 +57,8 @@ public struct AgentTarget: Identifiable, Hashable, Codable, Sendable {
         func value(_ key: String) -> String { fields[key].map { "\($0)" } ?? "" }
         let key: String? = switch transport {
         case .herdr: fields["pane_id"] == nil ? nil : "\(value("pane_id")) \(value("agent"))"
-        case .tmux: fields["target"] == nil ? nil : value("target")
+        // A pane by tmux's id when it was listed with one: its `session:window.pane` can pass to another pane.
+        case .tmux: fields["pane_id"] != nil ? value("pane_id") : fields["target"] == nil ? nil : value("target")
         case .opencode: fields["session_id"] == nil ? nil : "\(value("base_url")) \(value("session_id"))"
         default: nil
         }

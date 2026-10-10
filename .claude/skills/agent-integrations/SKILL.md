@@ -51,7 +51,7 @@ tmux send-keys -t <target> Enter
 tmux delete-buffer -b cc
 ```
 
-Over SSH run the same through the exec channel; pipe the packet into `ssh <host> tmux load-buffer -b gloss -`. Discover panes with `tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index} #{pane_current_command} #{pane_current_path}'` and let the user pick once per host; store in `target`. Agent panes usually show `node` (Claude Code), `codex`, or `opencode` as the current command.
+Over SSH run the same through the exec channel; pipe the packet into `ssh <host> tmux load-buffer -b gloss -`. Discover panes with `tmux list-panes -a -F '#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_current_command}\t#{pane_current_path}'` and let the user pick once per host; store the `session:window.pane` name in `target` for display and send to `pane_id` (`%12`): closing and renumbering windows hands a `session:window.pane` to another pane, while a pane id stays with its pane for the server's life. Agent panes usually show `node` (Claude Code), `codex`, or `opencode` as the current command.
 
 ## Shared MCP server surface (what every agent sees)
 
