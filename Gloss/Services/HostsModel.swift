@@ -272,3 +272,22 @@ final class HostsModel {
         }
     }
 }
+
+/// What the Add Host form accepts. ssh is given the name as its destination and the port as `-o Port=`, so a name with
+/// a space or a leading hyphen (which ssh would read as an option) can't work, and a name taken by another host
+/// (Gloss's own `local`, `web`, `github`, `atlassian` included) would fail to save.
+enum HostForm {
+    nonisolated static let reservedNames: Set<String> = Set(HostKind.allCases.filter { $0 != .ssh }.map(\.rawValue))
+
+    /// Why the form can't be saved, for the line under it; nil when it can (an empty name just leaves Save off).
+    nonisolated static func problem(name rawName: String, port rawPort: String, taken: Set<String>) -> String? {
+        let name = rawName.trimmingCharacters(in: .whitespaces)
+        let port = rawPort.trimmingCharacters(in: .whitespaces)
+        if name.contains(where: \.isWhitespace) { return "A name can't contain spaces." }
+        if name.hasPrefix("-") { return "A name can't start with a hyphen." }
+        if reservedNames.contains(name.lowercased()) { return "“\(name)” is a name Gloss uses for itself." }
+        if taken.contains(name) { return "Another host is already called “\(name)”." }
+        if !port.isEmpty, !(Int(port).map { (1...65535).contains($0) } ?? false) { return "The port is a number from 1 to 65535." }
+        return nil
+    }
+}

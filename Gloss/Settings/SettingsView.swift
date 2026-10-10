@@ -571,7 +571,7 @@ private struct HostsSettings: View {
                  : "Its settings, recent folders, and \(notes) note\(notes == 1 ? "" : "s") on its files are deleted from the app. This can't be undone. Your ssh config is not touched.")
         }
         .sheet(item: $editing) { draft in
-            HostEditor(draft: draft) { name, options in
+            HostEditor(draft: draft, taken: Set(model.hosts.entries.filter { $0.id != draft.hostID }.map(\.name))) { name, options in
                 Task { try? await model.hosts.save(id: draft.hostID, name: name, options: options) }
             }
         }
@@ -610,6 +610,8 @@ struct HostDraft: Identifiable {
 
 private struct HostEditor: View {
     let draft: HostDraft
+    /// Other hosts' names: a host can't take one.
+    let taken: Set<String>
     let save: (String, HostOptions) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
@@ -634,6 +636,11 @@ private struct HostEditor: View {
             .formStyle(.columns)
             Text("The name is what the sidebar shows and what `ssh` is given as the destination, so a name that is also an alias in ~/.ssh/config inherits that alias's settings.")
                 .font(.caption).foregroundStyle(.secondary)
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -642,7 +649,7 @@ private struct HostEditor: View {
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || name == "local")
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || problem != nil)
             }
         }
         .padding(20)
@@ -655,6 +662,8 @@ private struct HostEditor: View {
             identityFile = draft.options.identityFile
         }
     }
+
+    private var problem: String? { HostForm.problem(name: name, port: port, taken: taken) }
 
     private func chooseKey() {
         let panel = NSOpenPanel()
