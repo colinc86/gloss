@@ -4,6 +4,10 @@ import AppKit
 public nonisolated enum SyntaxTheme {
     nonisolated private static let colors: [String: NSColor] = [
         "keyword": .systemPurple,
+        "diff.plus": .systemGreen,
+        "diff.minus": .systemRed,
+        "diff.hunk": .systemPurple,
+        "diff.header": .secondaryLabelColor,
         "keyword.function": .systemPurple,
         "keyword.return": .systemPurple,
         "keyword.operator": .systemPurple,

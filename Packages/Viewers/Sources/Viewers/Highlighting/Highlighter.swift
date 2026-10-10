@@ -12,7 +12,8 @@ public final class Highlighter {
     public static let maximumLength = 1_000_000
 
     public let languageName: String
-    private var layer: LanguageLayer
+    /// Nil for a language coloured by line rather than parsed (`diff`).
+    private var layer: LanguageLayer?
     /// Whether the grammar can embed other languages (markdown code blocks, HTML scripts).
     private let hasInjections: Bool
     private var text: String
@@ -35,7 +36,16 @@ public final class Highlighter {
     public private(set) var generation = 0
 
     public init?(languageName: String, text: String) {
-        guard text.utf16.count <= Self.maximumLength, let configuration = GrammarCatalog.configuration(forLanguage: languageName) else { return nil }
+        guard text.utf16.count <= Self.maximumLength else { return nil }
+        if languageName == Self.diffLanguage {
+            self.languageName = languageName
+            self.text = text
+            hasInjections = false
+            layer = nil
+            captures = Self.diffCaptures(text)
+            return
+        }
+        guard let configuration = GrammarCatalog.configuration(forLanguage: languageName) else { return nil }
         self.languageName = languageName
         self.text = text
         hasInjections = configuration.queries[.injections] != nil
@@ -45,8 +55,39 @@ public final class Highlighter {
             Self.log.error("LanguageLayer for \(languageName, privacy: .public) failed: \(error, privacy: .public)")
             return nil
         }
-        layer.replaceContent(with: text)
+        layer?.replaceContent(with: text)
         rehighlight()
+    }
+
+    /// A unified diff has no grammar here; its lines are coloured by their first character, as GitHub colours them.
+    nonisolated static let diffLanguage = "diff"
+
+    /// Additions, removals, hunk headers and file headers (`diff`, `index`, `---`, `+++`), one capture per line.
+    nonisolated static func diffCaptures(_ text: String) -> [HighlightCapture] {
+        let ns = text as NSString
+        var captures: [HighlightCapture] = []
+        var location = 0
+        while location < ns.length {
+            let line = ns.lineRange(for: NSRange(location: location, length: 0))
+            var end = NSMaxRange(line)
+            while end > line.location, let scalar = Unicode.Scalar(ns.character(at: end - 1)), CharacterSet.newlines.contains(scalar) { end -= 1 }
+            let content = NSRange(location: line.location, length: end - line.location)
+            let first = content.length > 0 ? ns.substring(with: NSRange(location: content.location, length: min(content.length, 6))) : ""
+            let name: String? = if first.hasPrefix("+++") || first.hasPrefix("---") || first.hasPrefix("diff ") || first.hasPrefix("index ") {
+                "diff.header"
+            } else if first.hasPrefix("@@") {
+                "diff.hunk"
+            } else if first.hasPrefix("+") {
+                "diff.plus"
+            } else if first.hasPrefix("-") {
+                "diff.minus"
+            } else {
+                nil
+            }
+            if let name { captures.append(HighlightCapture(name: name, range: content)) }
+            location = NSMaxRange(line)
+        }
+        return captures
     }
 
     nonisolated private static func makeLayer(_ configuration: LanguageConfiguration, depth: Int = 3) throws -> LanguageLayer {
@@ -66,16 +107,21 @@ public final class Highlighter {
         text.utf16.count <= embeddedLanguageLimit ? 3 : 0
     }
 
-    private var hasSublayers: Bool { hasInjections && layer.snapshot()?.sublayerSnapshots.isEmpty == false }
+    private var hasSublayers: Bool { hasInjections && layer?.snapshot()?.sublayerSnapshots.isEmpty == false }
 
     /// Full reparse, for reloads.
     public func replaceAll(with newText: String) {
         text = newText
+        guard layer != nil else {
+            editCount += 1
+            captures = Self.diffCaptures(newText)
+            return
+        }
         editCount += 1
         if hasInjections, let configuration = GrammarCatalog.configuration(forLanguage: languageName), let fresh = try? Self.makeLayer(configuration, depth: Self.depth(for: newText)) {
             layer = fresh   // a reused layer would keep stale embedded languages
         }
-        layer.replaceContent(with: newText)
+        layer?.replaceContent(with: newText)
         mayBeStale = false
         rehighlight()
     }
@@ -99,6 +145,11 @@ public final class Highlighter {
             return
         }
         editCount += 1
+        // A diff is coloured line by line: the whole text again is cheaper than tracking the edit.
+        guard let layer else {
+            captures = Self.diffCaptures(newText)
+            return
+        }
         let hadSublayers = hasSublayers
         let invalidated = layer.didChangeContent(LanguageLayer.Content(string: newText), using: inputEdit)
         rehighlight(after: edit, replacementLength: replacementLength, invalidated: invalidated, newIndex: newIndex)
@@ -134,7 +185,7 @@ public final class Highlighter {
     /// Work that builds a fresh layer for the current text, safe to run off the main actor; nil when nothing is
     /// stale. Pass its result to `adopt`.
     public func backgroundRebuild() -> (@Sendable () -> Rebuild?)? {
-        guard mayBeStale else { return nil }
+        guard mayBeStale, let layer else { return nil }
         let text = text
         let languageName = languageName
         let version = editCount
@@ -164,6 +215,7 @@ public final class Highlighter {
     /// whole lines) and shifts every other capture. Querying the whole document on each keystroke cost 68 ms on
     /// an 81 KB file in a release build (340 ms in debug), close to a second near the size limit.
     private func rehighlight(after edit: NSRange, replacementLength: Int, invalidated: IndexSet, newIndex: LineIndex) {
+        guard let layer else { return }
         let length = text.utf16.count
         // What to query again, in post-edit coordinates, widened to whole lines.
         var region = invalidated
@@ -253,6 +305,7 @@ public final class Highlighter {
     }
 
     private func rehighlight() {
+        guard let layer else { return }
         let full = NSRange(location: 0, length: text.utf16.count)
         do {
             captures = try layer.highlights(in: full, provider: text.predicateTextProvider).compactMap(HighlightCapture.init).sorted(by: Self.order)
@@ -285,7 +338,7 @@ public final class Highlighter {
 
     /// The smallest syntax node strictly containing `range`, for expand-selection.
     public func enclosingNodeRange(of range: NSRange) -> NSRange? {
-        guard let snapshot = layer.snapshot(), let root = snapshot.rootSnapshot.tree.rootNode else { return nil }
+        guard let snapshot = layer?.snapshot(), let root = snapshot.rootSnapshot.tree.rootNode else { return nil }
         let bytes = UInt32(range.location * 2)..<UInt32((range.location + range.length) * 2)
         var node = root.descendant(in: bytes)
         while let current = node {

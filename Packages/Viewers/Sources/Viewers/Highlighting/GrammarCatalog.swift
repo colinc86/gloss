@@ -59,6 +59,8 @@ public nonisolated enum GrammarCatalog {
         "toml": "toml",
         "rs": "rust",
         "go": "go",
+        // No grammar: `Highlighter` colours a diff by its lines' first characters.
+        "diff": "diff", "patch": "diff",
     ]
 
     nonisolated private static let fileNames: [String: String] = [

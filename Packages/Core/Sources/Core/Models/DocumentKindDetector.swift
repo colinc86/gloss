@@ -13,9 +13,9 @@ public enum DocumentKindDetector {
         "json", "jsonc", "jsonl", "ndjson", "yaml", "yml", "toml", "xml", "plist", "html", "htm", "css", "scss", "less", "vue", "svelte",
         "dart", "ex", "exs", "erl", "hs", "ml", "clj", "cljs", "lisp", "el", "nix", "zig", "proto", "graphql", "gql",
         "cmake", "make", "mk", "gradle", "tf", "hcl", "dockerfile", "ini", "cfg", "conf", "env", "lock", "pbxproj",
-        "entitlements", "xcconfig", "strings", "xcstrings", "podspec", "rake", "gemspec",
+        "entitlements", "xcconfig", "strings", "xcstrings", "podspec", "rake", "gemspec", "diff", "patch",
     ]
-    public static let textExtensions: Set<String> = ["txt", "text", "log", "rst", "org", "adoc", "asciidoc", "tex", "bib", "diff", "patch", "nfo", "me", "1st"]
+    public static let textExtensions: Set<String> = ["txt", "text", "log", "rst", "org", "adoc", "asciidoc", "tex", "bib", "nfo", "me", "1st"]
     public static let textFileNames: Set<String> = [
         "makefile", "dockerfile", "readme", "license", "licence", "copying", "authors", "changelog", "todo", "notes",
         "gemfile", "rakefile", "podfile", "cartfile", "brewfile", "justfile", "procfile", "vagrantfile", ".gitignore",
