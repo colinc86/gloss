@@ -49,6 +49,23 @@ struct CSVParserTests {
     }
 
     /// The limit counts data rows, not the header, and the table says when the file had more.
+    /// Excel's `sep=;` first line names the delimiter and isn't a row: the header is the line after it, and rows
+    /// keep their own line numbers.
+    @Test func excelsSeparatorLineNamesTheDelimiter() {
+        let text = "sep=;\nName;Price, EUR\nTea;3,50\n"
+        #expect(CSVParser.delimiter(for: text, fileName: "prices.csv") == ";", "not the comma the counts would pick")
+        let table = CSVParser.parse(text, delimiter: CSVParser.delimiter(for: text, fileName: "prices.csv"))
+        #expect(table.header == ["Name", "Price, EUR"])
+        #expect(table.rows.map(\.fields) == [["Tea", "3,50"]])
+        #expect(table.rows.first?.firstLine == 3)
+        let comma = "SEP=,\r\na,b\r\n1,2\r\n"
+        #expect(CSVParser.delimiter(for: comma, fileName: "x.csv") == ",")
+        #expect(CSVParser.parse(comma, delimiter: ",").header == ["a", "b"])
+        #expect(CSVParser.parse("sep=;\nA;B\n", delimiter: ";", hasHeader: false).rows.first?.fields == ["A", "B"], "the line after it comes first")
+        #expect(CSVParser.declaredDelimiter(in: "sepal;width\n1;2\n") == nil, "a header that only starts like it")
+        #expect(CSVParser.declaredDelimiter(in: "sep=;;\n") == nil)
+    }
+
     @Test func aTableSaysWhenItStoppedAtTheLimit() {
         let rows = (1...CSVParser.maximumRows).map { "r\($0),\($0)" }
         let full = CSVParser.parse("id,value\n" + rows.joined(separator: "\n") + "\n\n", delimiter: ",")

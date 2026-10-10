@@ -39,6 +39,7 @@ public enum CSVParser {
     /// header `"Last, First";Age` is split by semicolons).
     public static func delimiter(for text: String, fileName: String) -> Character {
         if fileName.lowercased().hasSuffix(".tsv") { return "\t" }
+        if let declared = declaredDelimiter(in: text) { return declared }
         let firstLine = text.prefix { !$0.isNewline }
         var unquoted: [Character] = []
         var inQuotes = false
@@ -47,6 +48,14 @@ public enum CSVParser {
         }
         let counts: [(Character, Int)] = [",", ";", "\t"].map { delimiter in (delimiter, unquoted.filter { $0 == delimiter }.count) }
         return counts.max { $0.1 < $1.1 }.flatMap { $0.1 > 0 ? $0.0 : nil } ?? ","
+    }
+
+    /// The delimiter a first line of `sep=;` names, as Excel writes and reads it (common where `;` separates fields);
+    /// that line is not part of the table.
+    public static func declaredDelimiter(in text: String) -> Character? {
+        let first = text.prefix { !$0.isNewline }
+        guard first.count == 5, first.lowercased().hasPrefix("sep="), let delimiter = first.last else { return nil }
+        return delimiter
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
@@ -136,6 +145,8 @@ public enum CSVParser {
             }
         }
         if !field.isEmpty || !fields.isEmpty || recordHasContent { endRecord(lastLine: line) }
+        // Excel's `sep=;` line says how to read the file; the header is the line after it.
+        if declaredDelimiter(in: text) != nil, records.first?.firstLine == 1 { records.removeFirst() }
 
         if hasHeader, let first = records.first {
             return CSVTable(header: first.fields, rows: Array(records.dropFirst()), delimiter: delimiter, isTruncated: truncated)
