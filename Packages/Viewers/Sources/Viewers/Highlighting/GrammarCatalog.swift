@@ -63,7 +63,15 @@ public nonisolated enum GrammarCatalog {
 
     nonisolated private static let fileNames: [String: String] = [
         ".zshrc": "bash", ".bashrc": "bash", ".bash_profile": "bash", ".profile": "bash", "makefile": "bash",
+        ".zprofile": "bash", ".zshenv": "bash", ".zlogin": "bash", ".zlogout": "bash", ".bash_aliases": "bash",
+        ".bash_logout": "bash", ".envrc": "bash", "pkgbuild": "bash",
+        // Lockfiles that are TOML under another extension.
+        "cargo.lock": "toml", "poetry.lock": "toml", "uv.lock": "toml", "pipfile": "toml",
     ]
+
+    /// Every extension and file name a grammar colors, so the kind detector can be checked to open them as code.
+    nonisolated static var highlightedExtensions: Set<String> { Set(extensions.keys) }
+    nonisolated static var highlightedFileNames: Set<String> { Set(fileNames.keys) }
 
     /// The injection language name tree-sitter queries use for a file, or nil when unsupported.
     public nonisolated static func languageName(forPath path: String) -> String? {

@@ -8,8 +8,8 @@ public enum DocumentKindDetector {
                                                       "avif", "jxl", "jp2", "ico", "icns"]
     public static let csvExtensions: Set<String> = ["csv", "tsv"]
     public static let codeExtensions: Set<String> = [
-        "swift", "m", "mm", "h", "c", "cc", "cpp", "cxx", "hpp", "rs", "go", "py", "rb", "js", "jsx", "ts", "tsx", "mjs", "cjs",
-        "java", "kt", "kts", "scala", "cs", "php", "pl", "pm", "lua", "sh", "bash", "zsh", "fish", "ps1", "sql", "r", "jl",
+        "swift", "m", "mm", "h", "c", "cc", "cpp", "cxx", "hpp", "rs", "go", "py", "pyi", "rb", "js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts",
+        "zshrc", "bashrc", "java", "kt", "kts", "scala", "cs", "php", "pl", "pm", "lua", "sh", "bash", "zsh", "fish", "ps1", "sql", "r", "jl",
         "json", "jsonc", "jsonl", "ndjson", "yaml", "yml", "toml", "xml", "plist", "html", "htm", "css", "scss", "less", "vue", "svelte",
         "dart", "ex", "exs", "erl", "hs", "ml", "clj", "cljs", "lisp", "el", "nix", "zig", "proto", "graphql", "gql",
         "cmake", "make", "mk", "gradle", "tf", "hcl", "dockerfile", "ini", "cfg", "conf", "env", "lock", "pbxproj",
@@ -20,6 +20,7 @@ public enum DocumentKindDetector {
         "makefile", "dockerfile", "readme", "license", "licence", "copying", "authors", "changelog", "todo", "notes",
         "gemfile", "rakefile", "podfile", "cartfile", "brewfile", "justfile", "procfile", "vagrantfile", ".gitignore",
         ".gitattributes", ".editorconfig", ".env", ".zshrc", ".bashrc", ".bash_profile", ".profile", ".vimrc", ".tmux.conf", ".ssh_config",
+        ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".bash_aliases", ".bash_logout", ".envrc", "pkgbuild", "pipfile",
     ]
 
     public static func kind(forPath path: String) -> DocumentKind {
