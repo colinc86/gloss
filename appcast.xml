@@ -6,6 +6,37 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.5.0</title>
+      <pubDate>Mon, 12 Oct 2026 03:58:02 GMT</pubDate>
+      <sparkle:version>405</sparkle:version>
+      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">Review what your agent did, see every iteration's notes, preview a packet before sending it, and a compact layout for narrow windows.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Review When Done.</strong> Turn it on in the Send menu and the agent says what it changed for each note. Each note it resolves stays highlighted until you've looked at it; <strong>Review</strong> steps through them, and you accept each one or follow up.</li>
+<li><strong>All Iterations.</strong> In the iteration menu, list every iteration's notes in the notes panel, newest first, under a header for each iteration.</li>
+<li><strong>Show Earlier Notes.</strong> Earlier iterations' notes are drawn in the document with dashed outlines, found again in the file as it is now. Click one in the gutter to read it.</li>
+<li><strong>Preview Packet.</strong> In the Send menu, or Notes › Preview Packet… (⌥⌘↩): see exactly what Send will hand over, readable or raw, and which drafts the scope leaves out and why. Copy it or send it from there.</li>
+<li><strong>Each folder remembers where you were.</strong> Switching folders brings back that folder's last file, where you were reading, its selected notes, and the panel's tab, colors and search. A folder you haven't visited starts empty.</li>
+<li><strong>Compact layout.</strong> In a narrow window, the explorer slides over the document and the notes panel becomes a tray under it: one line with the current note, steps through the notes, and Send. Open the tray for the whole panel. Choose Automatic, Always Compact or Always Full, and the width, in Settings › General › Layout or View › Layout.</li>
+<li><strong>App icon follows light and dark mode.</strong> In Settings › General, pick one icon for light mode and another for dark.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li>The menus are reorganized: About and Check for Updates are in the Gloss menu, searches in Edit, display options and Layout in View, navigation in Go, and note and iteration actions in Notes.</li>
+</ul>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/632597163" type="application/octet-stream" sparkle:edSignature="CFkTQLce3L52tx/wvomiHDLPQgGFL/UMb7ghPL5eMQnzwl+PVUr1uCOsgfU5xHavoawtPKosjaCPAoBijBEbBw==" length="27151132"/>
+    </item>
+    <item>
       <title>Gloss 0.4.1</title>
       <pubDate>Fri, 09 Oct 2026 21:12:13 GMT</pubDate>
       <sparkle:version>207</sparkle:version>
