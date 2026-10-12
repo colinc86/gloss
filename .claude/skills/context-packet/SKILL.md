@@ -31,10 +31,10 @@ User comment: "<escaped comment>"   # left out only for an agent's own question 
 
 <blank line between notes, two blank lines between files>
 
-Notes: <count>. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
+Notes: <count>. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.[ The user will review each result, so when you resolve a note, say in its message what you changed, in one sentence.]
 ```
 
-The closing line's second sentence (naming `reply_to_note`) was added 2026-10-07 and is on every packet, first sends included.
+The closing line's second sentence (naming `reply_to_note`) was added 2026-10-07 and is on every packet, first sends included. The bracketed third sentence (added 2026-10-10) is only on a send that asks the user to review the results (Review When Done): there the resolve message is what the user reads while reviewing, so the agent is asked for one.
 
 ### Anchor line by source
 
@@ -143,7 +143,7 @@ The app only ever reads these resources; the agent makes every change with its o
 
 ## Resolution contract
 
-MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?, location?)` flips state to resolved. `message` is optional and usually left out: the change speaks for itself. Pass one only to tell the user what the change and thread don't (a decision, a caveat, what was skipped and why); it is added to the thread as the agent's reply. A bare acknowledgement (`done`, `Done.`, `fixed`, `ok`, `okay`, `resolved`, trimmed, any case, trailing `.`/`!`) counts as no message and adds no reply. It is refused while the user has a follow-up they haven't sent. `needs_input` (agents with older instructions) asks instead: the note stays sent, waiting on the user, and the answer is "asked the user (note <id>); the answer comes back when they send it".
+MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?, location?)` flips state to resolved. `message` is optional and usually left out: the change speaks for itself, except on a packet whose closing line asks for review, where it says in one sentence what changed. Pass one only to tell the user what the change and thread don't (a decision, a caveat, what was skipped and why); it is added to the thread as the agent's reply. A bare acknowledgement (`done`, `Done.`, `fixed`, `ok`, `okay`, `resolved`, trimmed, any case, trailing `.`/`!`) counts as no message and adds no reply. It is refused while the user has a follow-up they haven't sent. `needs_input` (agents with older instructions) asks instead: the note stays sent, waiting on the user, and the answer is "asked the user (note <id>); the answer comes back when they send it".
 
 `reply_to_note(id, message, asks?, location?)` adds a reply, or a question when `asks` (the note then waits on the user), and never resolves. It is refused for drafts and for resolved notes ("the user reopens it with a follow-up").
 

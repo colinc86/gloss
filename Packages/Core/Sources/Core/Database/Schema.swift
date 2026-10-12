@@ -286,6 +286,15 @@ public enum Schema {
                     SELECT document_id, 0, MIN(created_at) FROM note GROUP BY document_id;
                 """)
         }
+        migrator.registerMigration("v14-review") { db in
+            // Review (2026-10-10): a send can ask the user to review what the agent did; its notes, once resolved,
+            // wait for the user to accept them. Accepting is the user's own stamp, apart from the agent's resolve.
+            try db.execute(sql: """
+                ALTER TABLE send ADD COLUMN review INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE note ADD COLUMN review_requested INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE note ADD COLUMN accepted_at DATETIME;
+                """)
+        }
         return migrator
     }
 

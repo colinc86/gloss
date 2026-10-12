@@ -9,6 +9,8 @@ struct ContentView: View {
     /// What the inspector shows. Follows `model.showNotesPanel`, but opening waits until the window has room.
     @State private var panelShown = false
     @State private var window = WindowReference()
+    /// The sidebar column in the full layout; the compact one hides it and slides the explorer over instead.
+    @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @Environment(\.openWindow) private var openWindow
 
     /// The host under the title: an ssh alias, `owner/repo #12`, `Jira · PROJ`, `Confluence · SPACE`, a page's title;
@@ -31,9 +33,17 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            ExplorerSidebar()
-                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 600)
+        let compact = model.layout.isCompact
+        NavigationSplitView(columnVisibility: Binding(
+            get: { compact ? .detailOnly : columnVisibility },
+            // Compact, the sidebar button and ⌃⌘S slide the explorer over the document instead.
+            set: { if compact { model.layout.isExplorerShown.toggle() } else { columnVisibility = $0 } }
+        )) {
+            Group {
+                // One explorer at a time: compact, it lives in the slide-over (its outline view isn't built twice).
+                if compact { Color.clear } else { ExplorerSidebar() }
+            }
+            .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 600)
         } detail: {
             Group {
                 if let session = model.activeSession {
@@ -86,6 +96,12 @@ struct ContentView: View {
             .alert("Couldn't Complete the Action", isPresented: Binding(get: { model.explorer.lastError != nil }, set: { if !$0 { model.explorer.lastError = nil } })) {
                 Button("OK", role: .cancel) { model.explorer.lastError = nil }
             } message: { Text(model.explorer.lastError ?? "") }
+            .overlay(alignment: .leading) {
+                if compact { CompactExplorer() }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if compact { NotesTray() }
+            }
             .safeAreaInset(edge: .bottom) {
                 if let move = model.renameRecovery {
                     VStack(alignment: .leading, spacing: 4) {
@@ -101,7 +117,7 @@ struct ContentView: View {
                 guard let title, let session = model.activeSession, DocumentKindDetector.isWebURL(session.path) else { return }
                 model.webPages.setTitle(title, url: session.path, hostID: session.hostID)
             }
-            .inspector(isPresented: Binding(get: { panelShown }, set: { model.showNotesPanel = $0 })) {
+            .inspector(isPresented: Binding(get: { panelShown && !compact }, set: { model.showNotesPanel = $0 })) {
                 NotesPanel()
                     .inspectorColumnWidth(min: 300, ideal: 360, max: 480)
             }
@@ -195,7 +211,20 @@ struct ContentView: View {
         .background(WindowReader(reference: window))
         .onChange(of: model.showNotesPanel, initial: true) { _, show in
             syncPanel(show)
-            model.noteLink.isPanelShown = show
+            // The paths from notes to cards need the side panel; the compact tray has none to draw to.
+            model.noteLink.isPanelShown = show && !model.layout.isCompact
+        }
+        // Full or compact follows the window's width (and Settings › General › Layout).
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            model.layout.height = size.height
+            model.updateLayout(width: size.width)
+        }
+        .onChange(of: model.settings.layoutMode) { _, _ in model.updateLayout() }
+        .onChange(of: model.settings.compactBelow) { _, _ in model.updateLayout() }
+        .onChange(of: model.layout.isCompact) { _, isCompact in
+            model.noteLink.isPanelShown = model.showNotesPanel && !isCompact
+            // Compact closes the inspector; back to full, it opens as it would, making room first.
+            syncPanel(model.showNotesPanel)
         }
         .onChange(of: window.isAttached) { _, _ in
             model.mainWindow = window.window
@@ -211,6 +240,11 @@ struct ContentView: View {
     /// constraint pass and the app aborted with an NSGenericException at launch.
     private func syncPanel(_ show: Bool) {
         guard show else {
+            panelShown = false
+            return
+        }
+        // Compact, the notes are the tray: the window doesn't grow for a side panel.
+        guard !model.layout.isCompact else {
             panelShown = false
             return
         }
@@ -254,6 +288,38 @@ enum NotesPanelRoom {
                 MainActor.assumeIsolated { done(fits) }
             }
         }
+    }
+}
+
+/// The compact layout's explorer: slid over the document from the leading edge when asked (the sidebar button, ⌃⌘S),
+/// and away again on Escape, a click beside it, or (as Settings says) once a file is opened from it. Built only while
+/// shown, so nothing hidden takes the keyboard; its folders open again as they were (`FileNode.isExpanded`).
+private struct CompactExplorer: View {
+    @Environment(AppModel.self) private var model
+    static let width: CGFloat = 300
+
+    var body: some View {
+        let shown = model.layout.isExplorerShown
+        ZStack(alignment: .leading) {
+            if shown {
+                Color.black.opacity(0.12)
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.layout.isExplorerShown = false }
+                    .transition(.opacity)
+                    .accessibilityHidden(true)
+            }
+            if shown {
+                ExplorerSidebar()
+                    .frame(width: Self.width)
+                    .frame(maxHeight: .infinity)
+                    .background(.regularMaterial)
+                    .overlay(alignment: .trailing) { Divider() }
+                    .shadow(color: .black.opacity(0.18), radius: 12, x: 4)
+                    .onExitCommand { model.layout.isExplorerShown = false }
+                    .transition(.move(edge: .leading).calmed)
+            }
+        }
+        .animation(DS.Motion.smooth, value: shown)
     }
 }
 

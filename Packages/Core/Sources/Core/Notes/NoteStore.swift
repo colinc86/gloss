@@ -381,6 +381,14 @@ public struct NoteStore: Sendable {
         return Self.sorted(try request.fetchAll(db).map { try Note(record: $0, unsent: unsent) })
     }
 
+    /// A document's notes in every iteration: the newest iteration first, each in the panel's order.
+    static func notesInEveryIteration(_ documentID: DocumentID, _ db: Database) throws -> [Note] {
+        let unsent = try Self.unsentNoteIDs(db)
+        let notes = try NoteRecord.live.filter(Column("document_id") == documentID.rawValue).fetchAll(db)
+            .map { try Note(record: $0, unsent: unsent) }
+        return Dictionary(grouping: notes, by: \.iteration).sorted { $0.key > $1.key }.flatMap { Self.sorted($0.value) }
+    }
+
     /// Open notes (draft and sent by default), optionally limited to one host and a path prefix (a file or a
     /// directory). What agents see through MCP passes `[.sent]`: a draft stays the user's until they press Send.
     public func pendingNotes(hostID: HostID? = nil, pathPrefix: String? = nil, states: Set<NoteState> = [.draft, .sent], currentIterationOnly: Bool = false) async throws -> [(note: Note, document: Document)] {
@@ -606,6 +614,11 @@ public struct NoteStore: Sendable {
             // The next iteration starts at the commit this one ends on: the first commit after it is a change.
             try db.execute(sql: "INSERT INTO iteration (document_id, number, started_at, git_commit) VALUES (?, ?, ?, ?)",
                            arguments: [documentID.rawValue, next, date, gitCommit])
+            // A result waiting for review is the user's open work whatever was chosen: it comes along.
+            try db.execute(sql: """
+                UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state = 'resolved'
+                    AND review_requested = 1 AND accepted_at IS NULL AND deleted_at IS NULL
+                """, arguments: [next, documentID.rawValue, current])
             if openNotes == .carry {
                 try db.execute(sql: """
                     UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state != 'resolved' AND deleted_at IS NULL
@@ -847,6 +860,17 @@ public struct NoteStore: Sendable {
             record.resolveMessage = message
             record.resolveAgent = agent
             record.waitingOnUser = false
+            if onlySent {
+                // An agent's resolve is new work to review, in the round the user is on: it waits in the current
+                // iteration, where the panel and review find it.
+                record.acceptedAt = nil
+                if record.reviewRequested, let current = try Int.fetchOne(db, sql: "SELECT current_iteration FROM document WHERE id = ?", arguments: [record.documentId]) {
+                    record.iteration = current
+                }
+            } else if record.reviewRequested {
+                // Resolving by hand is the user's own verdict: nothing is left for them to review.
+                record.acceptedAt = date
+            }
             // A resolved orphan remembers its text is gone, so taking it back makes an orphan, not a draft drawn on
             // whatever text sits where its anchor points.
             record.previousState = state == .orphaned ? NoteState.orphaned.rawValue : nil
@@ -854,6 +878,20 @@ public struct NoteStore: Sendable {
             try record.update(db)
             if onlySent, let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 try Self.insertMessage(note: record.id, author: .agent(agent ?? MessageAuthor.unnamedAgent), kind: .reply, body: message, at: date, sent: true, db)
+            }
+        }
+    }
+
+    /// The user accepts what the agent did on notes awaiting review; any other note is left as it is.
+    public func accept(_ ids: [NoteID], at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            for id in ids {
+                guard var record = try NoteRecord.fetchOne(db, key: id.rawValue), record.deletedAt == nil,
+                      record.state == NoteState.resolved.rawValue, record.reviewRequested, record.acceptedAt == nil else { continue }
+                record.acceptedAt = date
+                record.updatedAt = date
+                try record.update(db)
             }
         }
     }
@@ -1229,6 +1267,11 @@ public struct NoteStore: Sendable {
         Self.stream(ValueObservation.tracking { db in try Self.notes(documentID, iteration: iteration, db) }, in: queue)
     }
 
+    /// Observes the notes of one document in every iteration, newest iteration first (All Iterations).
+    public func observeNotesInEveryIteration(for documentID: DocumentID) -> AsyncThrowingStream<[Note], any Error> {
+        Self.stream(ValueObservation.tracking { db in try Self.notesInEveryIteration(documentID, db) }, in: queue)
+    }
+
     /// Observes one note's messages, oldest first.
     public func observeMessages(for noteID: NoteID) -> AsyncThrowingStream<[NoteMessage], any Error> {
         Self.stream(ValueObservation.tracking { db in try Self.messages(noteID, db) }, in: queue)
@@ -1321,15 +1364,17 @@ public struct NoteStore: Sendable {
     /// `outcome` is `delivered` or `failed: <message>`. `carried` holds the follow-ups the packet held, with the text
     /// it held for each; one written, or changed, while the delivery was under way stays unsent. Nil stamps every
     /// unsent follow-up of the notes.
+    /// `review`: the send asked the user to review what the agent does; a note it carries out keeps asking (a later
+    /// follow-up included) and loses any earlier acceptance, since it is new work.
     public func recordSend(
         transport: String, targetJSON: String, packetText: String, noteIDs: [NoteID],
-        outcome: SendOutcome, carried: [MessageID: String]? = nil, at date: Date = Date()
+        outcome: SendOutcome, carried: [MessageID: String]? = nil, review: Bool = false, at date: Date = Date()
     ) async throws -> SendID {
         try await queue.write { db in
             let sendID = SendID.new()
             try SendRecord(
                 id: sendID.rawValue, targetJson: targetJSON, transport: transport,
-                packetText: packetText, sentAt: date, outcome: outcome.stored
+                packetText: packetText, sentAt: date, outcome: outcome.stored, review: review
             ).insert(db)
             for noteID in noteIDs {
                 try SendNoteRecord(sendId: sendID.rawValue, noteId: noteID.rawValue).insert(db)
@@ -1358,7 +1403,13 @@ public struct NoteStore: Sendable {
                         record.resolveMessage = nil
                         record.resolveAgent = nil
                     }
-                    if record.state != current.rawValue || record.waitingOnUser || stampedAny {
+                    let reviewBefore = (record.reviewRequested, record.acceptedAt)
+                    if record.state != NoteState.resolved.rawValue {
+                        record.reviewRequested = record.reviewRequested || review
+                        record.acceptedAt = nil
+                    }
+                    if record.state != current.rawValue || record.waitingOnUser || stampedAny
+                        || (record.reviewRequested, record.acceptedAt) != reviewBefore {
                         record.waitingOnUser = false
                         record.updatedAt = date
                         try record.update(db)
@@ -1649,7 +1700,8 @@ extension Note {
             createdAt: record.createdAt, updatedAt: record.updatedAt,
             resolveOutcome: record.resolveOutcome.flatMap(ResolveOutcome.init(rawValue:)), resolveMessage: record.resolveMessage,
             author: record.author, resolveAgent: record.resolveAgent, waitingOnUser: record.waitingOnUser,
-            hasUnsentFollowUps: unsent.contains(record.id), originalAnchor: original, iteration: record.iteration
+            hasUnsentFollowUps: unsent.contains(record.id), originalAnchor: original, iteration: record.iteration,
+            reviewRequested: record.reviewRequested, acceptedAt: record.acceptedAt
         )
     }
 

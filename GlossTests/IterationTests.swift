@@ -206,6 +206,46 @@ struct IterationTests {
         session.close()
     }
 
+    @Test func earlierNotesAreFoundAgainInTheFileAsItIs() async throws {
+        let (directory, path) = try makeFile("alpha\nbeta\ngamma\ndelta\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, settings) = try makeModel()
+        settings.iterationOpenNotes = .leave
+        let session = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store)
+        model.liveSession = { _ in session }
+        await session.open()
+        let document = try #require(session.document)
+        func anchor(_ line: Int, _ text: String, before: String, after: String) -> Anchor {
+            .text(TextAnchor(start: .init(line: line, col: 1), end: .init(line: line, col: text.count + 1), text: text, before: before, after: after, hash: nil))
+        }
+        let moved = try await store.createNote(documentID: document.id, anchor: anchor(2, "beta", before: "alpha", after: "gamma"), body: "moved", color: .blue)
+        let gone = try await store.createNote(documentID: document.id, anchor: anchor(4, "delta", before: "gamma", after: ""), body: "gone", color: .yellow)
+        _ = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "whole file", color: .green)
+        await model.requestNewIteration(for: document)
+        try "intro\nalpha\nbeta\ngamma\n".write(toFile: path, atomically: true, encoding: .utf8)
+        await session.reloadFromDisk()
+        await waitUntil { session.notes.isEmpty }
+
+        session.showsEarlierNotes = true
+        await waitUntil { !session.earlierNotes.isEmpty }
+        #expect(session.earlierNotes.map(\.note.id) == [moved.id], "a removed line's note and a whole-file note aren't drawn")
+        let text = try #require(session.textController?.text) as NSString
+        #expect(text.substring(with: try #require(session.earlierNotes.first).range) == "beta")
+        #expect(session.textController?.earlierMarks.map(\.id) == [moved.id])
+        #expect(session.textController?.drawnHighlights.isEmpty == true, "earlier notes are not this iteration's notes")
+        _ = gone
+
+        session.showsEarlierNotes = false
+        #expect(session.earlierNotes.isEmpty && session.textController?.earlierMarks.isEmpty == true)
+
+        await model.view(0, for: session)
+        let past = model.shownSession(for: session)
+        past.showsEarlierNotes = true
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(past.earlierNotes.isEmpty, "an earlier iteration on screen draws only its own notes")
+        session.close()
+    }
+
     /// The last commit is the named file's, a name with pattern characters in it read as written.
     @Test func theLastCommitIsTheNamedFilesOwn() async throws {
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/git") else { return }

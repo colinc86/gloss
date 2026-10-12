@@ -67,6 +67,22 @@ struct IterationStoreTests {
         }
     }
 
+    @Test func everyIterationsNotesComeNewestFirst() async throws {
+        let store = try makeStore()
+        let document = try await makeDocument(store)
+        let first = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "first", color: .yellow)
+        _ = try await store.startIteration(documentID: document.id, openNotes: .leave, snapshot: Data("v0".utf8))
+        let second = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "second", color: .yellow)
+        _ = try await store.startIteration(documentID: document.id, openNotes: .leave, snapshot: Data("v1".utf8))
+        let third = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "third", color: .yellow)
+        let deleted = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "gone", color: .yellow)
+        try await store.trashNotes([deleted.id])
+        var stream = store.observeNotesInEveryIteration(for: document.id).makeAsyncIterator()
+        let notes = try #require(try await stream.next())
+        #expect(notes.map(\.id) == [third.id, second.id, first.id], "newest iteration first, deleted notes left out")
+        #expect(notes.map(\.iteration) == [2, 1, 0])
+    }
+
     @Test func snapshotsAreDeduplicatedCompressedAndPruned() async throws {
         let store = try makeStore()
         let document = try await makeDocument(store)

@@ -101,7 +101,19 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
   (`ViewThatFits`). Avoid ViewThatFits in the window toolbar itself: a label that changes shape there changed the
   split view's minimum size mid-layout.
 - Minimum window widths with the notes panel open (sidebar at its smallest): about 1020 pt for text, 1100 pt for
-  the richest viewer toolbars; hide the panel or the sidebar to tile the window beside a terminal.
+  the richest viewer toolbars; below the compact width the window takes the compact layout instead.
+- **Compact layout** (2026-10-11, `LayoutModel`): measured from the window's content width (`onGeometryChange`, never
+  `NSWindow.minSize`), compact below Settings' width (1000 pt) and full again 40 pt past it. The split view's sidebar
+  column is hidden (`.detailOnly`) and the explorer lives in a 300 pt slide-over from the leading edge (regular
+  material, a hairline and a soft shadow, a 12% scrim over the document) that the sidebar button and ⌃⌘S open; it
+  stays built while compact so its folders keep their state. The inspector is replaced by `NotesTray` under the
+  document (`.bar` material, a hairline above): closed, a 36 pt row with the note in hand (color rail, anchor,
+  first line, its pill), ‹ "3 of 8" › over the panel's listed notes (wrapping), Send (prominent, with the count) and
+  a chevron; open, a grab handle (resize cursor, a chevron to close) over the whole `NotesPanel`, 200 pt to 60% of
+  the window, the height kept once the drag ends. The toolbar keeps its items and shape; the Notes button opens and
+  closes the tray. Show Paths to Notes is off while compact. Settings › General › Layout: Layout (Automatic, Always
+  Compact, Always Full), Go compact below (a stepper, 800–1400 pt by 50), Notes in the compact layout (Start as a
+  bar, Start open), Put the explorer away after opening a file; View › Layout is the same choice.
 
 ## App icon
 
@@ -124,15 +136,21 @@ doesn't follow the Mac's dark, tinted or clear icon style. Graphite Yellow sets 
 bundled `.icon`. Finder, Launchpad and the Dock while Gloss is closed always show the bundled icon; changing those
 would mean writing into the signed bundle. The pictures are 512 px renders of each style in
 `Gloss/Assets.xcassets/AppIconStyles`, made by `docs/icon/render-styles.sh` (Icon Composer's `ictool`); the Dock image
-sets one into the standard grid (824 of 1024, with a shadow).
+sets one into the standard grid (824 of 1024, with a shadow). **Match light and dark mode** (2026-10-11), a switch at the
+top of the section, keeps two picks, any of the 16: a segmented Light | Dark control says which one a click sets, and
+the two picks carry a small sun or moon badge on a material capsule at their corner so both show at once. Gloss
+swaps the Dock picture whenever the app's appearance changes (KVO on `NSApp.effectiveAppearance`, so `--appearance`
+counts), drawing even Graphite Yellow as its picture while matching, so the Mac's icon style doesn't decide for it.
+Turned on the first time, it starts from the color already picked: Frost for light, Graphite for dark.
 
 The About panel is the standard one with credits (`AboutPanel`): one line on what the app does, in label color,
 then what it is built on, smaller and secondary.
 
 ## Dock
 
-The Dock icon badges the number of notes an agent answered with a question (resolved, needs input): the app usually
-sits behind the agent's terminal, and a question waiting on you should be visible from there, as unread mail is.
+The Dock icon badges the number of notes an agent answered with a question (resolved, needs input), plus results
+waiting for your review in every folder: the app usually sits behind the agent's terminal, and a question waiting on
+you should be visible from there, as unread mail is.
 Drafts don't count (they are your own unsent work). Settings › General can turn it off. Right-clicking the Dock icon
 offers the next step from anywhere: "2 Questions from Agents…" (brings the window forward with the notes panel on
 Resolved) when there are any, then the five most recent folders on this Mac.
@@ -149,16 +167,27 @@ than forcing icons on. Replacing a
 standard group must keep its standard items (replacing the save group took Close with it; Close Window is back on
 ⌘W). Menu items are title case and say how much they touch: "Send Shown Drafts in This Location (5)", "Copy This Document's
 Drafts as Packet (2)", disabled when there is nothing to act on or no agent to send to. Window tabbing is off (`NSWindow.allowsAutomaticWindowTabbing`), since the folder switcher does that job.
-Every text field has a way in from the keyboard: View › Filter Files (⌥⌘J, as Xcode's navigator filter) and
-Notes › Search Notes (menu only: ⌥⌘F is Find and Replace in most Mac apps) put the caret in their fields, as Find
+The menus follow Apple's menu bar order and roles (2026-10-11): **File** opens (Open Folder, Open Quickly, Open
+Location, Open Pull Request, Open Jira Issue or Confluence Page), closes and saves; **Edit** keeps the system's items
+and its Find submenu for the file in front, followed by finding across files (Find in Files ⇧⌘F, Filter Files ⌥⌘J,
+Search Notes); **View** shows and hides (Show Sidebar from `SidebarCommands`, Show/Hide Notes Panel ⌥⌘N, Show Source /
+Show Rendered ⇧⌘M), then the checkmarked filters (Show Hidden Files, Show Resolved Notes, Separate Resolved Notes,
+Show Paths to Notes, Show Earlier Notes), then Refresh Explorer ⌘R; **Go** moves (Back, Forward, Go to Line…, Reveal
+in Explorer, Next/Previous Note, Next/Previous Change, Follow Herdr, Follow Page in Notes Panel); **Notes** makes,
+sends and reviews notes, ending with an Iteration submenu (New Iteration, All Iterations, Back to Current Iteration,
+Hide Changes), and Preview Packet… (⌥⌘↩) beside Copy; View also holds Layout (Automatic, Compact, Full);
+**Help** has Keyboard Shortcuts and Report a Bug. Items that show or hide a part of the window say
+which (Show Notes Panel becomes Hide Notes Panel) rather than carrying a checkmark; filters and modes that are an
+attribute keep their checkmark. No command is in two menus, and two commands don't share a symbol.
+Every text field has a way in from the keyboard: Edit › Filter Files (⌥⌘J, as Xcode's navigator filter) and
+Edit › Search Notes (menu only: ⌥⌘F is Find and Replace in most Mac apps) put the caret in their fields, as Find
 in Files, Open Quickly, and Go to Line do. New shortcuts follow the conventions of Xcode and the system before
 inventing one; when a natural choice is taken elsewhere, the menu item alone is fine. Search and filter fields
 behave like Mac search fields: Escape clears the text, a second Escape leaves the field (Find in Files closes).
 Commands that act in the main window bring it forward first: New Note from Selection, chosen while Settings or
 Keyboard Shortcuts is in front, raises the main window and then opens the composer (a popover there), instead of
 doing nothing (`AppModel.beginNoteInMainWindow`).
-Gloss › Check for Updates… sits under About, where Mac apps keep it, and again in Help beside Report a Bug or
-Request a Feature…; release builds only.
+Gloss › Check for Updates… sits under About, where Mac apps keep it; release builds only.
 Help › Keyboard Shortcuts (⌘/) opens a reference window (`ShortcutsWindow`): shortcuts grouped by where they work,
 each key a raised key cap, alternatives separated by a quiet "or", with a search field. It replaces the default
 help item, which pointed at a help book that does not exist. The menu groups are read from the menu bar itself (`ShortcutGroup.fromMenu`), so a new or changed shortcut appears there without anyone remembering to list it; the app menu and the standard Edit commands are left out. Only keys with no menu item (the note composer, viewers, the folder switcher) are listed by hand in `ShortcutGroup.contextual`.
@@ -520,6 +549,44 @@ path. Dropping on the Dock icon is not supported yet.
   notes asks in a 420 pt sheet: "Start a new iteration of PLAN.md?", how many notes aren't resolved, a "Don't ask
   again" checkbox, Cancel, Leave Them Behind, and Bring Them Along (default); with one note, Leave It Behind and Bring It
   Along.
+- **Preview Packet** (2026-10-11, `PacketPreview`): a 420 pt popover under the Send button. The title with a
+  This File | This Location segmented control, then "acme-site · 3 notes · 2 files → Claude" (the agent
+  orange when unavailable); a Readable | Raw switch over a 260 pt pane: Readable lists the notes by file (color rail,
+  anchor in caption, "Follow-up", a paperclip count, the comment to three lines) with a teal eye line when the packet
+  asks for review; Raw is the exact text, monospaced and selectable, with "Pictures are copied to <host> when sent."
+  for a remote target. "Not included" lists what the scope leaves out with a link-style fix (Show All, Send This
+  Location). Copy and Send N Notes (prominent, the default button) at the foot. A small spinner while it rebuilds,
+  150 ms after what it shows changes.
+- **All Iterations** (2026-10-11): the first item of a document's iteration menu (and Notes › Iteration). On, the
+  menu reads "All Iterations" in the accent color with `square.stack.3d.up`, and the document's notes are listed newest
+  iteration first, each iteration's run under a small caption header ("Iteration 2 · Oct 8 · 5 notes", the clock
+  symbol and secondary for earlier ones, the stack symbol and accent for the current one). Earlier cards are the
+  read-only cards above. Clicking one shows its iteration in the viewer and keeps the list; picking one iteration in
+  the menu ends it. Selection never takes in earlier notes.
+- **Earlier notes** (2026-10-11): with View › Show Earlier Notes (also in the panel's sort menu), or while a document
+  lists all iterations, earlier iterations' notes still found in a text document's text are drawn as a faint dashed
+  outline (1 pt, the note's color at 40%) under this iteration's marks, never filled. The gutter gains an 11 pt column
+  after the lanes with a small hollow card on the line each starts on, two stacked when several share it, tertiary and
+  secondary on hover, with "3 earlier notes here" as its tooltip. Clicking it opens a card beside the text in the
+  peek's style (`readableGlass`, 340 pt): "3 earlier notes here" and a close button, then each note newest first with
+  its color rail, "Iteration 1 · Oct 6", its pill, the comment, the agent's last word in its bubble, and Show in
+  Iteration 1 and Bring Forward. The minimap doesn't show them.
+- **Review** (2026-10-10): a send made with Review When Done (the Send menu, under the scope; also Settings › Notes)
+  leaves its notes, once resolved, at full strength with a teal "To review" pill (`eye.circle.fill`) and an open
+  note's underline until accepted. A full-width teal "Review 3 Results" button (eye) sits under the panel's filters
+  while any wait in the location in front; Notes › Review Resolved Notes does the same. Review is a card floating over
+  the bottom of the document (at most 560 pt wide, inset 14 pt, `readableGlass`, radius 12, the peek's shadow),
+  sliding up; the note it shows is scrolled to the middle, clear of it. It reads as the note's card does: the note's
+  color rail, the anchor and file in caption, `NoteCard.badge` (To review, then Resolved once accepted or Your turn
+  once followed up; a Skipped pill beside it when the agent skipped) and a ✕; the comment; the agent's resolve
+  message in its bubble, or "Resolved without a message", or for a note followed up the user's turn ("You · Not
+  sent"). A 2 pt teal hairline along the top fills as notes are reviewed. The bottom row: ‹ "3 of 8" › (inline icon
+  buttons, the count rolling), Accept All… as quiet secondary text, then Later, Follow Up… and Accept (prominent);
+  a reviewed note shows only the steps. Follow Up… opens the card's composer in place (Return adds, Shift-Return a
+  new line, Esc cancels). Switching notes cross-fades. Accept has no key: the document stays editable. Esc ends review;
+  so does switching location. At the end a green check bounces over "All reviewed" and what happened ("6 accepted ·
+  2 followed up"), with Back, and Send N Follow-Ups (prominent, to the agent in front) when follow-ups written in the
+  review are unsent, else Done (prominent).
 - **Send toast**: a glass card floating over the bottom of the notes panel that slides up with `DS.Motion.bouncy`.
   Sending: a spinner and "Sending 2 notes…" with the agent. Delivered: a green check that bounces, "Sent 2 notes",
   "to claude · task", and a hairline that drains over 4 s (hovering pauses it) before it leaves on its own.
@@ -684,7 +751,7 @@ path. Dropping on the Dock icon is not supported yet.
   `navigationTitle` still names the window for Mission Control and VoiceOver). Beside Back and Forward, the document's
   name (`.headline`) over its subtitle (`.caption`, secondary: the ssh host, `owner/repo #12`, a page's title) sits
   without a glass capsule and gains a faint rounded fill on hover, so it reads as clickable without looking like a
-  button. A click, File › Open Location… (⇧⌘L) or Go › Go to Address… turns it into a 460 pt field holding the
+  button. A click, File › Open Location… (⇧⌘L) turns it into a 460 pt field holding the
   page's live address or the file's path. The field (`AddressField`) has a leading globe or folder that follows
   what the text reads as, and, when ssh hosts exist, a small menu at its end naming the machine (This Mac in
   secondary, an ssh host in teal) that keeps the caret in the field. Return opens; text that is neither an address nor a path shakes
@@ -708,7 +775,7 @@ path. Dropping on the Dock icon is not supported yet.
   line still reads), with a 2 pt green bar at the gutter's text edge as VS Code marks changed rows; a red hairline
   across gutter and text marks where lines were taken out. The minimap shows hunks in a lane of their own
   under the notes (green bars, red ticks for deletions), clickable. The status bar reads "3 changes" with ⌃/⌄
-  steppers, "2 of 3" while stepping; Notes › Next Change (⌥⌘↓) and Previous Change (⌥⌘↑) walk the hunks from the
+  steppers, "2 of 3" while stepping; Go › Next Change (⌥⌘↓) and Previous Change (⌥⌘↑) walk the hunks from the
   caret and wrap, landing each with the find indicator. A reload after a new commit shows "Pull request updated" for
   eight seconds (an Atlassian document says "Updated in Jira or Confluence").
 - **Minimap** (`MinimapView`, 2026-10-09; replaced the 12 pt overview ruler): a 100 pt picture of the whole file at
@@ -738,7 +805,7 @@ path. Dropping on the Dock icon is not supported yet.
   2 pt rect for a point). Rendered Markdown maps the point to one rendered point (the start of an inexact run, never
   the whole block) and draws the same caret; a web page's text note draws it as an element in `<gloss-overlay>` at
   the collapsed range, since a CSS highlight of nothing shows nothing.
-- **Stepping through notes**: Notes › Next Note (⌘') and Previous Note (⇧⌘'), the keys Xcode uses for issues, and
+- **Stepping through notes**: Go › Next Note (⌘') and Previous Note (⇧⌘'), the keys Xcode uses for issues, and
   ⌃/⌄ steppers beside the status bar's note count. Open notes go in reading order (text by offset, PDF by page then
   top to bottom, images in the order made); a step goes on from the note last reached, or from the caret once it has
   moved, and wraps at either end. Each step shows the note without selecting it (so Add Note never floats over a note
@@ -746,8 +813,8 @@ path. Dropping on the Dock icon is not supported yet.
   stepped-to note is current. Nothing to step to beeps.
 - **Link and paths** (`NoteLinkModel`, `NotePathLayerView`, `NotePathGeometry`): two toggles after the note steppers
   in the status bar, in the steppers' style (18 × 16, accent glyph on a faint accent chip when on, the glyph struck
-  through by a thin diagonal when off, since SF Symbols has no unlinked or broken path), also in the Notes menu
-  (Follow Page in Notes Panel, Show Paths to Notes); both remembered. **Link** (`link`) makes the notes panel follow
+  through by a thin diagonal when off, since SF Symbols has no unlinked or broken path), also in the menus
+  (Go › Follow Page in Notes Panel, View › Show Paths to Notes); both remembered. **Link** (`link`) makes the notes panel follow
   the page: the visible note nearest the middle of the page (one the middle runs through first, then the nearest
   edge, then the one higher on the page) has its card scrolled to the middle of the list (smooth, instant with
   Reduce Motion). It is one way, and it waits while the pointer is over the list, so the list never moves under the
@@ -892,7 +959,7 @@ path. Dropping on the Dock icon is not supported yet.
   Install touches and how to undo it: nothing changes until you press Install, each edited settings file is first
   copied beside itself (`*.gloss-backup-…`, the last three kept), and Remove takes out only what was added.
 - **Settings**: every tab is a `.formStyle(.grouped)` form, 600 pt wide, with its own height so the window
-  resizes to each tab as System Settings does (General 684 with its Updates section, 540 without it, Editor 330, Notes 470, Agents 640, Integrations 660, Attachments 380, Hosts 440). The Notes tab holds Iterations (open notes, the two
+  resizes to each tab as System Settings does (General 684 with its Updates section, 540 without it, Editor 330, Notes 560, Agents 640, Integrations 660, Attachments 380, Hosts 440). The Notes tab holds Review (Review agents' work), Iterations (open notes, the two
   automatic starts, snapshots kept) and Recently Deleted's retention. Toggles
   carry a second line saying what they do; words match the rest of the app ("folder", never "root"). A setting
   shows its effect where it can: the editor font slider drives a live code preview, with the size in monospaced

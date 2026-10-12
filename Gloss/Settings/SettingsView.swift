@@ -29,20 +29,21 @@ struct SettingsView: View {
                     }
                     Toggle(isOn: $settings.showsQuestionsOnDock) {
                         Text("Show agent questions on the Dock icon")
-                        Text("A badge counts notes an agent answered with a question, so you see them from any app.")
+                        Text("A badge counts notes an agent answered with a question, and results waiting for your review, so you see them from any app.")
                     }
                     Toggle(isOn: $settings.showDotfilesByDefault) {
                         Text("Show hidden files")
                         Text("Dotfiles appear in the file tree from the start; the eye under the tree switches them until you quit.")
                     }
                 }
-                AppIconSection(selection: $settings.appIcon)
+                LayoutSection(settings: settings)
+                AppIconSection(settings: settings)
                 if model.updates.isAvailable {
                     UpdatesSection()
                 }
             }
             .formStyle(.grouped)
-            .frame(height: model.updates.isAvailable ? 684 : 540)
+            .frame(height: (model.updates.isAvailable ? 684 : 540) + (settings.appIconMatchesAppearance ? 76 : 40) + (settings.layoutMode == .automatic ? 190 : 150))
             .tabItem { Label("General", systemImage: "gear") }
             .tag(SettingsTab.general)
 
@@ -83,7 +84,7 @@ struct SettingsView: View {
             .tag(SettingsTab.editor)
 
             NotesSettings(settings: settings)
-                .frame(height: 470)
+                .frame(height: 560)
                 .tabItem { Label("Notes", systemImage: "note.text") }
             .tag(SettingsTab.notes)
 
@@ -118,6 +119,14 @@ private struct NotesSettings: View {
 
     var body: some View {
         Form {
+            Section {
+                Toggle(isOn: $settings.reviewsResults) {
+                    Text("Review agents' work")
+                    Text("Notes an agent resolves wait, at full strength, for you to accept them; Review in the notes panel steps through them. Also Review When Done in the Send menu.")
+                }
+            } header: {
+                Text("Review")
+            }
             Section {
                 Picker(selection: $settings.iterationOpenNotes) {
                     ForEach(IterationOpenNotes.allCases) { Text($0.title).tag($0) }
@@ -1071,17 +1080,81 @@ private struct UpdatesSection: View {
     }
 }
 
-/// Settings › General › App Icon: every style, by family, as small icons to click.
-private struct AppIconSection: View {
-    @Binding var selection: AppIconStyle
+/// Settings › General › Layout (2026-10-11): when the window goes compact (the explorer slides over the document, the
+/// notes become a tray under it), and how the compact layout starts.
+private struct LayoutSection: View {
+    @Environment(AppModel.self) private var model
+    @Bindable var settings: SettingsStore
 
     var body: some View {
         Section {
+            Picker("Layout", selection: $settings.layoutMode) {
+                Text("Automatic").tag(LayoutMode.automatic)
+                Text("Always Compact").tag(LayoutMode.compact)
+                Text("Always Full").tag(LayoutMode.full)
+            }
+            if settings.layoutMode == .automatic {
+                LabeledContent("Go compact below") {
+                    Stepper(value: $settings.compactBelow, in: SettingsStore.compactBelowRange, step: 50) {
+                        Text("\(Int(settings.compactBelow)) pt").monospacedDigit()
+                    }
+                }
+            }
+            Picker("Notes in the compact layout", selection: $settings.compactNotesExpanded) {
+                Text("Start as a bar").tag(false)
+                Text("Start open").tag(true)
+            }
+            Toggle("Put the explorer away after opening a file", isOn: $settings.compactExplorerClosesOnOpen)
+        } header: {
+            Text("Layout")
+        } footer: {
+            Text(model.layout.isCompact
+                 ? "The window is compact now. The explorer slides over the document from the sidebar button (⌃⌘S); the notes are the tray under it."
+                 : "Compact keeps Gloss usable beside a terminal: the explorer slides over the document when you ask for it, and the notes become a tray under it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Settings › General › App Icon: every style, by family, as small icons to click. Matching the Mac's appearance
+/// keeps two, one for light mode and one for dark, and the Light | Dark switch says which one a click sets.
+private struct AppIconSection: View {
+    @Bindable var settings: SettingsStore
+    @State private var slot = Slot.light
+
+    private enum Slot: String, CaseIterable, Identifiable {
+        case light, dark
+        var id: String { rawValue }
+        var title: String { self == .light ? "Light" : "Dark" }
+    }
+
+    private var selection: AppIconStyle {
+        settings.appIconMatchesAppearance && slot == .dark ? settings.appIconDark : settings.appIcon
+    }
+
+    private func choose(_ style: AppIconStyle) {
+        if settings.appIconMatchesAppearance, slot == .dark { settings.appIconDark = style } else { settings.appIcon = style }
+    }
+
+    var body: some View {
+        Section {
+            Toggle(isOn: $settings.appIconMatchesAppearance) {
+                Text("Match light and dark mode")
+                Text("Choose one icon for light mode and another for dark mode.")
+            }
+            if settings.appIconMatchesAppearance {
+                Picker("Choosing for", selection: $slot) {
+                    ForEach(Slot.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
             ForEach(AppIconStyle.Family.allCases, id: \.self) { family in
                 LabeledContent(family.title) {
                     HStack(spacing: DS.Space.s) {
                         ForEach(AppIconStyle.allCases.filter { $0.family == family }) { style in
-                            Button { selection = style } label: {
+                            Button { choose(style) } label: {
                                 Group {
                                     if let image = style.thumbnail {
                                         Image(nsImage: image).resizable().interpolation(.high)
@@ -1095,10 +1168,11 @@ private struct AppIconSection: View {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .strokeBorder(selection == style ? Color.accentColor : .clear, lineWidth: 2.5)
                                 }
+                                .overlay(alignment: .bottomTrailing) { badge(for: style) }
                             }
                             .buttonStyle(.plain)
                             .help(style == .bundled ? "\(style.title) (the app's own icon)" : style.title)
-                            .accessibilityLabel(style.title)
+                            .accessibilityLabel(accessibilityLabel(for: style))
                             .accessibilityAddTraits(selection == style ? .isSelected : [])
                         }
                     }
@@ -1107,9 +1181,35 @@ private struct AppIconSection: View {
         } header: {
             Text("App Icon")
         } footer: {
-            Text("The Dock and the app switcher show it while Gloss is open. Finder, Launchpad and the Dock while Gloss is closed keep Graphite Yellow, which also follows your Mac's icon style (dark, tinted or clear); the others always look as shown.")
+            Text(settings.appIconMatchesAppearance
+                 ? "Gloss switches between them as your Mac changes appearance. The Dock and the app switcher show them while Gloss is open; Finder, Launchpad and the Dock while Gloss is closed keep Graphite Yellow."
+                 : "The Dock and the app switcher show it while Gloss is open. Finder, Launchpad and the Dock while Gloss is closed keep Graphite Yellow, which also follows your Mac's icon style (dark, tinted or clear); the others always look as shown.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// While matching, a sun on the light mode icon and a moon on the dark mode one, so both choices show at once.
+    @ViewBuilder
+    private func badge(for style: AppIconStyle) -> some View {
+        if settings.appIconMatchesAppearance {
+            let light = style == settings.appIcon, dark = style == settings.appIconDark
+            if light || dark {
+                HStack(spacing: 1) {
+                    if light { Image(systemName: "sun.max.fill").foregroundStyle(.orange) }
+                    if dark { Image(systemName: "moon.fill").foregroundStyle(.indigo) }
+                }
+                .font(.system(size: 8, weight: .bold))
+                .padding(3)
+                .background(.regularMaterial, in: Capsule())
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func accessibilityLabel(for style: AppIconStyle) -> String {
+        guard settings.appIconMatchesAppearance else { return style.title }
+        let modes = [style == settings.appIcon ? "light mode" : nil, style == settings.appIconDark ? "dark mode" : nil].compactMap { $0 }
+        return modes.isEmpty ? style.title : "\(style.title), \(modes.joined(separator: " and "))"
     }
 }

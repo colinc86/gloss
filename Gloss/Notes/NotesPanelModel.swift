@@ -45,11 +45,12 @@ final class NotesPanelModel {
         guard self.location != location else { return }
         self.location = location
         locationGeneration += 1
-        pastGeneration += 1
-        pastObservation?.cancel()
-        pastObservation = nil
+        resetPast()
         viewedIteration = nil
-        pastNotes = []
+        if allIterations != nil {
+            allIterations = nil
+            onEarlierNotesChange()
+        }
         selection = []
         arrivedIDs = []
         arrivalReset?.cancel()
@@ -77,6 +78,21 @@ final class NotesPanelModel {
     @ObservationIgnored private var hasLoaded = false
     @ObservationIgnored private var arrivalReset: Task<Void, Never>?
 
+    /// The panel's part of a location's state (2026-10-11): its tab, colors, search and selection.
+    func capturedState() -> Workspace.LocationState {
+        Workspace.LocationState(selectedNotes: selection.map(\.rawValue).sorted(), filter: filter.rawValue,
+                                colors: colorFilter.map(\.rawValue).sorted(), search: searchText)
+    }
+
+    /// Puts back a location's tab, colors, search and selection; what isn't remembered starts clear.
+    func apply(_ state: Workspace.LocationState?) {
+        filter = state?.filter.flatMap(Filter.init(rawValue:)) ?? .all
+        colorFilter = Set((state?.colors ?? []).compactMap(NoteColor.init(rawValue:)))
+        searchText = state?.search ?? ""
+        let listed = Set(groups.flatMap { $0.notes.map(\.id) })
+        selection = Set((state?.selectedNotes ?? []).map(NoteID.init(rawValue:))).intersection(listed)
+    }
+
     /// A rename changes a location's path without changing what the person is reviewing.
     func relocate(_ move: DocumentRelocation) {
         if let old = location, old.hostID == move.hostID, let path = move.destination(for: old.path) {
@@ -89,6 +105,7 @@ final class NotesPanelModel {
         }
         liveGroups = liveGroups.map { DocumentNotes(document: mapped($0.document), notes: $0.notes) }
         if let viewed = viewedIteration { viewedIteration = (mapped(viewed.document), viewed.number) }
+        if let all = allIterations { allIterations = mapped(all) }
         applyGroups()
     }
 
@@ -117,6 +134,19 @@ final class NotesPanelModel {
         }
     }
     @ObservationIgnored private var isRestoringShowResolved = false
+    /// On, earlier iterations' notes are drawn faintly where they still are in a text document (View › Show Earlier
+    /// Notes, 2026-10-11); a document listing every iteration draws them whatever this says.
+    var showEarlierNotes = false {
+        didSet {
+            guard showEarlierNotes != oldValue else { return }
+            onEarlierNotesChange()
+            guard !isRestoringShowEarlierNotes else { return }
+            Task { try? await noteStore.setSetting("notes.showEarlier", showEarlierNotes ? "1" : "0") }
+        }
+    }
+    @ObservationIgnored private var isRestoringShowEarlierNotes = false
+    /// Whether earlier notes are drawn changed: Show Earlier Notes, or the document listing every iteration.
+    @ObservationIgnored var onEarlierNotesChange: () -> Void = {}
     /// On, open notes are listed above resolved ones, the two runs apart (2026-10-08). Only while resolved notes show.
     var separateResolved = false {
         didSet {
@@ -159,6 +189,14 @@ final class NotesPanelModel {
         let initial = sort
         let initialShowResolved = showResolved
         let initialSeparateResolved = separateResolved
+        let initialShowEarlierNotes = showEarlierNotes
+        Task { [weak self] in
+            guard let self, let stored = try? await noteStore.setting("notes.showEarlier") else { return }
+            guard showEarlierNotes == initialShowEarlierNotes else { return }
+            isRestoringShowEarlierNotes = true
+            showEarlierNotes = stored == "1"
+            isRestoringShowEarlierNotes = false
+        }
         Task { [weak self] in
             guard let self, let stored = try? await noteStore.setting("notes.sort"), let restored = Sort(rawValue: stored) else { return }
             // A pick made while the read was in flight wins over the stored value.
@@ -221,6 +259,7 @@ final class NotesPanelModel {
         observation?.cancel()
         messageObservation?.cancel()
         pastObservation?.cancel()
+        iterationsObservation?.cancel()
     }
 
     // MARK: Iterations
@@ -234,26 +273,98 @@ final class NotesPanelModel {
     @ObservationIgnored private var pastObservation: Task<Void, Never>?
     @ObservationIgnored private var pastGeneration = 0
 
-    /// A note of the earlier iteration listed: read-only in the panel.
+    /// The document listing every iteration's notes (All Iterations), newest iteration first; one at a time, and never
+    /// together with `viewedIteration`.
+    private(set) var allIterations: Document?
+    /// That document's iterations, for the headers between them.
+    private(set) var iterationsListed: [Iteration] = []
+    @ObservationIgnored private var iterationsObservation: Task<Void, Never>?
+
+    /// A note of an earlier iteration than its document's current one: read-only in the panel, and never sent or
+    /// acted on in bulk.
     func isPast(_ note: Note) -> Bool {
-        guard let viewed = viewedIteration else { return false }
-        return note.documentID == viewed.document.id && note.iteration == viewed.number
+        guard let document = liveGroups.first(where: { $0.document.id == note.documentID })?.document
+            ?? (viewedIteration?.document.id == note.documentID ? viewedIteration?.document : nil) else { return false }
+        return note.iteration < document.currentIteration
     }
+
+    /// Whether `document` lists every iteration's notes.
+    func listsAllIterations(_ document: Document) -> Bool { allIterations?.id == document.id }
 
     /// Lists iteration `number` of `document` in place of its current notes; nil goes back to them.
     func showIteration(_ number: Int?, of document: Document) {
-        pastGeneration += 1
-        let generation = pastGeneration
-        pastObservation?.cancel()
-        pastObservation = nil
-        pastNotes = []
+        if listsAllIterations(document) {
+            // The viewer shows an earlier iteration of the document whose every iteration the panel lists: the list
+            // stays, and Back to Current returns to it.
+            viewedIteration = number.map { (document, $0) }
+            return
+        }
         guard let number, location?.contains(document) == true else {
+            if allIterations != nil {
+                // Another document's every iteration is listed: only this document's earlier one goes.
+                if viewedIteration?.document.id == document.id { viewedIteration = nil }
+                return
+            }
+            resetPast()
             viewedIteration = nil
             applyGroups()
             return
         }
+        observePast(of: document, noteStore.observeNotes(for: document.id, iteration: number))
+        if allIterations != nil {
+            allIterations = nil
+            onEarlierNotesChange()
+        }
         viewedIteration = (document, number)
-        let stream = noteStore.observeNotes(for: document.id, iteration: number)
+        applyGroups()
+    }
+
+    /// Lists every iteration's notes of `document` in place of its current ones (All Iterations); nil goes back.
+    func showAllIterations(of document: Document?) {
+        defer { onEarlierNotesChange() }
+        guard let document, location?.contains(document) == true else {
+            guard allIterations != nil else { return }
+            resetPast()
+            allIterations = nil
+            // The viewer may still show an earlier iteration: the panel lists that one's notes again.
+            if let viewed = viewedIteration {
+                showIteration(viewed.number, of: viewed.document)
+            } else {
+                applyGroups()
+            }
+            return
+        }
+        observePast(of: document, noteStore.observeNotesInEveryIteration(for: document.id))
+        viewedIteration = nil
+        allIterations = document
+        let iterationStream = noteStore.observeIterations(for: document.id)
+        let generation = pastGeneration
+        iterationsObservation = Task { [weak self] in
+            do {
+                for try await iterations in iterationStream {
+                    guard let self, !Task.isCancelled, generation == self.pastGeneration else { return }
+                    self.iterationsListed = iterations
+                }
+            } catch {
+                Log.notes.error("iterations observation failed: \(error, privacy: .public)")
+            }
+        }
+        applyGroups()
+    }
+
+    private func resetPast() {
+        pastGeneration += 1
+        pastObservation?.cancel()
+        pastObservation = nil
+        iterationsObservation?.cancel()
+        iterationsObservation = nil
+        iterationsListed = []
+        pastNotes = []
+    }
+
+    private func observePast(of document: Document, _ stream: AsyncThrowingStream<[Note], any Error>) {
+        resetPast()
+        let generation = pastGeneration
         pastObservation = Task { [weak self] in
             do {
                 for try await notes in stream {
@@ -265,11 +376,34 @@ final class NotesPanelModel {
                 Log.notes.error("iteration notes observation failed: \(error, privacy: .public)")
             }
         }
-        applyGroups()
     }
 
     private func applyGroups() {
-        groups = Self.merged(liveGroups, past: viewedIteration.map { (DocumentNotes(document: $0.document, notes: pastNotes)) }).filter { location?.contains($0.document) == true }
+        // All Iterations keeps the live document (its current iteration moves on while listed).
+        let past = allIterations.map { all in
+            DocumentNotes(document: liveGroups.first { $0.document.id == all.id }?.document ?? all, notes: pastNotes)
+        } ?? viewedIteration.map { DocumentNotes(document: $0.document, notes: pastNotes) }
+        groups = Self.merged(liveGroups, past: past).filter { location?.contains($0.document) == true }
+    }
+
+    /// The notes of a group listing every iteration that start each iteration's run, with the header to show above.
+    func iterationStarts(in group: DocumentNotes) -> [NoteID: String] {
+        guard listsAllIterations(group.document) else { return [:] }
+        var starts: [NoteID: String] = [:]
+        var previous: Int?
+        for note in group.notes where note.iteration != previous {
+            previous = note.iteration
+            starts[note.id] = iterationHeader(note.iteration, current: group.document.currentIteration)
+        }
+        return starts
+    }
+
+    /// "Iteration 3 · Current · 2 notes" or "Iteration 2 · Oct 8 · 5 notes", as the iteration menu lists them.
+    func iterationHeader(_ number: Int, current: Int) -> String {
+        let title = iterationsListed.first { $0.number == number }?.name.flatMap { $0.isEmpty ? nil : "Iteration \(number) · \($0)" }
+            ?? "Iteration \(number)"
+        guard let iteration = iterationsListed.first(where: { $0.number == number }) else { return title }
+        return "\(title) · \(IterationMenu.detail(iteration, current: number == current))"
     }
 
     /// Documents as the explorer lists their files: by host, then by path with numbers in order and case aside
@@ -393,7 +527,11 @@ final class NotesPanelModel {
                     && (colorFilter.isEmpty || colorFilter.contains(note.color))
                     && (needle.isEmpty || fileMatches || textMatches(note, needle))
             }
-            return notes.isEmpty ? nil : DocumentNotes(document: group.document, notes: notes.sorted(by: ordering))
+            // Every iteration's notes stay in runs by iteration, newest first, each run in the panel's order.
+            let sorted = listsAllIterations(group.document)
+                ? notes.sorted { $0.iteration != $1.iteration ? $0.iteration > $1.iteration : ordering($0, $1) }
+                : notes.sorted(by: ordering)
+            return notes.isEmpty ? nil : DocumentNotes(document: group.document, notes: sorted)
         }
         if sort == .position {
             // Open work leads: documents with anything still open come first, finished ones after, each in path order.
@@ -430,9 +568,10 @@ final class NotesPanelModel {
         }
     }
 
-    /// Open work: anything not resolved (an agent's question leaves its note open).
+    /// Open work: anything not resolved (an agent's question leaves its note open, and so does a result waiting for
+    /// the user's review).
     nonisolated static func isOpen(_ note: Note) -> Bool {
-        note.state != .resolved || note.needsAttention
+        note.state != .resolved || note.needsAttention || note.awaitsReview
     }
 
     /// Notes in each state across every document, for the filter bar's counts (before search and color filters,
@@ -546,9 +685,16 @@ final class NotesPanelModel {
 
     /// The selected notes in the order the list shows them (by document, then the panel's sort). Selected notes the
     /// list no longer shows (filtered out since) are left out: what is acted on is what is seen.
-    var selectedNotes: [Note] {
+    /// The selected notes shown, earlier iterations' too: what Copy as Packet copies.
+    var selectedListedNotes: [Note] {
         guard !selection.isEmpty else { return [] }
         return visibleGroups.flatMap(\.notes).filter { selection.contains($0.id) }
+    }
+
+    var selectedNotes: [Note] {
+        guard !selection.isEmpty else { return [] }
+        // An earlier iteration's notes are only looked at: nothing acts on them in bulk.
+        return visibleGroups.flatMap(\.notes).filter { selection.contains($0.id) && !isPast($0) }
     }
 
     /// The selected notes in runs of cards next to each other in the list, top to bottom (issue #19). A document's

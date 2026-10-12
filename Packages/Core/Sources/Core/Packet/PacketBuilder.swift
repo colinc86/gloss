@@ -152,7 +152,8 @@ public enum PacketBuilder {
     public static let toolName = "resolve_note"
     public static let replyToolName = "reply_to_note"
 
-    public static func build(_ notes: [PacketNote]) -> Packet {
+    /// `review`: the user will review each result, so the closing line asks the agent to say what it changed.
+    public static func build(_ notes: [PacketNote], review: Bool = false) -> Packet {
         var order: [String] = []
         var groups: [String: [PacketNote]] = [:]
         for note in notes {
@@ -173,16 +174,21 @@ public enum PacketBuilder {
 
         var text = fileBlocks.joined(separator: "\n\n\n")
         if !text.isEmpty { text += "\n\n" }
-        text += closingLine(count: noteIDs.count)
+        text += closingLine(count: noteIDs.count, review: review)
         return Packet(text: text, noteIDs: noteIDs)
     }
 
     /// `Notes: 2. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id
     /// on its Note line. To answer or ask something without resolving it, use `reply_to_note`.` Each id sits at the
     /// top of its own note, so it is never matched to a note by position.
-    public static func closingLine(count: Int) -> String {
+    /// A send that asks for review adds `The user will review each result, so when you resolve a note, say in its
+    /// message what you changed, in one sentence.`: the agent's message is what the user reads while reviewing.
+    public static func closingLine(count: Int, review: Bool = false) -> String {
         "Notes: \(count). When you've acted on a note, mark it resolved with the gloss MCP tool `\(toolName)`, passing the id on its Note line. To answer or ask something without resolving it, use `\(replyToolName)`."
+            + (review ? " " + reviewSentence : "")
     }
+
+    public static let reviewSentence = "The user will review each result, so when you resolve a note, say in its message what you changed, in one sentence."
 
     /// `<id>: <file>:<anchor> "<first 80 chars of comment>"`: one note on one line.
     public static func summaryLine(_ note: PacketNote) -> String {

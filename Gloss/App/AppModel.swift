@@ -22,6 +22,7 @@ final class AppModel {
     let send: SendCoordinator
     let settings: SettingsStore
     let iterations: IterationsModel
+    let review: ReviewModel
     let hosts: HostsModel
     let hooks = HooksModel()
     let integrations: IntegrationsModel
@@ -130,8 +131,40 @@ final class AppModel {
     /// Bumped whenever the machine selection changes or following stops, so work resumed after an await can
     /// tell that the world moved on.
     @ObservationIgnored private var followGeneration = 0
+    /// The notes panel is shown: the inspector in the full layout, the tray open in the compact one.
     var showNotesPanel = true {
         didSet { if showNotesPanel != oldValue { scheduleWorkspaceSave() } }
+    }
+
+    /// Full or compact (2026-10-11).
+    let layout = LayoutModel()
+    /// The panel's state in the full layout while the compact one decides the tray's.
+    @ObservationIgnored private var fullLayoutShowsNotes: Bool?
+
+    /// Compact, the explorer slides in before a command puts the caret in it (Find in Files, Filter Files, Reveal),
+    /// and `then` runs once it is built; full, at once.
+    func withExplorerShown(_ then: @escaping @MainActor () -> Void) {
+        guard layout.isCompact, !layout.isExplorerShown else { return then() }
+        layout.isExplorerShown = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(250))
+            then()
+        }
+    }
+
+    /// Works the layout out again for a new window width (or, without one, for changed settings). Going compact
+    /// starts the tray as Settings says; going back puts the notes panel as it was.
+    func updateLayout(width: Double? = nil) {
+        let wasCompact = layout.isCompact
+        layout.update(width: width, mode: settings.layoutMode, threshold: settings.compactBelow)
+        guard layout.isCompact != wasCompact else { return }
+        if layout.isCompact {
+            fullLayoutShowsNotes = showNotesPanel
+            showNotesPanel = settings.compactNotesExpanded
+        } else if let shown = fullLayoutShowsNotes {
+            fullLayoutShowsNotes = nil
+            showNotesPanel = shown
+        }
     }
 
     /// Open documents keyed by `host:path`; `activeSession` is the one in the viewer pane.
@@ -145,9 +178,16 @@ final class AppModel {
     private(set) var activeSession: DocumentSession? {
         didSet {
             // An earlier iteration is looked at in place of one document; another document in front ends it.
-            if let oldValue, oldValue !== activeSession { iterations.backToCurrent(oldValue) }
+            if let oldValue, oldValue !== activeSession {
+                iterations.backToCurrent(oldValue)
+                rememberDocumentLeft(oldValue)
+            }
             explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
+            // The document in front just changed: a location change this causes brings back only that location's
+            // panel, never another document over the one just opened.
+            isChangingActiveSession = true
             syncNotesLocation()
+            isChangingActiveSession = false
             rememberLastDocument()
             if let session = activeSession {
                 let entry = DocumentHistory.Entry(hostID: session.hostID, path: session.path)
@@ -228,6 +268,7 @@ final class AppModel {
         noteLink = NoteLinkModel(noteStore: store)
         settings = SettingsStore(noteStore: store)
         iterations = IterationsModel(noteStore: store, settings: settings)
+        review = ReviewModel(noteStore: store)
         hosts = HostsModel(noteStore: store)
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
         herdrTransport = HerdrTransport(registry: connectionRegistry)
@@ -248,6 +289,14 @@ final class AppModel {
         send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
+        review.notes = { [weak self] in
+            guard let self, let location = self.notesPanel.location else { return [] }
+            return self.notesPanel.allGroups.filter { location.contains($0.document) }
+        }
+        review.reveal = { [weak self] note, document in self?.reveal(note: note, in: document) }
+        review.followUp = { [weak self] id, text in await self?.notesPanel.addFollowUp(to: id, text) ?? false }
+        review.send = { [weak self] ids in await self?.send(noteIDs: ids) }
+        review.onError = { [weak self] message in self?.notesPanel.lastError = message }
         trackHiddenNotes()
         noteLink.start()
         noteLink.noteStyles = { [weak self] in
@@ -383,7 +432,12 @@ final class AppModel {
             if let tab = explorer.selectedTab { pickedHost = tab.hostID }
             syncNotesLocation()
         }
-        explorer.onSelectFile = { [weak self] hostID, path in self?.openDocument(hostID: hostID, path: path) }
+        explorer.onSelectFile = { [weak self] hostID, path in
+            guard let self else { return }
+            openDocument(hostID: hostID, path: path)
+            // Compact, a file opened from the slid-over explorer puts it away, unless Settings keeps it out.
+            if layout.isCompact, settings.compactExplorerClosesOnOpen { layout.isExplorerShown = false }
+        }
         // Search results showing were found with hidden files in or out: they are found again the other way.
         explorer.onShowDotfilesChange = { [weak self] in
             guard let self, self.explorer.contentSearch.isVisible, self.explorer.contentSearch.searchedPattern != nil else { return }
@@ -405,6 +459,7 @@ final class AppModel {
         iterations.fileSystem = { [weak self] hostID in self?.fileSystems[hostID] }
         iterations.liveSession = { [weak self] documentID in self?.sessions.values.first { $0.document?.id == documentID } }
         iterations.onViewedIterationChange = { [weak self] document, number in self?.notesPanel.showIteration(number, of: document) }
+        notesPanel.onEarlierNotesChange = { [weak self] in self?.syncEarlierNotes() }
         iterations.onFailure = { [weak self] message in self?.notesPanel.lastError = message }
         notesPanel.onRestored = { [weak self] restored in
             Task { await self?.reanchorRestored(restored) }
@@ -598,8 +653,83 @@ final class AppModel {
         } else if let session = activeSession, DocumentKindDetector.isWebURL(session.path), pickedHost == .web || pickedHost == session.hostID {
             location = NotesLocation(hostID: session.hostID, path: session.path, exactDocument: true)
         } else { location = nil }
-        if location != notesPanel.location, let session = activeSession { iterations.backToCurrent(session) }
+        let previous = notesPanel.location
+        if location != previous {
+            if let session = activeSession { iterations.backToCurrent(session) }
+            // Review follows the location in front, as the panel and Send do.
+            review.end()
+            rememberLocation(previous)
+        }
         notesPanel.setLocation(location)
+        if location != previous { returnToLocation(location) }
+    }
+
+    // MARK: Each location remembers where you were (2026-10-11)
+
+    @ObservationIgnored private var isChangingActiveSession = false
+
+    /// Each location's last document and where in it, its selected notes and its panel filters, by `host:path`.
+    @ObservationIgnored private(set) var locationStates: [String: Workspace.LocationState] = [:]
+
+    /// A folder's key; nil for a standalone page, which has nothing to come back to.
+    private func locationKey(_ location: NotesLocation?) -> String? {
+        guard let location, !location.exactDocument else { return nil }
+        return Workspace.locationKey(host: location.hostID.rawValue, path: location.path)
+    }
+
+    /// `session` as a document to come back to, at the line at the top of its view.
+    private func remembered(_ session: DocumentSession) -> Workspace.Document {
+        Workspace.Document(place: Workspace.Place(host: session.hostID.rawValue, path: session.path),
+                           line: caretLine(of: session), showsSource: session.markdown.map { $0.mode == .source })
+    }
+
+    /// `location`'s state as it is now: the panel's, and the document in front when it lives there (else the one
+    /// remembered before).
+    private func currentState(of location: NotesLocation?) -> (key: String, state: Workspace.LocationState)? {
+        guard let location, let key = locationKey(location) else { return nil }
+        var state = notesPanel.location == location ? notesPanel.capturedState() : (locationStates[key] ?? .init())
+        if let session = activeSession, location.contains(hostID: session.hostID, path: session.path) {
+            state.document = remembered(session)
+        } else {
+            state.document = locationStates[key]?.document
+        }
+        return (key, state)
+    }
+
+    /// Keeps the location being left as it is, read while its document is still on screen.
+    private func rememberLocation(_ location: NotesLocation?) {
+        guard let current = currentState(of: location) else { return }
+        locationStates[current.key] = current.state
+    }
+
+    /// A document left for another in the same location is still that location's latest until another takes over.
+    private func rememberDocumentLeft(_ session: DocumentSession) {
+        guard let location = notesPanel.location, let key = locationKey(location),
+              location.contains(hostID: session.hostID, path: session.path) else { return }
+        locationStates[key, default: .init()].document = remembered(session)
+    }
+
+    /// Puts back what `location` was showing: the panel's filters and selection, and its last document. A document
+    /// already in front from there (a reveal, a link, Open Quickly) stays; with nothing remembered, the viewer clears
+    /// rather than keep another folder's file up.
+    private func returnToLocation(_ location: NotesLocation?) {
+        guard let key = locationKey(location), let location else { return }
+        let state = locationStates[key]
+        notesPanel.apply(state)
+        // Launch restores its own document, and a document just put in front stays there.
+        guard !isRestoringWorkspace, !isChangingActiveSession else { return }
+        if let session = activeSession, location.contains(hostID: session.hostID, path: session.path) { return }
+        if let document = state?.document, location.contains(hostID: document.place.hostID, path: document.place.path),
+           document.place.hostID == .local ? !Self.isGone(document.place.entry) : fileSystems[document.place.hostID] != nil {
+            // Opened on the next turn: whatever opens a document meanwhile (a click, a link) wins over the memory.
+            let leaving = activeSession
+            Task { [weak self] in
+                guard let self, activeSession === leaving, notesPanel.location == location else { return }
+                await restoreDocument(document) { [weak self] in self?.notesPanel.location == location }
+            }
+        } else {
+            activeSession = nil
+        }
     }
 
     func openDocument(hostID: HostID, path: String) {
@@ -649,6 +779,7 @@ final class AppModel {
             return
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
+        session.showsEarlierNotes = wantsEarlierNotes(session)
         session.onNoteCommitted = { [weak self] note in
             self?.notesPanel.makeListed(note)
             Task { await self?.iterations.recordStartingCommit(note.documentID) }
@@ -1269,6 +1400,43 @@ final class AppModel {
         }
     }
 
+    /// Earlier iterations' notes are drawn in a document while Show Earlier Notes is on, or while the notes panel
+    /// lists every iteration of it.
+    func syncEarlierNotes() {
+        for session in sessions.values { session.showsEarlierNotes = wantsEarlierNotes(session) }
+    }
+
+    private func wantsEarlierNotes(_ session: DocumentSession) -> Bool {
+        guard session.pastIteration == nil, !DocumentKindDetector.isWebURL(session.path) else { return false }
+        if notesPanel.showEarlierNotes { return true }
+        guard let all = notesPanel.allIterations else { return false }
+        return all.hostID == session.hostID && all.path == session.path
+    }
+
+    /// Shows an earlier iteration's note where it was taken: that iteration's snapshot, read-only, with the note.
+    func showEarlierNote(_ note: Note, in session: DocumentSession) {
+        session.textController?.earlierPeek = nil
+        Task {
+            await iterations.view(note.iteration, for: session)
+            let shown = iterations.shownSession(for: session)
+            guard shown.pastIteration == note.iteration else { return }
+            await Self.untilLoaded(shown)
+            shown.reveal(note, select: true)
+        }
+    }
+
+    /// All Iterations: the notes panel lists every iteration's notes of `document`, newest first, with the document
+    /// as it is in the viewer.
+    func showAllIterations(_ on: Bool, of document: Core.Document) {
+        if on {
+            // The viewer shows the document as it is; an earlier iteration of another document goes too, since the
+            // panel lists one past view at a time.
+            if let session = session(hostID: document.hostID, path: document.path) { iterations.backToCurrent(session) }
+            if let active = activeSession { iterations.backToCurrent(active) }
+        }
+        notesPanel.showAllIterations(of: on ? document : nil)
+    }
+
     /// Show Changes Since (nil: Hide Changes) from a document's header, on the document as it is.
     func showChanges(since number: Int?, of document: Core.Document) {
         Task {
@@ -1732,17 +1900,20 @@ final class AppModel {
         if let open = launchOptions.open {
             openDocument(hostID: .local, path: open)
         }
+        // Until here a save would write the empty startup state over the workspace about to be read.
+        hasRestoredWorkspace = true
         if launchOptions.follow { followHerdr = true }
         await folderBecameCurrent()
     }
 
     /// The root opened most recently on any host; a remote one connects the host first (the agent prompt may show).
     /// Questions back from agents, on the Dock icon: the app often sits behind the agent's terminal, and a note
-    /// waiting on an answer should be visible from there, as unread mail is.
+    /// waiting on an answer should be visible from there, as unread mail is. Results waiting for the user's review
+    /// count too, in every location.
     func updateDockBadge(_ groups: [DocumentNotes]? = nil) {
         let groups = groups ?? notesPanel.allGroups
         let waiting = settings.showsQuestionsOnDock
-            ? groups.reduce(0) { $0 + $1.notes.filter(\.waitingOnUser).count }
+            ? groups.reduce(0) { $0 + $1.notes.filter { $0.waitingOnUser || $0.awaitsReview }.count }
             : 0
         NSApp.dockTile.badgeLabel = waiting > 0 ? String(waiting) : nil
     }
@@ -1759,14 +1930,17 @@ final class AppModel {
 
     /// Saves what's open shortly after it changes (a crash still finds it); the quit saves it once more with the caret.
     func scheduleWorkspaceSave() {
-        guard started, !isRestoringWorkspace, !isShutDown else { return }
+        guard started, hasRestoredWorkspace, !isRestoringWorkspace, !isShutDown else { return }
         workspaceSave?.cancel()
         workspaceSave = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled, let self, !isShutDown else { return }
+            // A restore that began meanwhile saves once it ends.
+            guard !Task.isCancelled, let self, !isShutDown, !isRestoringWorkspace else { return }
             await saveWorkspace()
         }
     }
+    /// Launch has read (or chosen not to read) the saved workspace; saves wait for it.
+    @ObservationIgnored private var hasRestoredWorkspace = false
 
     private func saveWorkspace() async {
         guard let value = currentWorkspace().encoded() else { return }
@@ -1784,7 +1958,11 @@ final class AppModel {
         }
         workspace.back = history.back.map(Workspace.Place.init)
         workspace.forward = history.forward.map(Workspace.Place.init)
-        workspace.showsNotesPanel = showNotesPanel
+        // The side panel's state, not the compact tray's.
+        workspace.showsNotesPanel = fullLayoutShowsNotes ?? showNotesPanel
+        var states = locationStates
+        if let current = currentState(of: notesPanel.location) { states[current.key] = current.state }
+        workspace.locations = states.isEmpty ? nil : states
         return workspace
     }
 
@@ -1821,10 +1999,13 @@ final class AppModel {
         isRestoringWorkspace = true
         defer {
             isRestoringWorkspace = false
+            hasRestoredWorkspace = true
             // Whatever changed while restoring (the user didn't wait) is saved now.
             scheduleWorkspaceSave()
         }
-        showNotesPanel = workspace.showsNotesPanel
+        // Compact, the tray keeps its own start; the saved panel comes back with the full layout.
+        if layout.isCompact { fullLayoutShowsNotes = workspace.showsNotesPanel } else { showNotesPanel = workspace.showsNotesPanel }
+        locationStates = workspace.locations ?? [:]
         var opened: [Int: RootID] = [:]
         for (index, folder) in workspace.folders.enumerated() {
             let hostID = folder.hostID
@@ -1848,6 +2029,12 @@ final class AppModel {
         if let tab = explorer.selectedTab { pickedHost = tab.hostID }
         history = DocumentHistory(back: workspace.back.map(\.entry), current: workspace.document?.place.entry, forward: workspace.forward.map(\.entry))
         guard let document = workspace.document else { return }
+        await restoreDocument(document)
+    }
+
+    /// Opens a remembered document, in source or rendered as it was, at its line. `stillWanted` is asked after it
+    /// loads: another document put in front meanwhile, or another location, keeps the viewer.
+    private func restoreDocument(_ document: Workspace.Document, stillWanted: @escaping @MainActor () -> Bool = { true }) async {
         let place = document.place
         // Only from a host that is there now: a failed connection must not be retried for the document.
         guard place.hostID == .local ? !Self.isGone(place.entry) : fileSystems[place.hostID] != nil else { return }
@@ -1860,7 +2047,7 @@ final class AppModel {
         // Source or rendered first, then the line: the rendered view keeps its own caret.
         // Until it has loaded: a picture, PDF or spreadsheet never gets a text view, and nothing waits on one.
         for _ in 0..<100 { if case .loading = session.state { try? await Task.sleep(for: .milliseconds(50)) } else { break } }
-        guard session.textController != nil else { return }
+        guard session.textController != nil, activeSession === session, stillWanted() else { return }
         if document.showsSource == true, session.markdown?.mode == .rendered { session.toggleMarkdownMode() }
         if let line = document.line, line > 1 { openDocument(hostID: place.hostID, path: place.path, line: line, select: false) }
     }
@@ -2023,6 +2210,47 @@ final class AppModel {
     }
 
     var visibleDrafts: [Note] { sendSelection(scope: sendScope).notes }
+
+    // MARK: Preview Packet
+
+    /// The Send button's preview popover is open (Preview Packet, 2026-10-11).
+    var showsPacketPreview = false
+
+    /// Notes › Preview Packet…: opens the panel, where the popover hangs from Send.
+    func presentPacketPreview() {
+        showNotesPanel = true
+        showsPacketPreview = true
+    }
+
+    /// Drafts in the location in front that Send, in `scope`, leaves out, by why.
+    struct SendExclusion: Identifiable, Equatable {
+        enum Reason: Equatable { case filtered, earlierIteration, otherFiles }
+        let reason: Reason
+        let count: Int
+        var id: String { "\(reason)" }
+    }
+
+    func sendExclusions(scope: SendScope) async -> [SendExclusion] {
+        guard let location = notesPanel.location else { return [] }
+        let activeID = activeSession?.document?.id
+        let sending = Set(sendSelection(scope: scope).ids)
+        let shown = Set(notesPanel.visibleGroups.flatMap { $0.notes.map(\.id) })
+        var filtered = 0, otherFiles = 0
+        for group in notesPanel.groups {
+            for note in group.notes where note.isSendable && note.iteration == group.document.currentIteration && !sending.contains(note.id) {
+                if !shown.contains(note.id) {
+                    filtered += 1
+                } else if scope == .activeDocument, group.document.id != activeID {
+                    otherFiles += 1
+                }
+            }
+        }
+        // Drafts left behind in an earlier iteration aren't in the panel's lists at all: asked of the store.
+        let pending = (try? await noteStore.pendingNotes(hostID: location.hostID, pathPrefix: location.path, states: [.draft])) ?? []
+        let earlier = pending.filter { location.contains($0.document) && $0.note.iteration < $0.document.currentIteration }.count
+        return [SendExclusion(reason: .filtered, count: filtered), SendExclusion(reason: .earlierIteration, count: earlier),
+                SendExclusion(reason: .otherFiles, count: otherFiles)].filter { $0.count > 0 }
+    }
     /// Every UI send, including card and selection actions, stays in this location and current iteration.
     func send(noteIDs: [NoteID]) async {
         guard let target = send.lastTarget else { return }
@@ -2035,7 +2263,7 @@ final class AppModel {
             send.showCancelled(noteIDs: noteIDs, target: target, reason: problem)
             return
         }
-        await send.send(noteIDs: noteIDs, to: target) { [weak self] in
+        await send.send(noteIDs: noteIDs, to: target, review: settings.reviewsResults) { [weak self] in
             guard let self else { return "Gloss is closing." }
             guard self.notesPanel.location == location else { return "The location changed while the packet was being prepared." }
             guard self.send.lastTarget?.id == target.id, self.send.isTargetAvailable else { return "The recipient changed while the packet was being prepared." }
@@ -2170,7 +2398,19 @@ final class AppModel {
             guard let session = self.session(hostID: document.hostID, path: path) else { return }
             // While an earlier iteration is shown, its notes are in its snapshot's session; a note of another
             // iteration goes back to the document as it is.
-            let shown = iterations.shownSession(for: session)
+            var shown = iterations.shownSession(for: session)
+            // A note of an earlier iteration listed under All Iterations: its iteration comes on screen first.
+            if let iteration, shown.pastIteration != iteration, notesPanel.listsAllIterations(document),
+               let current = notesPanel.allGroups.first(where: { $0.document.id == document.id })?.document.currentIteration,
+               iteration < current {
+                await Self.untilLoaded(session)
+                await iterations.view(iteration, for: session)
+                shown = iterations.shownSession(for: session)
+                if shown.pastIteration == iteration {
+                    await body(shown)
+                    return
+                }
+            }
             guard let iteration, shown !== session, shown.pastIteration != iteration else {
                 await body(shown)
                 return
@@ -2351,6 +2591,7 @@ extension AppModel {
             if let value = workspace.encoded() { try await noteStore.setSetting(Workspace.key, value) }
         }
         notesPanel.relocate(move)
+        locationStates = Workspace.relocated(locationStates, move)
         await explorer.applyRelocation(move)
         explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
         syncNotesLocation()

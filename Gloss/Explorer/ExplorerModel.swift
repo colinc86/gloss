@@ -191,9 +191,7 @@ final class ExplorerModel {
         var files: [String: NoteMark] = [:]
         var folders: [String: Int] = [:]
         for group in groups {
-            let open = group.notes.filter { note in
-                note.state != .resolved || note.needsAttention
-            }
+            let open = group.notes.filter(NotesPanelModel.isOpen)
             guard !open.isEmpty else { continue }
             var tally: [NoteColor: Int] = [:]
             for note in open { tally[note.color, default: 0] += 1 }

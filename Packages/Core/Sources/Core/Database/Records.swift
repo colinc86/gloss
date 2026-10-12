@@ -81,6 +81,10 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     public var deletedAt: Date? = nil
     /// The document's iteration the note was taken in (issue #18).
     public var iteration: Int = 0
+    /// A send that carried the note asked the user to review the result.
+    public var reviewRequested: Bool = false
+    /// When the user accepted the agent's result; nil until then, and again after the note is sent anew.
+    public var acceptedAt: Date? = nil
 }
 
 /// One round of notes on a document (issue #18). Keyed by document and number.
@@ -140,6 +144,8 @@ public struct SendRecord: SnakeCaseRecord, Identifiable {
     public var packetText: String
     public var sentAt: Date
     public var outcome: String
+    /// The send asked the user to review what the agent did.
+    public var review: Bool = false
 }
 
 public struct SendNoteRecord: SnakeCaseRecord {

@@ -7,6 +7,9 @@ final class LineNumberGutterView: NSView {
     weak var controller: TextEditorController?
     private weak var textView: SourceTextView?
     private var markerRects: [(rect: NSRect, noteID: NoteID)] = []
+    /// Earlier notes' marks, one per line they start on: where each is, and its notes.
+    private var earlierRects: [(rect: NSRect, ids: [NoteID], range: NSRange)] = []
+    private var hoveredEarlierLine: NSRect?
     private(set) var gutterWidth: CGFloat = 44
 
     init(textView: SourceTextView, controller: TextEditorController) {
@@ -23,7 +26,8 @@ final class LineNumberGutterView: NSView {
 
     func updateWidth() {
         let digits = max(3, String(controller?.lineIndex.lineCount ?? 1).count)
-        let width = CGFloat(digits) * 7 + 26   // room for three note lanes before the numbers
+        // Room for three note lanes before the numbers, and a column for earlier notes' marks while there are any.
+        let width = CGFloat(digits) * 7 + 26 + (controller?.earlierMarks.isEmpty == false ? Self.earlierColumn : 0)
         if abs(gutterWidth - width) > 0.5 {
             gutterWidth = width
             superview?.needsLayout = true
@@ -41,6 +45,41 @@ final class LineNumberGutterView: NSView {
     static let laneGap: CGFloat = 2
     /// A removal point's hollow dot.
     static let pointDiameter: CGFloat = 6
+    /// The column after the lanes holding earlier notes' marks.
+    static let earlierColumn: CGFloat = 11
+    static let earlierX: CGFloat = 3 + CGFloat(maxLanes) * (barWidth + laneGap) + 1
+
+    /// Earlier marks grouped by the line each starts on, the line's notes in the order given (newest first).
+    static func earlierByLine(_ marks: [EarlierMark], lineIndex: LineIndex) -> [(line: Int, ids: [NoteID], range: NSRange)] {
+        var lines: [Int: (ids: [NoteID], range: NSRange)] = [:]
+        for mark in marks {
+            let line = lineIndex.positions(for: mark.range).start.line
+            if var entry = lines[line] {
+                entry.ids.append(mark.id)
+                entry.range = NSUnionRange(entry.range, mark.range)
+                lines[line] = entry
+            } else {
+                lines[line] = ([mark.id], mark.range)
+            }
+        }
+        return lines.sorted { $0.key < $1.key }.map { ($0.key, $0.value.ids, $0.value.range) }
+    }
+
+    /// One earlier note: a small hollow card; several: two stacked, with the count in the tooltip.
+    private func drawEarlierMark(count: Int, at rect: NSRect, hovered: Bool) {
+        (hovered ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor).setStroke()
+        let card = NSRect(x: rect.minX + 1, y: rect.minY + 2, width: rect.width - 3, height: rect.height - 4)
+        if count > 1 {
+            let back = NSBezierPath(roundedRect: card.offsetBy(dx: 1.5, dy: -1.5), xRadius: 1.5, yRadius: 1.5)
+            back.lineWidth = 1
+            back.stroke()
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(roundedRect: card, xRadius: 1.5, yRadius: 1.5).fill()
+        }
+        let front = NSBezierPath(roundedRect: card, xRadius: 1.5, yRadius: 1.5)
+        front.lineWidth = 1
+        front.stroke()
+    }
 
     /// Assigns each highlight (by start and end line) the first lane free at its start; extras share the last lane.
     static func lanes(for spans: [(id: NoteID, start: Int, end: Int)]) -> [NoteID: Int] {
@@ -71,6 +110,22 @@ final class LineNumberGutterView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        let earlierHit = earlierRects.last { $0.rect.insetBy(dx: -1, dy: -1).contains(point) }
+        let earlier = earlierHit?.rect
+        if earlier != hoveredEarlierLine {
+            hoveredEarlierLine = earlier
+            needsDisplay = true
+            if earlier != nil { NSCursor.pointingHand.set() } else { NSCursor.arrow.set() }
+            toolTip = earlierHit.map { $0.ids.count == 1 ? "1 earlier note here" : "\($0.ids.count) earlier notes here" }
+        }
+        if earlier != nil {
+            // Straight from a note's bar to the earlier column: the bar is no longer under the pointer.
+            if hoveredNoteID != nil {
+                hoveredNoteID = nil
+                controller?.hover(at: nil)
+            }
+            return
+        }
         let hit = markerRects.last { $0.rect.contains(point) }?.noteID
         guard hit != hoveredNoteID else { return }
         hoveredNoteID = hit
@@ -150,6 +205,15 @@ final class LineNumberGutterView: NSView {
         }
         guard firstVisible <= lastVisible else { return }
 
+        // Earlier iterations' notes: a small card on the line each starts on, in its own column after the lanes.
+        earlierRects = []
+        for entry in Self.earlierByLine(controller.drawnEarlierMarks, lineIndex: controller.lineIndex) {
+            guard let frame = lineFrames[entry.line] else { continue }
+            let rect = NSRect(x: Self.earlierX, y: frame.top + 1, width: Self.earlierColumn - 2, height: min(14, frame.bottom - frame.top - 2))
+            drawEarlierMark(count: entry.ids.count, at: rect, hovered: rect == hoveredEarlierLine)
+            earlierRects.append((rect, entry.ids, entry.range))
+        }
+
         // Note bars: one per note, spanning its lines, in lanes when notes overlap.
         let spans = controller.drawnHighlights.filter { !$0.isInvalidated }.map { highlight -> (id: NoteID, start: Int, end: Int) in
             let (start, end) = controller.lineIndex.positions(for: highlight.range)
@@ -206,6 +270,13 @@ final class LineNumberGutterView: NSView {
         guard let controller, let textView, let layoutManager = textView.textLayoutManager,
               let contentManager = layoutManager.textContentManager else { return }
         let point = convert(event.locationInWindow, from: nil)
+        if let hit = earlierRects.last(where: { $0.rect.insetBy(dx: -1, dy: -1).contains(point) }) {
+            controller.dismissPeek()
+            // A second click on the same mark puts its card away.
+            controller.earlierPeek = controller.earlierPeek?.ids == hit.ids ? nil : (hit.ids, hit.range)
+            return
+        }
+        controller.earlierPeek = nil
         if let hit = markerRects.last(where: { $0.rect.contains(point) }) {
             controller.dismissPeek()
             let location = controller.highlights.first { $0.id == hit.noteID }?.range.location ?? 0

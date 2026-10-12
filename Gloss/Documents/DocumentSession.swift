@@ -420,6 +420,7 @@ final class DocumentSession: Identifiable {
             controller.onTextChange = { [weak self] in
                 self?.isDirty = true
                 self?.textChangedUnderChanges()
+                self?.findEarlierNotes(after: Self.changesRefreshDelay)
             }
             controller.onEdit = { [weak self] _, _ in self?.liveRangesDidShift() }
             controller.onGutterClick = { [weak self] line, noteID in self?.gutterClicked(line: line, noteID: noteID) }
@@ -1012,6 +1013,10 @@ final class DocumentSession: Identifiable {
         notesObservation = nil
         pageReanchor?.cancel()
         pageReanchor = nil
+        earlierObservation?.cancel()
+        earlierObservation = nil
+        earlierTask?.cancel()
+        earlierSearching = nil
     }
 
     /// Reloads a changed PDF and re-anchors its notes by page text.
@@ -1068,10 +1073,105 @@ final class DocumentSession: Identifiable {
         }
     }
 
+    // MARK: Earlier notes
+
+    /// Earlier iterations' notes are drawn where they still are (View › Show Earlier Notes, or the document listing
+    /// every iteration in the notes panel). Set by the app model; text documents as they are only.
+    var showsEarlierNotes = false {
+        didSet {
+            guard showsEarlierNotes != oldValue else { return }
+            observeEarlierNotes()
+        }
+    }
+    /// Earlier iterations' notes found again in the text as it is, newest iteration first.
+    private(set) var earlierNotes: [EarlierNote] = []
+    @ObservationIgnored private var earlierObservation: Task<Void, Never>?
+    @ObservationIgnored private var earlierSource: [Note] = []
+    @ObservationIgnored private var earlierTask: Task<Void, Never>?
+    /// What the last search was made on, so a redraw that changed neither asks nothing.
+    @ObservationIgnored private var earlierSearched: (text: String, ids: [NoteID])?
+    /// The search under way, so the same one isn't started again before it ends.
+    @ObservationIgnored private var earlierSearching: (text: String, ids: [NoteID])?
+
+    private func observeEarlierNotes() {
+        earlierObservation?.cancel()
+        earlierObservation = nil
+        earlierTask?.cancel()
+        earlierSource = []
+        earlierSearched = nil
+        earlierSearching = nil
+        guard showsEarlierNotes, pastIteration == nil, let document else {
+            setEarlierNotes([])
+            return
+        }
+        let stream = noteStore.observeNotesInEveryIteration(for: document.id)
+        earlierObservation = Task { [weak self] in
+            do {
+                for try await notes in stream {
+                    guard let self, !Task.isCancelled else { return }
+                    self.earlierSource = notes
+                    self.findEarlierNotes()
+                }
+            } catch {
+                Log.notes.error("earlier notes observation failed: \(error, privacy: .public)")
+            }
+        }
+    }
+
+    /// Looks for the earlier notes in the text again, off the main thread; `delay` lets typing pause first.
+    private func findEarlierNotes(after delay: Duration = .zero) {
+        guard showsEarlierNotes, let controller = textController, !earlierSource.isEmpty else {
+            if !earlierNotes.isEmpty { setEarlierNotes([]) }
+            return
+        }
+        // This iteration's notes are drawn as notes; the rest are earlier ones (notes carried along moved here).
+        let current = Set(notes.map(\.id))
+        let candidates = earlierSource.filter { !current.contains($0.id) }
+        let text = controller.text
+        let ids = candidates.map(\.id)
+        // Notes elsewhere changing (an agent replying) doesn't move these: what is drawn takes their new state, and a
+        // search already made, or under way, for the same text and notes isn't started again.
+        if let searched = earlierSearched, searched.ids == ids, searched.text == text {
+            refreshEarlierNotes(from: candidates)
+            return
+        }
+        if let searching = earlierSearching, searching.ids == ids, searching.text == text { return }
+        earlierTask?.cancel()
+        earlierSearching = (text, ids)
+        let fileName = fileName
+        earlierTask = Task { [weak self] in
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled else { return }
+            }
+            let found = await EarlierNotes.find(candidates, in: text, fileName: fileName)
+            guard !Task.isCancelled, let self else { return }
+            self.earlierSearching = nil
+            self.earlierSearched = (text, ids)
+            self.setEarlierNotes(found)
+            // Notes that changed while searching (their ids didn't) are drawn as they are now.
+            self.refreshEarlierNotes(from: self.earlierSource)
+        }
+    }
+
+    /// The notes found keep their places but take their latest state, comment and outcome.
+    private func refreshEarlierNotes(from source: [Note]) {
+        let latest = Dictionary(source.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let refreshed = earlierNotes.map { found in EarlierNote(note: latest[found.note.id] ?? found.note, range: found.range) }
+        if refreshed != earlierNotes { setEarlierNotes(refreshed) }
+    }
+
+    private func setEarlierNotes(_ found: [EarlierNote]) {
+        earlierNotes = found
+        textController?.earlierMarks = found.map { EarlierMark(id: $0.note.id, range: $0.range, color: $0.note.color) }
+    }
+
     // MARK: Notes
 
     private func observeNotes() {
         guard let document else { return }
+        // The document is known now (or again, after a move): its earlier notes can be looked for.
+        if showsEarlierNotes { observeEarlierNotes() }
         notesObservation?.cancel()
         // An earlier iteration's notes were taken on its snapshot: shown where they were, never re-anchored.
         if pastIteration != nil { pendingOpenReanchor = nil }
@@ -1083,6 +1183,7 @@ final class DocumentSession: Identifiable {
                     self.dropLiveRangesMovedElsewhere(from: self.notes, to: notes)
                     self.notes = notes
                     self.syncHighlights()
+                    self.findEarlierNotes()
                     if !self.notesDelivered {
                         self.notesDelivered = true
                         if let reanchor = self.pendingOpenReanchor {
@@ -1720,7 +1821,7 @@ final class DocumentSession: Identifiable {
     /// and so are notes the panel isn't listing, so a step never selects a card that isn't there.
     var steppableNotes: [(id: NoteID, key: Double)] {
         let open = notes.filter {
-            $0.state != .resolved && $0.state != .orphaned && !hiddenNoteIDs.contains($0.id)
+            ($0.state != .resolved || $0.awaitsReview) && $0.state != .orphaned && !hiddenNoteIDs.contains($0.id)
         }
         let keyed: [(id: NoteID, key: Double)] = open.compactMap { note in
             switch note.anchor {

@@ -35,10 +35,20 @@ struct IterationMenu: View {
         let current = iterations.last
         let shown: Iteration? = shown
         let live = model.session(hostID: document.hostID, path: document.path)
+        let all = model.notesPanel.listsAllIterations(document)
         return Menu {
+            Toggle(isOn: Binding(get: { all }, set: { model.showAllIterations($0, of: document) })) {
+                Text("All Iterations")
+                Text("Every iteration's notes, newest first")
+            }
+            Divider()
             ForEach(iterations.reversed()) { iteration in
-                Toggle(isOn: Binding(get: { shown?.number == iteration.number },
-                                     set: { if $0 { model.showIteration(iteration.number, of: document) } })) {
+                Toggle(isOn: Binding(get: { !all && shown?.number == iteration.number },
+                                     set: {
+                                         guard $0 else { return }
+                                         model.notesPanel.showAllIterations(of: nil)
+                                         model.showIteration(iteration.number, of: document)
+                                     })) {
                     Text(iteration.label)
                     Text(Self.detail(iteration, current: iteration.number == current?.number))
                 }
@@ -65,18 +75,23 @@ struct IterationMenu: View {
             }
         } label: {
             HStack(spacing: DS.Space.xxs) {
-                if viewed != nil { Image(systemName: "clock.arrow.circlepath") }
-                Text(shown.map { "Iteration \($0.number)" } ?? "Iteration")
+                if all {
+                    Image(systemName: "square.stack.3d.up")
+                } else if viewed != nil {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                Text(all ? "All Iterations" : shown.map { "Iteration \($0.number)" } ?? "Iteration")
                     .monospacedDigit()
             }
             .font(.caption2.weight(.medium))
-            .foregroundStyle(viewed != nil ? Color.accentColor : Color.secondary)
+            .foregroundStyle(all || viewed != nil ? Color.accentColor : Color.secondary)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.visible)
         .fixedSize()
-        .help(viewed != nil ? "Showing an earlier iteration of \(document.fileName)" : "Iterations of \(document.fileName)")
-        .accessibilityLabel(viewed != nil ? "Iterations of \(document.fileName), showing earlier iteration \(viewed ?? 0)"
+        .help(all ? "Listing every iteration's notes of \(document.fileName)"
+              : viewed != nil ? "Showing an earlier iteration of \(document.fileName)" : "Iterations of \(document.fileName)")
+        .accessibilityLabel(all ? "Iterations of \(document.fileName), listing all iterations" : viewed != nil ? "Iterations of \(document.fileName), showing earlier iteration \(viewed ?? 0)"
                             : "Iterations of \(document.fileName), iteration \(current?.number ?? 0)")
         .alert("Rename Iteration", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $newName)

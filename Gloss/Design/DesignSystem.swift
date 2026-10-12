@@ -47,9 +47,11 @@ extension NoteState {
 
 extension Note {
     /// The state a note's highlight is drawn with. A note that is the user's turn (an agent asked something, or a
-    /// follow-up waits to be sent) is drawn as a draft so it stands out; one waiting on the agent as sent.
+    /// follow-up waits to be sent) is drawn as a draft so it stands out; one waiting on the agent as sent, and so is a
+    /// resolved one waiting for the user's review: it doesn't fade until they accept it.
     nonisolated var displayState: NoteState {
-        state != .orphaned && (waitingOnUser || hasUnsentFollowUps) ? .draft : state
+        if state != .orphaned && (waitingOnUser || hasUnsentFollowUps) { return .draft }
+        return awaitsReview ? .sent : state
     }
 }
 

@@ -23,6 +23,10 @@ final class HighlightBackdropView: NSView {
     var entries: [Entry] = [] {
         didSet { needsDisplay = true }
     }
+    /// Earlier iterations' notes where they still are: a faint dashed outline, under the notes of this iteration.
+    var earlierEntries: [(range: NSRange, color: NoteColor)] = [] {
+        didSet { needsDisplay = true }
+    }
 
     /// A change's lines: full-width tinted rows for added ones, a hairline where lines were taken out.
     var lineChanges: LineChanges? {
@@ -104,6 +108,21 @@ final class HighlightBackdropView: NSView {
         }
         if showsIndentGuides {
             drawIndentGuides(in: dirtyRect, layoutManager: layoutManager, contentManager: contentManager)
+        }
+        for earlier in earlierEntries where earlier.range.length > 0 {
+            guard let from = contentManager.location(documentStart, offsetBy: earlier.range.location),
+                  let to = contentManager.location(documentStart, offsetBy: earlier.range.location + earlier.range.length),
+                  let textRange = NSTextRange(location: from, end: to) else { continue }
+            layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: [.rangeNotRequired]) { _, frame, _, _ in
+                let rect = frame.offsetBy(dx: inset.x, dy: inset.y).insetBy(dx: -1, dy: 0.5)
+                guard rect.intersects(dirtyRect) else { return true }
+                let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
+                path.lineWidth = 1
+                path.setLineDash([2, 2], count: 2, phase: 0)
+                Theme.color(for: earlier.color).withAlphaComponent(0.4).setStroke()
+                path.stroke()
+                return true
+            }
         }
         for entry in entries {
             // Text an agent or an edit removed: a caret where it was, in the note's colour, with a round cap on top.

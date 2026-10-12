@@ -229,6 +229,13 @@ struct PacketBuilderTests {
         #expect(PacketBuilder.build([]).text == "Notes: 0. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.")
     }
 
+    /// A send that asks for review asks the agent, after the usual line, to say what it changed.
+    @Test func aReviewSendAsksWhatChanged() {
+        let plain = PacketBuilder.build([]).text
+        #expect(PacketBuilder.build([], review: true).text == plain + " The user will review each result, so when you resolve a note, say in its message what you changed, in one sentence.")
+        #expect(!plain.contains("review"))
+    }
+
     @Test func summaryLineTrimsTheComment() {
         let long = String(repeating: "x", count: 100)
         let note = PacketNote(noteID: markdownID, agentPath: "/p/a.md", source: .markdown, anchor: textAnchor(3, 5), comment: long)

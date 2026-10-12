@@ -86,7 +86,12 @@ struct NotesPanel: View {
                                         .padding(.vertical, DS.Space.xs)
                                         .listRowSeparator(.hidden)
                                 }
+                                let iterationStarts = panel.iterationStarts(in: group)
                                 ForEach(group.notes) { note in
+                                    // All Iterations: a small header where each iteration's notes begin.
+                                    if let header = iterationStarts[note.id] {
+                                        IterationRunHeader(title: header, isCurrent: note.iteration == group.document.currentIteration)
+                                    }
                                     NoteCard(note: note, document: group.document, listActive: listFocused && controlActiveState == .key,
                                              inRun: inRuns.contains(note.id))
                                         .background(NoSystemSelectionHighlight())
@@ -266,6 +271,16 @@ struct NotesPanel: View {
                 BulkActionBar(notes: panel.selectedNotes)
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
+            // Results agents resolved for a send that asked for review: reviewed when the user has time.
+            if model.review.waitingCount > 0 {
+                Button { model.review.start() } label: {
+                    Label("Review \(model.review.waitingCount) Result\(model.review.waitingCount == 1 ? "" : "s")", systemImage: "eye")
+                        .frame(maxWidth: .infinity)
+                }
+                .tint(.teal)
+                .help("Step through what the agent did on each note, and accept it or follow up")
+                .transition(.opacity.calmed)
+            }
             // Where notes go, and this document's drafts as ⌘↩ sends them. Several selected bring the selection bar
             // above, which sends what's selected instead (issue #8).
             HStack(spacing: 6) {
@@ -282,6 +297,9 @@ struct NotesPanel: View {
                         action: { Task { await model.sendVisibleDrafts() } },
                         menu: { sendMenuItems }
                     )
+                    .popover(isPresented: Binding(get: { model.showsPacketPreview }, set: { model.showsPacketPreview = $0 }), arrowEdge: .bottom) {
+                        PacketPreview()
+                    }
                     .transition(.opacity.calmed)
                 }
             }
@@ -303,7 +321,9 @@ struct NotesPanel: View {
                 Text("This Location\(locationDrafts > 0 ? " (\(locationDrafts))" : "")").tag(AppModel.SendScope.all)
             }
             .pickerStyle(.inline)
+            Toggle("Review When Done", isOn: Binding(get: { model.settings.reviewsResults }, set: { model.settings.reviewsResults = $0 }))
             Divider()
+            Button("Preview Packet…") { model.showsPacketPreview = true }
             Button("Copy Shown Notes as Packet\(shown > 0 ? " (\(shown))" : "")") {
                 Task { await model.copyVisibleDrafts() }
             }
@@ -331,6 +351,8 @@ struct NotesPanel: View {
             // Nothing to separate while resolved notes are hidden.
             Toggle("Separate Resolved Notes", isOn: $panel.separateResolved)
                 .disabled(!panel.showResolved)
+            // Earlier iterations' notes, faintly, where they still are in a text document.
+            Toggle("Show Earlier Notes", isOn: $panel.showEarlierNotes)
             Divider()
             Button("Recently Deleted", systemImage: "trash") { panel.showsRecentlyDeleted = true }
         } label: {
@@ -520,8 +542,9 @@ struct NoteCard: View {
     private var isSelected: Bool { model.notesPanel.selectedNoteID == note.id }
     /// Selected alone or among several: drawn as selected either way.
     private var isInSelection: Bool { model.notesPanel.selection.contains(note.id) }
-    /// Resolved notes step back so open work leads the eye; a question from the agent leaves its note open.
-    private var isSettled: Bool { note.state == .resolved }
+    /// Resolved notes step back so open work leads the eye; a question from the agent leaves its note open, and so
+    /// does a result waiting for the user's review.
+    private var isSettled: Bool { note.state == .resolved && !note.awaitsReview }
     /// A settled note at rest is one line, plus its latest turn if it has one; selected or opened it shows its actions.
     /// The pointer never changes its size: a card that grows under the pointer moves the one below it.
     private var isCompact: Bool { isSettled && !isSelected && !expanded }
@@ -725,6 +748,7 @@ struct NoteCard: View {
     nonisolated static func badgeLabel(_ note: Note) -> String {
         if note.state == .orphaned { return "Orphaned" }
         if note.waitingOnUser || note.hasUnsentFollowUps { return "Your turn" }
+        if note.awaitsReview { return "To review" }
         return note.state.rawValue.capitalized
     }
 
@@ -733,6 +757,9 @@ struct NoteCard: View {
     static func badge(_ note: Note) -> StatusPill {
         let style = note.state.style
         let yourTurn = note.state != .orphaned && (note.waitingOnUser || note.hasUnsentFollowUps)
+        if !yourTurn, note.awaitsReview {
+            return StatusPill(label: badgeLabel(note), symbol: "eye.circle.fill", tint: .teal)
+        }
         return StatusPill(label: badgeLabel(note),
                           symbol: yourTurn ? (note.waitingOnUser ? "questionmark.circle.fill" : NoteState.draft.style.symbol) : style.symbol,
                           tint: yourTurn ? .orange : style.tint)
@@ -2176,5 +2203,23 @@ private struct BulkActionBar: View {
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.accentColor.opacity(0.25)))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(notes.count.counted("note")) selected")
+    }
+}
+
+/// Above each iteration's notes while a document lists every iteration: "Iteration 2 · Oct 8 · 5 notes".
+private struct IterationRunHeader: View {
+    let title: String
+    let isCurrent: Bool
+
+    var body: some View {
+        Label(title, systemImage: isCurrent ? "square.stack.3d.up" : "clock.arrow.circlepath")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(isCurrent ? Color.accentColor : Color.secondary)
+            .monospacedDigit()
+            .lineLimit(1)
+            .padding(.top, DS.Space.s)
+            .listRowSeparator(.hidden)
+            .selectionDisabled()
+            .accessibilityAddTraits(.isHeader)
     }
 }

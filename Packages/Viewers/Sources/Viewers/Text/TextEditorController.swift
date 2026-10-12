@@ -46,6 +46,26 @@ public final class TextEditorController {
             for observer in highlightObservers.values { observer() }
         }
     }
+    /// Earlier iterations' notes found again in the text as it is (Show Earlier Notes): a faint outline and a mark in
+    /// the gutter. Apart from `highlights`, so stepping, counts, hits and the minimap never see them. Not shifted by
+    /// edits: the session finds them again once typing pauses.
+    public var earlierMarks: [EarlierMark] = [] {
+        didSet {
+            guard earlierMarks != oldValue else { return }
+            if let shown = earlierPeek, !earlierMarks.contains(where: { shown.ids.contains($0.id) }) { earlierPeek = nil }
+            highlightsVersion += 1
+            for observer in highlightObservers.values { observer() }
+        }
+    }
+    /// The earlier marks drawn: those whose range is still inside the text.
+    public var drawnEarlierMarks: [EarlierMark] {
+        let length = (text as NSString).length
+        return earlierMarks.filter { NSMaxRange($0.range) <= length }
+    }
+    /// The spot whose earlier notes are listed in a card (a click on its gutter mark): their ids, newest first, and
+    /// where they are.
+    public var earlierPeek: (ids: [NoteID], range: NSRange)?
+
     /// Views register here to redraw when highlights change; SwiftUI does not track reads inside AppKit updates.
     @ObservationIgnored private var highlightObservers: [UUID: () -> Void] = [:]
 
@@ -233,6 +253,19 @@ public final class TextEditorController {
 
     public var selectionPosition: (start: TextPosition, end: TextPosition) {
         lineIndex.positions(for: selection)
+    }
+}
+
+/// An earlier iteration's note, found again in the text as it is.
+public struct EarlierMark: Identifiable, Equatable, Sendable {
+    public var id: NoteID
+    public var range: NSRange
+    public var color: NoteColor
+
+    public init(id: NoteID, range: NSRange, color: NoteColor) {
+        self.id = id
+        self.range = range
+        self.color = color
     }
 }
 

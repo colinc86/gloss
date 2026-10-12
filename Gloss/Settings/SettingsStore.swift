@@ -24,13 +24,38 @@ final class SettingsStore {
     private let noteStore: NoteStore
 
     var launchRestore = LaunchRestore.system { didSet { persist("general.restore", launchRestore.rawValue) } }
-    /// The Dock icon while Gloss runs (`AppIconStyle`).
+    /// The Dock icon while Gloss runs (`AppIconStyle`); the light one while it matches the Mac's appearance.
     var appIcon = AppIconStyle.bundled {
         didSet {
             persist("general.appIcon", appIcon.rawValue)
-            if appIcon != oldValue { appIcon.apply() }
+            if appIcon != oldValue { applyAppIcon() }
         }
     }
+    /// The Dock icon in dark mode, while the icon matches the Mac's appearance.
+    var appIconDark = AppIconStyle.bundled {
+        didSet {
+            hasDarkIcon = true
+            persist("general.appIconDark", appIconDark.rawValue)
+            if appIconDark != oldValue { applyAppIcon() }
+        }
+    }
+    /// Switches the Dock icon between `appIcon` and `appIconDark` as the Mac changes appearance.
+    var appIconMatchesAppearance = false {
+        didSet {
+            persist("general.appIcon.matchAppearance", appIconMatchesAppearance ? "1" : "0")
+            guard appIconMatchesAppearance != oldValue else { return }
+            if appIconMatchesAppearance, loaded, !hasDarkIcon {
+                // The first time: Frost for light and Graphite for dark, in the color already chosen.
+                let pair = appIcon.seededPair
+                appIcon = pair.light
+                appIconDark = pair.dark
+            }
+            applyAppIcon()
+        }
+    }
+    /// Whether a dark icon was ever chosen (or stored), so turning matching on again keeps it.
+    @ObservationIgnored private var hasDarkIcon = false
+    @ObservationIgnored private lazy var appearance = AppIconAppearance { [weak self] in self?.applyAppIcon() }
     var showDotfilesByDefault = false { didSet { persist("general.showDotfiles", showDotfilesByDefault ? "1" : "0") } }
     var showsQuestionsOnDock = true {
         didSet {
@@ -85,8 +110,21 @@ final class SettingsStore {
     var iterationOpenNotes = IterationOpenNotes.ask { didSet { persist("iterations.openNotes", iterationOpenNotes.rawValue) } }
     /// Starts an iteration on the first note added after every note of the iteration was resolved.
     var iteratesAfterResolved = false { didSet { persist("iterations.afterResolved", iteratesAfterResolved ? "1" : "0") } }
+    /// Sends ask to review what the agent did: resolved notes wait for the user to accept them (Review When Done).
+    var reviewsResults = false { didSet { persist("notes.review", reviewsResults ? "1" : "0") } }
     /// Starts an iteration when a local file's git commit changed, checked when it opens or reloads.
     var iteratesOnCommit = false { didSet { persist("iterations.onCommit", iteratesOnCommit ? "1" : "0") } }
+    /// Settings › General › Layout (2026-10-11): when the window takes the compact layout.
+    var layoutMode = LayoutMode.automatic { didSet { persist("layout.mode", layoutMode.rawValue) } }
+    /// The window width below which Automatic goes compact.
+    var compactBelow: Double = 1000 { didSet { persist("layout.compactBelow", String(compactBelow)) } }
+    static let compactBelowRange: ClosedRange<Double> = 800...1400
+    /// In the compact layout the notes start as the tray's one-line bar (false) or open (true).
+    var compactNotesExpanded = false { didSet { persist("layout.notesExpanded", compactNotesExpanded ? "1" : "0") } }
+    /// In the compact layout the explorer slides away once a file is opened from it.
+    var compactExplorerClosesOnOpen = true { didSet { persist("layout.explorerCloses", compactExplorerClosesOnOpen ? "1" : "0") } }
+    /// The compact tray's height when open, as the user last dragged it.
+    var compactTrayHeight: Double = 320 { didSet { persist("layout.trayHeight", String(compactTrayHeight)) } }
     /// How many ended iterations of a document keep their snapshot; 0 keeps them all.
     var snapshotsKept = 10 { didSet { persist("iterations.snapshotsKept", String(snapshotsKept)) } }
     static let snapshotsKeptChoices = [10, 0]
@@ -121,6 +159,8 @@ final class SettingsStore {
             launchRestore = .nothing
         }
         if let value = await read("general.appIcon"), let style = AppIconStyle(rawValue: value) { appIcon = style }
+        if let value = await read("general.appIconDark"), let style = AppIconStyle(rawValue: value) { appIconDark = style }
+        if let value = await read("general.appIcon.matchAppearance") { appIconMatchesAppearance = value == "1" }
         if let value = await read("general.showDotfiles") { showDotfilesByDefault = value == "1" }
         if let value = await read("general.dockQuestions") { showsQuestionsOnDock = value == "1" }
         // Kept to what the controls offer: a value from elsewhere (an older build, a hand edit) is brought in range.
@@ -132,15 +172,34 @@ final class SettingsStore {
         if let value = await read("notes.trashDays"), let days = Int(value), Self.trashRetentionChoices.contains(days) { trashRetentionDays = days }
         if let value = await read("iterations.openNotes"), let choice = IterationOpenNotes(rawValue: value) { iterationOpenNotes = choice }
         if let value = await read("iterations.afterResolved") { iteratesAfterResolved = value == "1" }
+        if let value = await read("notes.review") { reviewsResults = value == "1" }
         if let value = await read("iterations.onCommit") { iteratesOnCommit = value == "1" }
         if let value = await read("iterations.snapshotsKept"), let count = Int(value), Self.snapshotsKeptChoices.contains(count) { snapshotsKept = count }
+        if let value = await read("layout.mode"), let mode = LayoutMode(rawValue: value) { layoutMode = mode }
+        if let value = await read("layout.compactBelow"), let width = Double(value), width.isFinite { compactBelow = min(max(width, Self.compactBelowRange.lowerBound), Self.compactBelowRange.upperBound) }
+        if let value = await read("layout.notesExpanded") { compactNotesExpanded = value == "1" }
+        if let value = await read("layout.explorerCloses") { compactExplorerClosesOnOpen = value == "1" }
+        if let value = await read("layout.trayHeight"), let height = Double(value), height.isFinite { compactTrayHeight = max(160, height) }
         if let value = await read("mcp.port"), let port = Int(value), Self.mcpPortRange.contains(port) { mcpPort = port }
         loaded = true
     }
 
+    /// Shows the icon for the Mac's appearance now, and watches for changes while it matches.
+    private func applyAppIcon() {
+        appearance.isWatching = appIconMatchesAppearance
+        AppIconStyle.style(light: appIcon, dark: appIconDark, matching: appIconMatchesAppearance, isDark: AppIconAppearance.isDark)
+            .apply(drawn: appIconMatchesAppearance)
+    }
+
+    /// The last setting written; each write waits for the one before, so two quick changes to a setting land in the
+    /// order they were made (unordered, turning matching off and on again could leave the older value stored).
+    @ObservationIgnored private var lastWrite: Task<Void, Never>?
+
     private func persist(_ key: String, _ value: String) {
         guard loaded else { return }
-        Task {
+        let previous = lastWrite
+        lastWrite = Task {
+            await previous?.value
             do { try await noteStore.setSetting(key, value) } catch { Log.app.error("setting \(key, privacy: .public) failed: \(error, privacy: .public)") }
         }
     }

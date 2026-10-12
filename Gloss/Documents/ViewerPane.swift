@@ -27,10 +27,19 @@ struct ViewerPane: View {
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
             content
+                // Review floats over the bottom of the document, as the peek and the send toast do; the note it
+                // shows is scrolled to the middle, clear of it.
+                .overlay(alignment: .bottom) {
+                    if model.review.isActive, model.shownSession === session {
+                        ReviewBar()
+                            .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
+                    }
+                }
             Divider()
             StatusBar(session: session)
         }
         .animation(DS.Motion.smooth, value: session.banner)
+        .animation(DS.Motion.smooth, value: model.review.isActive)
         // The notes panel's link follows whichever view of the document is in front.
         .onChange(of: session.noteGeometry.map(ObjectIdentifier.init), initial: true) {
             model.noteLink.attach(session.noteGeometry)
@@ -430,7 +439,7 @@ private struct StatusBar: View {
     /// This file's open notes as coloured dots and a count; opens the notes panel.
     @ViewBuilder
     private var openNotes: some View {
-        let open = session.notes.filter { $0.state != .resolved || $0.needsAttention }
+        let open = session.notes.filter(NotesPanelModel.isOpen)
         if !open.isEmpty {
             Button {
                 model.showNotesPanel = true
@@ -567,6 +576,9 @@ private struct NotePopoverHost: ViewModifier {
         }
         .overlay {
             NotePeekLayer(session: session)
+        }
+        .overlay {
+            EarlierNotesLayer(session: session)
         }
         .overlay {
             GeometryReader { proxy in
@@ -840,6 +852,110 @@ private struct NotePeekLayer: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .animation(DS.Motion.snappy, value: session.textController?.peek?.id)
         }
+    }
+}
+
+/// A click on an earlier notes' mark in the gutter lists that spot's notes from earlier iterations in a card beside it:
+/// newest first, each with what was asked, the agent's last word and how it ended, to look at where it was taken or
+/// bring forward.
+private struct EarlierNotesLayer: View {
+    @Environment(AppModel.self) private var model
+    let session: DocumentSession
+    @State private var cardHeight: CGFloat = 160
+    static let width: CGFloat = 340
+
+    var body: some View {
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
+            ZStack(alignment: .topLeading) {
+                if let controller = session.textController, let shown = controller.earlierPeek,
+                   let rect = controller.rect(for: shown.range)?.offsetBy(dx: -origin.x, dy: -origin.y) {
+                    let notes = shown.ids.compactMap { id in session.earlierNotes.first { $0.note.id == id }?.note }
+                    let below = rect.maxY + 6 + cardHeight <= proxy.size.height
+                    let x = min(max(DS.Space.s, rect.minX), proxy.size.width - Self.width - DS.Space.s)
+                    let y = below ? rect.maxY + 6 : max(DS.Space.s, rect.minY - 6 - cardHeight)
+                    EarlierNotesCard(notes: notes, session: session) { controller.earlierPeek = nil }
+                        .frame(width: Self.width)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
+                        .offset(x: x, y: y)
+                        .transition((AnyTransition.scale(scale: 0.94, anchor: below ? .top : .bottom).combined(with: .opacity)).calmed)
+                        .id(shown.ids)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .animation(DS.Motion.snappy, value: session.textController?.earlierPeek?.ids)
+        }
+    }
+}
+
+private struct EarlierNotesCard: View {
+    @Environment(AppModel.self) private var model
+    let notes: [Note]
+    let session: DocumentSession
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            HStack(spacing: DS.Space.s) {
+                Label(notes.count == 1 ? "1 earlier note here" : "\(notes.count) earlier notes here", systemImage: "square.stack")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: DS.Space.xs)
+                InlineIconButton(title: "Close", symbol: "xmark", emphasized: false, action: close)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: DS.Space.m) {
+                    ForEach(notes) { note in
+                        if note.id != notes.first?.id { Divider() }
+                        entry(note)
+                    }
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: 320)
+        }
+        .padding(DS.Space.m)
+        .readableGlass(in: RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
+        .shadow(color: .black.opacity(0.2), radius: 12, y: 5)
+        .onExitCommand(perform: close)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Earlier notes here")
+    }
+
+    private func entry(_ note: Note) -> some View {
+        let tint = Color(nsColor: Theme.color(for: note.color))
+        return HStack(alignment: .top, spacing: DS.Space.m) {
+            Capsule().fill(tint.gradient).frame(width: 3)
+            VStack(alignment: .leading, spacing: DS.Space.s) {
+                HStack(spacing: DS.Space.s) {
+                    Text("Iteration \(note.iteration) · \(note.createdAt.formatted(.dateTime.month(.abbreviated).day()))")
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: DS.Space.xs)
+                    NoteCard.badge(note)
+                }
+                Text(NoteCard.styledBody(note.body))
+                    .font(.callout)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+                if let latest = NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id)).latest, latest.speaker == .agent {
+                    AgentMessageBubble(message: latest.text, asks: false, agent: latest.agent ?? note.resolveAgent)
+                        .frame(maxHeight: 100)
+                }
+                HStack(spacing: DS.Space.s) {
+                    Button("Show in Iteration \(note.iteration)") { model.showEarlierNote(note, in: session) }
+                    if let document = session.document {
+                        Button("Bring Forward") {
+                            close()
+                            Task { await model.iterations.bringForward(note, in: document) }
+                        }
+                    }
+                }
+                .controlSize(.small)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

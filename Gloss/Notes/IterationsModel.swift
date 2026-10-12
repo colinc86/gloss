@@ -243,11 +243,11 @@ final class IterationsModel {
         var anchor = note.anchor
         var found = true
         if case .text(let old) = note.anchor, let text = await currentText(of: document) {
-            switch ReAnchorer.text(old, in: text, newHash: Data(text.utf8).sha256Hex, fileName: PathUtilities.name(of: document.path)) {
-            case .moved(let moved), .movedNeedsReview(let moved): anchor = moved
-            case .unchanged: break
-            // Not in the file any more: an orphan, to be placed again, rather than a highlight on other words.
-            case .removed, .orphaned: found = false
+            if let moved = EarlierNotes.relocate(old, in: text, hash: Data(text.utf8).sha256Hex, fileName: PathUtilities.name(of: document.path)) {
+                anchor = .text(moved)
+            } else {
+                // Not in the file any more: an orphan, to be placed again, rather than a highlight on other words.
+                found = false
             }
         }
         let label = (try? await noteStore.iterations(for: document.id).first { $0.number == note.iteration })?.label ?? "Iteration \(note.iteration)"

@@ -11,6 +11,8 @@ final class FileNode: NSObject {
     var children: [FileNode]?
     var isLoading = false
     var isIgnored = false
+    /// Open in the tree, so a tree built again (the compact layout's slide-over, back to the sidebar) opens it again.
+    var isExpanded = false
 
     init(hostID: HostID, entry: DirectoryEntry, parent: FileNode?) {
         self.hostID = hostID

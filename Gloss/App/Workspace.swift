@@ -29,6 +29,17 @@ nonisolated struct Workspace: Codable, Equatable {
         var showsSource: Bool?
     }
 
+    /// What one location (a folder in the explorer) was showing when it was left (2026-10-11): its last document and
+    /// where in it, the notes selected, and the notes panel's tab, colors and search. Every field optional, so what an
+    /// older build saved still reads.
+    struct LocationState: Codable, Equatable {
+        var document: Document?
+        var selectedNotes: [String]?
+        var filter: String?
+        var colors: [String]?
+        var search: String?
+    }
+
     static let key = "general.workspace"
 
     var folders: [Place] = []
@@ -38,6 +49,11 @@ nonisolated struct Workspace: Codable, Equatable {
     var back: [Place] = []
     var forward: [Place] = []
     var showsNotesPanel = true
+    /// Each location's state, by `host:path` of its folder; nil in what older builds saved.
+    var locations: [String: LocationState]?
+
+    /// The key a location's state is kept under.
+    static func locationKey(host: String, path: String) -> String { "\(host):\(path)" }
 
     /// The setting before #9: `host\npath[\nline]` of the document in front.
     static func fromLastDocument(_ value: String) -> Workspace? {
@@ -55,6 +71,24 @@ nonisolated struct Workspace: Codable, Equatable {
         }
         folders = folders.map(mapped); back = back.map(mapped); forward = forward.map(mapped)
         if let current = document { document?.place = mapped(current.place) }
+        locations = locations.map { Self.relocated($0, move) }
+    }
+
+    /// Location states with a renamed folder's key, and documents inside it, at their new paths.
+    static func relocated(_ states: [String: LocationState], _ move: DocumentRelocation) -> [String: LocationState] {
+        var result: [String: LocationState] = [:]
+        for (key, var state) in states {
+            var newKey = key
+            if let colon = key.firstIndex(of: ":") {
+                let host = String(key[..<colon]), path = String(key[key.index(after: colon)...])
+                if HostID(rawValue: host) == move.hostID, let moved = move.destination(for: path) { newKey = locationKey(host: host, path: moved) }
+            }
+            if let place = state.document?.place, place.hostID == move.hostID, let moved = move.destination(for: place.path) {
+                state.document?.place = Place(host: place.host, path: moved)
+            }
+            result[newKey] = state
+        }
+        return result
     }
 
     func encoded() -> String? {

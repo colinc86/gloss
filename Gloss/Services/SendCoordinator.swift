@@ -58,6 +58,8 @@ final class SendCoordinator {
         var copied = false
         /// Stopped before delivery because what was chosen changed: nothing went, and nothing is recorded.
         var cancelled = false
+        /// The send asked the user to review the results; a retry asks again.
+        var review = false
 
         static func == (lhs: SendResult, rhs: SendResult) -> Bool { lhs.id == rhs.id }
     }
@@ -72,7 +74,7 @@ final class SendCoordinator {
     /// Sends the last result's notes to the same target again.
     func retry() async {
         guard let result = lastResult else { return }
-        await send(noteIDs: result.noteIDs, to: result.target)
+        await send(noteIDs: result.noteIDs, to: result.target, review: result.review)
     }
     /// Bumped when a send attempt finishes, delivered or not; note cards refetch their latest send on it.
     private(set) var completedSends = 0
@@ -301,12 +303,13 @@ final class SendCoordinator {
 
     // MARK: Sending
 
-    /// Delivers one packet with these notes to `target`, recording the send and flipping drafts to sent.
-    func send(noteIDs: [NoteID], to target: AgentTarget, validate: @MainActor () async -> String? = { nil }) async {
+    /// Delivers one packet with these notes to `target`, recording the send and flipping drafts to sent. `review`: the
+    /// user will review what the agent does, which the packet tells it and the notes remember.
+    func send(noteIDs: [NoteID], to target: AgentTarget, review: Bool = false, validate: @MainActor () async -> String? = { nil }) async {
         guard !noteIDs.isEmpty, !isSending else { return }
         guard let transport = transports.first(where: { $0.kind == target.transport }) else {
             lastError = "No transport for \(target.transport.displayName)"
-            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: lastError)
+            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: lastError, review: review)
             return
         }
         isSending = true
@@ -329,7 +332,9 @@ final class SendCoordinator {
             let (notes, attachments) = try await collect(noteIDs: noteIDs)
             let staging = try await stagers[target.hostID]?.stage(attachments, for: target, sendID: sendID) ?? .empty
             let packetNotes = try await packetNotes(for: notes, target: target, staged: staging.attachments)
-            let packet = PacketBuilder.build(packetNotes)
+            // A note that asked for review keeps asking (its follow-ups too), so the agent is told whenever one goes.
+            let review = review || notes.contains { $0.note.reviewRequested }
+            let packet = PacketBuilder.build(packetNotes, review: review)
             let expiresAt = Date().addingTimeInterval(TimeInterval(stagedFileExpiryDays) * 24 * 3600)
             if let problem = await validate() {
                 // Nothing left the app: no failed send is recorded, and the toast offers no Retry.
@@ -340,15 +345,16 @@ final class SendCoordinator {
             do {
                 let receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
                 let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs,
-                                                              outcome: .delivered, carried: packetNotes.reduce(into: [:]) { $0.merge($1.carriedMessages) { first, _ in first } })
+                                                              outcome: .delivered, carried: packetNotes.reduce(into: [:]) { $0.merge($1.carriedMessages) { first, _ in first } },
+                                                              review: review)
                 if !staging.remoteDirectories.isEmpty {
                     try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
                 }
                 lastOutcome = "Sent \(packet.noteIDs.count) note\(packet.noteIDs.count == 1 ? "" : "s") to \(target.label)" + (receipt.detail.map { " (\($0))" } ?? "")
-                lastResult = SendResult(noteIDs: packet.noteIDs, target: target, failure: nil)
+                lastResult = SendResult(noteIDs: packet.noteIDs, target: target, failure: nil, review: review)
                 if generation == targetGeneration { rememberTarget(target) }
             } catch {
-                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error.userMessage)"))
+                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error.userMessage)"), review: review)
                 if !staging.remoteDirectories.isEmpty {
                     try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
                 }
@@ -356,7 +362,7 @@ final class SendCoordinator {
             }
         } catch {
             lastError = "Send failed: \(error.userMessage)"
-            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: error.userMessage)
+            lastResult = SendResult(noteIDs: noteIDs, target: target, failure: error.userMessage, review: review)
             Log.transport.error("send failed: \(error, privacy: .public)")
         }
     }
@@ -391,6 +397,16 @@ final class SendCoordinator {
         return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged, wholeThread: wholeThread))
     }
 
+    /// What Send would hand over for these notes, for Preview Packet: the same packet, review sentence included, but
+    /// with pictures at their local paths (a remote send's staged paths only exist once it goes) and nothing written:
+    /// a note found again in a file changed on disk is described where it is, without moving it in the database.
+    func preview(noteIDs: [NoteID], review: Bool) async throws -> Packet {
+        let (notes, attachments) = try await collect(noteIDs: noteIDs)
+        let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
+        let packetNotes = try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged, persists: false)
+        return PacketBuilder.build(packetNotes, review: review || notes.contains { $0.note.reviewRequested })
+    }
+
     /// What Send All sends: drafts, and notes with a follow-up the user hasn't sent.
     func draftNoteIDs(documentID: DocumentID?) async -> [NoteID] {
         // An orphan that was sent can carry an answer too; Send takes it, so Send All does.
@@ -413,7 +429,9 @@ final class SendCoordinator {
         return (notes.map { (note: $0.0, document: $0.1) }, attachments)
     }
 
-    private func packetNotes(for notes: [(note: Note, document: Document)], target: AgentTarget, staged: [StagedAttachment], wholeThread: Bool = false) async throws -> [PacketNote] {
+    /// `persists` false (a preview) describes moved notes where they are without writing the moves to the store.
+    private func packetNotes(for notes: [(note: Note, document: Document)], target: AgentTarget, staged: [StagedAttachment], wholeThread: Bool = false,
+                             persists: Bool = true) async throws -> [PacketNote] {
         var contents: [String: String] = [:]
         /// Hashes of files read from disk here (not open), to tell whether a note's anchor still describes them.
         var hashes: [String: String] = [:]
@@ -449,13 +467,13 @@ final class SendCoordinator {
                         note.anchor = moved
                         // Found on changed words, the thread records the move (`applyReanchor`). Only from where it
                         // was read: an agent's move landing meanwhile stands, and the packet describes that.
-                        if (try? await noteStore.applyReanchor(note.id, to: moved, ifAnchorIs: .text(anchor))) == false {
+                        if persists, (try? await noteStore.applyReanchor(note.id, to: moved, ifAnchorIs: .text(anchor))) == false {
                             note.anchor = (try? await noteStore.note(note.id))?.anchor ?? moved
                         }
                     case .removed(let point):
                         // Its text was removed: the note is a point where it was, which the thread says.
                         note.anchor = point
-                        if (try? await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil, ifAnchorIs: .text(anchor))) == false {
+                        if persists, (try? await noteStore.applyRelocation(note.id, to: point, removed: true, author: nil, ifAnchorIs: .text(anchor))) == false {
                             note.anchor = (try? await noteStore.note(note.id))?.anchor ?? point
                         }
                     case .orphaned:
@@ -482,7 +500,7 @@ final class SendCoordinator {
                 switch ReAnchorer.embeddedImage(anchor, in: read.text, newHash: read.hash) {
                 case .moved(let moved), .movedNeedsReview(let moved):
                     note.anchor = moved
-                    try? await noteStore.updateAnchor(note.id, anchor: moved)
+                    if persists { try? await noteStore.updateAnchor(note.id, anchor: moved) }
                 case .orphaned, .unchanged, .removed:
                     break
                 }

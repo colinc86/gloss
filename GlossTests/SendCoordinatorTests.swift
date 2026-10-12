@@ -50,6 +50,34 @@ struct SendCoordinatorTests {
         #expect(coordinator.lastTarget?.id == FakeTransport.target.id)
     }
 
+    /// Preview Packet shows what Send delivers, review sentence included, and moves nothing in the store on the way.
+    @Test func thePreviewIsWhatSendDeliversAndWritesNothing() async throws {
+        let store = try makeStore()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-preview-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = "\(directory)/PLAN.md"
+        try "# Plan\nan intro\nline two\n".write(toFile: path, atomically: true, encoding: .utf8)
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        // Made when "line two" was line 2; the file has changed since, so the packet finds it on line 3.
+        let made = Anchor.text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 9), text: "line two", before: "# Plan", after: "", hash: "stale"))
+        let note = try await store.createNote(documentID: document.id, anchor: made, body: "Tighten", color: .yellow)
+        let transport = FakeTransport()
+        let coordinator = SendCoordinator(noteStore: store, transports: [transport], stagers: [:])
+        coordinator.fileSystemProvider = { _ in LocalFileSystem(deleteBehavior: .permanent) }
+
+        let preview = try await coordinator.preview(noteIDs: [note.id], review: true)
+        #expect(preview.text.contains("Line 3\nExcerpt:\n> line two"), "\(preview.text)")
+        #expect(preview.text.contains(PacketBuilder.reviewSentence))
+        #expect(try await store.note(note.id)?.anchor == made, "a preview moves nothing")
+        #expect(try await store.messages(for: note.id).isEmpty)
+        #expect(try await store.note(note.id)?.state == .draft)
+
+        await coordinator.send(noteIDs: [note.id], to: FakeTransport.target, review: true)
+        let (sent, _, _) = try #require(transport.delivered.first)
+        #expect(sent.text == preview.text, "the preview is the packet Send delivers")
+    }
+
     /// A follow-up makes a sent note sendable again: Send All takes it, the packet carries the agent's question and
     /// the answer, the note keeps its id, and the follow-up is stamped sent. get_note's packet shows the whole thread.
     @Test func sendingAFollowUpStampsItAndKeepsTheID() async throws {

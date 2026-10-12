@@ -58,8 +58,20 @@ struct FileOutlineView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         outline.reloadData()
-        if let root = model.selectedTab?.node { outline.expandItem(root) }
+        if let root = model.selectedTab?.node {
+            outline.expandItem(root)
+            Self.reexpand(root, in: outline)
+        }
         return scroll
+    }
+
+    /// Opens again the folders under `node` that were open when the tree was last built (the compact layout builds
+    /// the explorer anew in its slide-over, and again in the sidebar going back).
+    static func reexpand(_ node: FileNode, in outline: NSOutlineView) {
+        for child in node.children ?? [] where child.isDirectory && child.isExpanded && child.isLoaded {
+            outline.expandItem(child)
+            reexpand(child, in: outline)
+        }
     }
 
     /// What a row drags out as; nil for an integration's document (a pull request's file, an issue), which is a file
@@ -161,8 +173,14 @@ struct FileOutlineView: NSViewRepresentable {
             model.holdsActiveDocument(node) && !outlineView.isItemExpanded(node)
         }
 
-        func outlineViewItemDidExpand(_ notification: Notification) { refreshRow(for: notification) }
-        func outlineViewItemDidCollapse(_ notification: Notification) { refreshRow(for: notification) }
+        func outlineViewItemDidExpand(_ notification: Notification) {
+            (notification.userInfo?["NSObject"] as? FileNode)?.isExpanded = true
+            refreshRow(for: notification)
+        }
+        func outlineViewItemDidCollapse(_ notification: Notification) {
+            (notification.userInfo?["NSObject"] as? FileNode)?.isExpanded = false
+            refreshRow(for: notification)
+        }
 
         private func refreshRow(for notification: Notification) {
             guard let outline, let node = notification.userInfo?["NSObject"] as? FileNode else { return }

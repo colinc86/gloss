@@ -217,12 +217,16 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var originalAnchor: Anchor?
     /// The document's iteration the note was taken in (issue #18).
     public var iteration: Int
+    /// A send that carried the note asked the user to review the result.
+    public var reviewRequested: Bool
+    /// When the user accepted the agent's result; nil until then.
+    public var acceptedAt: Date?
 
     public init(
         id: NoteID, documentID: DocumentID, anchor: Anchor, body: String, state: NoteState,
         color: NoteColor, createdAt: Date, updatedAt: Date, resolveOutcome: ResolveOutcome? = nil, resolveMessage: String? = nil,
         author: String? = nil, resolveAgent: String? = nil, waitingOnUser: Bool = false, hasUnsentFollowUps: Bool = false,
-        originalAnchor: Anchor? = nil, iteration: Int = 0
+        originalAnchor: Anchor? = nil, iteration: Int = 0, reviewRequested: Bool = false, acceptedAt: Date? = nil
     ) {
         self.id = id
         self.documentID = documentID
@@ -240,6 +244,8 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
         self.hasUnsentFollowUps = hasUnsentFollowUps
         self.originalAnchor = originalAnchor
         self.iteration = iteration
+        self.reviewRequested = reviewRequested
+        self.acceptedAt = acceptedAt
     }
 
     /// Notes an agent still has to act on.
@@ -247,6 +253,9 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
 
     /// The user has to look: an agent asked something, or the note lost its place.
     public var needsAttention: Bool { waitingOnUser || state == .orphaned }
+
+    /// The agent resolved a note whose send asked for review, and the user hasn't accepted the result yet.
+    public var awaitsReview: Bool { state == .resolved && reviewRequested && acceptedAt == nil }
 }
 
 /// A numbered round of notes on one document (issue #18), from 0. An ended iteration keeps the content its notes

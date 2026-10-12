@@ -309,6 +309,8 @@ public struct TextEditorView: NSViewRepresentable {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.isFocused($0.id))
             }
             backdrop?.lineChanges = controller.lineChanges
+            backdrop?.earlierEntries = controller.drawnEarlierMarks.map { ($0.range, $0.color) }
+            gutter?.updateWidth()
             gutter?.needsDisplay = true
             minimap?.needsDisplay = true
             controller.noteGeometry.changed()
