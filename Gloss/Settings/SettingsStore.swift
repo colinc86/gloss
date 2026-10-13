@@ -23,6 +23,10 @@ enum IterationOpenNotes: String, CaseIterable, Identifiable {
 final class SettingsStore {
     private let noteStore: NoteStore
 
+    var yourName = "" { didSet { persist("collaboration.name", yourName) } }
+    private(set) var authorID = AuthorID.new()
+    var collaborationIdentity: GlossIdentity { GlossIdentity(author: authorID, name: yourName) }
+
     var launchRestore = LaunchRestore.system { didSet { persist("general.restore", launchRestore.rawValue) } }
     /// The Dock icon while Gloss runs (`AppIconStyle`); the light one while it matches the Mac's appearance.
     var appIcon = AppIconStyle.bundled {
@@ -181,6 +185,8 @@ final class SettingsStore {
         if let value = await read("layout.explorerCloses") { compactExplorerClosesOnOpen = value == "1" }
         if let value = await read("layout.trayHeight"), let height = Double(value), height.isFinite { compactTrayHeight = max(160, height) }
         if let value = await read("mcp.port"), let port = Int(value), Self.mcpPortRange.contains(port) { mcpPort = port }
+        yourName = await read("collaboration.name") ?? ""
+        if let id = try? await noteStore.collaborationAuthorID() { authorID = id }
         loaded = true
     }
 

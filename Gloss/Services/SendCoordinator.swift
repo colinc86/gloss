@@ -41,6 +41,9 @@ final class SendCoordinator {
     @ObservationIgnored var willDeliver: ([NoteID]) -> Void = { _ in }
     private(set) var lastOutcome: String?
     private(set) var lastError: String?
+    @ObservationIgnored var mayDeliver: ([Note]) -> String? = { _ in nil }
+    @ObservationIgnored var contributorID: () -> String? = { nil }
+    @ObservationIgnored var didDeliver: ([Note], [PacketNote], [NoteMessage], [SentAttachment], Date, Bool) -> Void = { _, _, _, _, _, _ in }
     private(set) var lastTarget: AgentTarget?
     var isTargetAvailable: Bool {
         guard let target = lastTarget else { return false }
@@ -332,9 +335,34 @@ final class SendCoordinator {
             showCancelled(noteIDs: noteIDs, target: target, reason: problem)
             return
         }
+        var frozenFolder: URL?
+        defer { if let folder = frozenFolder { Task.detached { try? FileManager.default.removeItem(at: folder) } } }
         do {
             let (notes, attachments) = try await collect(noteIDs: noteIDs)
-            let staging = try await stagers[target.hostID]?.stage(attachments, for: target, sendID: sendID) ?? .empty
+            var sentAttachments: [SentAttachment] = []
+            for note in notes {
+                for attachment in try await noteStore.attachments(for: note.note.id) where attachments.contains(where: { $0.noteID == attachment.noteID && $0.localPath == attachment.localPath }) {
+                    let data = try await Task.detached { try Data(contentsOf: URL(fileURLWithPath: attachment.localPath)) }.value
+                    sentAttachments.append(SentAttachment(attachment: attachment,data: data))
+                }
+            }
+            var deliveryFiles = attachments
+            if !sentAttachments.isEmpty {
+                let folder = FileManager.default.temporaryDirectory.appendingPathComponent("GlossDelivery-" + UUID().uuidString)
+                frozenFolder = folder
+                let captures = sentAttachments
+                deliveryFiles = try await Task.detached {
+                    try FileManager.default.createDirectory(at: folder,withIntermediateDirectories: true)
+                    return try captures.enumerated().map { index, capture in
+                        let directory = folder.appendingPathComponent(String(index))
+                        try FileManager.default.createDirectory(at: directory,withIntermediateDirectories: true)
+                        let url = directory.appendingPathComponent((capture.attachment.localPath as NSString).lastPathComponent)
+                        try capture.data.write(to: url,options: .atomic)
+                        return LocalAttachment(noteID: capture.attachment.noteID,localPath: url.path)
+                    }
+                }.value
+            }
+            let staging = try await stagers[target.hostID]?.stage(deliveryFiles, for: target, sendID: sendID) ?? .empty
             var packetNotes = try await packetNotes(for: notes, target: target, staged: staging.attachments)
             // A note that asked for review keeps asking (its follow-ups too), so the agent is told whenever one goes.
             let review = review || notes.contains { $0.note.reviewRequested }
@@ -345,6 +373,13 @@ final class SendCoordinator {
                 showCancelled(noteIDs: noteIDs, target: target, reason: problem)
                 return
             }
+            if try await !noteStore.agentDeliveryAllowed(noteIDs) {
+                Log.transport.error("Blocked agent delivery for a participant or captured review")
+                await stagers[target.hostID]?.discard(staging.remoteDirectories)
+                showCancelled(noteIDs: noteIDs,target: target,reason: "Only the owner sends review notes to an agent")
+                return
+            }
+            let deliveryMessages = try await noteStore.messages(for: noteIDs).values.flatMap { $0 }
             // Refresh only control metadata after all preparation/validation awaits. Keep the carried answer snapshot.
             try await refreshRefinements(&packetNotes, documents: notes.map(\.document))
             if let problem = await validate() {
@@ -352,20 +387,17 @@ final class SendCoordinator {
                 showCancelled(noteIDs: noteIDs, target: target, reason: problem)
                 return
             }
+            if let problem = mayDeliver(notes.map(\.note)) {
+                await stagers[target.hostID]?.discard(staging.remoteDirectories)
+                showCancelled(noteIDs: noteIDs,target: target,reason: problem)
+                return
+            }
             suppressEndedRefinements(&packetNotes)
             let packet = PacketBuilder.build(packetNotes, review: review)
+            let receipt: DeliveryReceipt
             do {
                 willDeliver(packet.noteIDs)
-                let receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
-                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs,
-                                                              outcome: .delivered, carried: packetNotes.reduce(into: [:]) { $0.merge($1.carriedMessages) { first, _ in first } },
-                                                              carriedQuestions: packetNotes.reduce(into: []) { $0.formUnion($1.carriedQuestions) }, review: review)
-                if !staging.remoteDirectories.isEmpty {
-                    try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
-                }
-                lastOutcome = "Sent \(packet.noteIDs.count) note\(packet.noteIDs.count == 1 ? "" : "s") to \(target.label)" + (receipt.detail.map { " (\($0))" } ?? "")
-                lastResult = SendResult(noteIDs: packet.noteIDs, target: target, failure: nil, review: review)
-                if generation == targetGeneration { rememberTarget(target) }
+                receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
             } catch {
                 let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs, outcome: .failed("\(error.userMessage)"), review: review)
                 if !staging.remoteDirectories.isEmpty {
@@ -373,6 +405,23 @@ final class SendCoordinator {
                 }
                 throw error
             }
+            let deliveredAt = Date()
+            do {
+                let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs,
+                                                              outcome: .delivered, carriedNotes: notes.map(\.note), carriedAttachments: sentAttachments, carried: packetNotes.reduce(into: [:]) { $0.merge($1.carriedMessages) { first, _ in first } },
+                                                              carriedQuestions: packetNotes.reduce(into: []) { $0.formUnion($1.carriedQuestions) }, review: review, at: deliveredAt)
+                if !staging.remoteDirectories.isEmpty {
+                    try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
+                }
+            } catch {
+                // A transport receipt remains a delivery even if local persistence fails. Retrying would send twice.
+                Log.transport.error("Delivered notes could not be recorded: \(error, privacy: .public)")
+                lastError = "The notes reached the agent, but their local send record couldn't be saved: \(error.userMessage)"
+            }
+            didDeliver(notes.map(\.note), packetNotes, deliveryMessages, sentAttachments, deliveredAt, review)
+            lastOutcome = "Sent \(packet.noteIDs.count) note\(packet.noteIDs.count == 1 ? "" : "s") to \(target.label)" + (receipt.detail.map { " (\($0))" } ?? "")
+            lastResult = SendResult(noteIDs: packet.noteIDs, target: target, failure: nil, review: review)
+            if generation == targetGeneration { rememberTarget(target) }
         } catch {
             lastError = "Send failed: \(error.userMessage)"
             lastResult = SendResult(noteIDs: noteIDs, target: target, failure: error.userMessage, review: review)
@@ -405,7 +454,15 @@ final class SendCoordinator {
     /// which run on this Mac or read the crops as resources). `wholeThread` is `get_note`'s: every turn the agent was
     /// given and every move, rather than the latest turns a send carries.
     func packet(noteIDs: [NoteID], wholeThread: Bool = false) async throws -> Packet {
-        let (notes, attachments) = try await collect(noteIDs: noteIDs)
+        var (notes, attachments) = try await collect(noteIDs: noteIDs)
+        if wholeThread {
+            attachments = []
+            for i in notes.indices {
+                if let visible = try await noteStore.agentNote(notes[i].note.id) { notes[i].note = visible }
+                let files = try await noteStore.agentResourceAttachments(notes[i].note.id)
+                attachments += files.map { LocalAttachment(noteID: $0.attachment.noteID,localPath: $0.attachment.localPath) }
+            }
+        }
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
         return PacketBuilder.build(try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged, wholeThread: wholeThread))
     }
@@ -551,6 +608,10 @@ final class SendCoordinator {
             if let text = composing[note.id]?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
                 messages.append(NoteMessage(id: .new(), noteID: note.id, author: .user, kind: .comment, body: text, createdAt: Date(), sentAt: nil))
             }
+            for index in messages.indices {
+                let id = messages[index].contributorID
+                messages[index].contributorName = id != nil && id != contributorID() ? CollaborationModel.displayName(messages[index].contributorName) : nil
+            }
             let recent = PacketThread.recentWithQuestions(messages, at: note.anchor)
             var packetNote = PacketNote(
                 noteID: note.id, agentPath: document.path, source: Self.source(for: document), anchor: note.anchor,
@@ -559,6 +620,7 @@ final class SendCoordinator {
                 resource: resource?.url.absoluteString, resourceDetails: resource?.details ?? [],
                 thread: wholeThread ? .full(messages) : recent.thread, documentID: document.id
             )
+            packetNote.contributor = note.contributorID != nil && note.contributorID != contributorID() ? CollaborationModel.displayName(note.contributorName) : nil
             packetNote.carriedQuestions = wholeThread ? Set(messages.filter { $0.isSent && $0.kind == .question }.map(\.id)) : recent.questions
             // What the packet says the user wrote is what the send marks sent.
             if !wholeThread {

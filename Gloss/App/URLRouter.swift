@@ -107,6 +107,7 @@ enum URLRouter {
     }
 
     static func handle(_ url: URL, model: AppModel) async {
+        if url.isFileURL, url.pathExtension.lowercased() == "gloss" { await model.collaboration.open(url); return }
         let hosts = Dictionary(uniqueKeysWithValues: ((try? await model.noteStore.hosts()) ?? []).map { ($0.name, $0.id) })
         guard let route = parse(url, hosts: hosts, atlassianSite: model.integrations.atlassian?.site) else {
             Log.app.error("Unhandled URL: \(url.absoluteString, privacy: .public)")

@@ -80,6 +80,7 @@ public final class MarkdownViewerController {
     @ObservationIgnored public var onOpenDocument: (String, String?) -> Void = { _, _ in }
     /// Fetches a relative picture from the document's own host (a remote file system, a ticket's attachments);
     /// nil where images are local or not served. Set it before the first render that needs it.
+    @ObservationIgnored public var usesCapturedImages = false
     @ObservationIgnored public var loadImage: (@Sendable (String) async -> Data?)? {
         didSet { if loadImage != nil { rebuildNow() } }
     }
@@ -183,16 +184,18 @@ public final class MarkdownViewerController {
             return png
         }
         if let data = fetchedImageData[source] { return data }
-        guard let baseURL else { return nil }
+        guard !usesCapturedImages, let baseURL else { return nil }
         let decoded = source.removingPercentEncoding ?? source
         let url = decoded.hasPrefix("/") ? URL(fileURLWithPath: decoded) : baseURL.appending(path: decoded)
         return try? Data(contentsOf: url.standardizedFileURL)
     }
 
-    public init(source: TextEditorController, baseURL: URL? = nil, webImageLoader: WebImageLoader = .shared) {
+    public init(source: TextEditorController, baseURL: URL? = nil, webImageLoader: WebImageLoader = .shared, usesCapturedImages: Bool = false, capturedImageLoader: (@Sendable (String) async -> Data?)? = nil) {
         self.source = source
         self.baseURL = baseURL
         self.webImageLoader = webImageLoader
+        self.usesCapturedImages = usesCapturedImages
+        self.loadImage = capturedImageLoader
         rebuildNow()
         displayOptionsObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -242,7 +245,7 @@ public final class MarkdownViewerController {
     public func rebuildNow() {
         renderOwed = false
         renderedContentVersion = source.contentVersion
-        let output = MarkdownRenderer.render(source.text, baseURL: baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion)
+        let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion)
         rendered = output.text
         map = output.map
         renderedVersion += 1
@@ -290,11 +293,20 @@ public final class MarkdownViewerController {
         draw(Array(Set(diagrams.keys).union(pending)))
     }
 
+    /// A new captured generation can change pictures without changing the Markdown source.
+    public func invalidateCapturedImages() {
+        guard usesCapturedImages else { return }
+        for task in fetchTasks.values { task.cancel() }
+        fetchTasks.removeAll(); fetchingImages.removeAll()
+        fetchedImages.removeAll(); fetchedImageData.removeAll()
+        rebuildNow()
+    }
+
     /// Fetches pictures the render couldn't show, then renders once more with whatever arrived: web pictures from
     /// the web, relative ones from the document's host. A picture that can't be had is asked for once per document,
     /// not on every keystroke.
     private func fetch(_ sources: [String]) {
-        let loadImage = loadImage, web = webImageLoader
+        let loadImage = loadImage, web = webImageLoader, captured = usesCapturedImages
         let wanted = sources.filter { fetchedImages[$0] == nil && !fetchingImages.contains($0) && (loadImage != nil || WebImageLoader.handles($0)) }
         guard !wanted.isEmpty else { return }
         fetchingImages.formUnion(wanted)
@@ -305,7 +317,7 @@ public final class MarkdownViewerController {
                 var pending = wanted[...]
                 for _ in 0..<Self.fetchWidth {
                     guard let source = pending.popFirst() else { break }
-                    group.addTask { await Self.load(source, web: web, host: loadImage) }
+                    group.addTask { await Self.load(source, web: web, host: loadImage, captured: captured) }
                 }
                 for await picture in group {
                     guard !Task.isCancelled, let self else {
@@ -317,7 +329,7 @@ public final class MarkdownViewerController {
                         self.fetchedImageData[picture.source] = picture.data
                         self.scheduleRebuild()
                     }
-                    if let source = pending.popFirst() { group.addTask { await Self.load(source, web: web, host: loadImage) } }
+                    if let source = pending.popFirst() { group.addTask { await Self.load(source, web: web, host: loadImage, captured: captured) } }
                 }
             }
             self?.fetchTasks[id] = nil
@@ -333,8 +345,8 @@ public final class MarkdownViewerController {
     }
 
     /// Fetches one picture from the web or the document's host and decodes it, refusing one too big to draw.
-    @concurrent nonisolated static func load(_ source: String, web: WebImageLoader, host: (@Sendable (String) async -> Data?)?) async -> FetchedPicture? {
-        let data = WebImageLoader.handles(source) ? await web.data(for: source) : await host?(source)
+    @concurrent nonisolated static func load(_ source: String, web: WebImageLoader, host: (@Sendable (String) async -> Data?)?, captured: Bool = false) async -> FetchedPicture? {
+        let data = captured ? await host?(source) : (WebImageLoader.handles(source) ? await web.data(for: source) : await host?(source))
         guard let data, !Task.isCancelled, let image = ImageDecoder.checkedImage(data), image.size.width > 0, image.size.height > 0 else { return nil }
         return FetchedPicture(source: source, data: data, image: image)
     }

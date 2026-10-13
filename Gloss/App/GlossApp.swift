@@ -87,6 +87,9 @@ struct AppCommands: Commands {
             Button { model.presentQuickOpen() } label: { Label("Open Quickly…", systemImage: "doc.text.magnifyingglass") }
                 .keyboardShortcut("p", modifiers: [.command])
             // The window title turns into the address field.
+            Button("Open Review…") { model.openReviewPanel() }
+            Button("Share…") { model.collaboration.isSharePresented = true }
+                .disabled(model.activeSession == nil)
             Button { model.presentOpenLocation() } label: { Label("Open Location…", systemImage: "globe") }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Button { model.presentOpenPullRequest() } label: { Label("Open Pull Request…", systemImage: "arrow.triangle.pull") }
@@ -258,33 +261,33 @@ struct AppCommands: Commands {
             Label("Send Shown Notes — \(model.sendScope.rawValue)", systemImage: "paperplane")
         }
             .keyboardShortcut(model.selectionAwaitsNote ? nil : KeyboardShortcut(.return, modifiers: .command))
-            .disabled(!model.send.isTargetAvailable || model.visibleDrafts.isEmpty)
+            .disabled(!model.canSendInCurrentLocation || model.visibleDrafts.isEmpty)
         Button { Task { await model.sendAllDrafts(scope: .all) } } label: { Label("Send Shown Drafts in This Location (\(model.sendSelection(scope: .all).notes.count))", systemImage: "paperplane.fill") }
             .keyboardShortcut(.return, modifiers: [.command, .shift])
-            .disabled(!model.send.isTargetAvailable)
-        RefinementCommands(model: model)
+            .disabled(!model.canSendInCurrentLocation)
+        if !model.sendsToReview { RefinementCommands(model: model) }
         Button { model.presentPacketPreview() } label: { Label("Preview Packet…", systemImage: "doc.viewfinder") }
             .keyboardShortcut(.return, modifiers: [.command, .option])
             // It hangs from Send, which a selection of several notes trades for its own bar.
-            .disabled(model.notesPanel.location == nil || model.notesPanel.selectedNotes.count > 1)
+            .disabled(model.sendsToReview || model.notesPanel.location == nil || model.notesPanel.selectedNotes.count > 1)
         Button { Task { await model.copyVisibleDrafts() } } label: { Label("Copy Shown Notes as Packet", systemImage: "doc.on.doc") }
             .keyboardShortcut("c", modifiers: [.command, .shift])
-            .disabled(model.visibleDrafts.isEmpty)
+            .disabled(model.sendsToReview || model.visibleDrafts.isEmpty)
         Divider()
         // The selection may be several notes (issue #8): each command takes the ones it applies to.
         let selected = model.notesPanel.selectedNotes
-        let sendable = NotesPanelModel.sendable(selected), resolvable = NotesPanelModel.resolvable(selected)
+        let sendable = selected.filter { model.collaboration.canSendNote($0) }, resolvable = NotesPanelModel.resolvable(selected)
         let plural = selected.count > 1
         Button {
             Task { await model.send(noteIDs: sendable.map(\.id)) }
         } label: { Label(plural ? "Send Selected Notes" : "Send Selected Note", systemImage: "paperplane") }
-        .disabled(sendable.isEmpty || !model.send.isTargetAvailable)
+        .disabled(sendable.isEmpty || !model.canSendInCurrentLocation)
         // Copying an earlier iteration's note is only reading it, so Copy takes those too.
         let copyable = model.notesPanel.selectedListedNotes
         Button {
             Task { await model.copyPacket(noteIDs: copyable.map(\.id)) }
         } label: { Label(copyable.count > 1 ? "Copy Selected Notes as Packet" : "Copy Selected Note as Packet", systemImage: "doc.on.clipboard") }
-        .disabled(copyable.isEmpty)
+        .disabled(model.sendsToReview || copyable.isEmpty)
         Button {
             Task { await model.notesPanel.resolve(resolvable.map(\.id)) }
         } label: { Label(plural ? "Resolve Selected Notes" : "Resolve Selected Note", systemImage: "checkmark.circle") }
@@ -304,7 +307,7 @@ struct AppCommands: Commands {
         return Menu {
             // A new round of notes; open notes are asked about, as Settings says.
             Button { model.newIteration() } label: { Label("New Iteration", systemImage: "square.stack.3d.up") }
-                .disabled(document == nil || session?.kind == .web || model.isShowingPastIteration)
+                .disabled(model.sendsToReview || document == nil || session?.kind == .web || model.isShowingPastIteration)
             Toggle(isOn: Binding(get: { document.map(model.notesPanel.listsAllIterations) ?? false },
                                  set: { on in if let document { model.showAllIterations(on, of: document) } })) {
                 Label("All Iterations", systemImage: "square.stack")

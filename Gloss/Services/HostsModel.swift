@@ -38,7 +38,7 @@ final class HostsModel {
 
     private let noteStore: NoteStore
     let manager: SSHConnectionManager
-    private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local, origin: .local), HostsModel.web]
+    private(set) var entries: [Entry] = [Entry(id: .local, name: "local", kind: .local, origin: .local), HostsModel.web, Entry(id: .gloss, name: "gloss", kind: .gloss, origin: .local)]
     /// The open web: always listed after this Mac, for the explorer's Web section (pages, not files).
     static let web = Entry(id: .web, name: "web", kind: .web, origin: .local)
     /// Hosts the app serves itself (a pull request tree, a Jira project) while their key is saved; they need no
@@ -141,7 +141,7 @@ final class HostsModel {
             }
         }
         let ssh = list.dropFirst().sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        entries = [list[0], Self.web] + virtualHosts.sorted { $0.name < $1.name } + ssh
+        entries = [list[0], Self.web, Entry(id: .gloss,name: "gloss",kind: .gloss,origin: .local)] + virtualHosts.filter { $0.id != .gloss }.sorted { $0.name < $1.name } + ssh
     }
 
     /// Mirror of the setting that `refresh` reads, so the didSet above does not loop.

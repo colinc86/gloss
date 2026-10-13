@@ -32,7 +32,9 @@ struct ExplorerSidebar: View {
             Divider()
             // A folder shows only under its own host: picking another with nothing open there says so instead.
             let shown = model.shownTab
-            if pickedHost == .web {
+            if pickedHost == .gloss {
+                ReviewsSection()
+            } else if pickedHost == .web {
                 WebPagesSection()
             } else if explorer.contentSearch.isVisible, shown != nil {
                 searchBar

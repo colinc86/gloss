@@ -6,12 +6,17 @@ import OSLog
 /// file under Application Support, `temporary()` for `--reset-db` and tests.
 public final class AppDatabase: Sendable {
     public let queue: DatabaseQueue
+    public let retainedAttachmentsURL: URL
+    private let removesRetainedAttachments: Bool
     /// Set for temporary databases so `close()` can remove the file.
     private let temporaryURL: URL?
 
-    private init(queue: DatabaseQueue, temporaryURL: URL?) {
+    private init(queue: DatabaseQueue, temporaryURL: URL?, databaseURL: URL? = nil) {
         self.queue = queue
         self.temporaryURL = temporaryURL
+        retainedAttachmentsURL = (databaseURL ?? temporaryURL)?.deletingLastPathComponent().appendingPathComponent("agent-attachments", isDirectory: true)
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("GlossAgentAttachments-" + UUID().uuidString, isDirectory: true)
+        removesRetainedAttachments = databaseURL == nil
     }
 
     /// Opens or creates the database at `url`, creating parent directories, and applies migrations.
@@ -25,7 +30,7 @@ public final class AppDatabase: Sendable {
             Logger(subsystem: "com.cnc.Gloss", category: "database").fault("Could not back up the database before migrating: \(error, privacy: .public)")
         }
         try Schema.migrator.migrate(queue)
-        return AppDatabase(queue: queue, temporaryURL: nil)
+        return AppDatabase(queue: queue, temporaryURL: nil, databaseURL: url)
     }
 
     /// Before a new version's migrations touch a database that holds notes, a consistent copy is made beside it
@@ -99,9 +104,14 @@ public final class AppDatabase: Sendable {
     /// Closes the connection and removes a temporary database's directory.
     public func close() throws {
         try queue.close()
+        if removesRetainedAttachments { try? FileManager.default.removeItem(at: retainedAttachmentsURL) }
         if let temporaryURL {
             try? FileManager.default.removeItem(at: temporaryURL.deletingLastPathComponent())
         }
+    }
+
+    deinit {
+        if removesRetainedAttachments { try? FileManager.default.removeItem(at: retainedAttachmentsURL) }
     }
 
     private static func configuration() -> Configuration {

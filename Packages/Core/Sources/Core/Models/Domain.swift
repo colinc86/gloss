@@ -9,12 +9,13 @@ public enum HostKind: String, Codable, Sendable, CaseIterable {
     case github
     /// Jira issues and Confluence pages, read with the user's token.
     case atlassian
+    case gloss
 
     /// Served by the app from an API or a web view rather than from a machine's file system; never written to.
     public var isVirtual: Bool {
         switch self {
         case .local, .ssh: false
-        case .web, .github, .atlassian: true
+        case .web, .github, .atlassian, .gloss: true
         }
     }
 }
@@ -221,6 +222,12 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var reviewRequested: Bool
     /// When the user accepted the agent's result; nil until then.
     public var acceptedAt: Date?
+    public var resolvedAt: Date? = nil
+    public var contributorID: String? = nil
+    public var contributorName: String? = nil
+    public var publishedAt: Date? = nil
+    public var postedToOwner = false
+    public var hasUnpublishedChanges = false
 
     public init(
         id: NoteID, documentID: DocumentID, anchor: Anchor, body: String, state: NoteState,
@@ -365,6 +372,8 @@ public struct NoteMessage: Identifiable, Hashable, Sendable {
     public var inReplyTo: MessageID?
     public var selectedOptions: [Int]?
     public var customAnswer: Bool
+    public var contributorID: String? = nil
+    public var contributorName: String? = nil
 
     public init(id: MessageID, noteID: NoteID, author: MessageAuthor, kind: MessageKind, body: String, createdAt: Date, sentAt: Date?, move: NoteMove? = nil, choices: QuestionChoices? = nil, inReplyTo: MessageID? = nil, selectedOptions: [Int]? = nil, customAnswer: Bool = false) {
         self.id = id
@@ -477,4 +486,11 @@ public struct KnownTarget: Identifiable, Hashable, Codable, Sendable {
         self.label = label
         self.lastUsedAt = lastUsedAt
     }
+}
+
+/// Immutable bytes and metadata of an attachment the user actually sent.
+public struct SentAttachment: Codable, Sendable {
+    public var attachment: Attachment
+    public var data: Data
+    public init(attachment: Attachment, data: Data) { self.attachment = attachment; self.data = data }
 }

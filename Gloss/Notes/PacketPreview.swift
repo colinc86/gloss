@@ -169,6 +169,7 @@ struct PacketPreview: View {
         for turn in note.thread.turns {
             switch turn {
             case .agent(let name, let asked, let body): lines.append("\(name) \(asked ? "asked" : "replied"): \(body)")
+            case .contributor(let name,let body): lines.append("\(name) replied: \(body)")
             case .user(let body): lines.append("You replied: \(body)")
             case .choices(let choices):
                 lines.append(choices.multi ? "Choose any that apply" : "Choose one")

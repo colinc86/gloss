@@ -36,7 +36,8 @@ the tokens and components there instead of literals.
 11. **The app reads, the agent writes.** What the app shows of a pull request, a ticket or a page is the live
     thing, read with the user's own key, and the app never changes it: every edit goes through the agent with its
     own tools, and the packet names the exact resource (URL, head commit, field, version) so the agent can. Settings
-    say this where the key is entered.
+    say this where the key is entered. Shared reviews are the exception for Gloss's own data: it writes captured
+    content and explicitly published notes to `.gloss`, never into the original source.
 
 ## Tokens
 
@@ -315,6 +316,11 @@ path. Dropping on the Dock icon is not supported yet.
   folder rather than GitHub; ↑/↓ move a highlight through hosts and folders drawn as an accent ring (the current one
   keeps its fill, so the two never blur), Return picks, Escape closes (`SwitcherEntry.sections`, `SwitcherItem`).
   An ssh host row tells VoiceOver how its connection is (Connected, Connecting, Not connected, Couldn't connect).
+- **Reviews** (2026-10-13): the location switcher lists Reviews (the internal host is `gloss`); the explorer
+  groups Shared With You, Shared by You and Copies. Each row reads the review title over its owner/copy context,
+  with a 6 pt accent dot for new updates, its count in the tooltip and spoken label. Open Review… opens a package;
+  Finder/Open/drop do the same. Internal package folders never become a file tree. Known reviews reopen from the
+  instance index; Favorites/Recents integration is deferred. A copy says “Copy” and never opens a live return channel.
 - **Tree note marker**: on a file row, a 14 pt capsule at the row's trailing edge with up to three overlapping
   7 pt dots in the colors of its open notes (most used first, each ringed in the window background so they
   separate) and the count; orange-tinted when something needs attention (an orphan, or an agent's question).
@@ -692,6 +698,80 @@ path. Dropping on the Dock icon is not supported yet.
   button whose symbol names the order (numbered list, arrows, palette, dashed circle). Below it, `ColorFilterStrip`:
   one chip per color in use with its count (shown when two or more colors exist); a chip fills with its color and
   rings when on, the others dim to 45%, and "Clear" appears. Several colors may be on together.
+
+### Shared reviews
+
+- **Opening and removing reviews** (2026-10-13): launch opens only indexed, downloaded and current reviews in
+  the background, without delaying the window, MCP or document restoration. Stale, evicted or ambiguous packages
+  wait for Open Review…, Finder Open or drop; launch does not discover reviews in the iCloud folder or show
+  background opening alerts. Confirmed deletion or an invalid package removes the visible review and closes its
+  captured viewer, keeping notes and private drafts. Restoring it reuses those notes and the owner's original link.
+  An ambiguous download keeps the entry. Invalid identifiers, links or special files never become usable captures.
+- **Share** (2026-10-13): `square.and.arrow.up` in the toolbar's system glass, with “Share this document's content
+  and notes” as its help and “Share review of PLAN.md” as its spoken label; File › Share… opens the same 320 pt
+  preparation popover. It says “Captured content and sent notes, including their attachments. Your drafts stay on
+  this Mac.”, and for a page “Captures the visible viewport, not the complete page.” Collaborate… and Send a Copy…
+  prepare the right identity first, then a retained native picker offers Choose People… or Send Copy… with the
+  other mode disabled. No participant invitation is inferred from a contributor name. Dirty content says “Save
+  before sharing. The review will contain the saved file.”, with Save and Continue; saving returns to the sharing
+  choices. Preparing review… shows a small spinner; Cancel keeps drafts and stops preparation. Upload wait says
+  why the invitation is not ready. A saved local review can remain when its invitation is canceled.
+- **Contributors** (2026-10-13): cards, peeks, the tray and turns add a 20 pt initials avatar and the speaker's name,
+  “You” or “Alex · Owner”; absent names read “Unnamed contributor”. Tint is stable from author identity and stays
+  on the avatar, apart from note color/state. Human turns keep their own speaker; an agent's bubble names the contributor
+  who sent to it. Agent attribution is honored only from owners; a contributor's question-kind turn does not enter
+  Attention as an agent question. No Apple Account photograph, verified identity or online presence is implied.
+  Settings › Notes › Shared reviews has Your name; the Collaboration popover's Edit… changes the same value. People is a separate menu filter
+  with contributor toggles, Your private drafts and All People; remembering it per review is deferred.
+- **Owner on another Mac** (2026-10-13): on open, import and permission changes, this install joins the owner
+  set for a shared review with the native owner role, or an unshared review in your own iCloud Drive with no role.
+  Copies and shared participant/unknown roles never adopt. Every owner install gets the Owner label and ordinary
+  agent Send and acceptance actions; the named creator stays the same. Link Original… still requires matching
+  saved bytes before agent delivery. Becoming an owner or linking the original never forwards non-owner
+  contributors' posted answers; explicit Send forwards them. Turns from any owner import as sent, including after
+  a role upgrade, and keep their named speaker. Previously delivered turns stay delivered.
+- **Sending a shared note** (2026-10-13): a participant's recipient chip reads To Owner and Send posts their own
+  notes/answers into the review. “With Owner” is published work before the owner's agent delivery; “Changes not
+  sent” is a private edit, still available to change. A notice says “3 notes saved · Waiting for iCloud” or “Sent
+  3 notes to the review”, according to known status, never that the owner read them. The owner keeps the ordinary
+  agent picker and explicit Send. Received notes say “3 notes from Morgan”, with Show Notes isolating those exact
+  ids and Dismiss; they are never auto-forwarded. Posted answers need this explicit owner Send even when the
+  note was sent before. Agent delivery finishes Send while review publication continues in the background.
+  Participant packet/clipboard/Refinement and acceptance routes are unavailable. Own comment edits, writable
+  Resolve/Reopen and author-or-owner moderation keep their attribution.
+- **Collaboration** (2026-10-13): a `person.2` toolbar button beside Share has an accent new-activity dot and help
+  “Review collaborators and activity” or “4 new updates”. Its own 320 pt popover scrolls up to 520 pt: title,
+  “Shared review · iCloud Drive” or “Separate copy · No return channel”, sync status and known self permission;
+  Contributors with names and “Names chosen by contributors. This is not an access list.”; New Since You Looked,
+  All Activity… and Mark All as Seen; Your name with Edit…; owner Open Original, Link Original… and Refresh Shared
+  Content; Save My Notes… when copying or recovering input; Show in Finder with “Manage access in Finder's sharing
+  options.” All Activity stays in this popover. No `SWCollaborationView`, calls, cursors or guessed invitation roster.
+- **New since you looked** (2026-10-13): an accent dot by the contributor means “New”; it does not recolor the note
+  or borrow Attention orange. Opening a review alone marks nothing seen. Revealing marks the shown note revision,
+  visible turn/event records (the expanded conversation includes its shown thread); Mark All covers its current
+  record snapshot, so an update arriving meanwhile stays new. Updated content has its own content-hash marker and
+  “Updated content · Iteration 3” action. Unread is private to this reader and counts delayed older-created records.
+- **Captured content** (2026-10-13): a `.mode` notice over a received viewer says “Captured content · Read-only”,
+  or “Captured viewport snapshot · Read-only content” for a page. Write permission lets a participant annotate;
+  it never unlocks the capture. A view-only review says “You can view only.” A copy says “This copy has no return
+  channel.” The owner opens the original separately; Link Original… requires matching saved bytes and never
+  guesses by name. The shared review starts with the current capture, keeping only post-share iterations. Source
+  changed-content rollover runs once; the package mirrors its number, reusing the blob for an existing same-byte
+  round. A complete new capture arrives before it replaces current content, and earlier captures keep their identity.
+- **Sync and recovery** (2026-10-13): routine status is secondary text: “Sending changes · Waiting for iCloud”,
+  “Changes uploaded”, or “Showing the last available update”. Errors use a warning Notice “Review unavailable”
+  with Try Again and preserved private notes; merge completion can say “Review updates combined”. Same-instance
+  duplicates are combined on open and after a merge; an already-open review stays the destination. Merge errors
+  stay on that review, with Try Again repeating consolidation, never a modal loop. Presenter updates are backed
+  by polling that slows to 30 seconds when quiet. Save My Notes…
+  writes a manual text recovery/return artifact, including earlier private rounds. Stop Sharing and access changes
+  belong to Finder's native sharing options; a local close or failed download never claims revocation. Native
+  invitations, access changes and conflict behavior remain subject to the two-Mac live check.
+- **Shared review accessibility** (2026-10-13): attribution, With Owner/Changes not sent, sync and New are spoken
+  with the card/turn they describe. Decorative initials are hidden from VoiceOver because the name is spoken.
+  People and recovery actions remain reachable with visible focus rings; unknown permission never becomes an
+  enabled write. Full and compact use the same notes and attribution. Check popover focus, long names, light/dark
+  and Reduce Motion live; no contributor dot implies presence or uses looping motion.
 
 ### Viewers
 

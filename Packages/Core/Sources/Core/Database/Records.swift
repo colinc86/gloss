@@ -52,7 +52,7 @@ public struct DocumentRecord: SnakeCaseRecord, Identifiable {
     public var currentIteration: Int = 0
 }
 
-public struct NoteRecord: SnakeCaseRecord, Identifiable {
+public struct NoteRecord: SnakeCaseRecord, Identifiable, Equatable {
     public static let databaseTableName = "note"
     public static let document = belongsTo(DocumentRecord.self)
     public var id: String
@@ -85,6 +85,17 @@ public struct NoteRecord: SnakeCaseRecord, Identifiable {
     public var reviewRequested: Bool = false
     /// When the user accepted the agent's result; nil until then, and again after the note is sent anew.
     public var acceptedAt: Date? = nil
+    public var resolvedAt: Date? = nil
+    public var localStateAt: Date? = nil
+    public var contributorId: String? = nil
+    public var contributorName: String? = nil
+    public var publishedAt: Date? = nil
+    public var postedToOwner = false
+    public var publishedBody: String? = nil
+    public var publishedColor: String? = nil
+    public var collaborationEventId: String? = nil
+    public var collaborationMoveId: String? = nil
+    public var collaborationMoveAt: Date? = nil
 }
 
 /// One round of notes on a document (issue #18). Keyed by document and number.
@@ -124,10 +135,13 @@ public struct NoteMessageRecord: SnakeCaseRecord, Identifiable {
     public var createdAt: Date
     /// Nil for a user's follow-up until it is sent; set on write for everything else.
     public var sentAt: Date?
+    public var agentSentAt: Date? = nil
     public var choicesJson: String? = nil
     public var inReplyTo: String? = nil
     public var selectedOptionsJson: String? = nil
     public var customAnswer: Bool = false
+    public var contributorId: String? = nil
+    public var contributorName: String? = nil
 }
 
 public struct AttachmentRecord: SnakeCaseRecord, Identifiable {

@@ -34,6 +34,7 @@ struct NotesTray: View {
         return HStack(spacing: DS.Space.s) {
             if let current {
                 Capsule().fill(Color(nsColor: Theme.color(for: current.note.color)).gradient).frame(width: 3, height: 18)
+                if current.note.publishedAt != nil || model.activeReview != nil { ContributorLabel(note: current.note) }
                 Text(current.note.anchor.summary)
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -74,8 +75,8 @@ struct NotesTray: View {
             }
             .buttonStyle(.glassProminent)
             .controlSize(.small)
-            .disabled(drafts == 0 || !model.send.isTargetAvailable || model.send.isSending)
-            .help(model.send.lastTarget.map { "Send the shown drafts to \($0.label)" } ?? "Choose an agent in the notes panel")
+            .disabled(drafts == 0 || !model.canSendInCurrentLocation || model.isSendingInCurrentLocation)
+            .help(model.sendsToReview ? "Send your notes to \(model.activeReview?.ownerName ?? "the owner") through this review" : model.send.lastTarget.map { "Send the shown drafts to \($0.label)" } ?? "Choose an agent in the notes panel")
             InlineIconButton(title: "Show notes", symbol: "chevron.up", emphasized: false) { model.showNotesPanel = true }
         }
         .padding(.horizontal, DS.Space.m)

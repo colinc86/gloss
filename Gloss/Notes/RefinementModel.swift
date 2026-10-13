@@ -47,9 +47,10 @@ final class RefinementModel {
     func state(for id: DocumentID) -> Refinement? { states[id] }
     func target(for state: Refinement) -> AgentTarget? { try? JSONDecoder().decode(AgentTarget.self, from: Data(state.targetJSON.utf8)) }
     func available(_ target: AgentTarget) -> Bool { target.transport == .clipboard || sender.targets.contains { $0.id == target.id } }
+    @ObservationIgnored var mayStart: (DocumentID) -> Bool = { _ in true }
     func canStart(_ session: DocumentSession?) -> Bool {
-        guard let session, let document = session.document, session.pastIteration == nil else { return false }
-        return sender.isTargetAvailable && !sender.isSending && !preparing.contains(document.id) && !ending.contains(document.id) && states[document.id]?.emitsDirective != true
+        guard let session, let document = session.document, session.hostID != .gloss, session.pastIteration == nil else { return false }
+        return mayStart(document.id) && sender.isTargetAvailable && !sender.isSending && !preparing.contains(document.id) && !ending.contains(document.id) && states[document.id]?.emitsDirective != true
     }
     func begin(_ session: DocumentSession, review: Bool) async {
         guard canStart(session), let document = session.document, let target = sender.lastTarget else { return }

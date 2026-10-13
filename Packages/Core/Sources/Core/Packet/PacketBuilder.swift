@@ -55,6 +55,7 @@ public struct PacketNote: Sendable {
     public var thread: PacketThread
     /// The follow-ups not sent before that this packet carries, with the text it carries for each, which
     /// `NoteStore.recordSend` stamps sent; one written or changed while the packet is being delivered isn't.
+    public var contributor: String? = nil
     public var carriedMessages: [MessageID: String] = [:]
     /// Question messages actually included in this delivery snapshot.
     public var carriedQuestions: Set<MessageID> = []
@@ -89,6 +90,7 @@ public struct PacketThread: Sendable, Equatable {
         case agent(name: String, asked: Bool, body: String)
         /// `User replied:`.
         case user(String)
+        case contributor(name: String, body: String)
         case choices(QuestionChoices)
         /// `Moved:`, only in `get_note`'s whole thread.
         case moved(NoteMove, by: MessageAuthor)
@@ -146,7 +148,7 @@ public struct PacketThread: Sendable, Equatable {
         switch (message.kind, message.author) {
         case (.moved, let author): message.move.map { .moved($0, by: author) }
         case (_, .agent(let name)): .agent(name: name, asked: message.kind == .question, body: message.body)
-        case (_, .user): .user(message.body)
+        case (_, .user): message.contributorName.map { .contributor(name: $0, body: message.body) } ?? .user(message.body)
         case (_, .app): nil
         }
     }
@@ -261,6 +263,7 @@ public enum PacketBuilder {
     /// points at, and the comment.
     static func noteBlock(_ note: PacketNote) -> String {
         var lines: [String] = ["Note: \(note.noteID.rawValue)"]
+        if let contributor = note.contributor, !contributor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { lines.append("Author: " + headerValue(contributor)) }
         switch note.anchor {
         case .text(let anchor) where anchor.cells?.isColumns == true:
             // A whole-column note: the column replaces the line range, and the excerpt lists its values by line.
@@ -342,6 +345,8 @@ public enum PacketBuilder {
             case .choices(let choices):
                 lines.append("Choices: \(choices.multi ? "multiple" : "single")")
                 lines.append(contentsOf: choices.options.enumerated().map { "Choice \($0.offset + 1): \"\(escape($0.element))\"" })
+            case .contributor(let name, let body):
+                lines.append("Contributor (" + headerValue(name) + ") replied: \"" + escape(body) + "\"")
             case .user(let body):
                 lines.append("User replied: \"\(escape(body))\"")
             case .moved(let move, let author):

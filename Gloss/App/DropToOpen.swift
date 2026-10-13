@@ -40,7 +40,9 @@ struct DropToOpen: ViewModifier {
             let path = url.standardizedFileURL.path
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { continue }
-            if isDirectory.boolValue {
+            if url.pathExtension.lowercased() == "gloss" {
+                    await model.collaboration.open(url)
+                } else if isDirectory.boolValue {
                 await model.explorer.openRoot(hostID: .local, path: path)
             } else {
                 await model.openRootIfNeeded(hostID: .local, containing: path)
@@ -58,7 +60,7 @@ struct DropToOpen: ViewModifier {
     private static func pasteboardKind() -> DropHint.Kind {
         let pasteboard = NSPasteboard(name: .drag)
         let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] ?? []
-        if urls.contains(where: { $0.isFileURL && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }) { return .folder }
+        if urls.contains(where: { $0.isFileURL && $0.pathExtension.lowercased() != "gloss" && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }) { return .folder }
         if !urls.contains(where: \.isFileURL), !webPages(in: urls).isEmpty { return .page }
         return .file
     }

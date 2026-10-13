@@ -60,6 +60,11 @@ final class DocumentSession: Identifiable {
     /// An earlier iteration this session shows read-only from its snapshot (issue #18), with that iteration's notes;
     /// nil for the document as it is.
     let pastIteration: Int?
+    var indexedDocumentID: DocumentID?
+    @ObservationIgnored var captureFacts: (Int?) -> JSONValue? = { _ in nil }
+    @ObservationIgnored var capturedImages: (@Sendable (String,Int?) async -> Data?)?
+    @ObservationIgnored var mayAddNotes: () -> Bool = { true }
+    @ObservationIgnored var mayEditNote: (Note) -> Bool = { _ in true }
 
     private(set) var document: Document?
     private(set) var state: State = .loading {
@@ -162,19 +167,21 @@ final class DocumentSession: Identifiable {
     @ObservationIgnored private var resourceUpdateGeneration = 0
 
     init(hostID: HostID, path: String, fileSystem: any FileSystemProvider, noteStore: NoteStore, attachmentDirectory: URL = AttachmentCache.notesRoot,
-         pastIteration: Int? = nil) {
+         pastIteration: Int? = nil, capturedKind: DocumentKind? = nil) {
         self.hostID = hostID
         self.path = path
-        self.kind = DocumentKindDetector.kind(forPath: path)
+        self.kind = capturedKind ?? DocumentKindDetector.kind(forPath: path)
         self.fileSystem = fileSystem
         self.noteStore = noteStore
         self.attachmentDirectory = attachmentDirectory
         self.pastIteration = pastIteration
+        self.isReadOnly = hostID.isVirtual || pastIteration != nil
     }
 
     /// The document row: made or refreshed for the file as it is, only read for an earlier iteration's snapshot, whose
     /// bytes must not become the document's fingerprint.
     private func adoptDocument(kind: DocumentKind, fingerprint: Fingerprint) async throws -> Document {
+        if let indexedDocumentID, let existing = try await noteStore.document(indexedDocumentID) { return existing }
         let path = await documentPath()
         guard pastIteration != nil else { return try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint) }
         guard let document = try await noteStore.document(hostID: hostID, path: path) else { throw FileSystemError.notFound(path) }
@@ -211,6 +218,7 @@ final class DocumentSession: Identifiable {
         return switch hostID {
         case .github: "Read-only: a pull request's file at its head commit. Ask your agent for changes."
         case .atlassian: "Read-only: the live ticket or page. Ask your agent for changes."
+        case .gloss: "Read-only: captured content in this review"
         case .web: "Read-only: the page's current DOM"
         default: "Read-only: the file is too large to edit here"
         }
@@ -426,10 +434,19 @@ final class DocumentSession: Identifiable {
             controller.onGutterClick = { [weak self] line, noteID in self?.gutterClicked(line: line, noteID: noteID) }
             if kind == .markdown {
                 let folder = hostID == .local ? URL(fileURLWithPath: (path as NSString).deletingLastPathComponent, isDirectory: true) : nil
-                markdown = MarkdownViewerController(source: controller, baseURL: folder)
+                let loader: (@Sendable (String) async -> Data?)?
+                if let capturedImages {
+                    let number = pastIteration
+                    loader = { source in await capturedImages(source,number) }
+                } else { loader = nil }
+                markdown = MarkdownViewerController(source: controller,baseURL: folder,usesCapturedImages: capturedImages != nil,capturedImageLoader: loader)
                 // Relative links open beside the document: files on a host, and a ticket's or page's attachments.
                 if !hostID.isVirtual || hostID == .atlassian { markdown?.documentDirectory = PathUtilities.parent(of: path) }
-                if folder == nil {
+                if let capturedImages {
+                    markdown?.usesCapturedImages = true
+                    let iteration = pastIteration
+                    markdown?.loadImage = { source in await capturedImages(source,iteration) }
+                } else if folder == nil {
                     // Pictures that live on the document's host (a remote file's, a ticket's attachments) are read
                     // from it, within the size the image viewer takes.
                     let fileSystem = fileSystem, directory = PathUtilities.parent(of: path), threshold = Self.mediaThreshold
@@ -584,6 +601,7 @@ final class DocumentSession: Identifiable {
     /// pill in between), or on the picture chosen on the page once Add Note is pressed. On a served file the
     /// element's first text maps to its source line.
     func beginNote(element pick: ElementPick) {
+        guard mayAddNotes() else { return }
         guard let html, let controller = textController else { return }
         html.isNoteMode = false
         html.pendingPick = nil
@@ -632,6 +650,7 @@ final class DocumentSession: Identifiable {
             fingerprintAtOpen = fingerprint
             baseText = text
             controller.replaceAll(with: text)
+            markdown?.invalidateCapturedImages()
             rendered?.syncWithSourceIfReplaced()
             isDirty = false
             banner = textEncoding.isUnicode ? nil : .decodedAsLatin1
@@ -865,7 +884,7 @@ final class DocumentSession: Identifiable {
     // MARK: Watching
 
     private func startWatching() {
-        // A snapshot never changes.
+        // A snapshot never changes; current captures still update in view-only reviews.
         guard pastIteration == nil else { return }
         watcher?.cancel()
         let stream = fileSystem.watch(path)
@@ -917,6 +936,10 @@ final class DocumentSession: Identifiable {
         }
         if pdfController != nil {
             await reloadPDF()
+            return
+        }
+        if hostID == .gloss, textController != nil {
+            await reloadFromDisk(discardingEdits: false)
             return
         }
         guard textController != nil, let expected = fingerprintAtOpen else { return }
@@ -1220,6 +1243,15 @@ final class DocumentSession: Identifiable {
     }
 
     /// Pushes note ranges into the editor, preferring live (edited) ranges over stored anchors.
+    private func imageRect(_ anchor: Anchor,in image: ImageViewerController) -> CGRect? {
+        switch anchor {
+        case .image(let region): CGRect(x: region.x,y: region.y,width: region.w,height: region.h)
+        case .element(let element) where hostID == .gloss || captureFacts(pastIteration) != nil:
+            CapturedViewport.rect(for: element,facts: captureFacts(pastIteration),pixels: CGSize(width: image.image.width,height: image.image.height))
+        default: nil
+        }
+    }
+
     private func syncHighlights() {
         let hidden = hiddenNoteIDs
         let drawn = notes.filter { !hidden.contains($0.id) }
@@ -1244,8 +1276,8 @@ final class DocumentSession: Identifiable {
         }
         if let image = imageController {
             image.highlights = drawn.compactMap { note in
-                guard case .image(let anchor) = note.anchor else { return nil }
-                return ImageHighlight(id: note.id, rect: CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h), color: note.color, state: note.displayState, needsReview: needsReview.contains(note.id))
+                guard let rect = imageRect(note.anchor, in: image) else { return nil }
+                return ImageHighlight(id: note.id, rect: rect, color: note.color, state: note.displayState, needsReview: needsReview.contains(note.id))
             }
             return
         }
@@ -1371,6 +1403,7 @@ final class DocumentSession: Identifiable {
     /// state it had before (`recoverOrphan`); one whose text was removed becomes a point where it was, said in its
     /// thread as Gloss's own finding; a lost one is orphaned, which leaves a resolved note as it is.
     private func apply(_ result: ReAnchorResult, to note: Note, unchanged anchor: Anchor) async throws {
+        guard !(hostID == .gloss && document?.hostID != .gloss) else { return }
         guard pastIteration == nil else { return }
         switch result {
         case .unchanged:
@@ -1437,6 +1470,7 @@ final class DocumentSession: Identifiable {
     }
 
     private func reanchor(_ notes: [Note], in text: String, hash: String) async {
+        guard !(hostID == .gloss && document?.hostID != .gloss) else { return }
         guard pastIteration == nil else { return }
         for note in notes {
             if Task.isCancelled { return }
@@ -1495,7 +1529,7 @@ final class DocumentSession: Identifiable {
     /// Starts a note for the current selection (or the whole file when there is no text viewer).
     func beginNote() {
         // Notes are added to the iteration in progress, on the file as it is.
-        guard pastIteration == nil else { return }
+        guard pastIteration == nil, mayAddNotes() else { return }
         if let reanchoring = reanchoringNoteID {
             placeOrphan(reanchoring)
             return
@@ -1606,6 +1640,7 @@ final class DocumentSession: Identifiable {
     }
 
     func editNote(_ note: Note) {
+        guard mayEditNote(note) else { return }
         var rect = CGRect(x: 40, y: 40, width: 1, height: 1)
         if let pdf = pdfController, case .pdf(let anchor) = note.anchor, let bounds = Self.bounds(of: anchor, in: pdf),
            let found = pdf.rect(forPage: anchor.page, bounds: bounds) {
@@ -1724,7 +1759,7 @@ final class DocumentSession: Identifiable {
         let directory = attachmentDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let base = (fileName as NSString).deletingPathExtension
-        let url = directory.appendingPathComponent("\(base)-page\(anchor.page + 1)-\(noteID.rawValue.suffix(6)).png")
+        let url = directory.appendingPathComponent("\(base)-page\(anchor.page + 1)-\(noteID.rawValue.suffix(6))-\(rendered.data.sha256Hex).png")
         try rendered.data.write(to: url, options: .atomic)
         _ = try await noteStore.addAttachment(noteID: noteID, kind: .pageRender, localPath: url.path, width: rendered.width, height: rendered.height)
     }
@@ -1739,7 +1774,7 @@ final class DocumentSession: Identifiable {
         guard let crop = ImageDecoder.crop(decoded, to: rect), let png = ImageDecoder.pngData(crop) else { return }
         let directory = attachmentDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("\(anchor.attachmentBaseName)-\(anchor.isWholeImage ? "image" : "region")-\(noteID.rawValue.suffix(6)).png")
+        let url = directory.appendingPathComponent("\(anchor.attachmentBaseName)-\(anchor.isWholeImage ? "image" : "region")-\(noteID.rawValue.suffix(6))-\(png.sha256Hex).png")
         try png.write(to: url, options: .atomic)
         _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
     }
@@ -1750,7 +1785,7 @@ final class DocumentSession: Identifiable {
         let directory = attachmentDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let base = (fileName as NSString).deletingPathExtension
-        let url = directory.appendingPathComponent("\(base)-region-\(noteID.rawValue.suffix(6)).png")
+        let url = directory.appendingPathComponent("\(base)-region-\(noteID.rawValue.suffix(6))-\(png.sha256Hex).png")
         try png.write(to: url, options: .atomic)
         _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
     }
@@ -1760,7 +1795,7 @@ final class DocumentSession: Identifiable {
         let directory = attachmentDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let base = (fileName as NSString).deletingPathExtension.replacingOccurrences(of: "/", with: "-")
-        let url = directory.appendingPathComponent("\(base)-element-\(noteID.rawValue.suffix(6)).png")
+        let url = directory.appendingPathComponent("\(base)-element-\(noteID.rawValue.suffix(6))-\(crop.png.sha256Hex).png")
         try crop.png.write(to: url, options: .atomic)
         _ = try await noteStore.addAttachment(noteID: noteID, kind: .crop, localPath: url.path, width: crop.width, height: crop.height)
     }
@@ -1778,9 +1813,9 @@ final class DocumentSession: Identifiable {
             pdf.scroll(toPage: anchor.page, bounds: Self.bounds(of: anchor, in: pdf))
             return
         }
-        if let image = imageController, case .image(let anchor) = note.anchor {
+        if let image = imageController, let rect = imageRect(note.anchor,in: image) {
             image.selectedNoteID = note.id
-            image.reveal(CGRect(x: anchor.x, y: anchor.y, width: anchor.w, height: anchor.h))
+            image.reveal(rect)
             return
         }
         if let html, case .element(let anchor) = note.anchor {

@@ -5,7 +5,7 @@ import GRDB
 public enum Schema {
     public static let tableNames = [
         "host", "root", "document", "note", "attachment", "send", "send_note", "staged_file", "target", "setting", "web_page", "note_message",
-        "iteration", "snapshot", "refinement",
+        "iteration", "snapshot", "refinement", "collaboration_document", "collaboration_review", "collaboration_seen", "collaboration_note_map", "collaboration_message_map", "agent_note_snapshot",
     ]
 
     public static var migrator: DatabaseMigrator {
@@ -358,6 +358,67 @@ public enum Schema {
                 );
                 """)
         }
+        migrator.registerMigration("v17-collaboration") { db in
+            try db.execute(sql: """
+                CREATE TABLE host_new (
+                    id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL UNIQUE,
+                    kind TEXT NOT NULL CHECK (kind IN ('local','ssh','web','github','atlassian','gloss')),
+                    last_connected_at DATETIME, origin TEXT NOT NULL DEFAULT 'ssh_config', options_json TEXT
+                );
+                INSERT INTO host_new SELECT * FROM host;
+                DROP TABLE host;
+                ALTER TABLE host_new RENAME TO host;
+                """)
+            try Self.moveAliasesOffVirtualNames(db,includingRenamed: false,names: ["gloss"])
+            try db.execute(sql: """
+                INSERT INTO host (id,name,kind,origin) VALUES ('h_gloss','gloss','gloss','local');
+                ALTER TABLE note ADD COLUMN resolved_at DATETIME;
+                ALTER TABLE note ADD COLUMN contributor_id TEXT;
+                ALTER TABLE note ADD COLUMN contributor_name TEXT;
+                ALTER TABLE note ADD COLUMN published_at DATETIME;
+                ALTER TABLE note ADD COLUMN posted_to_owner INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE note ADD COLUMN published_body TEXT;
+                ALTER TABLE note ADD COLUMN published_color TEXT;
+                ALTER TABLE note ADD COLUMN collaboration_event_id TEXT;
+                ALTER TABLE note ADD COLUMN collaboration_move_id TEXT;
+                ALTER TABLE note ADD COLUMN collaboration_move_at DATETIME;
+                ALTER TABLE note ADD COLUMN local_state_at DATETIME;
+                CREATE TABLE agent_note_snapshot (
+                    note_id TEXT PRIMARY KEY NOT NULL REFERENCES note(id) ON DELETE CASCADE,
+                    note_json TEXT NOT NULL, attachments_json TEXT NOT NULL
+                );
+                CREATE TABLE collaboration_document (
+                    instance TEXT PRIMARY KEY NOT NULL,
+                    document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE
+                );
+                CREATE TABLE collaboration_review (
+                    instance TEXT PRIMARY KEY NOT NULL,
+                    url TEXT NOT NULL,
+                    document_id TEXT NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL, owner_author TEXT NOT NULL,
+                    is_owner INTEGER NOT NULL, is_copy INTEGER NOT NULL,
+                    UNIQUE(document_id)
+                );
+                ALTER TABLE note_message ADD COLUMN contributor_id TEXT;
+                ALTER TABLE note_message ADD COLUMN contributor_name TEXT;
+                ALTER TABLE note_message ADD COLUMN agent_sent_at DATETIME;
+                UPDATE note_message SET agent_sent_at=sent_at WHERE author='user' AND sent_at IS NOT NULL;
+                CREATE TABLE collaboration_note_map (
+                    instance TEXT NOT NULL REFERENCES collaboration_document(instance) ON DELETE CASCADE,
+                    remote_id TEXT NOT NULL, local_id TEXT NOT NULL REFERENCES note(id) ON DELETE CASCADE,
+                    PRIMARY KEY(instance,remote_id), UNIQUE(instance,local_id)
+                );
+                CREATE TABLE collaboration_message_map (
+                    instance TEXT NOT NULL REFERENCES collaboration_document(instance) ON DELETE CASCADE,
+                    remote_id TEXT NOT NULL, local_id TEXT NOT NULL REFERENCES note_message(id) ON DELETE CASCADE,
+                    PRIMARY KEY(instance,remote_id), UNIQUE(instance,local_id)
+                );
+                CREATE TABLE collaboration_seen (
+                    instance TEXT NOT NULL REFERENCES collaboration_review(instance) ON DELETE CASCADE,
+                    record_id TEXT NOT NULL, PRIMARY KEY(instance,record_id)
+                );
+                """)
+        }
         return migrator
     }
 
@@ -433,12 +494,12 @@ public enum Schema {
     }
 
     /// The names the integration hosts own.
-    static let virtualHostNames = ["web", "github", "atlassian"]
+    static let virtualHostNames = ["web", "github", "atlassian", "gloss"]
 
     /// Moves ssh rows off the integration hosts' names (first free `<name>-ssh`) and records each one's real alias
     /// in its options, including rows an earlier version already renamed without recording it.
-    static func moveAliasesOffVirtualNames(_ db: Database, includingRenamed: Bool) throws {
-        for name in virtualHostNames {
+    static func moveAliasesOffVirtualNames(_ db: Database, includingRenamed: Bool, names: [String] = ["web", "github", "atlassian"]) throws {
+        for name in names {
             let sql = includingRenamed
                 ? "SELECT id, name, options_json FROM host WHERE kind = 'ssh' AND (name = ? OR (name = ? AND origin = 'ssh_config'))"
                 : "SELECT id, name, options_json FROM host WHERE kind = 'ssh' AND name = ?"

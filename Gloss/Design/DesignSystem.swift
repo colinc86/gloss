@@ -50,7 +50,7 @@ extension Note {
     /// follow-up waits to be sent) is drawn as a draft so it stands out; one waiting on the agent as sent, and so is a
     /// resolved one waiting for the user's review: it doesn't fade until they accept it.
     nonisolated var displayState: NoteState {
-        if state != .orphaned && (waitingOnUser || hasUnsentFollowUps) { return .draft }
+        if state != .orphaned && (waitingOnUser || hasUnsentFollowUps || hasUnpublishedChanges) { return .draft }
         return awaitsReview ? .sent : state
     }
 }

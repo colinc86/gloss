@@ -476,7 +476,7 @@ public actor MCPServer {
         exact new text, {removed: true, line}, or {selector} for a page element) so the note follows it. To show the \
         user something, call open_in_viewer with a path and lines. When you made or changed something the user should \
         review or decide on and no note is about it, call ask_user with the file, the lines, and your question. \
-        add_favorite keeps a project folder at hand in Gloss's explorer.
+        add_favorite keeps a project folder at hand in Gloss's explorer. Collaborator comments and answers carry their chosen author names; only the review owner delivers them to you. Names are attribution, not verified identities.
         When a file block says Refinement, read that document for ambiguity and open-ended concepts. Ask through \
         ask_user or reply_to_note with asks: true. Offer choices when useful; multi: true allows several. Ask small \
         groups of anchored questions and wait for the user's sent answers. Apply those answers and make the changes, \
@@ -518,8 +518,10 @@ public actor MCPServer {
             }
             // Sent notes, and sent notes whose text has since gone (often because the agent removed it, as asked).
             let sentOrphans = try await store.sentOrphanIDs()
-            let pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue.map { Self.absolutePath($0) ?? PathUtilities.lexicallyNormalized($0) }, states: Self.sharedStates.union([.orphaned]))
-                .filter { $0.note.state != .orphaned || sentOrphans.contains($0.note.id) }
+            let sharedIDs = try await store.sharedNoteIDs()
+            var pending = try await store.pendingNotes(hostID: hostID, pathPrefix: arguments["path"]?.stringValue.map { Self.absolutePath($0) ?? PathUtilities.lexicallyNormalized($0) }, states: Self.sharedStates.union([.orphaned]))
+                .filter { sharedIDs.contains($0.note.id) && ($0.note.state != .orphaned || sentOrphans.contains($0.note.id)) }
+            for i in pending.indices { if let visible = try await store.agentNote(pending[i].note.id) { pending[i].note = visible } }
             func anchor(_ note: Note) -> String {
                 note.state == .orphaned ? "\(note.anchor.summary) (text no longer found)" : note.anchor.summary
             }
@@ -544,7 +546,7 @@ public actor MCPServer {
                 return CallTool.Result(content: [text("unknown note id")], isError: true)
             }
             let packet = try await dependencies.packet([id])
-            let attachments = try await store.attachments(for: id)
+            let attachments = try await store.agentResourceAttachments(id)
             var body = packet.text
             if !attachments.isEmpty {
                 body += "\nAttachments: " + attachments.indices.map { "note://\(note.id.rawValue)/attachment/\($0)" }.joined(separator: " ")
@@ -672,6 +674,7 @@ public actor MCPServer {
             do { choices = try questionChoices(arguments) }
             catch { return CallTool.Result(content: [text(error.userMessage)], isError: true) }
             let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
+            if host == "gloss" { return CallTool.Result(content: [text("Ask about the original document. Shared review captures do not connect to agents.")],isError: true) }
             guard let given = arguments["path"]?.stringValue, let path = Self.absolutePath(given, home: true) ?? Self.webPath(given) else {
                 return CallTool.Result(content: [text("path must be absolute or a live page URL")], isError: true)
             }
@@ -835,15 +838,17 @@ public actor MCPServer {
 
     nonisolated static func resources(dependencies: MCPDependencies) async throws -> [Resource] {
         var resources: [Resource] = []
-        for entry in try await dependencies.noteStore.pendingNotes(states: sharedStates) {
-            let attachments = try await dependencies.noteStore.attachments(for: entry.note.id)
+        let shared = try await dependencies.noteStore.sharedNoteIDs()
+        for entry in try await dependencies.noteStore.pendingNotes(states: sharedStates) where shared.contains(entry.note.id) {
+            let attachments = try await dependencies.noteStore.agentResourceAttachments(entry.note.id)
+            let visible = try await dependencies.noteStore.agentNote(entry.note.id) ?? entry.note
             for (index, attachment) in attachments.enumerated() {
                 resources.append(Resource(
                     name: "\(PathUtilities.name(of: entry.document.path)) region \(index)",
                     uri: "note://\(entry.note.id.rawValue)/attachment/\(index)",
-                    description: entry.note.body.prefix(80).description,
+                    description: visible.body.prefix(80).description,
                     mimeType: "image/png",
-                    size: (try? FileManager.default.attributesOfItem(atPath: attachment.localPath)[.size] as? Int)
+                    size: attachment.data.count
                 ))
             }
         }
@@ -857,11 +862,12 @@ public actor MCPServer {
         }
         let parts = url.path.split(separator: "/").map(String.init)
         guard parts.count == 2, parts[0] == "attachment", let index = Int(parts[1]) else { throw MCPError.invalidParams("unknown resource \(uri)") }
-        let attachments = try await dependencies.noteStore.attachments(for: id)
-        guard attachments.indices.contains(index), let data = FileManager.default.contents(atPath: attachments[index].localPath) else {
+        guard try await dependencies.noteStore.sharedNoteIDs().contains(id) else { throw MCPError.invalidParams("unknown resource \(uri)") }
+        let attachments = try await dependencies.noteStore.agentResourceAttachments(id)
+        guard attachments.indices.contains(index) else {
             throw MCPError.invalidParams("attachment \(index) of \(raw) is not available")
         }
-        return ReadResource.Result(contents: [.binary(data, uri: uri, mimeType: "image/png")])
+        return ReadResource.Result(contents: [.binary(attachments[index].data, uri: uri, mimeType: "image/png")])
     }
 }
 

@@ -28,6 +28,7 @@ final class IterationsModel {
     private let noteStore: NoteStore
     private let settings: SettingsStore
     /// The host's file system, for reading the content an iteration ends on.
+    @ObservationIgnored var mayStart: (DocumentID) -> Bool = { _ in true }
     @ObservationIgnored var fileSystem: (HostID) -> (any FileSystemProvider)? = { _ in nil }
     /// The open session of a document, if any.
     @ObservationIgnored var liveSession: (DocumentID) -> DocumentSession? = { _ in nil }
@@ -66,7 +67,7 @@ final class IterationsModel {
     /// New Iteration: asks about open notes when there are any and Settings says to ask, else starts at once. An
     /// iteration with no notes yet has nothing to end.
     func requestNewIteration(for document: Core.Document) async {
-        guard let fresh = try? await noteStore.document(document.id) else { return }
+        guard mayStart(document.id), let fresh = try? await noteStore.document(document.id) else { return }
         let notes = (try? await noteStore.notes(for: fresh.id, iteration: fresh.currentIteration)) ?? []
         guard !notes.isEmpty else { return }
         let open = notes.filter { $0.state != .resolved }.count
@@ -91,6 +92,7 @@ final class IterationsModel {
         guard let fresh = try? await noteStore.document(document.id) else { return }
         let expected = expectedIteration ?? fresh.currentIteration
         guard fresh.currentIteration == expected else { return }
+        guard fresh.hostID != .gloss, mayStart(fresh.id) else { return }
         let content = await agentContent(of: fresh)
         let snapshot = content == nil ? nil : snapshotContent(of: fresh, agentContent: content)
         let commit = await gitCommit(of: fresh)
@@ -162,12 +164,12 @@ final class IterationsModel {
                 while !Task.isCancelled, let next = pendingCompletions.removeValue(forKey: id) {
                     do {
                         if let document = try await noteStore.document(id) {
-                            let content = settings.iteratesAfterResolved ? await agentContent(of: document) : nil
+                            let content = settings.iteratesAfterResolved && document.hostID != .gloss ? await agentContent(of: document) : nil
                             let snapshot = snapshotContent(of: document, agentContent: content)
                             let commit = settings.iteratesAfterResolved ? await gitCommit(of: document) : nil
                             guard !Task.isCancelled else { return }
                             let started = try await noteStore.finishIteration(next, content: content, snapshot: snapshot,
-                                                                             gitCommit: commit, enabled: settings.iteratesAfterResolved)
+                                                                             gitCommit: commit, enabled: settings.iteratesAfterResolved && document.hostID != .gloss && mayStart(document.id))
                             if started, settings.snapshotsKept > 0 { try? await noteStore.pruneSnapshots(keepingLast: settings.snapshotsKept) }
                         } else { try await noteStore.handleIterationCompletion(next) }
                         // Recheck for a newer generation arriving during content reads or the final worker pass.
@@ -272,11 +274,17 @@ final class IterationsModel {
         let data = try? await iteration.snapshotHash.asyncMap { try await noteStore.snapshot(hash: $0) }
         // Another view, Back to Current, or quitting won while the snapshot was read.
         guard generation == viewGeneration else { return }
-        if let data = data ?? nil, let base = fileSystem(document.hostID) {
-            let snapshot = SnapshotFileSystem(base: base, path: document.path, data: data, date: iteration.endedAt ?? iteration.startedAt)
-            snapshotSession = DocumentSession(hostID: document.hostID, path: document.path, fileSystem: snapshot, noteStore: noteStore,
-                                              attachmentDirectory: session.attachmentDirectory, pastIteration: number)
+        let capture = session.hostID == .gloss
+        let snapshotHost = capture ? session.hostID : document.hostID
+        let snapshotPath = capture ? session.path : document.path
+        if let data = data ?? nil, let base = fileSystem(snapshotHost) {
+            let snapshot = SnapshotFileSystem(base: base, path: snapshotPath, data: data, date: iteration.endedAt ?? iteration.startedAt)
+            snapshotSession = DocumentSession(hostID: snapshotHost, path: snapshotPath, fileSystem: snapshot, noteStore: noteStore,
+                                              attachmentDirectory: session.attachmentDirectory, pastIteration: number, capturedKind: capture ? session.kind : nil)
+            if capture { snapshotSession?.indexedDocumentID = document.id }
         }
+        snapshotSession?.capturedImages = session.capturedImages
+        snapshotSession?.captureFacts = session.captureFacts
         past[session.id] = PastView(iteration: iteration, session: snapshotSession)
         onViewedIterationChange(document, number)
         await snapshotSession?.open()

@@ -6,8 +6,9 @@ nonisolated struct NotesLocation: Hashable {
     let hostID: HostID
     let path: String
     var exactDocument = false
+    var displayTitle: String? = nil
 
-    var title: String { Core.Document.displayName(of: path) }
+    var title: String { displayTitle ?? Core.Document.displayName(of: path) }
 
     func contains(hostID: HostID, path: String) -> Bool {
         guard self.hostID == hostID else { return false }

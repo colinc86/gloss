@@ -11,13 +11,14 @@ struct AgentMessageBubble: View {
     var waiting = false
     /// The agent the note was last sent to, when there was a send; otherwise "Agent".
     let agent: String?
+    var via: String? = nil
 
     private var needsInput: Bool { asks && waiting }
     private var tint: Color { needsInput ? .orange : .secondary }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
-            Text(Self.heading(agent: agent))
+            Text(Self.heading(agent: agent) + (via.map { " · via " + $0 } ?? ""))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(tint)
             Text(message)
@@ -33,7 +34,7 @@ struct AgentMessageBubble: View {
         .background(tint.opacity(needsInput ? 0.12 : 0.08), in: BubbleShape())
         .overlay(BubbleShape().stroke(tint.opacity(needsInput ? 0.28 : 0.12), lineWidth: 0.5))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.spoken(agent: agent, message: message, waiting: needsInput))
+        .accessibilityLabel(Self.spoken(agent: agent, message: message, waiting: needsInput) + (via.map { ", via " + $0 } ?? ""))
         .help(needsInput ? "Waiting for your answer" : "")
     }
 

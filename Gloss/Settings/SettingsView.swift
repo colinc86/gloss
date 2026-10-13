@@ -115,10 +115,16 @@ struct SettingsView: View {
 
 /// Iterations and Recently Deleted: everything about a note's life after it is written (issues #15 and #18).
 private struct NotesSettings: View {
+    @Environment(AppModel.self) private var model
     @Bindable var settings: SettingsStore
 
     var body: some View {
         Form {
+            Section {
+                TextField("Your name", text: $settings.yourName, prompt: Text("Unnamed contributor"))
+                    .onSubmit { Task { await model.collaboration.updateName() } }
+                    .help("The name shown beside your notes in shared reviews. This is a name you choose, not a verified identity.")
+            } header: { Text("Shared reviews") }
             Section {
                 Toggle(isOn: $settings.reviewsResults) {
                     Text("Review agents' work")

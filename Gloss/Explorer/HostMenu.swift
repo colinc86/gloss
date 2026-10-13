@@ -9,6 +9,7 @@ enum HostMenu {
         /// ssh host already connected).
         case show(HostID)
         /// The explorer lists web pages.
+        case reviews
         case webPages
         case openPullRequest
         case openAtlassian
@@ -26,6 +27,7 @@ enum HostMenu {
         switch kind {
         case .web: .webPages
         case .github: .openPullRequest
+        case .gloss: .reviews
         case .atlassian: .openAtlassian
         case .local: .show(hostID)
         case .ssh: status == .connected ? .show(hostID) : .connect(hostID)
@@ -35,6 +37,7 @@ enum HostMenu {
     /// How a host is named: This Mac, the integrations and the web by what they are, others by their name.
     static func label(_ hostID: HostID, name: String) -> String {
         switch hostID {
+        case .gloss: "Reviews"
         case .local: "This Mac"
         case .web: "Web"
         case .github: "GitHub"
@@ -46,6 +49,7 @@ enum HostMenu {
     /// A host's symbol; an ssh host's says how its connection is.
     static func symbol(_ hostID: HostID, status: HostsModel.Status) -> String {
         switch hostID {
+        case .gloss: "person.2"
         case .local: "desktopcomputer"
         case .web: "globe"
         case .github: "arrow.triangle.pull"
@@ -89,6 +93,7 @@ enum HostMenu {
     /// The last item of the dropdown, for the host it shows.
     static func openTitle(_ hostID: HostID, name: String) -> String {
         switch hostID {
+        case .gloss: "Open Review…"
         case .web: "Open Location…"
         case .github: "Open Pull Request…"
         case .atlassian: "Open Jira Issue or Confluence Page…"
@@ -113,6 +118,8 @@ extension AppModel {
             if explorer.selectedTab?.hostID != hostID, let tab = explorer.tabs.first(where: { $0.hostID == hostID }) {
                 explorer.selectedTabID = tab.id
             }
+        case .reviews:
+            pickedHost = .gloss
         case .webPages:
             // Pages, not files: the explorer's Web section lists them and takes an address.
             pickedHost = .web
@@ -131,7 +138,9 @@ extension AppModel {
     /// Opens a folder on `hostID`: the open panel on this Mac, a path sheet for an ssh host (there is no panel for
     /// SFTP), the address field for the web, an integration's sheet.
     func presentOpenFolder(on hostID: HostID) {
-        if hostID == .web {
+        if hostID == .gloss {
+            openReviewPanel()
+        } else if hostID == .web {
             presentOpenLocation()
         } else if hostID == .local {
             explorer.chooseRootWithPanel(hostID: .local)

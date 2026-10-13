@@ -9,7 +9,7 @@ struct SchemaTests {
         "host": [("id", "TEXT"), ("name", "TEXT"), ("kind", "TEXT"), ("last_connected_at", "DATETIME"), ("origin", "TEXT"), ("options_json", "TEXT")],
         "root": [("id", "TEXT"), ("host_id", "TEXT"), ("path", "TEXT"), ("last_opened_at", "DATETIME"), ("pinned", "BOOLEAN")],
         "document": [("id", "TEXT"), ("host_id", "TEXT"), ("path", "TEXT"), ("kind", "TEXT"), ("last_hash", "TEXT"), ("last_mtime", "DATETIME"), ("last_size", "INTEGER"), ("current_iteration", "INTEGER")],
-        "note": [("id", "TEXT"), ("document_id", "TEXT"), ("anchor_json", "TEXT"), ("anchor_type", "TEXT"), ("body", "TEXT"), ("state", "TEXT"), ("created_at", "DATETIME"), ("updated_at", "DATETIME"), ("color", "TEXT"), ("resolve_outcome", "TEXT"), ("resolve_message", "TEXT"), ("previous_state", "TEXT"), ("author", "TEXT"), ("resolve_agent", "TEXT"), ("waiting_on_user", "INTEGER"), ("original_anchor_json", "TEXT"), ("original_anchor_type", "TEXT"), ("deleted_at", "DATETIME"), ("iteration", "INTEGER"), ("review_requested", "INTEGER"), ("accepted_at", "DATETIME"), ("iteration_joined_at", "DATETIME")],
+        "note": [("id", "TEXT"), ("document_id", "TEXT"), ("anchor_json", "TEXT"), ("anchor_type", "TEXT"), ("body", "TEXT"), ("state", "TEXT"), ("created_at", "DATETIME"), ("updated_at", "DATETIME"), ("color", "TEXT"), ("resolve_outcome", "TEXT"), ("resolve_message", "TEXT"), ("previous_state", "TEXT"), ("author", "TEXT"), ("resolve_agent", "TEXT"), ("waiting_on_user", "INTEGER"), ("original_anchor_json", "TEXT"), ("original_anchor_type", "TEXT"), ("deleted_at", "DATETIME"), ("iteration", "INTEGER"), ("review_requested", "INTEGER"), ("accepted_at", "DATETIME"), ("iteration_joined_at", "DATETIME"), ("resolved_at", "DATETIME"), ("contributor_id", "TEXT"), ("contributor_name", "TEXT"), ("published_at", "DATETIME"), ("posted_to_owner", "INTEGER"), ("published_body", "TEXT"), ("published_color", "TEXT"), ("collaboration_event_id", "TEXT"), ("collaboration_move_id", "TEXT"), ("collaboration_move_at", "DATETIME"), ("local_state_at", "DATETIME")],
         "attachment": [("id", "TEXT"), ("note_id", "TEXT"), ("kind", "TEXT"), ("local_path", "TEXT"), ("width", "INTEGER"), ("height", "INTEGER")],
         "send": [("id", "TEXT"), ("target_json", "TEXT"), ("transport", "TEXT"), ("packet_text", "TEXT"), ("sent_at", "DATETIME"), ("outcome", "TEXT"), ("review", "INTEGER")],
         "send_note": [("send_id", "TEXT"), ("note_id", "TEXT")],
@@ -17,9 +17,15 @@ struct SchemaTests {
         "target": [("id", "TEXT"), ("host_id", "TEXT"), ("transport", "TEXT"), ("identity_json", "TEXT"), ("label", "TEXT"), ("last_used_at", "DATETIME")],
         "setting": [("key", "TEXT"), ("value", "TEXT")],
         "web_page": [("url", "TEXT"), ("host_id", "TEXT"), ("title", "TEXT"), ("last_visited_at", "DATETIME"), ("pinned", "BOOLEAN")],
-        "note_message": [("id", "TEXT"), ("note_id", "TEXT"), ("author", "TEXT"), ("kind", "TEXT"), ("body", "TEXT"), ("meta_json", "TEXT"), ("created_at", "DATETIME"), ("sent_at", "DATETIME"), ("choices_json", "TEXT"), ("in_reply_to", "TEXT"), ("selected_options_json", "TEXT"), ("custom_answer", "INTEGER")],
+        "note_message": [("id", "TEXT"), ("note_id", "TEXT"), ("author", "TEXT"), ("kind", "TEXT"), ("body", "TEXT"), ("meta_json", "TEXT"), ("created_at", "DATETIME"), ("sent_at", "DATETIME"), ("choices_json", "TEXT"), ("in_reply_to", "TEXT"), ("selected_options_json", "TEXT"), ("custom_answer", "INTEGER"), ("contributor_id", "TEXT"), ("contributor_name", "TEXT"), ("agent_sent_at", "DATETIME")],
         "refinement": [("document_id", "TEXT"), ("generation", "TEXT"), ("status", "TEXT"), ("round", "INTEGER"), ("request_note_id", "TEXT"), ("target_json", "TEXT"), ("started_at", "DATETIME"), ("completed_at", "DATETIME"), ("summary", "TEXT"), ("error", "TEXT"), ("awaiting_next_round", "INTEGER"), ("has_answers", "INTEGER"), ("dismissed", "INTEGER")],
         "iteration": [("document_id", "TEXT"), ("number", "INTEGER"), ("name", "TEXT"), ("started_at", "DATETIME"), ("ended_at", "DATETIME"), ("snapshot_hash", "TEXT"), ("git_commit", "TEXT"), ("start_hash", "TEXT"), ("completion_generation", "INTEGER"), ("handled_generation", "INTEGER"), ("completed_at", "DATETIME")],
+        "agent_note_snapshot": [("note_id","TEXT"),("note_json","TEXT"),("attachments_json","TEXT")],
+        "collaboration_document": [("instance","TEXT"),("document_id","TEXT")],
+        "collaboration_review": [("instance","TEXT"),("url","TEXT"),("document_id","TEXT"),("title","TEXT"),("owner_author","TEXT"),("is_owner","INTEGER"),("is_copy","INTEGER")],
+        "collaboration_note_map": [("instance","TEXT"),("remote_id","TEXT"),("local_id","TEXT")],
+        "collaboration_message_map": [("instance","TEXT"),("remote_id","TEXT"),("local_id","TEXT")],
+        "collaboration_seen": [("instance","TEXT"),("record_id","TEXT")],
         "snapshot": [("hash", "TEXT"), ("data", "BLOB"), ("size", "INTEGER"), ("created_at", "DATETIME")],
     ]
 
@@ -38,7 +44,7 @@ struct SchemaTests {
     @Test func fixedHostsAreSeeded() async throws {
         let store = NoteStore(database: try AppDatabase.inMemory())
         let hosts = try await store.hosts()
-        #expect(Set(hosts.map(\.name)) == ["local", "web", "github", "atlassian"])
+        #expect(Set(hosts.map(\.name)) == ["local", "web", "github", "atlassian", "gloss"])
         let byID = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
         #expect(byID[.local]?.kind == .local)
         #expect(byID[.web]?.kind == .web && byID[.github]?.kind == .github && byID[.atlassian]?.kind == .atlassian)
@@ -102,7 +108,7 @@ struct SchemaTests {
             #expect(before[index] == kept, "\(table) rows survive the rebuild")
         }
         try queue.read { (db: Database) throws in
-            #expect(try rows(db, "host").count == before[0].count + 3, "the three virtual hosts are added, no host is lost")
+            #expect(try rows(db, "host").count == before[0].count + 4, "the four virtual hosts are added, no host is lost")
             #expect(try String.fetchOne(db, sql: "SELECT name FROM host WHERE id = 'h_01GITH'") == "github-ssh", "an ssh alias that took a virtual host's name is renamed, not lost")
             let options = { (id: String) in try String.fetchOne(db, sql: "SELECT options_json FROM host WHERE id = ?", arguments: [id]).flatMap { try? JSONDecoder().decode(HostOptions.self, from: Data($0.utf8)) } }
             #expect(try options("h_01GITH")?.alias == "github", "it remembers the alias ssh knows it by")

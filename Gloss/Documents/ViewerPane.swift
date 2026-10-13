@@ -26,7 +26,8 @@ struct ViewerPane: View {
                 BannerView(banner: banner, session: session)
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
-            RefinementNotice(session: session)
+            CollaborationNotice(session: session)
+            if session.hostID != .gloss { RefinementNotice(session: session) }
             content
                 // A native sibling above the paths keeps the document and its glass card in the right order.
                 .background(ReviewOverlay(model: model, session: session))
@@ -973,6 +974,7 @@ private struct NotePeekCard: View {
                     Spacer(minLength: DS.Space.xs)
                     NoteCard.badge(note)
                 }
+                if note.publishedAt != nil || model.activeReview != nil { ContributorLabel(note: note) }
                 Text((try? AttributedString(markdown: note.body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(note.body))
                     .font(.callout)
                     .lineLimit(6)
@@ -993,8 +995,8 @@ private struct NotePeekCard: View {
                 }
                 HStack(spacing: DS.Space.xxs) {
                     // A draft's next step is sending it, so Send leads, as on the panel's cards.
-                    if note.state == .draft || note.state == .sent, let target = model.send.lastTarget, model.send.isTargetAvailable, model.isInSendScope(note) {
-                        InlineIconButton(title: "Send to \(target.label)", symbol: "paperplane.fill", prominent: true, emphasized: true) {
+                    if model.collaboration.isSendable(note), model.canSendInCurrentLocation, model.isInSendScope(note) {
+                        InlineIconButton(title: model.sendsToReview ? "Send to \(model.activeReview?.ownerName ?? "Owner")" : "Send to \(model.send.lastTarget?.label ?? "agent")", symbol: "paperplane.fill", prominent: true, emphasized: true) {
                             session.textController?.dismissPeek()
                             Task { await model.send(noteIDs: [note.id]) }
                         }
@@ -1002,7 +1004,7 @@ private struct NotePeekCard: View {
                     InlineIconButton(title: "Edit", symbol: "pencil", emphasized: true) {
                         session.textController?.dismissPeek()
                         session.editNote(note)
-                    }
+                    }.disabled(!model.collaboration.canEdit(note))
                     if note.state == .resolved {
                         InlineIconButton(title: "Reopen as draft", symbol: "arrow.counterclockwise", emphasized: true) {
                             Task { await model.notesPanel.reopen(note.id) }

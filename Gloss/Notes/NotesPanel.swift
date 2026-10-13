@@ -265,6 +265,7 @@ struct NotesPanel: View {
                 sortMenu
             }
             ColorFilterStrip(counts: colorCounts, selection: $panel.colorFilter)
+            if model.activeReview != nil { PeopleFilter() }
             // Several selected: the bar acts on them all. One selected card carries its own actions, so selecting
             // a note (a click) never pushes the list down.
             if panel.selectedNotes.count > 1 {
@@ -284,7 +285,10 @@ struct NotesPanel: View {
             // Where notes go, and this document's drafts as ⌘↩ sends them. Several selected bring the selection bar
             // above, which sends what's selected instead (issue #8).
             HStack(spacing: 6) {
-                TargetPicker()
+                Group { if model.sendsToReview {
+                    Label("To \(model.activeReview?.ownerName ?? "Owner") · Owner", systemImage: "person")
+                        .font(.callout)
+                } else { TargetPicker() } }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(1)
                 if panel.selectedNotes.count <= 1 {
@@ -292,8 +296,8 @@ struct NotesPanel: View {
                         count: model.visibleDrafts.count,
                         colors: panel.colorFilter,
                         filtered: model.draftsAreFiltered,
-                        isSending: model.send.isSending,
-                        hasTarget: model.send.isTargetAvailable,
+                        isSending: model.isSendingInCurrentLocation,
+                        hasTarget: model.canSendInCurrentLocation,
                         action: { Task { await model.sendVisibleDrafts() } },
                         menu: { sendMenuItems }
                     )
@@ -321,6 +325,7 @@ struct NotesPanel: View {
                 Text("This Location\(locationDrafts > 0 ? " (\(locationDrafts))" : "")").tag(AppModel.SendScope.all)
             }
             .pickerStyle(.inline)
+            if !model.sendsToReview {
             Toggle("Review When Done", isOn: Binding(get: { model.settings.reviewsResults }, set: { model.settings.reviewsResults = $0 }))
             Divider()
             RefinementCommands(model: model)
@@ -329,6 +334,7 @@ struct NotesPanel: View {
                 Task { await model.copyVisibleDrafts() }
             }
             .disabled(shown == 0)
+            }
         }
     }
 
@@ -565,7 +571,7 @@ struct NoteCard: View {
 
     /// A follow-up needs someone to follow: every note but a draft never sent, whose comment is edited instead.
     private func canFollowUp(_ thread: NoteThread) -> Bool {
-        guard !isPast else { return false }
+        guard !isPast, model.collaboration.context(for: note.documentID)?.canWrite != false else { return false }
         return note.state != .draft || lastSend != nil || note.author != nil || !thread.entries.isEmpty
     }
 
@@ -587,6 +593,9 @@ struct NoteCard: View {
                         .lineLimit(1)
                     Spacer(minLength: DS.Space.xs)
                     stateBadge
+                }
+                if note.publishedAt != nil || model.activeReview != nil {
+                    ContributorLabel(note: note)
                 }
                 // Brought forward from an earlier iteration: Gloss's own line in the thread says from where.
                 if let origin = model.notesPanel.messages(for: note.id).first(where: { $0.author == .app && $0.kind == .comment })?.body {
@@ -634,6 +643,7 @@ struct NoteCard: View {
         .animation(DS.Motion.bouncy, value: note.state)
         .animation(DS.Motion.smooth, value: isCompact)
         .animation(DS.Motion.smooth, value: expanded)
+        .onChange(of: expanded) { _, open in if open { model.collaboration.revealed(note, includeThread: true) } }
         .onChange(of: isSelected) { _, selected in if !selected { opening.deselected() } }
         .animation(DS.Motion.smooth, value: editing)
         .animation(DS.Motion.smooth, value: editingMessageID)
@@ -668,7 +678,8 @@ struct NoteCard: View {
         // on it, instead of a walk through the rail, the pill, and six unlabeled-looking icons.
         // Open, the thread and its follow-up field have to stay reachable, so the card opens up to its children.
         .accessibilityElement(children: expanded || editing || unansweredQuestion?.choices != nil ? .contain : .ignore)
-        .accessibilityLabel(Self.spokenSummary(note, latest: thread.latest) + model.notesPanel.choiceAnswerSummary(for: note.id))
+        .accessibilityLabel(model.collaboration.authorLabel(note) + ", " + Self.spokenSummary(note, latest: thread.latest) + model.notesPanel.choiceAnswerSummary(for: note.id))
+        .onChange(of: isSelected) { _, selected in if selected { model.collaboration.revealed(note) } }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityActions {
             commands(dividers: false)
@@ -705,7 +716,7 @@ struct NoteCard: View {
 
     @ViewBuilder
     private var copyCommands: some View {
-        Button("Copy as Packet") { Task { await model.copyPacket(noteIDs: [note.id]) } }
+        if !model.sendsToReview { Button("Copy as Packet") { Task { await model.copyPacket(noteIDs: [note.id]) } } }
         Button("Copy Comment") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(note.body, forType: .string)
@@ -725,7 +736,7 @@ struct NoteCard: View {
             if dividers { Divider() }
         }
         Button("Reveal in Viewer") { model.reveal(note: note, in: document) }
-        Button("Edit…", action: startEdit)
+        Button("Edit…", action: startEdit).disabled(!model.collaboration.canEdit(note))
         if note.state == .orphaned {
             Button("Re-anchor to a New Selection") { model.reanchor(note: note, in: document) }
         }
@@ -733,7 +744,9 @@ struct NoteCard: View {
             Button("Restore Original") { Task { await model.notesPanel.restoreOriginalPlace(note.id) } }
         }
         if dividers { Divider() }
-        if NotesPanelModel.sendable([note]).count == 1, let target = model.send.lastTarget {
+        if model.sendsToReview, model.collaboration.isSendable(note) {
+            Button("Send to \(model.activeReview?.ownerName ?? "Owner")") { Task { await model.send(noteIDs: [note.id]) } }
+        } else if NotesPanelModel.sendable([note]).count == 1, let target = model.send.lastTarget {
             Button("Send to \(target.label)") { Task { await model.send(noteIDs: [note.id]) } }
         }
         copyCommands
@@ -747,12 +760,14 @@ struct NoteCard: View {
         } else {
             Button("Reopen as Draft") { Task { await model.notesPanel.reopen(note.id) } }
         }
-        Button("Delete", role: .destructive) { Task { await model.notesPanel.delete(note.id) } }
+        Button("Delete", role: .destructive) { Task { await model.notesPanel.delete(note.id) } }.disabled(!model.collaboration.canDelete(note))
     }
 
     /// The badge's words: orphaned first (nothing else matters until it has a place), then whose turn it is.
     nonisolated static func badgeLabel(_ note: Note) -> String {
         if note.state == .orphaned { return "Orphaned" }
+        if note.hasUnpublishedChanges { return "Changes not sent" }
+        if note.publishedAt != nil, note.state == .draft, !note.hasUnsentFollowUps { return "With Owner" }
         if note.waitingOnUser || note.hasUnsentFollowUps { return "Your turn" }
         if note.awaitsReview { return "To review" }
         return note.state.rawValue.capitalized
@@ -927,7 +942,8 @@ struct NoteCard: View {
         case .agent:
             AgentMessageBubble(message: turn.text, asks: turn.asks,
                                waiting: note.waitingOnUser && turn.id == unansweredQuestion?.id,
-                               agent: turn.agent ?? note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName))
+                               agent: turn.agent ?? note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName),
+                               via: model.collaboration.context(for: note.documentID).map { _ in model.collaboration.turnAuthor(turn.id,note: note) })
                 // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
                 .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
                                                      removal: .opacity).calmed)
@@ -942,15 +958,15 @@ struct NoteCard: View {
     private func userTurnView(_ turn: NoteThread.Turn) -> some View {
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
             HStack(spacing: DS.Space.xs) {
-                Text("You")
+                Text(model.collaboration.turnAuthor(turn.id, note: note))
                     .foregroundStyle(Color.accentColor)
                 if turn.unsent {
-                    Text(model.notesPanel.messages(for: note.id).first { $0.id == turn.id }?.customAnswer == true ? "Custom answer · Not sent" : "Not sent")
+                    Text(model.notesPanel.messages(for: note.id).first { $0.id == turn.id }?.customAnswer == true ? "Custom answer · Not sent" : (model.activeReview?.isOwner == true ? "Not sent to agent" : "Not sent"))
                         .fontWeight(.regular)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                if turn.unsent, !isPast, let id = turn.id, editingMessageID != id {
+                if turn.unsent, !isPast, let id = turn.id, editingMessageID != id, model.notesPanel.messages(for: note.id).first(where: { $0.id == id })?.contributorID == nil {
                     InlineIconButton(title: "Edit this follow-up", symbol: "pencil", emphasized: hovering || isSelected) {
                         model.notesPanel.followUpEdits[id] = turn.text
                     }
@@ -1172,6 +1188,7 @@ struct NoteCard: View {
     }
 
     private func startEdit() {
+        guard model.collaboration.canEdit(note) else { return }
         model.notesPanel.commentEdits[note.id] = .init(body: note.body, color: note.color, original: note.body)
     }
 
@@ -1218,12 +1235,12 @@ struct NoteCard: View {
 
     @ViewBuilder
     private func currentActions(lit: Bool) -> some View {
-        if !NotesPanelModel.sendable([note]).isEmpty {
-            InlineIconButton(title: model.send.lastTarget.map { "Send to \($0.label)" } ?? "Choose an agent to send to",
+        if model.collaboration.canSendNote(note) {
+            InlineIconButton(title: model.sendsToReview ? "Send to \(model.activeReview?.ownerName ?? "Owner")" : model.send.lastTarget.map { "Send to \($0.label)" } ?? "Choose an agent to send to",
                              symbol: "paperplane.fill", prominent: true, emphasized: lit || note.hasUnsentFollowUps) {
                 Task { await model.send(noteIDs: [note.id]) }
             }
-            .disabled(!model.send.isTargetAvailable)
+            .disabled(!model.canSendInCurrentLocation)
         }
         if canFollowUp(thread) {
             InlineIconButton(title: note.waitingOnUser ? "Answer the agent" : "Follow up", symbol: "arrowshape.turn.up.left.fill",
@@ -1234,7 +1251,7 @@ struct NoteCard: View {
             InlineIconButton(title: "Re-anchor to a new selection", symbol: "link", emphasized: lit) { model.reanchor(note: note, in: document) }
             InlineIconButton(title: "Restore as draft", symbol: "arrow.uturn.backward", emphasized: lit) { Task { await model.notesPanel.restoreDraft(note) } }
         }
-        InlineIconButton(title: "Edit the comment", symbol: "pencil", emphasized: lit, action: startEdit)
+        InlineIconButton(title: "Edit the comment", symbol: "pencil", emphasized: lit, action: startEdit).disabled(!model.collaboration.canEdit(note))
         if note.state == .sent {
             InlineIconButton(title: "Back to draft (the agent may already have read it)", symbol: "arrow.uturn.backward", emphasized: lit) {
                 Task { await model.notesPanel.unsend(note.id) }
@@ -2126,13 +2143,15 @@ struct BulkNoteCommands: View {
 
     var body: some View {
         let ids = notes.map(\.id)
-        let sendable = NotesPanelModel.sendable(notes)
+        let sendable = notes.filter { model.collaboration.canSendNote($0) }
         let resolvable = NotesPanelModel.resolvable(notes)
         let reopenable = NotesPanelModel.reopenable(notes)
-        if let target = model.send.lastTarget, !sendable.isEmpty {
+        if model.sendsToReview, !sendable.isEmpty {
+            Button("Send \(Self.noun(sendable.count)) to \(model.activeReview?.ownerName ?? "Owner")") { Task { await model.send(noteIDs: sendable.map(\.id)) } }
+        } else if let target = model.send.lastTarget, !sendable.isEmpty {
             Button("Send \(Self.noun(sendable.count)) to \(target.label)") { Task { await model.send(noteIDs: sendable.map(\.id)) } }
         }
-        Button("Copy \(Self.noun(notes.count)) as Packet") { Task { await model.copyPacket(noteIDs: ids) } }
+        if !model.sendsToReview { Button("Copy \(Self.noun(notes.count)) as Packet") { Task { await model.copyPacket(noteIDs: ids) } } }
         Divider()
         if !resolvable.isEmpty {
             Button("Resolve \(Self.noun(resolvable.count))") { Task { await model.notesPanel.resolve(resolvable.map(\.id)) } }
@@ -2158,7 +2177,7 @@ private struct BulkActionBar: View {
     let notes: [Note]
 
     var body: some View {
-        let sendable = NotesPanelModel.sendable(notes)
+        let sendable = notes.filter { model.collaboration.canSendNote($0) }
         let resolvable = NotesPanelModel.resolvable(notes)
         let reopenable = NotesPanelModel.reopenable(notes)
         HStack(spacing: DS.Space.s) {
@@ -2173,13 +2192,13 @@ private struct BulkActionBar: View {
                     Task { await model.send(noteIDs: sendable.map(\.id)) }
                 } label: {
                     HStack(spacing: DS.Space.xs) {
-                        LaunchingPlane(isSending: model.send.isSending)
+                        LaunchingPlane(isSending: model.isSendingInCurrentLocation)
                         Text(notes.count == 1 ? "Send" : "Send \(sendable.count)")
                     }
                 }
                 .buttonStyle(.glassProminent)
-                .disabled(!model.send.isTargetAvailable || model.send.isSending)
-                .help(model.send.lastTarget.map { sendable.count == 1 ? "Send the note to \($0.label)" : "Send the \(sendable.count) drafts and sent notes to \($0.label)" } ?? "Choose an agent above first")
+                .disabled(!model.canSendInCurrentLocation || model.isSendingInCurrentLocation)
+                .help(model.sendsToReview ? "Send your notes to \(model.activeReview?.ownerName ?? "the owner") through this review" : model.send.lastTarget.map { sendable.count == 1 ? "Send the note to \($0.label)" : "Send the \(sendable.count) drafts and sent notes to \($0.label)" } ?? "Choose an agent above first")
             }
             if !resolvable.isEmpty {
                 InlineIconButton(title: "Resolve \(resolvable.count)", symbol: "checkmark.circle", emphasized: true) {

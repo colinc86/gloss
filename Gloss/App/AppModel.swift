@@ -24,6 +24,7 @@ final class AppModel {
     let iterations: IterationsModel
     let refinement: RefinementModel
     let review: ReviewModel
+    let collaboration: CollaborationModel
     let hosts: HostsModel
     let hooks = HooksModel()
     let integrations: IntegrationsModel
@@ -268,6 +269,7 @@ final class AppModel {
         notesPanel = NotesPanelModel(noteStore: store)
         noteLink = NoteLinkModel(noteStore: store)
         settings = SettingsStore(noteStore: store)
+        collaboration = CollaborationModel(store: store, settings: settings)
         iterations = IterationsModel(noteStore: store, settings: settings)
         review = ReviewModel(noteStore: store)
         hosts = HostsModel(noteStore: store)
@@ -277,6 +279,57 @@ final class AppModel {
         refinement.startObserving()
         herdrTransport = HerdrTransport(registry: connectionRegistry)
         fileSystems[.local] = LocalFileSystem()
+        fileSystems[.gloss] = collaboration.fileSystem
+        collaboration.showReview = { [weak self] context in self?.showReview(context) }
+        collaboration.sourceSession = { [weak self] id in self?.sessions.values.first { $0.document?.id == id && $0.hostID != .gloss } }
+        collaboration.captureSource = { [weak self] id in
+            guard let self, let session = sessions.values.first(where: { $0.document?.id == id && $0.hostID != .gloss }) else { throw FileSystemError.io("Open the original document to refresh its capture") }
+            if session.kind == .web, let html = session.html { return try await ReviewCapture.viewport(browser,expected: html) }
+            guard let provider = fileSystems[session.hostID] else { throw FileSystemError.notFound(session.path) }
+            return try await ReviewCapture.saved(session,provider: provider,browser: browser)
+        }
+        collaboration.sourceFileSystem = { [weak self] id in self?.fileSystems[id] }
+        collaboration.revealNotes = { [weak self] context, ids in
+            guard let self else { return }
+            showReview(context)
+            notesPanel.clearFilters()
+            notesPanel.receivedFilter = Set(ids)
+            showNotesPanel = true
+            notesPanel.selection = Set(ids)
+        }
+        send.contributorID = { [weak settings] in settings?.authorID.rawValue }
+        send.didDeliver = { [weak collaboration] notes, packets, messages, attachments, date, review in
+            guard let collaboration, notes.contains(where: { collaboration.context(for: $0.documentID)?.isOwner == true }) else { return }
+            Task { await collaboration.ownerDelivered(notes, packets: packets, messages: messages, attachments: attachments, at: date, review: review) }
+        }
+        collaboration.removedReview = { [weak self] context in
+            guard let self else { return }
+            let removed = sessions.filter { $0.value.hostID == .gloss && $0.value.path == context.capturePath }
+            for (key, session) in removed {
+                retire(session); sessions[key] = nil
+                if activeSession === session { activeSession = nil }
+            }
+            syncNotesLocation()
+        }
+        notesPanel.mayEdit = { [weak collaboration] note in collaboration?.canEdit(note) ?? true }
+        notesPanel.mayDelete = { [weak collaboration] note in collaboration?.canDelete(note) ?? true }
+        notesPanel.mayAnswerQuestion = { [weak self] id in
+            guard let self, let message = notesPanel.messages.values.flatMap({ $0 }).first(where: { $0.id == id }),
+                  let note = notesPanel.allGroups.flatMap(\.notes).first(where: { $0.id == message.noteID }) else { return false }
+            return collaboration.context(for: note.documentID)?.canWrite ?? true
+        }
+        send.mayDeliver = { [weak collaboration] notes in
+            for note in notes {
+                if let review = collaboration?.context(for: note.documentID), !review.isOwner || !review.canWrite {
+                    return "Only the owner sends review notes to an agent."
+                }
+            }
+            return nil
+        }
+        iterations.mayStart = { [weak collaboration] id in collaboration?.context(for: id).map { $0.isOwner && $0.canWrite } ?? true }
+        refinement.mayStart = { [weak collaboration] id in collaboration?.context(for: id).map { $0.isOwner && $0.canWrite } ?? true }
+        notesPanel.mayWrite = { [weak collaboration] note in collaboration?.canChange(note) ?? true }
+        notesPanel.sharedChange = { [weak collaboration] note, type in await collaboration?.change(note, type: type) ?? true }
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
         // Excerpts come from what is on disk, which is what the agent will read; stored anchors match that text.
         send.openTextProvider = { [weak self] hostID, path in self?.session(hostID: hostID, path: path)?.baseText }
@@ -461,7 +514,7 @@ final class AppModel {
             self?.updateDockBadge(groups)
         }
         iterations.fileSystem = { [weak self] hostID in self?.fileSystems[hostID] }
-        iterations.liveSession = { [weak self] documentID in self?.sessions.values.first { $0.document?.id == documentID } }
+        iterations.liveSession = { [weak self] documentID in self?.sessions.values.first { $0.document?.id == documentID && $0.hostID != .gloss } }
         iterations.onViewedIterationChange = { [weak self] document, number in self?.notesPanel.showIteration(number, of: document) }
         notesPanel.onEarlierNotesChange = { [weak self] in self?.syncEarlierNotes() }
         iterations.onFailure = { [weak self] message in self?.notesPanel.lastError = message }
@@ -637,6 +690,7 @@ final class AppModel {
     /// The folder whose agent sends go to: the one in front, except while following Herdr (which pairs folders and
     /// panes itself). A manual recipient choice never navigates to a different folder.
     private var agentFolder: (hostID: HostID, path: String)? {
+        if let session = activeSession, session.hostID == .gloss, let document = session.document, activeReview?.isOwner == true, !document.hostID.isVirtual { return (document.hostID,PathUtilities.parent(of: document.path)) }
         guard !followHerdr, let tab = shownTab else { return nil }
         return (tab.hostID, tab.path)
     }
@@ -650,7 +704,10 @@ final class AppModel {
 
     func syncNotesLocation() {
         let location: NotesLocation?
-        if let page = webNotesLocation, activeSession?.hostID == page.hostID, activeSession?.path == page.path {
+        if let session = activeSession, session.hostID == .gloss, let context = collaboration.context(path: session.path),
+           let document = session.document {
+            location = NotesLocation(hostID: document.hostID, path: document.path, exactDocument: true, displayTitle: context.locationTitle)
+        } else if let page = webNotesLocation, activeSession?.hostID == page.hostID, activeSession?.path == page.path {
             location = page
         } else if let tab = shownTab {
             location = NotesLocation(hostID: tab.hostID, path: tab.path)
@@ -737,6 +794,10 @@ final class AppModel {
     }
 
     func openDocument(hostID: HostID, path: String) {
+        if hostID == .local, URL(fileURLWithPath: path).pathExtension.lowercased() == "gloss" {
+            Task { await collaboration.open(URL(fileURLWithPath: path)) }; return
+        }
+        if hostID == .gloss, let context = collaboration.context(path: path) { showReview(context); return }
         if let move = blockedRenames[hostID], move.destination(for: path) != nil || path == move.to || path.hasPrefix(move.to + "/") {
             renameRecovery = move
             explorer.lastError = "Finish recovering the rename before opening this file."
@@ -823,6 +884,45 @@ final class AppModel {
             await self?.iterations.checkCommit(session)
         }
         trimSessions()
+    }
+
+    func rebuildReview(_ context: ReviewContext) {
+        for (key,session) in sessions where session.hostID == .gloss && session.path == context.capturePath {
+            retire(session); sessions[key] = nil
+            if activeSession === session { activeSession = nil }
+        }
+        showReview(context)
+    }
+
+    func showReview(_ context: ReviewContext) {
+        let key = "\(HostID.gloss.rawValue):\(context.capturePath)"
+        if let existing = sessions[key] { pickedHost = .gloss; activeSession = existing; syncNotesLocation(); return }
+        let session = DocumentSession(hostID: .gloss, path: context.capturePath, fileSystem: collaboration.fileSystem, noteStore: noteStore, capturedKind: context.snapshot.info.documentKind == .web ? .image : context.snapshot.info.documentKind)
+        session.indexedDocumentID = context.documentID
+        session.captureFacts = { [weak context] number in number.flatMap { context?.historyFacts[$0] } ?? (number == nil ? context?.snapshot.info.content : nil) }
+        let provider = collaboration.fileSystem, path = context.capturePath
+        session.capturedImages = { source,number in await provider.image(source,path: path,iteration: number) }
+        session.mayAddNotes = { [weak context] in context?.canWrite == true || context?.isCopy == true }
+        session.mayEditNote = { [weak collaboration] note in collaboration?.canEdit(note) ?? false }
+        session.onNoteCommitted = { [weak self] note in self?.notesPanel.makeListed(note) }
+        sessions[key] = session
+        pickedHost = .gloss
+        activeSession = session
+        Task { await session.open(); self.syncNotesLocation() }
+    }
+
+    var activeReview: ReviewContext? { collaboration.context(for: activeSession?.document?.id) }
+    var sendsToReview: Bool { activeReview.map { !$0.isOwner } ?? false }
+    var canSendInCurrentLocation: Bool {
+        if let review = activeReview, !review.canWrite { return false }
+        return sendsToReview ? activeReview?.canWrite == true : send.isTargetAvailable
+    }
+    var isSendingInCurrentLocation: Bool { send.isSending || activeReview?.isPublishing == true }
+    func openReviewPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.treatsFilePackagesAsDirectories = false
+        panel.allowedContentTypes = [.glossReview]
+        if panel.runModal() == .OK, let url = panel.url { Task { await collaboration.open(url) } }
     }
 
     // MARK: Integration hosts
@@ -1834,6 +1934,7 @@ final class AppModel {
     }
 
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var collaborationStartup: Task<Void, Never>?
 
     /// The tab Settings opens on; the update toast sends it to Agents.
     var settingsTab = SettingsTab.general
@@ -1861,6 +1962,12 @@ final class AppModel {
         return activeSession?.dismissNoteAffordance() ?? false
     }
 
+    /// Package coordination must never hold up host setup, MCP, or workspace restoration.
+    func startCollaboration() {
+        guard collaborationStartup == nil else { return }
+        collaborationStartup = Task { [weak collaboration] in await collaboration?.start() }
+    }
+
     /// Applies `--root` and `--open`, or reopens what was open (as Settings › General says). Runs once even if
     /// several windows appear.
     func start() async {
@@ -1868,6 +1975,8 @@ final class AppModel {
         started = true
         installEscapeMonitor()
         await settings.load()
+        await hosts.setVirtualHost(.gloss, name: "gloss", kind: .gloss, enabled: true)
+        startCollaboration()
         iterations.observeResolutions()
         send.stagedFileExpiryDays = settings.stagedFileExpiryDays
         settings.onStagedExpiryChange = { [weak self] days in self?.send.stagedFileExpiryDays = days }
@@ -2233,7 +2342,7 @@ final class AppModel {
     func sendSelection(scope: SendScope) -> SendSelection {
         let notes = notesPanel.visibleGroups.flatMap { group -> [Note] in
             guard scope == .all || (group.document.id == activeSession?.document?.id && !isShowingPastIteration) else { return [] }
-            return group.notes.filter { $0.isSendable && $0.iteration == group.document.currentIteration && !notesPanel.isPast($0) }
+            return group.notes.filter { collaboration.isSendable($0) && $0.iteration == group.document.currentIteration && !notesPanel.isPast($0) }
         }
         return SendSelection(location: notesPanel.location, notes: notes)
     }
@@ -2247,6 +2356,7 @@ final class AppModel {
 
     /// Notes › Preview Packet…: opens the panel, where the popover hangs from Send.
     func presentPacketPreview() {
+        guard !sendsToReview else { return }
         showNotesPanel = true
         showsPacketPreview = true
     }
@@ -2282,6 +2392,16 @@ final class AppModel {
     }
     /// Every UI send, including card and selection actions, stays in this location and current iteration.
     func send(noteIDs: [NoteID]) async {
+        if let review = activeReview, !review.canWrite { review.error = "You can view this review only. Your notes are saved here."; return }
+        if let review = activeReview, !review.isOwner {
+            guard await selectionProblem(noteIDs, location: notesPanel.location, sendable: true) == nil else { return }
+            await collaboration.publish(noteIDs, in: review)
+            return
+        }
+        if let review = activeReview, review.isOwner,
+           (try? await noteStore.document(review.documentID))?.hostID == .gloss {
+            review.error = "Choose the original document before sending to an agent."; return
+        }
         guard let target = send.lastTarget else { return }
         guard send.isTargetAvailable else {
             send.showCancelled(noteIDs: noteIDs, target: target, reason: "\(target.label) is unavailable. Choose another agent or refresh.")
@@ -2322,7 +2442,7 @@ final class AppModel {
                 "A note belongs to an earlier iteration. Bring it forward to send it."
             } else if !notesPanel.listedIDs(for: document.id).contains(id) {
                 "A note is hidden by the notes panel's filters. Show it to send it."
-            } else if sendable, NotesPanelModel.sendable([note]).isEmpty {
+            } else if sendable, !collaboration.isSendable(note) {
                 "A note has nothing new to send."
             } else { nil }
             if let problem { return problem }
@@ -2383,6 +2503,7 @@ final class AppModel {
     }
 
     func copyPacket(noteIDs: [NoteID]) async {
+        guard !sendsToReview else { return }
         if let problem = await selectionProblem(noteIDs, location: notesPanel.location, sendable: false) {
             send.showCancelled(noteIDs: noteIDs, target: ClipboardTransport.target, reason: problem, copying: true)
             return
@@ -2406,6 +2527,7 @@ final class AppModel {
     /// Opens the note's document and scrolls to it. A note the panel's filters hide is brought into the list first,
     /// so what's shown on the page always has its card.
     func reveal(note: Note, in document: Core.Document, select: Bool = true) {
+        collaboration.revealed(note)
         notesPanel.makeListed(note)
         withSession(for: document, iteration: note.iteration) { session in
             // The session may still be opening.
@@ -2501,6 +2623,8 @@ final class AppModel {
         refinement.stop()
         notesPanel.stop()
         iterations.stop()
+        collaborationStartup?.cancel()
+        _ = await withDeadline(.seconds(2)) { await self.collaboration.stop() }
         explorer.stopWatching()
         for session in sessions.values { session.close() }
         let hosts = hosts

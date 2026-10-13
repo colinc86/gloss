@@ -18,6 +18,7 @@ struct ContentView: View {
     /// nothing on this Mac.
     static func subtitle(for session: DocumentSession, hosts: HostsModel) -> String {
         switch session.hostID {
+        case .gloss: "Reviews"
         case .local: ""
         // A page's own title, once it has one: its name is its address.
         case .web: session.html?.pageTitle ?? ""
@@ -137,6 +138,23 @@ struct ContentView: View {
                 // against the title.
                 ToolbarSpacer(.flexible)
                 ToolbarItem(placement: .primaryAction) {
+                    Button { model.collaboration.error = nil; model.collaboration.shareURL = nil; model.collaboration.isSharePresented = true } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .help("Share this document's content and notes")
+                    .accessibilityLabel("Share review of \(model.activeSession?.fileName ?? "document")")
+                    .disabled(model.activeSession == nil)
+                    .popover(isPresented: Binding(get: { model.collaboration.isSharePresented },set: { model.collaboration.isSharePresented = $0 })) { ShareReviewPopover() }
+                }
+                if let review = model.activeReview {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { model.collaboration.isPopoverPresented.toggle() } label: { Label("Collaboration",systemImage: "person.2") }
+                        .overlay(alignment: .topTrailing) { if !review.unread.isEmpty { Circle().fill(Color.accentColor).frame(width: 5,height: 5) } }
+                        .help(review.unread.isEmpty ? "Review collaborators and activity" : "\(review.unread.count) new updates")
+                        .popover(isPresented: Binding(get: { model.collaboration.isPopoverPresented },set: { model.collaboration.isPopoverPresented = $0 })) { CollaborationPopover(review: review) }
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         model.presentReport()
                     } label: {
@@ -197,6 +215,9 @@ struct ContentView: View {
             Text((pending.hostName.map { "A link asked to connect to \($0) and open \(pending.path)." } ?? "A link asked to open \(pending.path).")
                  + " Open it only if you followed this link yourself.")
         }
+        .alert("Couldn't Open the Review",isPresented: Binding(get: { model.collaboration.error != nil && !model.collaboration.isSharePresented },set: { if !$0 { model.collaboration.error = nil } })) {
+            Button("Close",role: .cancel) { model.collaboration.error = nil }
+        } message: { Text(model.collaboration.error ?? "") }
         .dropToOpen()
         // Window notifications sit above the document's floating Review card.
         .background(WindowHUDOverlay(model: model, panelShown: panelShown, openSettings: { openSettings() }))

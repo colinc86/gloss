@@ -434,3 +434,113 @@ extension AgentAvailabilityTests {
         #expect(Set(send.targets.map(\.id)) == Set([agent.id, remote.id]), "the quiet host keeps its agent; this Mac's list is current")
     }
 }
+
+private struct ReviewTestStager: AttachmentStager {
+    func stage(_ files: [LocalAttachment], for target: AgentTarget, sendID: SendID) async throws -> StagingResult {
+        StagingResult(attachments: [],remoteDirectories: ["/tmp/gloss-fixture-stage"])
+    }
+}
+
+extension SendCoordinatorTests {
+    func reviewInfo(owner: AuthorID) -> GlossInfo {
+        GlossInfo(id: .new(),instance: .new(),createdAt: Date(),ownerAuthor: owner,kind: .markdown,title: "README.md",source: .file(name: "README.md",git: nil),current: GlossCurrent(hash: Data("saved".utf8).sha256Hex,iteration: 0,capturedAt: Date()))
+    }
+    @Test func publicationRunsAfterStagedFilesAreRecordedAndDoesNotHoldSending() async throws {
+        let store = try makeStore()
+        let document = try await store.upsertDocument(hostID: .local,path: "/tmp/README.md",kind: .markdown,fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id,anchor: .wholeFile,body: "Send",color: .yellow)
+        let transport = FakeTransport(), sender = SendCoordinator(noteStore: store,transports: [transport],stagers: [.local: ReviewTestStager()])
+        var publication: Task<(Int,Bool), Never>?
+        sender.didDeliver = { _, _, _, _, _, _ in
+            publication = Task { ((try? await store.expiredStagedFiles(now: .distantFuture).count) ?? 0,sender.isSending) }
+        }
+        await sender.send(noteIDs: [note.id],to: FakeTransport.target)
+        #expect(!sender.isSending && sender.lastResult?.failure == nil)
+        let result = await publication?.value
+        #expect(result?.0 == 1 && result?.1 == false)
+    }
+    @Test func participantDeliveryIsStoppedBeforeTransportHandoff() async throws {
+        let store = try makeStore()
+        let document = try await store.upsertDocument(hostID: .local,path: "/tmp/README.md",kind: .markdown,fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id,anchor: .wholeFile,body: "Participant draft",color: .yellow)
+        try await store.indexReview(reviewInfo(owner: .new()),url: URL(fileURLWithPath: "/tmp/Review.gloss"),documentID: document.id,isOwner: false)
+        let transport = FakeTransport(), sender = SendCoordinator(noteStore: store,transports: [transport],stagers: [:])
+        await sender.send(noteIDs: [note.id],to: FakeTransport.target)
+        #expect(transport.delivered.isEmpty && sender.lastResult?.cancelled == true)
+        #expect(try await store.sends(for: note.id).isEmpty)
+    }
+    @Test func aPermissionChangeDuringDeliveryDoesNotRecordAFailedSend() async throws {
+        let store = try makeStore()
+        let document = try await store.upsertDocument(hostID: .local,path: "/tmp/README.md",kind: .markdown,fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id,anchor: .wholeFile,body: "Owner send",color: .yellow)
+        let info = reviewInfo(owner: .new()), url = URL(fileURLWithPath: "/tmp/Review.gloss")
+        try await store.indexReview(info,url: url,documentID: document.id,isOwner: true)
+        let transport = FakeTransport(), sender = SendCoordinator(noteStore: store,transports: [transport],stagers: [:])
+        transport.whileDelivering = { try? await store.indexReview(info,url: url,documentID: document.id,isOwner: false) }
+        await sender.send(noteIDs: [note.id],to: FakeTransport.target)
+        #expect(transport.delivered.count == 1 && sender.lastResult?.failure == nil)
+        let history = try await store.sends(for: note.id)
+        #expect(history.count == 1 && history.first?.outcome == "delivered")
+    }
+    @Test func aLocalRecordingFailureAfterTheReceiptDoesNotOfferRetry() async throws {
+        let store = try makeStore()
+        let document = try await store.upsertDocument(hostID: .local,path: "/tmp/README.md",kind: .markdown,fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id,anchor: .wholeFile,body: "Delete during send",color: .yellow)
+        let transport = FakeTransport(), sender = SendCoordinator(noteStore: store,transports: [transport],stagers: [:])
+        transport.whileDelivering = { try? await store.deleteNote(note.id) }
+        await sender.send(noteIDs: [note.id],to: FakeTransport.target)
+        #expect(transport.delivered.count == 1 && sender.lastResult?.failure == nil)
+        #expect(sender.lastError?.contains("reached the agent") == true)
+    }
+    @Test func packetsAttributeOnlyOtherContributorsAndFillInMissingNames() async throws {
+        let store = try makeStore(), owner = AuthorID.new(), other = AuthorID.new()
+        let document = try await store.upsertDocument(hostID: .local,path: "/tmp/README.md",kind: .markdown,fingerprint: Fingerprint())
+        let info = reviewInfo(owner: owner)
+        try await store.indexReview(info,url: URL(fileURLWithPath: "/tmp/Review.gloss"),documentID: document.id,isOwner: true)
+        let own = GlossNote(id: .new(),author: owner,createdAt: Date(),updatedAt: Date(),iteration: 0,anchor: .wholeFile,body: "Own comment",color: .yellow)
+        let foreign = GlossNote(id: .new(),author: other,createdAt: Date(),updatedAt: Date(),iteration: 0,anchor: .wholeFile,body: "Foreign comment",color: .yellow)
+        let ownTurn = GlossMessage(note: own.id,author: owner,kind: .comment,body: "Own answer",createdAt: Date())
+        let foreignTurn = GlossMessage(note: foreign.id,author: other,kind: .comment,body: "Foreign answer",createdAt: Date())
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("GlossPacketAuthors-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var snapshot = try await Task.detached {
+            try FileManager.default.createDirectory(at: folder,withIntermediateDirectories: true)
+            let seed = GlossReviewSeed(title: "README.md",kind: .markdown,source: .file(name: "README.md",git: nil),content: .file(Data("saved".utf8),ext: "md"),iteration: 0)
+            let session = try GlossReviewSession.create(in: folder,seed: seed,notes: [],identity: GlossIdentity(author: owner,name: "Alex"))
+            defer { session.close() }
+            return try session.snapshot()
+        }.value
+        snapshot.info = info
+        snapshot.authors = [GlossAuthor(id: owner,name: "Alex",joinedAt: Date()),GlossAuthor(id: other,name: "  ",joinedAt: Date())]
+        snapshot.notes = [own,foreign]; snapshot.messages = [ownTurn,foreignTurn]
+        try await store.importReview(snapshot,documentID: document.id,identity: owner,isOwner: true)
+        let delivered = try #require(try await store.note(foreign.id))
+        _ = try await store.recordSend(transport: "clipboard",targetJSON: "{}",packetText: "packet",noteIDs: [foreign.id],outcome: .delivered,carriedNotes: [delivered],carried: [foreignTurn.id: foreignTurn.body])
+        let sender = SendCoordinator(noteStore: store,transports: [],stagers: [:]); sender.contributorID = { owner.rawValue }
+        let ownPacket = try await sender.packet(noteIDs: [own.id],wholeThread: true)
+        #expect(!ownPacket.text.contains("Author:") && !ownPacket.text.contains("Contributor (Alex)"))
+        let foreignPacket = try await sender.packet(noteIDs: [foreign.id],wholeThread: true)
+        #expect(foreignPacket.text.contains("Author: Unnamed contributor") && foreignPacket.text.contains("Contributor (Unnamed contributor)"))
+        #expect(!foreignPacket.text.contains("Author: \n"))
+    }
+}
+
+extension SendCoordinatorTests {
+    @Test func noDatabaseAwaitSeparatesFinalValidationAndHandoff() async throws {
+        let store = try makeStore()
+        let document = try await store.upsertDocument(hostID: .local,path: "/tmp/README.md",kind: .markdown,fingerprint: Fingerprint())
+        let note = try await store.createNote(documentID: document.id,anchor: .wholeFile,body: "Selected note",color: .yellow)
+        let transport = FakeTransport(), sender = SendCoordinator(noteStore: store,transports: [transport],stagers: [:])
+        var validations = 0, selectionChanged = false, changedAtHandoff = true
+        var change: Task<Void,Never>?
+        sender.willDeliver = { _ in changedAtHandoff = selectionChanged }
+        await sender.send(noteIDs: [note.id],to: FakeTransport.target,validate: {
+            validations += 1
+            if validations == 3 { change = Task { selectionChanged = true } }
+            return nil
+        })
+        await change?.value
+        #expect(validations == 3 && !changedAtHandoff)
+        #expect(transport.delivered.count == 1)
+    }
+}

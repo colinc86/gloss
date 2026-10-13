@@ -156,6 +156,13 @@ final class NotesPanelModel {
     }
     @ObservationIgnored private var isRestoringSeparateResolved = false
     /// Matched against note text, file name, resolve message, and the thread's messages, case-insensitively.
+    @ObservationIgnored var mayEdit: (Note) -> Bool = { _ in true }
+    @ObservationIgnored var mayDelete: (Note) -> Bool = { _ in true }
+    @ObservationIgnored var mayAnswerQuestion: (MessageID) -> Bool = { _ in true }
+    @ObservationIgnored var mayWrite: (Note) -> Bool = { _ in true }
+    @ObservationIgnored var sharedChange: (Note, GlossEventType) async -> Bool = { _, _ in true }
+    var peopleFilter: Set<String> = []
+    var receivedFilter: Set<NoteID> = []
     var searchText = ""
     /// Bumped by Notes › Search Notes to put the caret in the search field.
     var searchFocusRequest = 0
@@ -441,6 +448,7 @@ final class NotesPanelModel {
         return messages(for: question.noteID).last { $0.inReplyTo == question.id && $0.selectedOptions != nil && (!editable || !$0.isSent) }?.selectedOptions ?? []
     }
     func selectChoices(_ indexes: [Int], question: MessageID) async {
+        guard mayAnswerQuestion(question) else { return }
         choiceSelections[question] = indexes
         pendingChoiceWrites.insert(question)
         let previous = choiceWrites[question]
@@ -463,7 +471,7 @@ final class NotesPanelModel {
 
     func messages(for id: NoteID) -> [NoteMessage] { messages[id] ?? [] }
 
-    var isFiltering: Bool { filter != .all || !colorFilter.isEmpty || !searchText.trimmingCharacters(in: .whitespaces).isEmpty || isHidingResolved }
+    var isFiltering: Bool { filter != .all || !receivedFilter.isEmpty || !peopleFilter.isEmpty || !colorFilter.isEmpty || !searchText.trimmingCharacters(in: .whitespaces).isEmpty || isHidingResolved }
 
     /// Show Resolved is off and there are resolved notes for it to hide.
     var isHidingResolved: Bool { !showResolved && groups.contains { $0.notes.contains { !Self.isOpen($0) } } }
@@ -513,6 +521,8 @@ final class NotesPanelModel {
     func clearFilters() {
         filter = .all
         colorFilter = []
+        peopleFilter = []
+        receivedFilter = []
         searchText = ""
     }
 
@@ -554,6 +564,8 @@ final class NotesPanelModel {
             let fileMatches = !needle.isEmpty && contains(group.document.fileName)
             let notes = group.notes.filter { note in
                 listed(in: filter, note)
+                    && (receivedFilter.isEmpty || receivedFilter.contains(note.id))
+                    && (peopleFilter.isEmpty || peopleFilter.contains(note.contributorID ?? "you"))
                     && (colorFilter.isEmpty || colorFilter.contains(note.color))
                     && (needle.isEmpty || fileMatches || textMatches(note, needle))
             }
@@ -601,7 +613,7 @@ final class NotesPanelModel {
     /// Open work: anything not resolved (an agent's question leaves its note open, and so does a result waiting for
     /// the user's review).
     nonisolated static func isOpen(_ note: Note) -> Bool {
-        note.state != .resolved || note.needsAttention || note.awaitsReview
+        note.state != .resolved || note.needsAttention || note.awaitsReview || note.hasUnpublishedChanges
     }
 
     /// Notes in each state across every document, for the filter bar's counts (before search and color filters,
@@ -637,6 +649,8 @@ final class NotesPanelModel {
     /// one, and a colour filter or search that still hides it is cleared.
     func makeListed(_ note: Note) {
         let needle = searchText.trimmingCharacters(in: .whitespaces)
+        if !receivedFilter.isEmpty, !receivedFilter.contains(note.id) { receivedFilter = [] }
+        if !peopleFilter.isEmpty, !peopleFilter.contains(note.contributorID ?? "you") { peopleFilter = [] }
         if !listed(in: filter, note) {
             filter = .all
             if !showResolved, !Self.isOpen(note) { showResolved = true }
@@ -676,7 +690,7 @@ final class NotesPanelModel {
     var draftCount: Int { groups.reduce(0) { $0 + $1.notes.filter(Self.isUnsent).count } }
 
     /// Something in the note hasn't left the app: it is a draft, or has a follow-up not yet sent.
-    nonisolated static func isUnsent(_ note: Note) -> Bool { note.state == .draft || note.hasUnsentFollowUps }
+    nonisolated static func isUnsent(_ note: Note) -> Bool { (note.state == .draft && !note.postedToOwner) || note.hasUnsentFollowUps || note.hasUnpublishedChanges }
 
     /// One line about a note's latest delivery for its card: where it went and when, or that it failed.
     /// Who a note was sent to, for naming the agent that answered it when the reply doesn't say. The clipboard is
@@ -780,6 +794,7 @@ final class NotesPanelModel {
     }
 
     func resolve(_ id: NoteID) async {
+        if let note = try? await noteStore.note(id) { guard mayWrite(note), await sharedChange(note, .resolved) else { return } }
         await attempt("resolve the note") { try await noteStore.resolve(id) }
     }
 
@@ -799,6 +814,7 @@ final class NotesPanelModel {
 
     /// A sent note back to a draft (#13).
     func unsend(_ id: NoteID) async {
+        guard let note = try? await noteStore.note(id), mayEdit(note), note.publishedAt == nil else { return }
         await attempt("put the note back to a draft") { try await noteStore.unsend(id) }
     }
 
@@ -810,6 +826,7 @@ final class NotesPanelModel {
     func update(_ id: NoteID, body: String, color: NoteColor, editedFrom original: String) async -> EditRefusal? {
         do {
             guard let current = try await noteStore.note(id) else { return .failed }
+            guard mayEdit(current) else { return .failed }
             guard current.body == original else { return .changedMeanwhile }
             guard body != current.body || color != current.color else { return nil }
             // Compared and written together: an answer that lands between the read above and this write still wins.
@@ -822,6 +839,7 @@ final class NotesPanelModel {
 
     func setColor(_ ids: [NoteID], _ color: NoteColor) async {
         for id in ids {
+            guard let note = try? await noteStore.note(id), mayEdit(note) else { continue }
             guard await attempt("change the note's color", { try await noteStore.updateColor(id, color: color) }) else { return }
         }
     }
@@ -845,7 +863,7 @@ final class NotesPanelModel {
     func delete(_ ids: [NoteID]) async {
         var batch: [Note] = []
         for id in ids {
-            if let note = try? await noteStore.note(id) { batch.append(note) }
+            if let note = try? await noteStore.note(id), mayDelete(note), await sharedChange(note, .deleted) { batch.append(note) }
         }
         guard !batch.isEmpty else { return }
         guard await attempt(batch.count == 1 ? "delete the note" : "delete \(batch.count) notes", { try await noteStore.trashNotes(batch.map(\.id)) }) else { return }
@@ -877,9 +895,11 @@ final class NotesPanelModel {
         for token in tokens {
             for window in [NSApp.mainWindow, NSApp.keyWindow].compactMap({ $0 }) { window.undoManager?.removeAllActions(withTarget: token) }
         }
+        var permitted: [Note] = []
+        for note in batch where mayDelete(note) { if await sharedChange(note,.restored) { permitted.append(note) } }
         var restored: Set<NoteID> = []
         do {
-            restored = try await noteStore.untrashNotes(batch.map(\.id))
+            restored = try await noteStore.untrashNotes(permitted.map(\.id))
             Log.notes.info("undo toast: restored \(restored.count, privacy: .public) of \(batch.count, privacy: .public) notes")
         } catch {
             Log.notes.error("undo delete failed: \(error, privacy: .public)")
@@ -935,8 +955,10 @@ final class NotesPanelModel {
     func restoreFromTrash(_ ids: [NoteID]) async {
         let wanted = Set(ids)
         let notes = trashed.map(\.note).filter { wanted.contains($0.id) }
+        var permitted: [NoteID] = []
+        for note in notes where mayDelete(note) { if await sharedChange(note,.restored) { permitted.append(note.id) } }
         await attempt("restore from Recently Deleted") {
-            let restored = try await noteStore.untrashNotes(ids)
+            let restored = try await noteStore.untrashNotes(permitted)
             onRestored(notes.filter { restored.contains($0.id) })
         }
     }
@@ -963,6 +985,7 @@ final class NotesPanelModel {
     /// what was typed.
     @discardableResult
     func addFollowUp(to id: NoteID, _ text: String) async -> Bool {
+        guard let note = try? await noteStore.note(id), mayWrite(note) else { return false }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return false }
         do {
@@ -1031,6 +1054,7 @@ final class NotesPanelModel {
     }
 
     func reopen(_ id: NoteID) async {
+        if let note = try? await noteStore.note(id) { guard mayWrite(note), await sharedChange(note, .reopened) else { return } }
         await attempt("reopen the note") { try await noteStore.reopen(id) }
     }
 

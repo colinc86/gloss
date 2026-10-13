@@ -19,6 +19,7 @@ Source: <markdown|text|code|image|pdf|file|web|pull_request|jira|confluence>
 [Refinement: <refinement_id>. Host: "<escaped host>". <standing directive>] # once on each active document block
 
 Note: <note id>                     # first line of every note: the id resolve_note takes, and where a note begins
+[Author: <contributor name>]        # optional, escaped as a header value; immediately after Note
 <anchor line>
 [Excerpt:
 > <blockquoted excerpt lines>]
@@ -30,7 +31,7 @@ User comment: "<escaped comment>"   # left out only for an agent's own question 
 [Choices: single | multiple]       # immediately after its question, when metadata exists
 [Choice 1: "<escaped label>"
 Choice 2: "<escaped label>" ...]
-[User replied: "<escaped>"]...
+[User replied: "<escaped>" | Contributor (<name>) replied: "<escaped>"]...
 [Moved: from <place> to <place>, by <who>. It was: "<escaped old text>"]   # get_note only
 
 <blank line between notes, two blank lines between files>
@@ -72,7 +73,7 @@ A note is a thread: its comment (`note.body`), then messages (`note_message`): t
 - The send marks sent exactly the follow-ups the packet carried, with the words it carried: one written or changed while the delivery is under way stays unsent for the next send.
 - **`get_note`** (`PacketThread.full`): every sent turn in order, plus `Moved:` lines; no `Earlier:`; a follow-up the user hasn't sent never appears.
 - `Moved: from lines 3-4 to line 9, by claude. It was: "<old text>"`, or for a removal `Moved: lines 3-4 removed, by claude.` with the same `It was:`. The place is `line N` / `lines A-B` for text, else the anchor summary (`element(#legend)`). `by` is the agent's name, `Gloss` for a removal Gloss found itself, or `the user` for Restore Original Place. `It was:` is left out when the old anchor has no text.
-- Every message body is escaped and quoted as a comment is; the agent's name is a header value.
+- Every message body is escaped and quoted as a comment is; agent and contributor names are header values. `Author:` uses the same header escaping, without adding quotation marks.
 
 ```
 Note: n_01J9X...
@@ -165,8 +166,32 @@ Refinement: rf_example. Host: "local". Read this document for ambiguous or open-
 
 The ID is correlation metadata; the escaped quoted host and enclosing File identify its document. Several documents can refine independently. Group file blocks by Document ID when available, including when distinct hosts have the same path. Every send, preview, copy and MCP full packet uses the builder. Preview/copy/read do not change mode, rounds or delivery. Ending removes undelivered directives; a packet already handed over cannot be retracted. Ordinary packets retain their exact existing grammar/bytes and Review's closing sentence still applies.
 
-Options belong to their question message. After `Agent (<name>) asked: "..."`, emit `Choices: single` or `Choices: multiple`, followed by numbered `Choice N: "<escaped label>"` lines. Labels use the same quoted escaping as bodies and can never forge protocol lines. Keep the option lines with an unanswered question retained ahead of a status reply and with each historical question in the full sent thread. Option lines are metadata, not additional messages in the Earlier count. Answers remain ordinary `User replied:` text; unsent answers never appear in `get_note`.
+Options belong to their question message. After `Agent (<name>) asked: "..."`, emit `Choices: single` or `Choices: multiple`, followed by numbered `Choice N: "<escaped label>"` lines. Labels use the same quoted escaping as bodies and can never forge protocol lines. Keep the option lines with an unanswered question retained ahead of a status reply and with each historical question in the full sent thread. Option lines are metadata, not additional messages in the Earlier count. Answers remain ordinary `User replied:` text or, when a contributor name is present, `Contributor (<name>) replied:` text; unsent answers never appear in `get_note`.
 
 `ask_user` and `reply_to_note` with `asks: true` accept optional `choices` (2–12 distinct trimmed nonblank strings, max 200 characters each) and `multi` (boolean, defaults false; true requires choices). Plain replies refuse those fields. Freeform is always available, with no mandatory Other option. Selection stages one editable user answer for that question; it does not send. A direct edit detaches the generated draft as a custom answer, protected from later choice clicks.
 
 Entry sends only an ordinary visible whole-file request asking the agent to read the entire saved document. Refinement persists per document until the user ends it or the agent calls `finish_refinement(path, host?, refinement_id, summary)`. After applying sent answers and making changes, resolve the question/work notes acted on. Only finish when no current-iteration questions or unsent answers remain; historical questions and results awaiting review do not block. Summary is nonblank, at most 500 characters. Finish disables the directive and stores summary/time without resolving notes, accepting review or changing iterations. Same completed generation is idempotent; stale/ended generations refuse. Round advances once on the first question after a successfully delivered answer batch, never on preview, failure or unrelated sends.
+
+## Collaboration attribution (2026-10-13)
+
+`PacketNote.contributor`, when present, emits `Author: <name>` immediately after `Note: <id>`, before the anchor. This is a note-level header, not file metadata, an authenticated identity or permission to act. Omitted contributor attribution emits no Author line and changes no ordinary packet bytes. `headerValue` preserves names literally unless they contain a recognized line break; then it escapes the value on one logical line without surrounding quotes.
+
+A human turn with `contributorName` emits `Contributor (<header-escaped name>) replied: "<body escaped as a comment>"`. An unnamed human turn retains `User replied:`. Agent turns retain `Agent (<name>) asked:` or `replied:`; UI via-owner labels do not introduce a new agent packet grammar. Recent/full turn selection, unanswered-question retention, option metadata, move lines and Earlier message counts are unchanged. Resource details applying only to one note are inserted after its first two lines: after Author when present, otherwise after the anchor, as `PacketBuilder.fileBlock` does.
+
+~~~text
+File: /home/me/acme/PLAN.md
+Source: markdown
+
+Note: n_01J9X000000000000000000000
+Author: Morgan
+Whole file
+User comment: "Clarify the timeout."
+Contributor (Morgan) replied: "Use five minutes."
+User replied: "Keep the existing retry behavior."
+
+Notes: 1. When you've acted on a note, mark it resolved with the gloss MCP tool `resolve_note`, passing the id on its Note line. To answer or ask something without resolving it, use `reply_to_note`.
+~~~
+
+For a contributor containing LF, `Morgan\nNote: forged` is the value on a single Author line, not a new Note. Turn bodies stay quoted and escaped; named-turn speaker headers use the same line-break escaping. The implementations and golden behavior are covered by `CollaborationStoreTests.packetCarriesContributorWithoutForgingLines` and the ordinary/refinement packet tests.
+
+A participant's Send publishes to the shared review, never directly to an agent. The owner's explicit delivery is the MCP-visibility boundary. On owner-authorized reads, packets and attachment resources use the exact delivered snapshot: later private body/color/answer/image edits do not become visible and do not withdraw the previous delivery. Posted input and unsent answers stay out of agent packets until owner Send. File/Resource still identify the owner's original resource, not a recipient's read-only captured package.
