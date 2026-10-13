@@ -6,6 +6,39 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.1</title>
+      <pubDate>Tue, 13 Oct 2026 21:55:44 GMT</pubDate>
+      <sparkle:version>411</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">A beta: the agent can refine a document with you in rounds, and you can share a document and its notes with someone else through iCloud Drive.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Refinement.</strong> Notes › Refine This Document asks the agent to read the document and ask you about anything unclear, as anchored questions. Answer them, by choosing from the agent's options or in your own words, and press Send at the end of each round. The agent keeps asking until it has no more questions and has made its changes, then says it's done. End it at any time; its questions stay as ordinary notes.</li>
+<li><strong>Questions with choices.</strong> An agent's question can offer one or several options to pick from, alongside a written answer.</li>
+<li><strong>Share a review.</strong> Share in the toolbar (or File › Share…) puts the document and its sent notes in a .gloss file in iCloud Drive. Collaborate shares that file, so both of you work on the same review; Send a Copy sends a separate one. Shared reviews open under Reviews.</li>
+<li><strong>Who wrote what.</strong> In a shared review every note and reply shows its author. Set your name in Settings. A collaborator's Send goes to the owner, and only the owner sends to an agent.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li>A new iteration starts when the last note is resolved only if the content actually changed, so a round of questions no longer starts one. It's a setting in Settings › Notes, on by default.</li>
+</ul>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>The Review card now draws above note outlines and paths.</li>
+</ul>
+<p dir="auto">This is a beta: sharing hasn't yet been tried between two Macs.</p>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/638361808" type="application/octet-stream" sparkle:edSignature="1tVwnwuZthafUdB0jsEg3RpxGINjn2ja0TdSnwrWZYli9zgsb8zeZQS+ZUUjHlYSlGfbdmYzbtQjMaHnT7pzDA==" length="28952908"/>
+    </item>
+    <item>
       <title>Gloss 0.5.0</title>
       <pubDate>Mon, 12 Oct 2026 03:58:02 GMT</pubDate>
       <sparkle:version>405</sparkle:version>
