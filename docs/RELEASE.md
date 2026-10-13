@@ -36,7 +36,8 @@ The script checks the setup above and a clean `main`, sets `MARKETING_VERSION` t
 zips the app as `build/Gloss-<version>.zip` and signs the zip with Sparkle's key. Then it commits "Release
 <version>", tags `v<version>` (signed), pushes, creates the GitHub release with the zip and the notes, renders the
 notes to HTML with GitHub's Markdown API and adds the release to `appcast.xml` at the repo root
-(`scripts/appcast.py`), and commits and pushes that.
+(`scripts/appcast.py`), and commits and pushes that. A version like `0.6.0-beta.1` becomes a GitHub prerelease;
+the appcast lists it like any other release, so every copy that checks for updates is offered it.
 
 If anything fails before the release commit, the version change is undone. If publishing fails after the tag was
 pushed (a network failure, say), the script prints how to finish: `scripts/release.sh 0.2.0 notes.md --resume`

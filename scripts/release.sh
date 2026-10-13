@@ -22,7 +22,10 @@ step() { print "\n==> $*"; }
 VERSION=$1
 NOTES=${2:A}
 MODE=${3:-}
-[[ $VERSION =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || fail "version must look like 0.1.0"
+[[ $VERSION =~ '^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$' ]] || fail "version must look like 0.1.0 or 0.1.0-beta.1"
+# A -beta.N version is a GitHub prerelease; the appcast lists it like any other release.
+PRERELEASE=()
+[[ $VERSION == *-beta.* ]] && PRERELEASE=(--prerelease)
 [[ -s $NOTES ]] || fail "no notes at $NOTES"
 [[ -z $MODE || $MODE == --dry-run || $MODE == --resume ]] || fail "unknown option $MODE"
 ZIP=build/Gloss-$VERSION.zip
@@ -32,7 +35,7 @@ publish() {
   local build=$(<build/build-number) signature=$(<build/signature)
   if ! gh release view "v$VERSION" --repo "$REPO" >/dev/null 2>&1; then
     step "Publishing the GitHub release"
-    gh release create "v$VERSION" "$ZIP" --repo "$REPO" --title "Gloss $VERSION" --notes-file "$NOTES" --verify-tag
+    gh release create "v$VERSION" "$ZIP" --repo "$REPO" --title "Gloss $VERSION" --notes-file "$NOTES" --verify-tag $PRERELEASE
   fi
   if grep -q "<sparkle:shortVersionString>$VERSION<" appcast.xml 2>/dev/null; then
     step "Already in the appcast"
