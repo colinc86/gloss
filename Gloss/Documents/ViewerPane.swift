@@ -26,6 +26,7 @@ struct ViewerPane: View {
                 BannerView(banner: banner, session: session)
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
+            RefinementNotice(session: session)
             content
                 // A native sibling above the paths keeps the document and its glass card in the right order.
                 .background(ReviewOverlay(model: model, session: session))

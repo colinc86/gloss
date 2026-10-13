@@ -38,11 +38,19 @@ struct NotesTray: View {
                     .font(.caption.weight(.medium).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .fixedSize()
-                Text(Self.firstLine(current.note.body))
+                Button {
+                    model.showNotesPanel = true
+                    model.notesPanel.makeListed(current.note)
+                    model.reveal(note: current.note, in: current.document, select: false)
+                } label: { Text(Self.summary(current.note, messages: model.notesPanel.messages(for: current.note.id))) }
+                    .buttonStyle(.plain)
                     .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 NoteCard.badge(current.note)
+                if current.note.waitingOnUser {
+                    Button("Answer…") { model.showNotesPanel = true; model.notesPanel.selectedNoteID = current.note.id }.buttonStyle(.glass).controlSize(.small)
+                }
             } else {
                 Label(notes.isEmpty ? "No notes here" : (notes.count == 1 ? "1 note" : "\(notes.count) notes"), systemImage: "note.text")
                     .font(.callout)
@@ -89,6 +97,10 @@ struct NotesTray: View {
         guard count > 0 else { return nil }
         guard let index else { return offset > 0 ? 0 : count - 1 }
         return ((index + offset) % count + count) % count
+    }
+
+    static func summary(_ note: Note, messages: [NoteMessage]) -> String {
+        firstLine(note.body.isEmpty ? NoteMessage.unansweredQuestion(in: messages)?.body ?? messages.last(where: { $0.kind == .question })?.body ?? "" : note.body)
     }
 
     static func firstLine(_ body: String) -> String {

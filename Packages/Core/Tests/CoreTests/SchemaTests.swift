@@ -17,7 +17,8 @@ struct SchemaTests {
         "target": [("id", "TEXT"), ("host_id", "TEXT"), ("transport", "TEXT"), ("identity_json", "TEXT"), ("label", "TEXT"), ("last_used_at", "DATETIME")],
         "setting": [("key", "TEXT"), ("value", "TEXT")],
         "web_page": [("url", "TEXT"), ("host_id", "TEXT"), ("title", "TEXT"), ("last_visited_at", "DATETIME"), ("pinned", "BOOLEAN")],
-        "note_message": [("id", "TEXT"), ("note_id", "TEXT"), ("author", "TEXT"), ("kind", "TEXT"), ("body", "TEXT"), ("meta_json", "TEXT"), ("created_at", "DATETIME"), ("sent_at", "DATETIME")],
+        "note_message": [("id", "TEXT"), ("note_id", "TEXT"), ("author", "TEXT"), ("kind", "TEXT"), ("body", "TEXT"), ("meta_json", "TEXT"), ("created_at", "DATETIME"), ("sent_at", "DATETIME"), ("choices_json", "TEXT"), ("in_reply_to", "TEXT"), ("selected_options_json", "TEXT"), ("custom_answer", "INTEGER")],
+        "refinement": [("document_id", "TEXT"), ("generation", "TEXT"), ("status", "TEXT"), ("round", "INTEGER"), ("request_note_id", "TEXT"), ("target_json", "TEXT"), ("started_at", "DATETIME"), ("completed_at", "DATETIME"), ("summary", "TEXT"), ("error", "TEXT"), ("awaiting_next_round", "INTEGER"), ("has_answers", "INTEGER"), ("dismissed", "INTEGER")],
         "iteration": [("document_id", "TEXT"), ("number", "INTEGER"), ("name", "TEXT"), ("started_at", "DATETIME"), ("ended_at", "DATETIME"), ("snapshot_hash", "TEXT"), ("git_commit", "TEXT"), ("start_hash", "TEXT"), ("completion_generation", "INTEGER"), ("handled_generation", "INTEGER"), ("completed_at", "DATETIME")],
         "snapshot": [("hash", "TEXT"), ("data", "BLOB"), ("size", "INTEGER"), ("created_at", "DATETIME")],
     ]

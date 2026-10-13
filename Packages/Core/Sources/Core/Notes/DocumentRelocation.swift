@@ -57,7 +57,7 @@ extension NoteStore {
         let moving = Set(rows.filter { move.destination(for: $0.path) != nil }.map(\.id))
         let destination = DocumentRelocation(hostID: move.hostID, from: move.to, to: move.to, directory: move.directory)
         for target in rows where !moving.contains(target.id) && destination.destination(for: target.path) != nil {
-            if try NoteRecord.filter(Column("document_id") == target.id).fetchCount(db) > 0 || IterationRecord.filter(Column("document_id") == target.id).fetchCount(db) > 0 {
+            if try NoteRecord.filter(Column("document_id") == target.id).fetchCount(db) > 0 || IterationRecord.filter(Column("document_id") == target.id).fetchCount(db) > 0 || Self.refinement(DocumentID(rawValue: target.id), db) != nil {
                 throw FileSystemError.io("\(target.path) already has review history. Choose a different name to keep both histories intact.")
             }
         }

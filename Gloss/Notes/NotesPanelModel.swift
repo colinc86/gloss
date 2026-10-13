@@ -260,6 +260,8 @@ final class NotesPanelModel {
         messageObservation?.cancel()
         pastObservation?.cancel()
         iterationsObservation?.cancel()
+        for task in choiceWrites.values { task.cancel() }
+        choiceWrites.removeAll(); pendingChoiceWrites.removeAll()
     }
 
     // MARK: Iterations
@@ -431,6 +433,34 @@ final class NotesPanelModel {
     }
 
     /// A note's messages, oldest first.
+    private(set) var pendingChoiceWrites: Set<MessageID> = []
+    private var choiceSelections: [MessageID: [Int]] = [:]
+    @ObservationIgnored private var choiceWrites: [MessageID: Task<Void, Never>] = [:]
+    func selectedChoices(for question: NoteMessage, editable: Bool) -> [Int] {
+        if editable, let pending = choiceSelections[question.id] { return pending }
+        return messages(for: question.noteID).last { $0.inReplyTo == question.id && $0.selectedOptions != nil && (!editable || !$0.isSent) }?.selectedOptions ?? []
+    }
+    func selectChoices(_ indexes: [Int], question: MessageID) async {
+        choiceSelections[question] = indexes
+        pendingChoiceWrites.insert(question)
+        let previous = choiceWrites[question]
+        let task = Task {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            if await attempt("stage the choice answer", { try await noteStore.setChoiceSelection(questionID: question, indexes: indexes) }) == false {
+                if choiceSelections[question] == indexes { choiceSelections[question] = nil }
+            }
+        }
+        choiceWrites[question] = task
+        await task.value
+        if choiceSelections[question] == indexes || choiceSelections[question] == nil { pendingChoiceWrites.remove(question) }
+    }
+    func choiceAnswerSummary(for id: NoteID) -> String {
+        let staged = messages(for: id).filter { !$0.isSent && ($0.selectedOptions != nil || $0.customAnswer) }
+        if staged.contains(where: \.customAnswer) { return ". Custom answer, not sent" }
+        return staged.isEmpty ? "" : ". Choice answer staged, not sent"
+    }
+
     func messages(for id: NoteID) -> [NoteMessage] { messages[id] ?? [] }
 
     var isFiltering: Bool { filter != .all || !colorFilter.isEmpty || !searchText.trimmingCharacters(in: .whitespaces).isEmpty || isHidingResolved }
@@ -961,6 +991,7 @@ final class NotesPanelModel {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             if text.isEmpty { try await noteStore.deleteFollowUp(id) } else { try await noteStore.updateFollowUp(id, body: text) }
+            if let question = messages.values.flatMap({ $0 }).first(where: { $0.id == id })?.inReplyTo { choiceSelections[question] = nil }
             return true
         } catch {
             Log.notes.error("follow-up edit failed: \(error, privacy: .public)")
@@ -973,6 +1004,8 @@ final class NotesPanelModel {
     func deleteFollowUp(_ id: MessageID) async {
         let removed = messages.values.lazy.flatMap { $0 }.first { $0.id == id }
         guard await attempt("delete the follow-up", { try await noteStore.deleteFollowUp(id) }) else { return }
+        if let question = removed?.inReplyTo { choiceSelections[question] = nil }
+        if let removed { messages[removed.noteID]?.removeAll { $0.id == id } }
         guard let removed, let undo = NSApp?.mainWindow?.undoManager ?? NSApp?.keyWindow?.undoManager else { return }
         undo.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated { _ = Task { await model.restoreFollowUp(removed) } }
@@ -983,7 +1016,13 @@ final class NotesPanelModel {
     /// A deleted follow-up back on its note, at the end of its thread (with a new id: it was never sent).
     @discardableResult
     func restoreFollowUp(_ message: NoteMessage) async -> Bool {
-        await addFollowUp(to: message.noteID, message.body)
+        if message.customAnswer { return await attempt("restore the custom answer", { try await noteStore.restoreCustomAnswer(message) }) }
+        if let question = message.inReplyTo, let selected = message.selectedOptions, !message.customAnswer {
+            guard await attempt("restore the choice answer", { try await noteStore.setChoiceSelection(questionID: question, indexes: selected) }) else { return false }
+            choiceSelections[question] = selected
+            return true
+        }
+        return await addFollowUp(to: message.noteID, message.body)
     }
 
     /// Puts a moved note back where it was before its first move.

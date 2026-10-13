@@ -19,6 +19,8 @@ public struct MCPDependencies: Sendable {
     public var addFavorite: @Sendable (_ host: String, _ path: String) async throws -> Bool = { _, _ in false }
     /// An agent's question to the user about a place in a file (`ask_user`); the new note's id.
     public var askUser: @Sendable (AgentQuestion) async throws -> NoteID = { _ in throw MCPError.internalError("asking is not available") }
+    /// App buffers are private, but must block finishing while the user is still composing.
+    public var validateRefinementFinish: @Sendable (DocumentID) async throws -> Void = { _ in }
     /// A resource URL (a GitHub pull request) as the host and path it opens under; nil when the app has no host for it.
     public var resolveURL: (@Sendable (URL) -> (host: String, path: String)?) = { _ in nil }
     /// Where a note goes for an agent's `location` (`reply_to_note`, `resolve_note`), worked out against the document
@@ -46,8 +48,9 @@ public struct AgentQuestion: Sendable, Equatable {
     public var text: String?
     /// The asking agent's name as its client reported it ("claude", "codex", "opencode").
     public var agent: String
+    public var choices: QuestionChoices?
 
-    public init(host: String, path: String, question: String, line: Int? = nil, endLine: Int? = nil, text: String? = nil, agent: String) {
+    public init(host: String, path: String, question: String, line: Int? = nil, endLine: Int? = nil, text: String? = nil, agent: String, choices: QuestionChoices? = nil) {
         self.host = host
         self.path = path
         self.question = question
@@ -55,6 +58,7 @@ public struct AgentQuestion: Sendable, Equatable {
         self.endLine = endLine
         self.text = text
         self.agent = agent
+        self.choices = choices
     }
 }
 
@@ -373,6 +377,7 @@ public actor MCPServer {
                 "id": ["type": "string"],
                 "message": ["type": "string"],
                 "asks": ["type": "boolean", "description": "true when the message is a question for the user"],
+                "choices": choicesSchema, "multi": ["type": "boolean"],
                 "location": locationSchema,
             ], "required": ["id", "message"], "additionalProperties": false],
             annotations: .init(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false)
@@ -389,12 +394,22 @@ public actor MCPServer {
             inputSchema: ["type": "object", "properties": [
                 "path": ["type": "string", "description": "absolute path on your machine (or on host; ~/… for its home), or a file:// link; path:line asks about that line"],
                 "question": ["type": "string"],
+                "choices": choicesSchema, "multi": ["type": "boolean"],
                 "line": ["type": "integer", "minimum": 1],
                 "end_line": ["type": "integer", "minimum": 1],
                 "text": ["type": "string", "description": "exact text in the file the question is about; found nearest line when given"],
                 "host": ["type": "string", "description": "\"local\" or an ssh alias; defaults to your machine"],
             ], "required": ["path", "question"], "additionalProperties": false],
             annotations: .init(readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false)
+        ),
+        Tool(
+            name: "finish_refinement",
+            description: "Finish this document's Refinement after applying sent answers, completing changes and resolving acted-on notes. Does not accept review results. Use the host/path and refinement_id from its packet.",
+            inputSchema: ["type": "object", "properties": [
+                "path": ["type": "string"], "host": ["type": "string"],
+                "refinement_id": ["type": "string"], "summary": ["type": "string", "minLength": 1, "maxLength": 500],
+            ], "required": ["path", "refinement_id", "summary"], "additionalProperties": false],
+            annotations: .init(idempotentHint: true)
         ),
         Tool(
             name: "add_favorite",
@@ -415,6 +430,24 @@ public actor MCPServer {
             annotations: .init(readOnlyHint: true)
         ),
     ]
+
+    nonisolated static func webPath(_ value: String) -> String? {
+        guard let url = URL(string: value), url.host != nil, url.scheme == "http" || url.scheme == "https" else { return nil }
+        return url.absoluteString
+    }
+
+    static let choicesSchema: Value = ["type": "array", "minItems": 2, "maxItems": 12, "uniqueItems": true,
+                                       "items": ["type": "string", "minLength": 1, "maxLength": 200]]
+    nonisolated static func questionChoices(_ arguments: [String: Value], asks: Bool = true) throws -> QuestionChoices? {
+        guard asks || (arguments["choices"] == nil && arguments["multi"] == nil) else { throw RefinementError.invalidChoices }
+        if let multi = arguments["multi"], multi.boolValue == nil { throw RefinementError.invalidChoices }
+        guard let raw = arguments["choices"] else {
+            guard arguments["multi"]?.boolValue != true else { throw RefinementError.invalidChoices }
+            return nil
+        }
+        guard case .array(let values) = raw, values.allSatisfy({ $0.stringValue != nil }) else { throw RefinementError.invalidChoices }
+        return try QuestionChoices(values.compactMap(\.stringValue), multi: arguments["multi"]?.boolValue ?? false)
+    }
 
     /// Where a note's text is after the agent's change: the lines and exact new text, a removal, or a page element's
     /// selector. Gloss finds the text itself; columns and context never come from the agent.
@@ -444,6 +477,15 @@ public actor MCPServer {
         user something, call open_in_viewer with a path and lines. When you made or changed something the user should \
         review or decide on and no note is about it, call ask_user with the file, the lines, and your question. \
         add_favorite keeps a project folder at hand in Gloss's explorer.
+        When a file block says Refinement, read that document for ambiguity and open-ended concepts. Ask through \
+        ask_user or reply_to_note with asks: true. Offer choices when useful; multi: true allows several. Ask small \
+        groups of anchored questions and wait for the user's sent answers. Apply those answers and make the changes, \
+        then keep refining. Unsent answers or the absence of new questions do not mean completion. Resolve ordinary \
+        work notes after acting on them; when review is requested describe the changes in their resolve messages. \
+        Only when no questions remain and your changes are complete, call finish_refinement with that document's \
+        host, path, refinement_id and a short summary. Finishing does not accept the user's review results. \
+        Read the entire saved document with your tools, using Resource metadata for virtual documents. If you cannot \
+        access it, explain the limitation or ask on the request note; do not claim you read or refined it.
         """
 
     /// Handlers are registered before the server starts, so the first `tools/list` can never race them.
@@ -560,13 +602,16 @@ public actor MCPServer {
                 return CallTool.Result(content: [text("message is required")], isError: true)
             }
             let asks = arguments["asks"]?.boolValue ?? false
+            let choices: QuestionChoices?
+            do { choices = try questionChoices(arguments, asks: asks) }
+            catch { return CallTool.Result(content: [text(error.userMessage)], isError: true) }
             let relocation: NoteRelocation?
             switch await Self.relocation(for: id, arguments: arguments, dependencies: dependencies) {
             case .success(let found): relocation = found
             case .failure(let refusal): return CallTool.Result(content: [text(refusal.description)], isError: true)
             }
             do {
-                try await store.agentReply(id, body: message, asks: asks, agent: agentName, relocation: relocation)
+                try await store.agentReply(id, body: message, asks: asks, agent: agentName, relocation: relocation, choices: choices)
             } catch NoteStoreError.illegalTransition(from: .draft, to: _) {
                 return CallTool.Result(content: [text("note \(raw) isn't sent: the user took it back and hasn't sent it again")], isError: true)
             } catch {
@@ -623,9 +668,12 @@ public actor MCPServer {
             }
             return CallTool.Result(content: [text(lines.isEmpty ? "No favorites." : lines.joined(separator: "\n"))])
         case "ask_user":
+            let choices: QuestionChoices?
+            do { choices = try questionChoices(arguments) }
+            catch { return CallTool.Result(content: [text(error.userMessage)], isError: true) }
             let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
-            guard let path = Self.absolutePath(arguments["path"]?.stringValue, home: true) else {
-                return CallTool.Result(content: [text("path must be absolute")], isError: true)
+            guard let given = arguments["path"]?.stringValue, let path = Self.absolutePath(given, home: true) ?? Self.webPath(given) else {
+                return CallTool.Result(content: [text("path must be absolute or a live page URL")], isError: true)
             }
             guard let question = arguments["question"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !question.isEmpty else {
                 return CallTool.Result(content: [text("question is required")], isError: true)
@@ -641,11 +689,28 @@ public actor MCPServer {
             }
             let quoted = arguments["text"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 }
             do {
-                let id = try await dependencies.askUser(AgentQuestion(host: host, path: path, question: question, line: line, endLine: endLine, text: quoted, agent: agentName))
+                let id = try await dependencies.askUser(AgentQuestion(host: host, path: path, question: question, line: line, endLine: endLine, text: quoted, agent: agentName, choices: choices))
                 return CallTool.Result(content: [text("asked the user (note \(id.rawValue)); the answer comes back when they send it")])
             } catch NoteStoreError.tooManyQuestions(let limit) {
                 return CallTool.Result(content: [text("that file already has \(limit) open questions; wait for answers")], isError: true)
             }
+        case "finish_refinement":
+            let host = arguments["host"]?.stringValue.flatMap { $0.isEmpty ? nil : $0 } ?? agentHost
+            guard let hostID = try await hostID(named: host, store: store),
+                  let rawPath = arguments["path"]?.stringValue,
+                  let path = Self.absolutePath(rawPath) ?? Self.webPath(rawPath),
+                  let generation = arguments["refinement_id"]?.stringValue,
+                  let summary = arguments["summary"]?.stringValue else {
+                return CallTool.Result(content: [text("Provide a known host, absolute document path, refinement_id and summary.")], isError: true)
+            }
+            do {
+                guard let document = try await store.document(hostID: hostID, path: path) else { throw RefinementError.staleGeneration }
+                let state = try await store.refinement(for: document.id)
+                // Idempotent completion does not re-check input typed after the completed call.
+                if state?.generation != generation || state?.status != .completed { try await dependencies.validateRefinementFinish(document.id) }
+                try await store.finishRefinement(documentID: document.id, generation: generation, summary: summary)
+                return CallTool.Result(content: [text("Refinement finished; results still follow the normal review workflow.")])
+            } catch { return CallTool.Result(content: [text(error.userMessage)], isError: true) }
         case "list_documents":
             // Notes never sent are the user's own: only notes an agent was given count, and a document with none of
             // them is not listed.

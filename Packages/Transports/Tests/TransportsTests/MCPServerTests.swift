@@ -598,7 +598,7 @@ struct MCPServerTests {
 
             let tools = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": [:]])
             let names = ((tools.reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
-            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "reply_to_note", "list_documents", "open_in_viewer", "ask_user", "add_favorite", "list_favorites"])
+            #expect(Set(names) == ["list_pending_notes", "get_note", "resolve_note", "reply_to_note", "list_documents", "open_in_viewer", "ask_user", "add_favorite", "list_favorites", "finish_refinement"])
 
             let pending = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": ["name": "list_pending_notes", "arguments": ["host": "local", "path": "/tmp/demo"]]])
             let listing = (((pending.reply?["result"] as? [String: Any])?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""

@@ -361,8 +361,12 @@ public struct NoteMessage: Identifiable, Hashable, Sendable {
     public var sentAt: Date?
     /// For `moved` messages.
     public var move: NoteMove?
+    public var choices: QuestionChoices?
+    public var inReplyTo: MessageID?
+    public var selectedOptions: [Int]?
+    public var customAnswer: Bool
 
-    public init(id: MessageID, noteID: NoteID, author: MessageAuthor, kind: MessageKind, body: String, createdAt: Date, sentAt: Date?, move: NoteMove? = nil) {
+    public init(id: MessageID, noteID: NoteID, author: MessageAuthor, kind: MessageKind, body: String, createdAt: Date, sentAt: Date?, move: NoteMove? = nil, choices: QuestionChoices? = nil, inReplyTo: MessageID? = nil, selectedOptions: [Int]? = nil, customAnswer: Bool = false) {
         self.id = id
         self.noteID = noteID
         self.author = author
@@ -371,6 +375,10 @@ public struct NoteMessage: Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.sentAt = sentAt
         self.move = move
+        self.choices = choices
+        self.inReplyTo = inReplyTo
+        self.selectedOptions = selectedOptions
+        self.customAnswer = customAnswer
     }
 
     public var isSent: Bool { sentAt != nil }

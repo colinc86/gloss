@@ -23,6 +23,8 @@ final class SendCoordinator {
     /// What a virtual host says a document is (a pull request's URL and file at its head), for the packet header.
     @ObservationIgnored var packetResourceProvider: (HostID, String, Int?) async -> PacketResource? = { _, _, _ in nil }
 
+    @ObservationIgnored var refinementAllowed: (DocumentID, String) -> Bool = { _, _ in true }
+
     /// The packet's `Source:` for a document: a virtual host names the resource kind, a file its document kind.
     nonisolated static func source(for document: Document) -> PacketSource {
         switch document.hostID {
@@ -35,6 +37,8 @@ final class SendCoordinator {
     private(set) var targets: [AgentTarget] = []
     private(set) var isDiscovering = false
     private(set) var isSending = false
+    /// Called synchronously at the boundary where preparation ends and transport handoff begins.
+    @ObservationIgnored var willDeliver: ([NoteID]) -> Void = { _ in }
     private(set) var lastOutcome: String?
     private(set) var lastError: String?
     private(set) var lastTarget: AgentTarget?
@@ -331,10 +335,9 @@ final class SendCoordinator {
         do {
             let (notes, attachments) = try await collect(noteIDs: noteIDs)
             let staging = try await stagers[target.hostID]?.stage(attachments, for: target, sendID: sendID) ?? .empty
-            let packetNotes = try await packetNotes(for: notes, target: target, staged: staging.attachments)
+            var packetNotes = try await packetNotes(for: notes, target: target, staged: staging.attachments)
             // A note that asked for review keeps asking (its follow-ups too), so the agent is told whenever one goes.
             let review = review || notes.contains { $0.note.reviewRequested }
-            let packet = PacketBuilder.build(packetNotes, review: review)
             let expiresAt = Date().addingTimeInterval(TimeInterval(stagedFileExpiryDays) * 24 * 3600)
             if let problem = await validate() {
                 // Nothing left the app: no failed send is recorded, and the toast offers no Retry.
@@ -342,11 +345,21 @@ final class SendCoordinator {
                 showCancelled(noteIDs: noteIDs, target: target, reason: problem)
                 return
             }
+            // Refresh only control metadata after all preparation/validation awaits. Keep the carried answer snapshot.
+            try await refreshRefinements(&packetNotes, documents: notes.map(\.document))
+            if let problem = await validate() {
+                await stagers[target.hostID]?.discard(staging.remoteDirectories)
+                showCancelled(noteIDs: noteIDs, target: target, reason: problem)
+                return
+            }
+            suppressEndedRefinements(&packetNotes)
+            let packet = PacketBuilder.build(packetNotes, review: review)
             do {
+                willDeliver(packet.noteIDs)
                 let receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
                 let recorded = try await noteStore.recordSend(transport: target.transport.rawValue, targetJSON: targetJSON(target), packetText: packet.text, noteIDs: packet.noteIDs,
                                                               outcome: .delivered, carried: packetNotes.reduce(into: [:]) { $0.merge($1.carriedMessages) { first, _ in first } },
-                                                              review: review)
+                                                              carriedQuestions: packetNotes.reduce(into: []) { $0.formUnion($1.carriedQuestions) }, review: review)
                 if !staging.remoteDirectories.isEmpty {
                     try await noteStore.recordStagedFiles(sendID: recorded, hostID: target.hostID, remotePaths: staging.remoteDirectories, expiresAt: expiresAt)
                 }
@@ -400,11 +413,25 @@ final class SendCoordinator {
     /// What Send would hand over for these notes, for Preview Packet: the same packet, review sentence included, but
     /// with pictures at their local paths (a remote send's staged paths only exist once it goes) and nothing written:
     /// a note found again in a file changed on disk is described where it is, without moving it in the database.
-    func preview(noteIDs: [NoteID], review: Bool) async throws -> Packet {
+    func preview(noteIDs: [NoteID], review: Bool, composing: [NoteID: String] = [:], edits: [MessageID: String] = [:]) async throws -> Packet {
+        try await previewData(noteIDs: noteIDs, review: review, composing: composing, edits: edits).packet
+    }
+
+    struct PreviewData {
+        let packet: Packet
+        let notes: [PacketNote]
+        let review: Bool
+    }
+
+    /// Readable and raw previews share one structured snapshot, including current anchors and control metadata.
+    func previewData(noteIDs: [NoteID], review: Bool, composing: [NoteID: String] = [:], edits: [MessageID: String] = [:]) async throws -> PreviewData {
         let (notes, attachments) = try await collect(noteIDs: noteIDs)
         let staged = attachments.map { StagedAttachment(noteID: $0.noteID, agentPath: $0.localPath) }
-        let packetNotes = try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged, persists: false)
-        return PacketBuilder.build(packetNotes, review: review || notes.contains { $0.note.reviewRequested })
+        let packetNotes = try await packetNotes(for: notes, target: ClipboardTransport.target, staged: staged, persists: false, composing: composing, edits: edits)
+        let review = review || notes.contains { $0.note.reviewRequested }
+        let packet = PacketBuilder.build(packetNotes, review: review)
+        let byID = Dictionary(packetNotes.map { ($0.noteID, $0) }, uniquingKeysWith: { first, _ in first })
+        return PreviewData(packet: packet, notes: packet.noteIDs.compactMap { byID[$0] }, review: review)
     }
 
     /// What Send All sends: drafts, and notes with a follow-up the user hasn't sent.
@@ -431,7 +458,7 @@ final class SendCoordinator {
 
     /// `persists` false (a preview) describes moved notes where they are without writing the moves to the store.
     private func packetNotes(for notes: [(note: Note, document: Document)], target: AgentTarget, staged: [StagedAttachment], wholeThread: Bool = false,
-                             persists: Bool = true) async throws -> [PacketNote] {
+                             persists: Bool = true, composing: [NoteID: String] = [:], edits: [MessageID: String] = [:]) async throws -> [PacketNote] {
         var contents: [String: String] = [:]
         /// Hashes of files read from disk here (not open), to tell whether a note's anchor still describes them.
         var hashes: [String: String] = [:]
@@ -516,21 +543,48 @@ final class SendCoordinator {
             var firstLine: Int?
             if case .text(let anchor) = note.anchor { firstLine = anchor.start.line }
             let resource = document.hostID.isVirtual ? await packetResourceProvider(document.hostID, document.path, firstLine) : nil
-            let messages = try await noteStore.messages(for: note.id)
+            var messages = try await noteStore.messages(for: note.id)
+            for index in messages.indices where !messages[index].isSent {
+                if let edit = edits[messages[index].id] { messages[index].body = edit.trimmingCharacters(in: .whitespacesAndNewlines) }
+            }
+            messages.removeAll { !$0.isSent && $0.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if let text = composing[note.id]?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                messages.append(NoteMessage(id: .new(), noteID: note.id, author: .user, kind: .comment, body: text, createdAt: Date(), sentAt: nil))
+            }
+            let recent = PacketThread.recentWithQuestions(messages, at: note.anchor)
             var packetNote = PacketNote(
                 noteID: note.id, agentPath: document.path, source: Self.source(for: document), anchor: note.anchor,
                 comment: note.body, excerptLines: excerpt, selectedText: selectedText,
                 attachmentAgentPath: staged.first { $0.noteID == note.id }?.agentPath, cellDescription: cellDescription,
                 resource: resource?.url.absoluteString, resourceDetails: resource?.details ?? [],
-                thread: wholeThread ? .full(messages) : .recent(messages, at: note.anchor)
+                thread: wholeThread ? .full(messages) : recent.thread, documentID: document.id
             )
+            packetNote.carriedQuestions = wholeThread ? Set(messages.filter { $0.isSent && $0.kind == .question }.map(\.id)) : recent.questions
             // What the packet says the user wrote is what the send marks sent.
             if !wholeThread {
                 packetNote.carriedMessages = Dictionary(uniqueKeysWithValues: messages.filter { !$0.isSent }.map { ($0.id, $0.body) })
             }
             result.append(packetNote)
         }
+        try await refreshRefinements(&result, documents: notes.map(\.document))
+        suppressEndedRefinements(&result)
         return result
+    }
+
+    private func refreshRefinements(_ notes: inout [PacketNote], documents: [Document]) async throws {
+        let states = Dictionary(uniqueKeysWithValues: try await noteStore.refinements().map { ($0.documentID, $0) })
+        let hosts = Dictionary(uniqueKeysWithValues: try await noteStore.hosts().map { ($0.id, $0.name) })
+        for index in notes.indices {
+            guard let document = documents.first(where: { $0.id == notes[index].documentID }),
+                  let state = states[document.id], state.emitsDirective,
+                  state.status == .active || notes.contains(where: { $0.noteID == state.requestNoteID }) else { notes[index].refinement = nil; continue }
+            notes[index].refinement = PacketRefinement(generation: state.generation, host: hosts[document.hostID] ?? document.hostID.rawValue)
+        }
+    }
+    private func suppressEndedRefinements(_ notes: inout [PacketNote]) {
+        for index in notes.indices {
+            if let id = notes[index].documentID, let state = notes[index].refinement, !refinementAllowed(id, state.generation) { notes[index].refinement = nil }
+        }
     }
 
     private func readText(hostID: HostID, path: String) async throws -> (text: String, hash: String)? {

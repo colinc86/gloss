@@ -323,6 +323,7 @@ struct NotesPanel: View {
             .pickerStyle(.inline)
             Toggle("Review When Done", isOn: Binding(get: { model.settings.reviewsResults }, set: { model.settings.reviewsResults = $0 }))
             Divider()
+            RefinementCommands(model: model)
             Button("Preview Packet…") { model.showsPacketPreview = true }
             Button("Copy Shown Notes as Packet\(shown > 0 ? " (\(shown))" : "")") {
                 Task { await model.copyVisibleDrafts() }
@@ -554,6 +555,11 @@ struct NoteCard: View {
     /// The comment and its thread, from the panel's one observation of every note's messages.
     private var thread: NoteThread { NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id)) }
 
+    private var unansweredQuestion: NoteMessage? {
+        guard note.waitingOnUser else { return nil }
+        return NoteMessage.unansweredQuestion(in: model.notesPanel.messages(for: note.id))
+    }
+
     /// A note of an earlier iteration (issue #18): read-only, offering only Reveal, Bring Forward and the copies.
     private var isPast: Bool { note.iteration < document.currentIteration }
 
@@ -661,8 +667,8 @@ struct NoteCard: View {
         // One element for VoiceOver: the card is read as a sentence, and every button and menu command is an action
         // on it, instead of a walk through the rail, the pill, and six unlabeled-looking icons.
         // Open, the thread and its follow-up field have to stay reachable, so the card opens up to its children.
-        .accessibilityElement(children: expanded || editing ? .contain : .ignore)
-        .accessibilityLabel(Self.spokenSummary(note, latest: thread.latest))
+        .accessibilityElement(children: expanded || editing || unansweredQuestion?.choices != nil ? .contain : .ignore)
+        .accessibilityLabel(Self.spokenSummary(note, latest: thread.latest) + model.notesPanel.choiceAnswerSummary(for: note.id))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityActions {
             commands(dividers: false)
@@ -886,9 +892,11 @@ struct NoteCard: View {
             if !isCompact, note.originalAnchor != nil, let move = thread.latestMove {
                 moveLine(move, isLatest: true)
             }
-            if let latest = thread.latest {
-                turnView(latest, latest: true, thread: thread)
-            }
+            if let question = unansweredQuestion, question.id != thread.latest?.id,
+               let turn = thread.turns.first(where: { $0.id == question.id }) { turnView(turn, latest: false, thread: thread) }
+            if let latest = thread.latest { turnView(latest, latest: true, thread: thread) }
+            if !isPast, unansweredQuestion != nil || !(model.notesPanel.followUpText[note.id] ?? "").isEmpty { followUpField }
+
         }
         if showsThreadToggle(thread) {
             Button {
@@ -918,11 +926,14 @@ struct NoteCard: View {
         switch turn.speaker {
         case .agent:
             AgentMessageBubble(message: turn.text, asks: turn.asks,
-                               waiting: note.waitingOnUser && turn.id == thread.turns.last(where: { $0.speaker == .agent })?.id,
+                               waiting: note.waitingOnUser && turn.id == unansweredQuestion?.id,
                                agent: turn.agent ?? note.author ?? note.resolveAgent ?? lastSend.flatMap(NotesPanelModel.agentName))
                 // The agent's turn arrives from where the comment ends, like a reply landing in a thread.
                 .transition(AnyTransition.asymmetric(insertion: .scale(scale: 0.92, anchor: .topLeading).combined(with: .opacity),
                                                      removal: .opacity).calmed)
+            if let message = model.notesPanel.messages(for: note.id).first(where: { $0.id == turn.id }), let choices = message.choices {
+                QuestionChoiceControls(question: message, choices: choices, editable: !isPast && message.id == unansweredQuestion?.id)
+            }
         case .user:
             userTurnView(turn)
         }
@@ -934,7 +945,7 @@ struct NoteCard: View {
                 Text("You")
                     .foregroundStyle(Color.accentColor)
                 if turn.unsent {
-                    Text("Not sent")
+                    Text(model.notesPanel.messages(for: note.id).first { $0.id == turn.id }?.customAnswer == true ? "Custom answer · Not sent" : "Not sent")
                         .fontWeight(.regular)
                         .foregroundStyle(.secondary)
                 }
@@ -971,7 +982,7 @@ struct NoteCard: View {
             }
         }
         .padding(.leading, DS.Space.l)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     /// A follow-up not yet sent, changed in place: Return saves (empty deletes it), Escape cancels.

@@ -64,7 +64,8 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
 
 ## Accessibility
 
-- **A composite reads as one sentence, and says what the screen shows.** A note card is a single VoiceOver element:
+- **A composite reads as one sentence, and says what the screen shows.** A closed note card without fields or choices
+  is a single VoiceOver element:
   "Draft note, yellow, Line 9. On: var isSteep: Bool { … }. Use 10%." The "On:" part is the excerpt well a sighted
   reader sees; the agent's turn is worded as the bubble words it ("Agent asks:" for a question, "Agent replied:"
   otherwise). When something visible is added to a card, its spoken summary gains it too. Its buttons and context-menu commands are its
@@ -83,6 +84,20 @@ pills `.caption2` semibold. Secondary information uses `.secondary`, never a sma
   then the folder switcher. Every control is reachable; a change that adds or groups stops re-checks this order.
   Since 2026-10-07 the host picker is part of the folder switcher and follow sits at its left, both above the
   tree rather than in the sidebar's toolbar; the order has not been re-checked since.
+- **A question's choices stay reachable** (2026-10-12). Its spoken summary names the agent, the question and
+  "waiting for your answer", as the bubble does; the choice group says "Choose one" or "Choose any that apply",
+  and each radio button or checkbox speaks its label and whether it is selected. The group, answer field and
+  actions are reachable inside the card, rather than swallowed by its composite summary. A staged answer says
+  "Not sent"; an edited one says "Custom answer · Not sent" and keeps its words. Space chooses the focused
+  option, Tab moves on, and every focus ring stays visible. A question arriving never takes focus, and the full
+  panel and compact tray offer the same controls and labels.
+
+- **Refinement says whose turn it is** (2026-10-12). Its notice speaks the document, round, waiting-question
+  count or the agent's turn, and the completion summary. Updates announce the change without moving focus. End
+  Refinement remains reachable at narrow widths. The new stops need a live check of the window's tab order in
+  both layouts; the notice uses `DS.Motion` and `.calmed` transitions so Reduce Motion keeps the change without
+  travel or pulsing.
+
 - Check with the accessibility API (an `AXUIElement` walk), since System Events does not reach into SwiftUI lists.
 
 ## Window and layout
@@ -179,6 +194,14 @@ Hide Changes), and Preview Packet… (⌥⌘↩) beside Copy; View also holds La
 **Help** has Keyboard Shortcuts and Report a Bug. Items that show or hide a part of the window say
 which (Show Notes Panel becomes Hide Notes Panel) rather than carrying a checkmark; filters and modes that are an
 attribute keep their checkmark. No command is in two menus, and two commands don't share a symbol.
+
+Refine This Document (2026-10-12) sits with the sending actions in Notes and in the Send button's menu. It sends
+at once, so it has no ellipsis; it needs a live document and an available chosen agent, but no drafts. While the
+document is being refined, Refine This Document is disabled and End Refinement is added. An earlier iteration
+offers Back to Current before it can start. The notice's Send N Answers has Preview Answers… in its context
+menu. Several documents can be refining; the command always names the document in front, with no prompt to end
+another.
+
 Every text field has a way in from the keyboard: Edit › Filter Files (⌥⌘J, as Xcode's navigator filter) and
 Edit › Search Notes (menu only: ⌥⌘F is Find and Replace in most Mac apps) put the caret in their fields, as Find
 in Files, Open Quickly, and Go to Line do. New shortcuts follow the conventions of Xcode and the system before
@@ -209,6 +232,18 @@ path. Dropping on the Dock icon is not supported yet.
 - The app's nouns, not the code's: "folder" (never "root"), "agent" (never "target"), "note", "draft", "sent".
 - Say what happened in a sentence a person would say ("The file isn't there. It may have been moved…"), never an
   error's debug description.
+
+- **Refinement's words** (2026-10-12): "Starting Refinement…" while its request goes; "The agent is reading the
+  document" before the first questions; "Refining · Round 2 · 3 questions for you" while answers wait ("1
+  question for you" for one); "The agent is reading your answers" once they go; "No more questions" once the
+  agent finishes. Actions are Refine This Document, End Refinement, Show Questions, Send 1 Answer or Send 3
+  Answers, Preview Answers…, and Done. A choice group says "Choose one" or "Choose any that apply"; the freeform
+  field says "Your answer", and an answer not sent says "Not sent", as every follow-up does; an edited choice
+  answer says "Custom answer · Not sent". Clear choices removes the generated selection, leaving custom words
+  alone. Dirty entry says "Save before Refinement" and "The agent needs the saved document.", with Save First;
+  saving does not start Refinement until it is chosen again. A delivery failure stays beside what can be
+  retried; it never says the agent is reading something that did not go.
+
 
 ## Components
 
@@ -377,8 +412,9 @@ path. Dropping on the Dock icon is not supported yet.
   replies and questions, the user's follow-ups) and moves. The panel reads every note's messages through one
   observation (`NotesPanelModel.messages`), so a card never opens its own.
   Collapsed, a card shows the comment (two lines), the move that took the note from where it was made while it is
-  still away, and the latest turn whole, never cut (the agent's bubble or the user's follow-up; 2026-10-08). A quiet
-  "Show conversation (N)" link with a chevron pointing down opens every turn and move and the whole comment in one
+  still away, and the latest turn whole, never cut (the agent's bubble or the user's follow-up; 2026-10-08). An
+  unanswered question stays ahead of a later turn, with its choices and answer field, so a status reply never
+  covers what still needs the user (2026-10-12). A quiet "Show conversation (N)" link with a chevron pointing down opens every turn and move and the whole comment in one
   smooth animation; open, it reads "Hide conversation" (or "Show less") with the chevron pointing up, the symbol
   swapping in place. It's there when there is more than the collapsed card shows ("Show more" when only the comment
   was cut, and always once open, to close it). Whether the comment is cut is measured on unseen collapsed and uncut
@@ -402,6 +438,22 @@ path. Dropping on the Dock icon is not supported yet.
   only Follow Up… (menu, the ↩ action icon, accessibility action) opens the card and puts the caret in it, so
   opening a card never takes the keyboard. Follow Up… is offered on every note but a draft never sent, whose
   comment is edited instead; its action icon is the accent-filled one while an agent waits on an answer.
+- **Choices from an agent** (2026-10-12): a question can offer one answer or several, on a new note (`ask_user`)
+  or a question in its thread (`reply_to_note`, `asks: true`). Under the orange question bubble, "Choose one"
+  heads native radio buttons, or "Choose any that apply" heads checkboxes; no choice starts selected. Each label
+  wraps rather than cutting off what the answer means. A click stages the answer as the user's own turn, "You ·
+  Not sent", with the selected words in their given order, and it can be edited before Send. The "Your answer"
+  field is there too: a choice never prevents a freeform answer. Choosing again changes the staged choices,
+  never words the person has edited into a "Custom answer · Not sent", and never sends. Clear choices removes
+  the generated draft, not a custom answer. Delete and Undo retain the question association, selected options
+  and custom status. A new question has its own fresh choices; earlier ones stay with their question in Show
+  conversation, read-only once answered. Closing a card or changing the layout keeps what was chosen and typed.
+  Choices work on ordinary questions too, whether or not the document is being refined.
+
+- **The question still waiting** (2026-10-12): a later status reply does not cover an unanswered question. The
+  collapsed card keeps that question and its choices in sight, orange with primary text; the status remains in
+  the conversation. A question arriving while an answer is being written leaves its text and the keyboard alone.
+
 - **Moves** (2026-10-07): when an agent says where its change now is, or the note's text was removed, the thread
   shows one quiet `.caption` secondary line where it happened, with a pencil for an edit and a minus circle for a
   removal: "Edited by Claude Code", "Removed by Codex", "Edited" or "Removed" (Gloss found the note on rewritten words,
@@ -553,7 +605,8 @@ path. Dropping on the Dock icon is not supported yet.
   This File | This Location segmented control, then "acme-site · 3 notes · 2 files → Claude" (the agent
   orange when unavailable); a Readable | Raw switch over a 260 pt pane: Readable lists the notes by file (color rail,
   anchor in caption, "Follow-up", a paperclip count, the comment to three lines) with a teal eye line when the packet
-  asks for review; Raw is the exact text, monospaced and selectable, with "Pictures are copied to <host> when sent."
+  asks for review; Readable also shows the document's Refinement directive and question/choice/answer turns
+  (2026-10-12). Raw is the exact text, monospaced and selectable, with "Pictures are copied to <host> when sent."
   for a remote target. "Not included" lists what the scope leaves out with a link-style fix (Show All, Send This
   Location). Copy and Send N Notes (prominent, the default button) at the foot. A small spinner while it rebuilds,
   150 ms after what it shows changes.
@@ -571,6 +624,38 @@ path. Dropping on the Dock icon is not supported yet.
   peek's style (`readableGlass`, 340 pt): "3 earlier notes here" and a close button, then each note newest first with
   its color rail, "Iteration 1 · Oct 6", its pill, the comment, the agent's last word in its bubble, and Show in
   Iteration 1 and Bring Forward. The minimap doesn't show them.
+- **Refinement** (2026-10-12): Refine This Document in Notes and the Send button's menu sends a whole-file
+  request to the agent chosen for that document, even with no notes yet; other drafts stay. Saved content is
+  required; Save First saves dirty text, then the user chooses Refine This Document again. A failed request
+  stays with Retry; restoring a Refinement never resends it. While it is on, a small `.mode` Notice above the
+  document, under a warning if there is one, names the round and whose turn it is: "Refining · Round 2 · 3
+  questions for you", or "The agent is reading your answers". The document stays in hand, and its questions are
+  the ordinary anchored cards under Attention. Its count takes current-iteration questions across filters;
+  earlier questions do not count. Show Questions brings the current questions into the list; once answers are
+  ready, Send 3 Answers is the prominent action; otherwise Show Questions is prominent. That send takes this
+  document's answers to its original recipient, including ones hidden by the filters and text still in fields,
+  and leaves other drafts. Its count says what goes; staging failure preserves the words and sends nothing.
+  Preview Answers… in the send's context menu opens a 420 pt popover of the exact text, including field edits,
+  without staging them. End Refinement is quiet but always in reach, including while the agent works: it stops
+  the instruction on packets not yet handed over and leaves every note, question and answer where it is. There
+  is no confirmation. Actions drop under the detail when the notice is narrow, as other Notices do. The round
+  counts questions and answers, not document iterations. A successfully delivered answer batch arms the next
+  round; its first later question advances it once. Several documents can be refined at once; each shows its own
+  notice, and changing documents changes neither.
+
+- **Refinement ends** (2026-10-12): when the agent has made its changes and has no more questions, its
+  `finish_refinement` puts "No more questions" over its short summary in the notice, with Done to put it away.
+  The instruction has already ended. The Review Results action remains where it was; finishing neither accepts
+  results nor opens review or changes iterations. Current questions, unsent answers and field edits block
+  finishing; earlier-iteration questions and results waiting for acceptance do not. The summary wraps in full.
+  Leaving Refinement by hand puts the notice away at once; open questions still wait under Attention.
+
+- **Questions in the compact layout** (2026-10-12): the closed NotesTray uses the question's first line when the
+  card has no comment of the user's, beside its anchor and Your turn pill. Answer… opens the tray to that card,
+  with the same choices, answer field and Send as the full panel; choices do not crowd the 36 pt bar. Closing
+  the tray keeps the answer, and the Refinement notice stays above the document. Options wrap within the card,
+  including at the tray's smallest width.
+
 - **Review** (2026-10-10): a send made with Review When Done (the Send menu, under the scope; also Settings › Notes)
   leaves its notes, once resolved, at full strength with a teal "To review" pill (`eye.circle.fill`) and an open
   note's underline until accepted. A full-width teal "Review 3 Results" button (eye) sits under the panel's filters

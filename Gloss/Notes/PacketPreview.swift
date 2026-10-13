@@ -7,11 +7,13 @@ import Viewers
 /// Send builds it, but writes nothing; Send itself stays one click.
 struct PacketPreview: View {
     @Environment(AppModel.self) private var model
-    @State private var packet: Packet?
+    @State private var preview: SendCoordinator.PreviewData?
+    private var packet: Packet? { preview?.packet }
     @State private var attachments: [NoteID: Int] = [:]
     @State private var exclusions: [AppModel.SendExclusion] = []
     @State private var failure: String?
     @State private var isBuilding = true
+    @State private var builtKey: [String] = []
     @State private var showsRaw = false
 
     private var selection: AppModel.SendSelection { model.sendSelection(scope: model.sendScope) }
@@ -19,6 +21,7 @@ struct PacketPreview: View {
     /// What the preview is built from: rebuilt when a note in it, the scope, or Review When Done changes.
     private var key: [String] {
         [model.sendScope.rawValue, model.settings.reviewsResults ? "review" : ""]
+            + selection.notes.compactMap { note in model.refinement.state(for: note.documentID).map { "\($0.generation):\($0.status.rawValue)" } }
             + selection.notes.map { "\($0.id.rawValue)@\($0.updatedAt.timeIntervalSince1970)@\($0.hasUnsentFollowUps)" }
     }
 
@@ -102,20 +105,23 @@ struct PacketPreview: View {
 
     /// Each note as it goes, by file in the order the packet lists them.
     private var readable: some View {
-        let groups = model.notesPanel.visibleGroups.compactMap { group -> (Core.Document, [Note])? in
-            let ids = Set(selection.ids)
-            let notes = group.notes.filter { ids.contains($0.id) }.sorted { $0.anchor.sortKey < $1.anchor.sortKey }
-            return notes.isEmpty ? nil : (group.document, notes)
+        let notes = preview?.notes ?? []
+        let ids = notes.reduce(into: [DocumentID]()) { result, note in
+            if let id = note.documentID, !result.contains(id) { result.append(id) }
         }
-        let review = model.settings.reviewsResults || selection.notes.contains(where: \.reviewRequested)
+        let review = preview?.review ?? false
         return ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.m) {
-                ForEach(groups, id: \.0.id) { document, notes in
+                ForEach(ids, id: \.self) { id in
+                    let notes = notes.filter { $0.documentID == id }
                     VStack(alignment: .leading, spacing: DS.Space.s) {
-                        Label(document.fileName, systemImage: "doc.text")
+                        Label(PathUtilities.name(of: notes.first?.agentPath ?? ""), systemImage: "doc.text")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                        ForEach(notes) { note in row(note) }
+                        if let directive = notes.compactMap(\.refinement).first {
+                            Text(directive.line).font(.caption).foregroundStyle(Color.accentColor).fixedSize(horizontal: false, vertical: true)
+                        }
+                        ForEach(notes, id: \.noteID) { note in row(note) }
                     }
                 }
                 if review {
@@ -130,31 +136,47 @@ struct PacketPreview: View {
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
     }
 
-    private func row(_ note: Note) -> some View {
+    private func row(_ note: PacketNote) -> some View {
         HStack(alignment: .top, spacing: DS.Space.s) {
-            Capsule().fill(Color(nsColor: Theme.color(for: note.color)).gradient).frame(width: 3)
+            Capsule().fill(Color(nsColor: Theme.color(for: selection.notes.first { $0.id == note.noteID }?.color ?? .yellow)).gradient).frame(width: 3)
             VStack(alignment: .leading, spacing: DS.Space.xxs) {
                 HStack(spacing: DS.Space.s) {
                     Label(note.anchor.summary, systemImage: note.anchor.symbol)
                         .labelStyle(.titleAndIcon)
                         .font(.caption.weight(.medium).monospacedDigit())
                         .foregroundStyle(.secondary)
-                    if note.state != .draft, note.hasUnsentFollowUps {
+                    if !note.carriedMessages.isEmpty {
                         Text("Follow-up").font(.caption2.weight(.semibold)).foregroundStyle(Color.accentColor)
                     }
-                    if let count = attachments[note.id], count > 0 {
+                    if let count = attachments[note.noteID], count > 0 {
                         Label(count == 1 ? "1 picture" : "\(count) pictures", systemImage: "paperclip")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text(NoteCard.styledBody(note.body))
+                Text(NoteCard.styledBody(Self.readableText(note)))
                     .font(.callout)
-                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Human-readable values come from the snapshot, never from escaped protocol text.
+    nonisolated static func readableText(_ note: PacketNote) -> String {
+        var lines = note.comment.isEmpty ? [] : [note.comment]
+        for turn in note.thread.turns {
+            switch turn {
+            case .agent(let name, let asked, let body): lines.append("\(name) \(asked ? "asked" : "replied"): \(body)")
+            case .user(let body): lines.append("You replied: \(body)")
+            case .choices(let choices):
+                lines.append(choices.multi ? "Choose any that apply" : "Choose one")
+                lines.append(contentsOf: choices.options)
+            case .moved(let move, _): lines.append("Moved to \(move.to.summary)")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// The packet's exact text, as the agent reads it.
@@ -218,13 +240,15 @@ struct PacketPreview: View {
             Spacer(minLength: 0)
             // What Raw shows, review sentence and all.
             Button("Copy") {
-                if let text = packet?.text {
-                    model.send.writeClipboard(text)
-                    model.flashCopied("Packet copied")
+                Task {
+                    if let current = try? await model.send.preview(noteIDs: selection.ids, review: model.settings.reviewsResults) {
+                        model.send.writeClipboard(current.text)
+                        model.flashCopied("Packet copied")
+                    }
+                    model.showsPacketPreview = false
                 }
-                model.showsPacketPreview = false
             }
-            .disabled(count == 0 || packet == nil || isBuilding)
+            .disabled(count == 0 || packet == nil || isBuilding || builtKey != key)
             Button(count == 1 ? "Send 1 Note" : "Send \(count) Notes") {
                 model.showsPacketPreview = false
                 Task { await model.sendVisibleDrafts() }
@@ -240,6 +264,7 @@ struct PacketPreview: View {
 
     private func build() async {
         isBuilding = true
+        let requestedKey = key
         // Typing in a card, or a burst of agent replies, settles before the packet is built again.
         try? await Task.sleep(for: .milliseconds(150))
         guard !Task.isCancelled else { return }
@@ -249,17 +274,19 @@ struct PacketPreview: View {
         guard !Task.isCancelled else { return }
         exclusions = excluded
         guard !ids.isEmpty else {
-            packet = nil
+            preview = nil
             failure = nil
             isBuilding = false
             return
         }
         do {
-            let built = try await model.send.preview(noteIDs: ids, review: model.settings.reviewsResults)
+            let built = try await model.send.previewData(noteIDs: ids, review: model.settings.reviewsResults)
             guard !Task.isCancelled else { return }
             var counts: [NoteID: Int] = [:]
             for id in ids { counts[id] = (try? await model.noteStore.attachments(for: id).count) ?? 0 }
-            packet = built
+            guard !Task.isCancelled, requestedKey == key else { return }
+            preview = built
+            builtKey = requestedKey
             attachments = counts.filter { $0.value > 0 }
             failure = nil
         } catch {

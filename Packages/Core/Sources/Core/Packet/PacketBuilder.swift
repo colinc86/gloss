@@ -31,6 +31,8 @@ public enum PacketSource: String, Sendable, CaseIterable {
 /// One note, already resolved to paths on the agent's machine. The builder does no I/O.
 public struct PacketNote: Sendable {
     public var noteID: NoteID
+    public var documentID: DocumentID?
+    public var refinement: PacketRefinement?
     /// Absolute path of the file on the machine where the agent runs.
     public var agentPath: String
     public var source: PacketSource
@@ -54,12 +56,17 @@ public struct PacketNote: Sendable {
     /// The follow-ups not sent before that this packet carries, with the text it carries for each, which
     /// `NoteStore.recordSend` stamps sent; one written or changed while the packet is being delivered isn't.
     public var carriedMessages: [MessageID: String] = [:]
+    /// Question messages actually included in this delivery snapshot.
+    public var carriedQuestions: Set<MessageID> = []
 
     public init(
         noteID: NoteID, agentPath: String, source: PacketSource, anchor: Anchor, comment: String,
         excerptLines: [String] = [], selectedText: String? = nil, attachmentAgentPath: String? = nil, cellDescription: String? = nil,
-        resource: String? = nil, resourceDetails: [String] = [], thread: PacketThread = PacketThread()
+        resource: String? = nil, resourceDetails: [String] = [], thread: PacketThread = PacketThread(),
+        documentID: DocumentID? = nil, refinement: PacketRefinement? = nil
     ) {
+        self.documentID = documentID
+        self.refinement = refinement
         self.thread = thread
         self.cellDescription = cellDescription
         self.resource = resource
@@ -82,6 +89,7 @@ public struct PacketThread: Sendable, Equatable {
         case agent(name: String, asked: Bool, body: String)
         /// `User replied:`.
         case user(String)
+        case choices(QuestionChoices)
         /// `Moved:`, only in `get_note`'s whole thread.
         case moved(NoteMove, by: MessageAuthor)
     }
@@ -103,25 +111,35 @@ public struct PacketThread: Sendable, Equatable {
     /// say where the note is now, except a removal while the note still sits where its text was (`anchor`): the
     /// line it points at isn't what the note was about. A note with no agent message yet carries all its follow-ups.
     public static func recent(_ messages: [NoteMessage], at anchor: Anchor? = nil) -> PacketThread {
+        recentWithQuestions(messages, at: anchor).thread
+    }
+
+    public static func recentWithQuestions(_ messages: [NoteMessage], at anchor: Anchor? = nil) -> (thread: PacketThread, questions: Set<MessageID>) {
         var removal: [Turn] = []
         if let last = messages.last(where: { $0.kind == .moved }), let move = last.move, move.removed, move.to == anchor {
             removal = [.moved(move, by: last.author)]
         }
         let turns = messages.filter { $0.kind != .moved && $0.author != .app }
-        guard !turns.isEmpty else { return PacketThread(turns: removal) }
+        guard !turns.isEmpty else { return (PacketThread(turns: removal), []) }
         let start = turns.indices.last { turns[$0].author.isAgent } ?? turns.startIndex
         let answered = turns.indices.last { turns[$0].author == .user && turns[$0].isSent } ?? -1
         let openQuestion = turns.indices.last { $0 < start && $0 > answered && turns[$0].kind == .question }
         let lead = [openQuestion, start].compactMap { $0 }
         let rest = turns.indices.filter { !lead.contains($0) && ($0 > start || !turns[$0].isSent) }
         let shown = lead + rest
-        return PacketThread(earlierCount: turns.count - shown.count, turns: removal + shown.compactMap { turn(turns[$0]) })
+        let questions = Set(shown.filter { turns[$0].kind == .question }.map { turns[$0].id })
+        return (PacketThread(earlierCount: turns.count - shown.count, turns: removal + shown.flatMap { serialized(turns[$0]) }), questions)
     }
 
     /// What `get_note` returns: every turn the agent was given, moves included, in order. A follow-up the user
     /// hasn't sent stays in the app.
     public static func full(_ messages: [NoteMessage]) -> PacketThread {
-        PacketThread(turns: messages.filter(\.isSent).compactMap(turn))
+        PacketThread(turns: messages.filter(\.isSent).flatMap(serialized))
+    }
+
+    static func serialized(_ message: NoteMessage) -> [Turn] {
+        guard let turn = turn(message) else { return [] }
+        return [turn] + (message.kind == .question ? message.choices.map { [.choices($0)] } ?? [] : [])
     }
 
     static func turn(_ message: NoteMessage) -> Turn? {
@@ -131,6 +149,15 @@ public struct PacketThread: Sendable, Equatable {
         case (_, .user): .user(message.body)
         case (_, .app): nil
         }
+    }
+}
+
+public struct PacketRefinement: Sendable, Equatable {
+    public let generation: String
+    public let host: String
+    public init(generation: String, host: String) { self.generation = generation; self.host = host }
+    public var line: String {
+        "Refinement: \(PacketBuilder.headerValue(generation)). Host: \"\(PacketBuilder.escape(host))\". Read this document for ambiguous or open-ended content. Apply the user's sent answers and make the changes, then keep refining by asking questions with ask_user or reply_to_note (asks: true). Wait for the user to send answers. When you have no more questions and your changes are complete, call finish_refinement with this document's host, path, refinement_id, and a short summary."
     }
 }
 
@@ -157,8 +184,9 @@ public enum PacketBuilder {
         var order: [String] = []
         var groups: [String: [PacketNote]] = [:]
         for note in notes {
-            if groups[note.agentPath] == nil { order.append(note.agentPath) }
-            groups[note.agentPath, default: []].append(note)
+            let key = note.documentID?.rawValue ?? note.agentPath
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(note)
         }
 
         var fileBlocks: [String] = []
@@ -169,7 +197,7 @@ public enum PacketBuilder {
                 return lhs.noteID.rawValue < rhs.noteID.rawValue
             }
             noteIDs.append(contentsOf: group.map(\.noteID))
-            fileBlocks.append(fileBlock(path: path, notes: group))
+            fileBlocks.append(fileBlock(path: group.first?.agentPath ?? path, notes: group))
         }
 
         var text = fileBlocks.joined(separator: "\n\n\n")
@@ -216,6 +244,7 @@ public enum PacketBuilder {
         } else if let pdf = notes.lazy.compactMap({ note -> PDFAnchor? in if case .pdf(let pdf) = note.anchor { pdf } else { nil } }).first {
             header.append("Pages: \(pdf.pageCount)")
         }
+        if let refinement = notes.lazy.compactMap(\.refinement).first { header.append(refinement.line) }
         let blocks = notes.map { note -> String in
             let block = noteBlock(note)
             let own = note.resourceDetails.filter { !shared.contains($0) }
@@ -310,6 +339,9 @@ public enum PacketBuilder {
             switch turn {
             case .agent(let name, let asked, let body):
                 lines.append("Agent (\(headerValue(name))) \(asked ? "asked" : "replied"): \"\(escape(body))\"")
+            case .choices(let choices):
+                lines.append("Choices: \(choices.multi ? "multiple" : "single")")
+                lines.append(contentsOf: choices.options.enumerated().map { "Choice \($0.offset + 1): \"\(escape($0.element))\"" })
             case .user(let body):
                 lines.append("User replied: \"\(escape(body))\"")
             case .moved(let move, let author):

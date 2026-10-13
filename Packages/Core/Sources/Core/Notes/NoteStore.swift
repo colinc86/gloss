@@ -460,7 +460,7 @@ public struct NoteStore: Sendable {
     /// A question an agent asks the user about a place in a file (`ask_user`): a sent note by the agent, with no
     /// comment, whose thread opens with the question. It waits on the user, so it shows under Attention and counts on
     /// the Dock; the user's answer is a follow-up that goes back only when they send it.
-    public func askUser(documentID: DocumentID, anchor: Anchor, question: String, author: String, color: NoteColor = .orange, at date: Date = Date()) async throws -> Note {
+    public func askUser(documentID: DocumentID, anchor: Anchor, question: String, author: String, color: NoteColor = .orange, choices: QuestionChoices? = nil, at date: Date = Date()) async throws -> Note {
         let date = Self.rounded(date)
         return try await queue.write { db in
             let iteration = try Self.openIteration(documentID, at: date, db)
@@ -475,7 +475,7 @@ public struct NoteStore: Sendable {
                 resolveOutcome: nil, resolveMessage: nil, author: author, waitingOnUser: true, iteration: iteration
             )
             try record.insert(db)
-            try Self.insertMessage(note: record.id, author: .agent(author), kind: .question, body: question, at: date, sent: true, db)
+            try Self.insertMessage(note: record.id, author: .agent(author), kind: .question, body: question, choices: choices, at: date, sent: true, db)
             return try Note(record: try Self.refetch(record, db), db)
         }
     }
@@ -563,6 +563,13 @@ public struct NoteStore: Sendable {
     /// Moves a document's notes onto another row (the same thing under a new path) into that row's current iteration:
     /// the old row's iterations go with it, and notes kept in an iteration the new row doesn't have would be lost.
     static func moveNotes(from oldID: String, to target: DocumentRecord, _ db: Database) throws {
+        if try refinement(DocumentID(rawValue: oldID), db) != nil {
+            if let destination = try refinement(DocumentID(rawValue: target.id), db), destination.emitsDirective || (destination.status == .completed && !destination.dismissed) {
+                throw FileSystemError.io("End or dismiss Refinement at the destination before combining these documents.")
+            }
+            try db.execute(sql: "DELETE FROM refinement WHERE document_id = ?", arguments: [target.id])
+            try db.execute(sql: "UPDATE refinement SET document_id = ? WHERE document_id = ?", arguments: [target.id, oldID])
+        }
         guard try NoteRecord.filter(Column("document_id") == oldID).fetchCount(db) > 0 else { return }
         _ = try openIteration(DocumentID(rawValue: target.id), at: rounded(Date()), db)
         try db.execute(sql: "UPDATE note SET document_id = ?, iteration = ? WHERE document_id = ?",
@@ -996,11 +1003,12 @@ public struct NoteStore: Sendable {
     /// resolves the note. Refused for drafts (the user
     /// hasn't sent them) and resolved notes (the user reopens those with a follow-up). A follow-up the user hasn't
     /// sent yet stays as it is. `relocation` moves the note in the same write.
-    public func agentReply(_ id: NoteID, body: String, asks: Bool, agent: String?, relocation: NoteRelocation? = nil, at date: Date = Date()) async throws {
-        try await agentReply(id, body: body, asks: asks, agent: agent, relocation: relocation, at: date, onlySent: true)
+    public func agentReply(_ id: NoteID, body: String, asks: Bool, agent: String?, relocation: NoteRelocation? = nil, choices: QuestionChoices? = nil, at date: Date = Date()) async throws {
+        guard asks || choices == nil else { throw RefinementError.invalidChoices }
+        try await agentReply(id, body: body, asks: asks, agent: agent, relocation: relocation, choices: choices, at: date, onlySent: true)
     }
 
-    private func agentReply(_ id: NoteID, body: String, asks: Bool, agent: String?, relocation: NoteRelocation?, at date: Date, onlySent: Bool) async throws {
+    private func agentReply(_ id: NoteID, body: String, asks: Bool, agent: String?, relocation: NoteRelocation?, choices: QuestionChoices? = nil, at date: Date, onlySent: Bool) async throws {
         let date = Self.rounded(date)
         try await queue.write { db in
             guard var record = try NoteRecord.fetchOne(db, key: id.rawValue) else { throw NoteStoreError.noteNotFound(id) }
@@ -1016,7 +1024,7 @@ public struct NoteStore: Sendable {
             try record.update(db)
             let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty || asks {
-                try Self.insertMessage(note: record.id, author: author, kind: asks ? .question : .reply, body: text, at: date, sent: true, db)
+                try Self.insertMessage(note: record.id, author: author, kind: asks ? .question : .reply, body: text, choices: choices, at: date, sent: true, db)
             }
         }
     }
@@ -1130,26 +1138,31 @@ public struct NoteStore: Sendable {
     public func addFollowUp(_ noteID: NoteID, body: String, at date: Date = Date()) async throws -> NoteMessage {
         let date = Self.rounded(date)
         return try await queue.write { db in
-            guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
-            if record.state == NoteState.resolved.rawValue {
-                // A draft resolved by hand was never an agent's: reopening it must not hand it to one.
-                let open = try Self.wasShared(record, db) ? NoteState.sent : .draft
-                if record.previousState == NoteState.orphaned.rawValue {
-                    record.state = NoteState.orphaned.rawValue
-                    record.previousState = open.rawValue
-                } else {
-                    record.state = open.rawValue
-                    record.previousState = nil
-                }
-                record.resolveOutcome = nil
-                record.resolveMessage = nil
-                record.resolveAgent = nil
-            }
-            record.updatedAt = date
-            try record.update(db)
-            let message = try Self.insertMessage(note: record.id, author: .user, kind: .comment, body: body, at: date, sent: false, db)
+            let message = try Self.insertFollowUp(noteID, body: body, at: date, db)
             return NoteMessage(record: message)
         }
+    }
+
+    static func insertFollowUp(_ noteID: NoteID, body: String, at date: Date, _ db: Database) throws -> NoteMessageRecord {
+        guard var record = try NoteRecord.fetchOne(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+        if record.state == NoteState.resolved.rawValue {
+            // A draft resolved by hand was never an agent's: reopening it must not hand it to one.
+            let open = try wasShared(record, db) ? NoteState.sent : .draft
+            if record.previousState == NoteState.orphaned.rawValue {
+                record.state = NoteState.orphaned.rawValue
+                record.previousState = open.rawValue
+            } else {
+                record.state = open.rawValue
+                record.previousState = nil
+            }
+            record.resolveOutcome = nil
+            record.resolveMessage = nil
+            record.resolveAgent = nil
+        }
+        record.updatedAt = date
+        try record.update(db)
+        let message = try insertMessage(note: record.id, author: .user, kind: .comment, body: body, at: date, sent: false, db)
+        return message
     }
 
     /// Changes a follow-up the user hasn't sent.
@@ -1158,6 +1171,10 @@ public struct NoteStore: Sendable {
         try await queue.write { db in
             var message = try Self.unsentFollowUp(id, db)
             message.body = body
+            if message.selectedOptionsJson != nil {
+                message.selectedOptionsJson = nil
+                message.customAnswer = true
+            }
             try message.update(db)
             try db.execute(sql: "UPDATE note SET updated_at = ? WHERE id = ?", arguments: [date, message.noteId])
         }
@@ -1410,7 +1427,7 @@ public struct NoteStore: Sendable {
     }
 
     /// Bridges a GRDB observation to a plain stream so callers need no GRDB import.
-    private static func stream<T: Sendable>(_ observation: ValueObservation<ValueReducers.Fetch<T>>, in queue: DatabaseQueue) -> AsyncThrowingStream<T, any Error> {
+    static func stream<T: Sendable>(_ observation: ValueObservation<ValueReducers.Fetch<T>>, in queue: DatabaseQueue) -> AsyncThrowingStream<T, any Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -1463,7 +1480,7 @@ public struct NoteStore: Sendable {
     /// follow-up included) and loses any earlier acceptance, since it is new work.
     public func recordSend(
         transport: String, targetJSON: String, packetText: String, noteIDs: [NoteID],
-        outcome: SendOutcome, carried: [MessageID: String]? = nil, review: Bool = false, at date: Date = Date()
+        outcome: SendOutcome, carried: [MessageID: String]? = nil, carriedQuestions: Set<MessageID>? = nil, review: Bool = false, at date: Date = Date()
     ) async throws -> SendID {
         try await queue.write { db in
             let sendID = SendID.new()
@@ -1498,14 +1515,26 @@ public struct NoteStore: Sendable {
                         record.resolveMessage = nil
                         record.resolveAgent = nil
                     }
+                    // Only a delivered request activates its own generation; exiting during delivery stays ended.
+                    try db.execute(sql: "UPDATE refinement SET status = 'active', error = NULL WHERE request_note_id = ? AND status = 'starting'", arguments: [record.id])
+                    if stampedAny, record.waitingOnUser {
+                        try db.execute(sql: """
+                            UPDATE refinement SET awaiting_next_round = 1, has_answers = 1
+                            WHERE document_id = ? AND status = 'active'
+                            AND ? = (SELECT current_iteration FROM document WHERE id = ?)
+                            """, arguments: [record.documentId, record.iteration, record.documentId])
+                    }
+                    let messages = try Self.messages(noteID, db)
+                    let questions = carriedQuestions ?? Set(messages.filter { $0.kind == .question }.map(\.id))
+                    let waiting = messages.last(where: { $0.kind == .question }).map { !questions.contains($0.id) } ?? false
                     let reviewBefore = (record.reviewRequested, record.acceptedAt)
                     if record.state != NoteState.resolved.rawValue {
                         record.reviewRequested = record.reviewRequested || review
                         record.acceptedAt = nil
                     }
-                    if record.state != current.rawValue || record.waitingOnUser || stampedAny
+                    if record.state != current.rawValue || record.waitingOnUser != waiting || stampedAny
                         || (record.reviewRequested, record.acceptedAt) != reviewBefore {
-                        record.waitingOnUser = false
+                        record.waitingOnUser = waiting
                         record.updatedAt = date
                         try record.update(db)
                     }
@@ -1655,9 +1684,20 @@ public struct NoteStore: Sendable {
     }
 
     @discardableResult
-    static func insertMessage(note noteID: String, author: MessageAuthor, kind: MessageKind, body: String, meta: String? = nil, at date: Date, sent: Bool, _ db: Database) throws -> NoteMessageRecord {
-        let record = NoteMessageRecord(id: MessageID.new().rawValue, noteId: noteID, author: author.stored, kind: kind.rawValue, body: body,
+    static func insertMessage(note noteID: String, author: MessageAuthor, kind: MessageKind, body: String, meta: String? = nil, choices: QuestionChoices? = nil, at date: Date, sent: Bool, _ db: Database) throws -> NoteMessageRecord {
+        var record = NoteMessageRecord(id: MessageID.new().rawValue, noteId: noteID, author: author.stored, kind: kind.rawValue, body: body,
                                        metaJson: meta, createdAt: date, sentAt: sent ? date : nil)
+        record.choicesJson = try choices.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
+        if kind == .question {
+            // Advance once at the first question after a delivered answer batch, in this same write.
+            try db.execute(sql: """
+                UPDATE refinement SET round = round + awaiting_next_round, awaiting_next_round = 0
+                WHERE status IN ('starting', 'active')
+                    AND document_id = (SELECT document_id FROM note WHERE id = ?)
+                    AND (SELECT iteration FROM note WHERE id = ?) =
+                        (SELECT current_iteration FROM document WHERE id = refinement.document_id)
+                """, arguments: [noteID, noteID])
+        }
         try record.insert(db)
         return record
     }
@@ -1812,7 +1852,11 @@ extension NoteMessage {
         self.init(
             id: MessageID(rawValue: record.id), noteID: NoteID(rawValue: record.noteId), author: MessageAuthor(stored: record.author),
             kind: MessageKind(rawValue: record.kind) ?? .comment, body: record.body, createdAt: record.createdAt, sentAt: record.sentAt,
-            move: record.metaJson.flatMap { try? JSONDecoder().decode(NoteMove.self, from: Data($0.utf8)) }
+            move: record.metaJson.flatMap { try? JSONDecoder().decode(NoteMove.self, from: Data($0.utf8)) },
+            choices: record.choicesJson.flatMap { try? JSONDecoder().decode(QuestionChoices.self, from: Data($0.utf8)) },
+            inReplyTo: record.inReplyTo.map(MessageID.init(rawValue:)),
+            selectedOptions: record.selectedOptionsJson.flatMap { try? JSONDecoder().decode([Int].self, from: Data($0.utf8)) },
+            customAnswer: record.customAnswer
         )
     }
 }

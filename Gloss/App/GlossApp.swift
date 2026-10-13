@@ -262,6 +262,7 @@ struct AppCommands: Commands {
         Button { Task { await model.sendAllDrafts(scope: .all) } } label: { Label("Send Shown Drafts in This Location (\(model.sendSelection(scope: .all).notes.count))", systemImage: "paperplane.fill") }
             .keyboardShortcut(.return, modifiers: [.command, .shift])
             .disabled(!model.send.isTargetAvailable)
+        RefinementCommands(model: model)
         Button { model.presentPacketPreview() } label: { Label("Preview Packet…", systemImage: "doc.viewfinder") }
             .keyboardShortcut(.return, modifiers: [.command, .option])
             // It hangs from Send, which a selection of several notes trades for its own bar.

@@ -22,6 +22,7 @@ final class AppModel {
     let send: SendCoordinator
     let settings: SettingsStore
     let iterations: IterationsModel
+    let refinement: RefinementModel
     let review: ReviewModel
     let hosts: HostsModel
     let hooks = HooksModel()
@@ -271,6 +272,9 @@ final class AppModel {
         review = ReviewModel(noteStore: store)
         hosts = HostsModel(noteStore: store)
         send = SendCoordinator(noteStore: store, transports: [ClipboardTransport()], stagers: [.local: LocalAttachmentStager()])
+        refinement = RefinementModel(store: store, sender: send, panel: notesPanel)
+        refinement.prepareDocument = { [weak iterations] id in await iterations?.prepareForNote(id) }
+        refinement.startObserving()
         herdrTransport = HerdrTransport(registry: connectionRegistry)
         fileSystems[.local] = LocalFileSystem()
         send.fileSystemProvider = { [weak self] hostID in self?.fileSystems[hostID] }
@@ -1618,6 +1622,20 @@ final class AppModel {
     func ask(_ asked: AgentQuestion) async throws -> NoteID {
         var question = asked
         let hostID = try await hostID(named: question.host)
+        if let url = URL(string: question.path), url.scheme == "http" || url.scheme == "https" {
+            guard let document = try await noteStore.document(hostID: hostID, path: url.absoluteString), document.kind == .web else {
+                throw DeliveryError.failed("Open this live page in Gloss first, or ask on its existing note with reply_to_note.")
+            }
+            var anchor = Anchor.wholeFile
+            if let content = session(hostID: hostID, path: document.path)?.textController?.text, let quoted = question.text {
+                let index = LineIndex(content)
+                if let range = Self.occurrence(of: quoted, in: content, index: index, nearLine: question.line) {
+                    anchor = .text(ReAnchorer.make(from: range, in: content, index: index, hash: Data(content.utf8).sha256Hex))
+                }
+            }
+            let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent, choices: question.choices)
+            return note.id
+        }
         guard await ensureConnected(hostID), let fileSystem = fileSystems[hostID] else { throw DeliveryError.failed("couldn't connect to \(question.host)") }
         question.path = expandingHome(question.path, on: hostID)
         // `path:line`, as agents print a location and open_in_viewer reads it.
@@ -1646,9 +1664,9 @@ final class AppModel {
         }
         let document = try await noteStore.upsertDocument(hostID: hostID, path: question.path, kind: DocumentKindDetector.kind(forPath: question.path), fingerprint: attributes.fingerprint)
         await iterations.prepareForNote(document.id)
-        let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent)
+        let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent, choices: question.choices)
         await iterations.recordStartingCommit(document.id)
-        if activeSession?.noteEditor == nil {
+        if activeSession?.noteEditor == nil, !(mainWindow?.firstResponder is NSTextView) {
             await openRootIfNeeded(hostID: hostID, containing: question.path)
             showNotesPanel = true
             // Shown, not selected: a selection would offer Add Note over the agent's question.
@@ -2128,6 +2146,10 @@ final class AppModel {
             guard let self else { throw DeliveryError.failed("Gloss is closing") }
             return try await self.ask(question)
         }
+        dependencies.validateRefinementFinish = { [weak self] id in
+            guard let self else { throw DeliveryError.failed("Gloss is closing") }
+            try await self.refinement.validateFinish(id)
+        }
         dependencies.relocate = { [weak self] id, target in
             guard let self else { throw DeliveryError.failed("Gloss is closing") }
             return try await self.relocation(of: id, to: target)
@@ -2476,6 +2498,7 @@ final class AppModel {
         workspaceSave?.cancel()
         // Quitting while a restore still waits (a host's key agent) keeps the saved workspace whole.
         if !isRestoringWorkspace { _ = await withDeadline(.seconds(1)) { await self.saveWorkspace() } }
+        refinement.stop()
         notesPanel.stop()
         iterations.stop()
         explorer.stopWatching()
@@ -2497,6 +2520,7 @@ final class AppModel {
         hosts.killMasters()
         guard !isShutDown else { return }
         isShutDown = true
+        refinement.stop()
         notesPanel.stop()
         iterations.stop()
         explorer.stopWatching()

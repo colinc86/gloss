@@ -5,7 +5,7 @@ import GRDB
 public enum Schema {
     public static let tableNames = [
         "host", "root", "document", "note", "attachment", "send", "send_note", "staged_file", "target", "setting", "web_page", "note_message",
-        "iteration", "snapshot",
+        "iteration", "snapshot", "refinement",
     ]
 
     public static var migrator: DatabaseMigrator {
@@ -331,6 +331,31 @@ public enum Schema {
                     UPDATE iteration SET completion_generation = completion_generation + 1, completed_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
                         WHERE document_id = NEW.document_id AND number = NEW.iteration;
                 END;
+                """)
+        }
+        migrator.registerMigration("v16-refinement") { db in
+            try db.execute(sql: """
+                ALTER TABLE note_message ADD COLUMN choices_json TEXT;
+                ALTER TABLE note_message ADD COLUMN in_reply_to TEXT REFERENCES note_message(id) ON DELETE SET NULL;
+                ALTER TABLE note_message ADD COLUMN selected_options_json TEXT;
+                ALTER TABLE note_message ADD COLUMN custom_answer INTEGER NOT NULL DEFAULT 0;
+                CREATE UNIQUE INDEX choice_answer_draft ON note_message(in_reply_to)
+                    WHERE sent_at IS NULL AND custom_answer = 0 AND selected_options_json IS NOT NULL;
+                CREATE TABLE refinement (
+                    document_id TEXT PRIMARY KEY NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+                    generation TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('starting', 'active', 'completed', 'ended')),
+                    round INTEGER NOT NULL DEFAULT 1,
+                    request_note_id TEXT REFERENCES note(id) ON DELETE SET NULL,
+                    target_json TEXT NOT NULL,
+                    started_at DATETIME NOT NULL,
+                    completed_at DATETIME,
+                    summary TEXT,
+                    error TEXT,
+                    awaiting_next_round INTEGER NOT NULL DEFAULT 0,
+                    has_answers INTEGER NOT NULL DEFAULT 0,
+                    dismissed INTEGER NOT NULL DEFAULT 0
+                );
                 """)
         }
         return migrator

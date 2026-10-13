@@ -371,6 +371,8 @@ struct Notice<Actions: View>: View {
     let title: String
     let detail: String
     var pulses = false
+    var expandsDetail = false
+    var wrapsActions = false
     @ViewBuilder var actions: Actions
 
     private var tint: Color {
@@ -424,14 +426,20 @@ struct Notice<Actions: View>: View {
     private func text(lines: Int) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title).font(.callout.weight(.semibold))
-            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(lines)
+            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(expandsDetail ? nil : lines)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var actionRow: some View {
-        HStack(spacing: DS.Space.s) { actions }
-            .controlSize(.small)
+        Group {
+            if wrapsActions {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: DS.Space.s) { actions }
+                    VStack(alignment: .trailing, spacing: DS.Space.s) { actions }
+                }
+            } else { HStack(spacing: DS.Space.s) { actions } }
+        }.controlSize(.small)
     }
 }
 

@@ -16,6 +16,7 @@ Source: <markdown|text|code|image|pdf|file|web|pull_request|jira|confluence>
 [Path: <repo path> at <sha>]        # pull_request file; also Field: <name>, Comment: <url>, Version: <n> as they apply
 [Original size: <W>x<H>]            # image only
 [Pages: <N>]                        # pdf only
+[Refinement: <refinement_id>. Host: "<escaped host>". <standing directive>] # once on each active document block
 
 Note: <note id>                     # first line of every note: the id resolve_note takes, and where a note begins
 <anchor line>
@@ -26,6 +27,9 @@ Note: <note id>                     # first line of every note: the id resolve_n
 User comment: "<escaped comment>"   # left out only for an agent's own question (ask_user), which has no comment
 [Earlier: <N> message(s) (get_note returns the whole thread)]
 [Agent (<name>) asked: "<escaped>" | Agent (<name>) replied: "<escaped>"]
+[Choices: single | multiple]       # immediately after its question, when metadata exists
+[Choice 1: "<escaped label>"
+Choice 2: "<escaped label>" ...]
 [User replied: "<escaped>"]...
 [Moved: from <place> to <place>, by <who>. It was: "<escaped old text>"]   # get_note only
 
@@ -150,3 +154,19 @@ MCP tool `resolve_note(id, outcome?: "done"|"skipped"|"needs_input", message?, l
 `location`, on either: `{line, end_line, text}` (the exact new text; looked for in those lines, then nearest them within 50), `{removed: true, line}` (the note becomes a point at the start of `line`, the line that now sits where the text was), or `{selector}` for an element note. Gloss builds the anchor from the file as it is now; columns and context never come from the agent. A location that doesn't fit is an `isError` answer and nothing is written.
 
 The closing line names both tools: `resolve_note` when the agent has acted, `reply_to_note` to answer or ask without resolving. Each note's id is the first line of its block (decided 2026-10-06; it used to be a list in the Notes line, matched to notes by position), so an agent resolves exactly the note it just read. The packet ends with the Notes line: the count and how to resolve. If a transport cannot reach MCP (clipboard to a bare mosh session), it is still emitted; the user resolves by hand.
+
+## Refinement and choices (2026-10-12)
+
+An active document's file block adds exactly one line after all shared file metadata and before its first Note:
+
+```text
+Refinement: rf_example. Host: "local". Read this document for ambiguous or open-ended content. Apply the user's sent answers and make the changes, then keep refining by asking questions with ask_user or reply_to_note (asks: true). Wait for the user to send answers. When you have no more questions and your changes are complete, call finish_refinement with this document's host, path, refinement_id, and a short summary.
+```
+
+The ID is correlation metadata; the escaped quoted host and enclosing File identify its document. Several documents can refine independently. Group file blocks by Document ID when available, including when distinct hosts have the same path. Every send, preview, copy and MCP full packet uses the builder. Preview/copy/read do not change mode, rounds or delivery. Ending removes undelivered directives; a packet already handed over cannot be retracted. Ordinary packets retain their exact existing grammar/bytes and Review's closing sentence still applies.
+
+Options belong to their question message. After `Agent (<name>) asked: "..."`, emit `Choices: single` or `Choices: multiple`, followed by numbered `Choice N: "<escaped label>"` lines. Labels use the same quoted escaping as bodies and can never forge protocol lines. Keep the option lines with an unanswered question retained ahead of a status reply and with each historical question in the full sent thread. Option lines are metadata, not additional messages in the Earlier count. Answers remain ordinary `User replied:` text; unsent answers never appear in `get_note`.
+
+`ask_user` and `reply_to_note` with `asks: true` accept optional `choices` (2–12 distinct trimmed nonblank strings, max 200 characters each) and `multi` (boolean, defaults false; true requires choices). Plain replies refuse those fields. Freeform is always available, with no mandatory Other option. Selection stages one editable user answer for that question; it does not send. A direct edit detaches the generated draft as a custom answer, protected from later choice clicks.
+
+Entry sends only an ordinary visible whole-file request asking the agent to read the entire saved document. Refinement persists per document until the user ends it or the agent calls `finish_refinement(path, host?, refinement_id, summary)`. After applying sent answers and making changes, resolve the question/work notes acted on. Only finish when no current-iteration questions or unsent answers remain; historical questions and results awaiting review do not block. Summary is nonblank, at most 500 characters. Finish disables the directive and stores summary/time without resolving notes, accepting review or changing iterations. Same completed generation is idempotent; stale/ended generations refuse. Round advances once on the first question after a successfully delivered answer batch, never on preview, failure or unrelated sends.

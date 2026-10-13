@@ -124,6 +124,10 @@ public struct NoteMessageRecord: SnakeCaseRecord, Identifiable {
     public var createdAt: Date
     /// Nil for a user's follow-up until it is sent; set on write for everything else.
     public var sentAt: Date?
+    public var choicesJson: String? = nil
+    public var inReplyTo: String? = nil
+    public var selectedOptionsJson: String? = nil
+    public var customAnswer: Bool = false
 }
 
 public struct AttachmentRecord: SnakeCaseRecord, Identifiable {
