@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import OSLog
 import Remote
+import Viewers
 
 /// Iterations (issue #18): numbered rounds of notes on one document, from 0, backed by Gloss's own snapshots. Starts
 /// them (asking about open notes as Settings › Notes says), shows an earlier one read-only from its snapshot, tints
@@ -53,6 +54,10 @@ final class IterationsModel {
 
     /// Ends every observation and closes the snapshots on screen, when the app quits.
     func stop() {
+        resolutionObservation?.cancel()
+        for task in completionTasks.values { task.cancel() }
+        pendingCompletions = [:]
+        isStopped = true
         for view in past.values { view.session?.close() }
         past = [:]
         viewGeneration += 1
@@ -61,14 +66,15 @@ final class IterationsModel {
     /// New Iteration: asks about open notes when there are any and Settings says to ask, else starts at once. An
     /// iteration with no notes yet has nothing to end.
     func requestNewIteration(for document: Core.Document) async {
-        let notes = (try? await noteStore.notes(for: document.id)) ?? []
+        guard let fresh = try? await noteStore.document(document.id) else { return }
+        let notes = (try? await noteStore.notes(for: fresh.id, iteration: fresh.currentIteration)) ?? []
         guard !notes.isEmpty else { return }
         let open = notes.filter { $0.state != .resolved }.count
         switch (open, settings.iterationOpenNotes) {
-        case (0, _): await start(document, openNotes: .carry)
-        case (_, .ask): prompt = OpenNotesPrompt(document: document, openCount: open)
-        case (_, .carry): await start(document, openNotes: .carry)
-        case (_, .leave): await start(document, openNotes: .leave)
+        case (0, _): await start(fresh, openNotes: .carry, expectedIteration: fresh.currentIteration)
+        case (_, .ask): prompt = OpenNotesPrompt(document: fresh, openCount: open)
+        case (_, .carry): await start(fresh, openNotes: .carry, expectedIteration: fresh.currentIteration)
+        case (_, .leave): await start(fresh, openNotes: .leave, expectedIteration: fresh.currentIteration)
         }
     }
 
@@ -76,16 +82,21 @@ final class IterationsModel {
     func answer(_ prompt: OpenNotesPrompt, _ choice: OpenNotesChoice, remember: Bool) async {
         self.prompt = nil
         if remember { settings.iterationOpenNotes = choice == .carry ? .carry : .leave }
-        await start(prompt.document, openNotes: choice)
+        await start(prompt.document, openNotes: choice, expectedIteration: prompt.document.currentIteration)
     }
 
     /// Ends the current iteration on the content as it is now (and the commit it is at), and opens the next.
     /// `byHand`: the user asked for it, so a failure is said, not only logged (one started on its own stays quiet).
-    func start(_ document: Core.Document, openNotes: OpenNotesChoice, byHand: Bool = true) async {
-        let snapshot = await currentContent(of: document)
-        let commit = await gitCommit(of: document)
+    func start(_ document: Core.Document, openNotes: OpenNotesChoice, byHand: Bool = true, expectedIteration: Int? = nil) async {
+        guard let fresh = try? await noteStore.document(document.id) else { return }
+        let expected = expectedIteration ?? fresh.currentIteration
+        guard fresh.currentIteration == expected else { return }
+        let content = await agentContent(of: fresh)
+        let snapshot = content == nil ? nil : snapshotContent(of: fresh, agentContent: content)
+        let commit = await gitCommit(of: fresh)
         do {
-            try await noteStore.startIteration(documentID: document.id, openNotes: openNotes, snapshot: snapshot, gitCommit: commit)
+            try await noteStore.startIteration(documentID: document.id, openNotes: openNotes, snapshot: document.kind == .web ? nil : snapshot,
+                                               gitCommit: commit, startHash: content?.sha256Hex, expectedIteration: expected)
         } catch {
             Log.notes.error("starting an iteration failed: \(error, privacy: .public)")
             if byHand { onFailure("Couldn't start a new iteration: \(error.userMessage)") }
@@ -99,12 +110,82 @@ final class IterationsModel {
         }
     }
 
-    /// The first note added after every note of the iteration was resolved starts the next one, when Settings says
-    /// so. Resolving never does: the panel stays as it is while replies are read.
-    func startIfAllResolved(_ documentID: DocumentID) async {
-        guard settings.iteratesAfterResolved, let document = try? await noteStore.document(documentID),
-              let notes = try? await noteStore.notes(for: documentID), Self.allResolved(notes) else { return }
-        await start(document, openNotes: .leave, byHand: false)
+    @ObservationIgnored private var resolutionObservation: Task<Void, Never>?
+    @ObservationIgnored private var completionTasks: [DocumentID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var pendingCompletions: [DocumentID: NoteStore.IterationCompletion] = [:]
+    @ObservationIgnored private var isStopped = false
+
+    /// Dispatch without awaiting: a slow or failed document does not hold up another document's completion.
+    func observeResolutions() {
+        guard resolutionObservation == nil, !isStopped else { return }
+        let stream = noteStore.observeIterationCompletions()
+        resolutionObservation = Task { [weak self] in
+            do {
+                for try await pending in stream {
+                    guard !Task.isCancelled else { return }
+                    self?.scheduleCompletions(pending)
+                }
+            } catch { Log.notes.error("observing iteration completion failed: \(error, privacy: .public)") }
+        }
+    }
+
+    /// Capture bytes only before a round's first note, when no trustworthy starting hash is already stored.
+    func prepareForNote(_ documentID: DocumentID) async {
+        guard !isStopped, (try? await noteStore.needsIterationStart(documentID: documentID)) == true,
+              let document = try? await noteStore.document(documentID), let content = await agentContent(of: document) else { return }
+        do { try await noteStore.recordIterationStart(documentID: documentID, content: content) }
+        catch { Log.notes.error("recording iteration start failed: \(error, privacy: .public)") }
+    }
+
+    func createNote(documentID: DocumentID, anchor: Anchor, body: String, color: NoteColor) async throws -> Note {
+        await prepareForNote(documentID)
+        return try await noteStore.createNote(documentID: documentID, anchor: anchor, body: body, color: color)
+    }
+
+    /// Tests and explicit callers can await the currently pending documents; observation itself never waits.
+    func processCompletions() async {
+        guard !Task.isCancelled, !isStopped else { return }
+        do { scheduleCompletions(try await noteStore.pendingIterationCompletions()) }
+        catch { Log.notes.error("reading iteration completions failed: \(error, privacy: .public)") }
+        for task in Array(completionTasks.values) { await task.value }
+    }
+
+    private func scheduleCompletions(_ pending: [NoteStore.IterationCompletion]) {
+        guard !isStopped else { return }
+        for completion in pending {
+            let id = completion.documentID
+            pendingCompletions[id] = completion
+            guard completionTasks[id] == nil else { continue }
+            completionTasks[id] = Task { [weak self] in
+                guard let self else { return }
+                defer { completionTasks[id] = nil }
+                while !Task.isCancelled, let next = pendingCompletions.removeValue(forKey: id) {
+                    do {
+                        if let document = try await noteStore.document(id) {
+                            let content = settings.iteratesAfterResolved ? await agentContent(of: document) : nil
+                            let snapshot = snapshotContent(of: document, agentContent: content)
+                            let commit = settings.iteratesAfterResolved ? await gitCommit(of: document) : nil
+                            guard !Task.isCancelled else { return }
+                            let started = try await noteStore.finishIteration(next, content: content, snapshot: snapshot,
+                                                                             gitCommit: commit, enabled: settings.iteratesAfterResolved)
+                            if started, settings.snapshotsKept > 0 { try? await noteStore.pruneSnapshots(keepingLast: settings.snapshotsKept) }
+                        } else { try await noteStore.handleIterationCompletion(next) }
+                        // Recheck for a newer generation arriving during content reads or the final worker pass.
+                        if let newer = try await noteStore.pendingIterationCompletions().first(where: { $0.documentID == id }) {
+                            pendingCompletions[id] = newer
+                        }
+                    } catch {
+                        Log.notes.error("finishing an iteration failed: \(error, privacy: .public)")
+                        try? await noteStore.handleIterationCompletion(next)
+                        // Drop only this failed generation; a newer completion still gets its own attempt.
+                        if let queued = pendingCompletions[id], queued.generation <= next.generation { pendingCompletions[id] = nil }
+                        if let newer = try? await noteStore.pendingIterationCompletions().first(where: { $0.documentID == id && $0.generation > next.generation }) {
+                            pendingCompletions[id] = newer
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// The current iteration remembers the commit its file was at when it began (its first note, for iteration 0),
@@ -115,10 +196,6 @@ final class IterationsModel {
               let current = try? await noteStore.iterations(for: documentID).last, current.number == document.currentIteration,
               current.gitCommit == nil, let commit = await gitCommit(of: document) else { return }
         try? await noteStore.setIterationCommit(documentID: documentID, number: current.number, commit: commit)
-    }
-
-    nonisolated static func allResolved(_ notes: [Note]) -> Bool {
-        !notes.isEmpty && notes.allSatisfy { $0.state == .resolved }
     }
 
     /// When Settings says so, a local file whose git commit changed since the iteration began starts the next one
@@ -135,11 +212,20 @@ final class IterationsModel {
         await requestNewIteration(for: document)
     }
 
-    /// The bytes the iteration's notes were taken on: the file as it is now. A live page has none.
-    private func currentContent(of document: Core.Document) async -> Data? {
+    /// Eligibility hashes only the agent's file bytes, or the live page's current DOM. Never use unsaved edits.
+    private func agentContent(of document: Core.Document) async -> Data? {
+        if document.kind == .web { return liveSession(document.id)?.html.map { Data($0.source.text.utf8) } }
+        guard let fileSystem = fileSystem(document.hostID) else { return nil }
+        return try? await fileSystem.read(document.path)
+    }
+
+    /// The historical snapshot can still show the user's editor content without deciding whether a round changed.
+    private func snapshotContent(of document: Core.Document, agentContent: Data?) -> Data? {
         guard document.kind != .web else { return nil }
-        if let fileSystem = fileSystem(document.hostID), let data = try? await fileSystem.read(document.path) { return data }
-        return liveSession(document.id)?.baseText.map { Data($0.utf8) }
+        if let session = liveSession(document.id), session.isDirty, let text = session.textController?.text {
+            return session.textEncoding.encode(text) ?? Data(text.utf8)
+        }
+        return agentContent
     }
 
     private func gitCommit(of document: Core.Document) async -> String? {
@@ -252,6 +338,7 @@ final class IterationsModel {
         }
         let label = (try? await noteStore.iterations(for: document.id).first { $0.number == note.iteration })?.label ?? "Iteration \(note.iteration)"
         do {
+            await prepareForNote(document.id)
             _ = try await noteStore.bringForward(note.id, anchor: anchor, found: found, origin: "Brought forward from \(label)")
         } catch {
             Log.notes.error("bring forward failed: \(error, privacy: .public)")

@@ -108,8 +108,8 @@ final class SettingsStore {
     static let trashRetentionChoices = [7, 30, 90, 0]
     /// What starting an iteration does with notes still open (issue #18): ask each time, or the remembered choice.
     var iterationOpenNotes = IterationOpenNotes.ask { didSet { persist("iterations.openNotes", iterationOpenNotes.rawValue) } }
-    /// Starts an iteration on the first note added after every note of the iteration was resolved.
-    var iteratesAfterResolved = false { didSet { persist("iterations.afterResolved", iteratesAfterResolved ? "1" : "0") } }
+    /// Starts an iteration when the last open note resolves and the document changed since the round began.
+    var iteratesAfterResolved = true { didSet { persist("iterations.afterResolved", iteratesAfterResolved ? "1" : "0") } }
     /// Sends ask to review what the agent did: resolved notes wait for the user to accept them (Review When Done).
     var reviewsResults = false { didSet { persist("notes.review", reviewsResults ? "1" : "0") } }
     /// Starts an iteration when a local file's git commit changed, checked when it opens or reloads.

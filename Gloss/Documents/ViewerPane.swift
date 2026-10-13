@@ -27,14 +27,8 @@ struct ViewerPane: View {
                     .transition((AnyTransition.move(edge: .top).combined(with: .opacity)).calmed)
             }
             content
-                // Review floats over the bottom of the document, as the peek and the send toast do; the note it
-                // shows is scrolled to the middle, clear of it.
-                .overlay(alignment: .bottom) {
-                    if model.review.isActive, model.shownSession === session {
-                        ReviewBar()
-                            .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
-                    }
-                }
+                // A native sibling above the paths keeps the document and its glass card in the right order.
+                .background(ReviewOverlay(model: model, session: session))
             Divider()
             StatusBar(session: session)
         }

@@ -784,7 +784,9 @@ final class AppModel {
             self?.notesPanel.makeListed(note)
             Task { await self?.iterations.recordStartingCommit(note.documentID) }
         }
-        session.beforeCreatingNote = { [weak self] documentID in await self?.iterations.startIfAllResolved(documentID) }
+        session.beforeCreatingNote = { [weak self] documentID in
+            await self?.iterations.prepareForNote(documentID)
+        }
         session.onReloaded = { [weak self, weak session] in
             guard let self, let session else { return }
             Task { await self.iterations.checkCommit(session) }
@@ -1067,6 +1069,9 @@ final class AppModel {
         }
         let session = DocumentSession(hostID: hostID, path: path, fileSystem: fileSystem, noteStore: noteStore)
         session.onNoteCommitted = { [weak self] note in self?.notesPanel.makeListed(note) }
+        session.beforeCreatingNote = { [weak self] documentID in
+            await self?.iterations.prepareForNote(documentID)
+        }
         if let via { session.proxy = proxy(for: via) }
         // A page opened is a visit; showing one already open again (a click in the Web section, Back) is not.
         webPages.recordVisit(url: path, hostID: hostID)
@@ -1640,6 +1645,7 @@ final class AppModel {
             if let range { anchor = .text(ReAnchorer.make(from: range, in: text, index: index, hash: Data(text.utf8).sha256Hex)) }
         }
         let document = try await noteStore.upsertDocument(hostID: hostID, path: question.path, kind: DocumentKindDetector.kind(forPath: question.path), fingerprint: attributes.fingerprint)
+        await iterations.prepareForNote(document.id)
         let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent)
         await iterations.recordStartingCommit(document.id)
         if activeSession?.noteEditor == nil {
@@ -1749,7 +1755,7 @@ final class AppModel {
             let kind = DocumentKindDetector.kind(forPath: path)
             let fingerprint = (try? await fileSystem.stat(path))?.fingerprint ?? Fingerprint()
             let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: fingerprint)
-            _ = try await noteStore.createNote(documentID: document.id, anchor: anchor, body: body, color: color)
+            _ = try await iterations.createNote(documentID: document.id, anchor: anchor, body: body, color: color)
             showNotesPanel = true
         } catch {
             Log.notes.error("URL note failed: \(error, privacy: .public)")
@@ -1844,6 +1850,7 @@ final class AppModel {
         started = true
         installEscapeMonitor()
         await settings.load()
+        iterations.observeResolutions()
         send.stagedFileExpiryDays = settings.stagedFileExpiryDays
         settings.onStagedExpiryChange = { [weak self] days in self?.send.stagedFileExpiryDays = days }
         settings.onDockSettingChange = { [weak self] in self?.updateDockBadge() }
@@ -2093,13 +2100,14 @@ final class AppModel {
         var dependencies = MCPDependencies(
             noteStore: store,
             packet: { ids in try await send.packet(noteIDs: ids, wholeThread: true) },
-            createDraft: { host, path, cwd, text in
+            createDraft: { [weak self] host, path, cwd, text in
                 let hostID = host == "local" ? HostID.local : try await store.hosts().first { $0.name == host }?.id
                 guard let hostID else { throw DeliveryError.failed("unknown host \(host)") }
                 guard let documentPath = path ?? cwd.map({ PathUtilities.join($0, ".gloss-inbox.md") }) else {
                     throw DeliveryError.failed("path or cwd is required")
                 }
-                return try await AppModel.createPluginDraft(store: store, hostID: hostID, path: documentPath, text: text)
+                guard let self else { throw DeliveryError.failed("Gloss is closing") }
+                return try await self.createPluginDraft(hostID: hostID, path: documentPath, text: text)
             },
             appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         )
@@ -2160,8 +2168,7 @@ final class AppModel {
         do {
             let fingerprint = (try? await fileSystems[hostID]?.stat(path))?.fingerprint ?? Fingerprint()
             let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: DocumentKindDetector.kind(forPath: path), fingerprint: fingerprint)
-            await iterations.startIfAllResolved(document.id)
-            _ = try await noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: color)
+            _ = try await iterations.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: color)
             await iterations.recordStartingCommit(document.id)
             showNotesPanel = true
         } catch {
@@ -2181,10 +2188,10 @@ final class AppModel {
     }
 
     /// A whole-file draft created by the Herdr plugin (the user re-anchors it in the app if needed).
-    nonisolated static func createPluginDraft(store: NoteStore, hostID: HostID, path: String, text: String) async throws -> NoteID {
+    func createPluginDraft(hostID: HostID, path: String, text: String) async throws -> NoteID {
         let kind = DocumentKindDetector.kind(forPath: path)
-        let document = try await store.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: Fingerprint())
-        return try await store.createNote(documentID: document.id, anchor: .wholeFile, body: text, color: .yellow).id
+        let document = try await noteStore.upsertDocument(hostID: hostID, path: path, kind: kind, fingerprint: Fingerprint())
+        return try await iterations.createNote(documentID: document.id, anchor: .wholeFile, body: text, color: .yellow).id
     }
 
     enum SendScope: String, CaseIterable, Identifiable {

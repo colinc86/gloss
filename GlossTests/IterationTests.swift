@@ -1,5 +1,6 @@
 import Core
 import Foundation
+import GRDB
 import Testing
 import Viewers
 @testable import Gloss
@@ -126,25 +127,246 @@ struct IterationTests {
     }
 
     @Test func theFirstNoteAfterEverythingIsResolvedStartsAnIteration() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
         let (model, store, settings) = try makeModel()
-        let document = try await store.upsertDocument(hostID: .local, path: "/tmp/never-read.md", kind: .markdown, fingerprint: Fingerprint())
-        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "a", color: .yellow)
-        settings.iteratesAfterResolved = true
-        await model.startIfAllResolved(document.id)
-        #expect(try await store.document(document.id)?.currentIteration == 0, "an open note: nothing starts")
-        try await store.resolve(note.id)
-        #expect(try await store.document(document.id)?.currentIteration == 0, "resolving alone never starts one")
-        await model.startIfAllResolved(document.id)
-        #expect(try await store.document(document.id)?.currentIteration == 1, "the next note's arrival does")
-        await model.startIfAllResolved(document.id)
-        #expect(try await store.document(document.id)?.currentIteration == 1, "an empty iteration doesn't start another")
+        defer { model.stop() }
+        #expect(settings.iteratesAfterResolved, "on by default")
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        await model.prepareForNote(document.id)
+        let first = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "a", color: .yellow)
+        let last = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "Which?", author: "codex")
+        model.observeResolutions()
+        try "after\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try await store.resolve(first.id)
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 0, "a question is still open")
+        try await store.resolveSent(last.id, agent: "codex")
+        await waitForIteration(1, document.id, store)
+        #expect(try await store.notes(for: document.id).isEmpty, "no new note is needed")
+        let ended = try #require(try await store.iterations(for: document.id).first)
+        #expect(try await store.snapshot(hash: try #require(ended.snapshotHash)) == Data("after\n".utf8))
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 1, "one transition, one rollover")
+    }
 
+    func waitForIteration(_ number: Int, _ documentID: DocumentID, _ store: NoteStore,
+                          sourceLocation: SourceLocation = #_sourceLocation) async {
+        for _ in 0..<100 {
+            if (try? await store.document(documentID)?.currentIteration) == number { return }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        Issue.record("timed out waiting for iteration \(number)", sourceLocation: sourceLocation)
+    }
+
+    @Test func unchangedContentDoesNotStartAnIteration() async throws {
+        let (directory, path) = try makeFile("same\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, _) = try makeModel()
+        defer { model.stop() }
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        await model.prepareForNote(document.id)
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "a", color: .yellow)
+        try await store.resolve(note.id)
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 0)
+        #expect(try await store.pendingIterationCompletions().isEmpty)
+        // A later edit is not a resolution transition, and must not resurrect the consumed completion.
+        try "later\n".write(toFile: path, atomically: true, encoding: .utf8)
+        await model.prepareForNote(document.id)
+        let question = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "Keep?", author: "codex")
+        #expect(question.iteration == 0)
+        #expect(try await store.document(document.id)?.currentIteration == 0)
+    }
+
+    @Test func concurrentResolvesStartOnlyOneIteration() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, _) = try makeModel()
+        defer { model.stop() }
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        await model.prepareForNote(document.id)
+        let a = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "A?", author: "codex")
+        let b = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "B?", author: "codex")
+        try "after\n".write(toFile: path, atomically: true, encoding: .utf8)
+        model.observeResolutions()
+        async let first: Void = store.resolveSent(a.id, agent: "codex")
+        async let second: Void = store.resolveSent(b.id, agent: "codex")
+        _ = try await (first, second)
+        async let processA: Void = model.processCompletions()
+        async let processB: Void = model.processCompletions()
+        _ = await (processA, processB)
+        #expect(try await store.document(document.id)?.currentIteration == 1)
+        #expect(try await store.iterations(for: document.id).count == 2)
+        #expect(try await store.pendingIterationCompletions().isEmpty)
+    }
+
+    @Test func carriedReviewResultsDoNotCompleteTheNewIteration() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, _) = try makeModel()
+        defer { model.stop() }
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        await model.prepareForNote(document.id)
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "a", color: .yellow)
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [note.id], outcome: .delivered, review: true)
+        try "after\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try await store.resolveSent(note.id, agent: "codex")
+        await model.processCompletions()
+        #expect(try await store.note(note.id)?.iteration == 1)
+        #expect(try await store.note(note.id)?.awaitsReview == true)
+        try "later\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try await store.accept([note.id])
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 1)
+        await model.prepareForNote(document.id)
+        let question = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "Next?", author: "codex")
+        #expect(question.iteration == 1, "a later question joins the new round")
+    }
+
+    @Test func laterQuestionsAreSavedDuringCompletionThenCarriedForward() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, settings) = try makeModel()
+        defer { model.stop() }
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        await model.prepareForNote(document.id)
+        let old = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "Old?", author: "codex")
+        try "after\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try await store.resolveSent(old.id, agent: "codex")
+        await model.prepareForNote(document.id)
+        let next = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "Next?", author: "codex")
+        #expect(next.iteration == 0, "insertion does not wait for completion")
+        await model.processCompletions()
+        #expect(try await store.note(next.id)?.iteration == 1, "the pending question comes into the next round")
         settings.iteratesAfterResolved = false
-        let again = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "b", color: .yellow)
-        try await store.resolve(again.id)
-        await model.startIfAllResolved(document.id)
-        #expect(try await store.document(document.id)?.currentIteration == 1, "off by default")
-        #expect(IterationsModel.allResolved([]) == false)
+        try "disabled\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try await store.resolveSent(next.id, agent: "codex")
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 1, "setting off suppresses rollover")
+    }
+
+    @Test func unsavedDocumentChangesDoNotDecideWhetherToRollOver() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, _) = try makeModel()
+        defer { model.stop() }
+        let session = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(), noteStore: store)
+        await session.open()
+        defer { session.close() }
+        let document = try #require(session.document)
+        model.liveSession = { $0 == document.id ? session : nil }
+        await model.prepareForNote(document.id)
+        let note = try await store.createNote(documentID: document.id, anchor: .wholeFile, body: "a", color: .yellow)
+        let editor = try #require(session.textController)
+        editor.viewDidChangeText("unsaved\n")
+        #expect(session.isDirty)
+        try await store.resolve(note.id)
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 0, "unsaved edits do not change the agent's file")
+        #expect(try await store.pendingIterationCompletions().isEmpty)
+        let next = try await model.createNote(documentID: document.id, anchor: .wholeFile, body: "next", color: .yellow)
+        try "agent\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try await store.resolve(next.id)
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 1, "the disk change now qualifies")
+        let ended = try #require(try await store.iterations(for: document.id).first)
+        #expect(try await store.snapshot(hash: try #require(ended.snapshotHash)) == Data("unsaved\n".utf8), "snapshot can show editor text")
+        #expect(try String(contentsOfFile: path, encoding: .utf8) == "agent\n", "rollover never saves the editor")
+    }
+
+    @Test func aStartingHashIsReadOnlyWhenNeeded() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, _) = try makeModel()
+        defer { model.stop() }
+        let counter = IterationReadCounter()
+        let fileSystem = CountedIterationFiles(counter: counter)
+        model.fileSystem = { $0 == .local ? fileSystem : nil }
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        await model.prepareForNote(document.id)
+        #expect(await counter.count == 1)
+        _ = try await model.createNote(documentID: document.id, anchor: .wholeFile, body: "first", color: .yellow)
+        _ = try await model.createNote(documentID: document.id, anchor: .wholeFile, body: "second", color: .yellow)
+        #expect(await counter.count == 1, "adding more notes does not read the file")
+        let legacy = try await store.upsertDocument(hostID: .local, path: path + ".legacy", kind: .markdown, fingerprint: Fingerprint())
+        _ = try await store.createNote(documentID: legacy.id, anchor: .wholeFile, body: "old", color: .yellow)
+        await model.prepareForNote(legacy.id)
+        #expect(await counter.count == 1, "unknown baseline with live notes cannot be reconstructed by reading now")
+    }
+
+    @Test func pluginDraftsSaveWithoutAConnectedHost() async throws {
+        let app = AppModel(launchOptions: AppLaunchOptions(arguments: ["app", "--reset-db"]))
+        let host = try await app.noteStore.upsertHost(name: "offline", kind: .ssh)
+        let id = try await app.createPluginDraft(hostID: host.id, path: "/tmp/demo.md", text: "remember this")
+        let note = try #require(try await app.noteStore.note(id))
+        #expect(note.body == "remember this" && note.state == .draft)
+        await app.shutDown()
+    }
+
+    @Test func aFailedCompletionDoesNotBlockAnotherDocumentOrNewNotes() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let otherPath = path + ".other"
+        try "before\n".write(toFile: otherPath, atomically: true, encoding: .utf8)
+        let (model, store, _) = try makeModel()
+        defer { model.stop() }
+        let a = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        let b = try await store.upsertDocument(hostID: .local, path: otherPath, kind: .markdown, fingerprint: Fingerprint())
+        let noteA = try await model.createNote(documentID: a.id, anchor: .wholeFile, body: "a", color: .yellow)
+        let noteB = try await model.createNote(documentID: b.id, anchor: .wholeFile, body: "b", color: .yellow)
+        try "bad\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try "good\n".write(toFile: otherPath, atomically: true, encoding: .utf8)
+        let badHash = Data("bad\n".utf8).sha256Hex
+        try await store.database.queue.write { db in
+            try db.execute(sql: "CREATE TRIGGER fail_snapshot BEFORE INSERT ON snapshot WHEN NEW.hash = '\(badHash)' BEGIN SELECT RAISE(ABORT, 'test snapshot failure'); END")
+        }
+        try await store.resolve(noteA.id)
+        try await store.resolve(noteB.id)
+        await model.processCompletions()
+        #expect(try await store.document(a.id)?.currentIteration == 0)
+        #expect(try await store.document(b.id)?.currentIteration == 1)
+        #expect(try await store.pendingIterationCompletions().isEmpty, "failed completion was handled")
+        _ = try await model.createNote(documentID: a.id, anchor: .wholeFile, body: "still saves", color: .yellow)
+        #expect(try await store.notes(for: a.id).count == 2)
+    }
+
+    @Test func answeringAQuestionKeepsItOpenUntilResolved() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, _) = try makeModel()
+        defer { model.stop() }
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        await model.prepareForNote(document.id)
+        let question = try await store.askUser(documentID: document.id, anchor: .wholeFile, question: "Keep?", author: "codex")
+        try await store.addFollowUp(question.id, body: "Yes")
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [question.id], outcome: .delivered)
+        try "after\n".write(toFile: path, atomically: true, encoding: .utf8)
+        await model.processCompletions()
+        #expect(try await store.note(question.id)?.waitingOnUser == false)
+        #expect(try await store.note(question.id)?.state == .sent)
+        #expect(try await store.document(document.id)?.currentIteration == 0)
+        try await store.resolveSent(question.id, agent: "codex")
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 1)
+    }
+
+    @Test func aManualPromptDoesNotAdvanceARoundThatAlreadyCompleted() async throws {
+        let (directory, path) = try makeFile("before\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (model, store, settings) = try makeModel()
+        defer { model.stop() }
+        settings.iterationOpenNotes = .ask
+        let document = try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint())
+        let note = try await model.createNote(documentID: document.id, anchor: .wholeFile, body: "a", color: .yellow)
+        await model.requestNewIteration(for: document)
+        let prompt = try #require(model.prompt)
+        try "after\n".write(toFile: path, atomically: true, encoding: .utf8)
+        try await store.resolve(note.id)
+        await model.processCompletions()
+        #expect(try await store.document(document.id)?.currentIteration == 1)
+        await model.answer(prompt, .carry, remember: false)
+        #expect(try await store.document(document.id)?.currentIteration == 1, "automatic completion already satisfied the request")
     }
 
     /// Show Changes Since on a file being edited: the tints follow the edit instead of keeping their line numbers.
@@ -270,4 +492,25 @@ struct IterationTests {
         #expect(await IterationsModel.lastCommit(of: "\(repo)/[draft].md") == nil, "never committed: not d.md's commit")
         #expect(await IterationsModel.lastCommit(of: "\(repo)/:memo.md") == nil)
     }
+}
+
+private actor IterationReadCounter {
+    private(set) var count = 0
+    func record() { count += 1 }
+}
+
+private struct CountedIterationFiles: FileSystemProvider {
+    let counter: IterationReadCounter
+    let base = LocalFileSystem()
+    var hostID: HostID { .local }
+    func read(_ path: String) async throws -> Data { await counter.record(); return try await base.read(path) }
+    func list(_ directory: String) async throws -> [DirectoryEntry] { try await base.list(directory) }
+    func stat(_ path: String) async throws -> FileAttributes { try await base.stat(path) }
+    func writeAtomically(_ data: Data, to path: String, preservingModeFrom original: FileAttributes?) async throws -> FileAttributes {
+        try await base.writeAtomically(data, to: path, preservingModeFrom: original)
+    }
+    func makeDirectory(_ path: String) async throws { try await base.makeDirectory(path) }
+    func rename(_ path: String, to newPath: String) async throws { try await base.rename(path, to: newPath) }
+    func delete(_ path: String) async throws { try await base.delete(path) }
+    func watch(_ path: String) -> AsyncStream<FileSystemEvent> { base.watch(path) }
 }

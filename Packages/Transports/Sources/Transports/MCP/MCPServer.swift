@@ -385,7 +385,7 @@ public actor MCPServer {
         ),
         Tool(
             name: "ask_user",
-            description: "Ask the user something about a place in a file: content you made or changed that they should review, or a decision only they can make. The question appears in Gloss beside that text, under Attention; the user's answer comes back to you as a note when they send it. Give the lines, or the exact text, it is about; neither means the whole file. Don't use it for progress reports.",
+            description: "Ask the user something about a place in a file: content you made or changed that they should review, or a decision only they can make. The question appears in Gloss beside that text, under Attention; the user's answer comes back to you as a note when they send it. Give the lines, or the exact text, it is about; neither means the whole file. Once you have acted on the user's answer, call resolve_note on this question note. Don't use it for progress reports.",
             inputSchema: ["type": "object", "properties": [
                 "path": ["type": "string", "description": "absolute path on your machine (or on host; ~/… for its home), or a file:// link; path:line asks about that line"],
                 "question": ["type": "string"],
@@ -437,7 +437,8 @@ public actor MCPServer {
         give one only to tell the user something the change and thread don't (a decision, a caveat, what you skipped \
         and why). To answer the user, or ask them something, without \
         closing the note, call reply_to_note (asks: true for a question); their answer comes back to you when they send \
-        it. A packet shows a note's latest turns; get_note returns its whole thread. Whenever your change replaced or \
+        it. Once you have acted on the answer, call resolve_note on that question note (including questions made with \
+        ask_user); answering alone does not close it. A packet shows a note's latest turns; get_note returns its whole thread. Whenever your change replaced or \
         removed the text a note is on, pass location to resolve_note or reply_to_note ({line, end_line, text} with the \
         exact new text, {removed: true, line}, or {selector} for a page element) so the note follows it. To show the \
         user something, call open_in_viewer with a path and lines. When you made or changed something the user should \

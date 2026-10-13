@@ -115,7 +115,7 @@ final class DocumentSession: Identifiable {
     /// A note made or changed here, so the notes panel can bring it into its list: the page draws what the list
     /// shows, and a note just written must not vanish under a tab, colour or search.
     @ObservationIgnored var onNoteCommitted: (Note) -> Void = { _ in }
-    /// Runs before a new note is written: the first note after every note was resolved may start an iteration.
+    /// Runs before a new note is written to capture the round's starting content when needed.
     @ObservationIgnored var beforeCreatingNote: (DocumentID) async -> Void = { _ in }
     /// After the text was read again from disk: a git commit change may start an iteration.
     @ObservationIgnored var onReloaded: () -> Void = {}

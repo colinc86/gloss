@@ -12,6 +12,7 @@ struct ContentView: View {
     /// The sidebar column in the full layout; the compact one hides it and slides the explorer over instead.
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     /// The host under the title: an ssh alias, `owner/repo #12`, `Jira · PROJ`, `Confluence · SPACE`, a page's title;
     /// nothing on this Mac.
@@ -197,15 +198,8 @@ struct ContentView: View {
                  + " Open it only if you followed this link yourself.")
         }
         .dropToOpen()
-        .overlay(alignment: .bottom) { CopyHUD() }
-        // With the notes panel closed the update toast (#10) has the window's corner; open, it sits with the panel's.
-        .overlay(alignment: .bottomTrailing) {
-            if !panelShown {
-                AgentsUpdateToast()
-                    .frame(maxWidth: 380)
-                    .padding(DS.Space.m)
-            }
-        }
+        // Window notifications sit above the document's floating Review card.
+        .background(WindowHUDOverlay(model: model, panelShown: panelShown, openSettings: { openSettings() }))
         // The dot in the close button whenever any open document has unsaved edits, not only the visible one.
         .background(WindowEditedMarker(isEdited: !model.unsavedSessions.isEmpty))
         .background(WindowReader(reference: window))
@@ -368,7 +362,7 @@ private struct WindowEditedMarker: NSViewRepresentable {
 
 /// "Path copied", "Comment copied": a glass capsule that rises at the bottom of the window for a moment after a copy
 /// that has no place of its own to say so (context menus, the tree). Never in the way: no hit testing.
-private struct CopyHUD: View {
+struct CopyHUD: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {

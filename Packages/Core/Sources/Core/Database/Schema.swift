@@ -295,6 +295,44 @@ public enum Schema {
                 ALTER TABLE note ADD COLUMN accepted_at DATETIME;
                 """)
         }
+        migrator.registerMigration("v15-iteration-completion") { db in
+            // Completion is recorded in the same transaction as the last resolve, including writes outside the UI.
+            try db.execute(sql: """
+                ALTER TABLE iteration ADD COLUMN start_hash TEXT;
+                ALTER TABLE iteration ADD COLUMN completion_generation INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE iteration ADD COLUMN handled_generation INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE iteration ADD COLUMN completed_at DATETIME;
+                ALTER TABLE note ADD COLUMN iteration_joined_at DATETIME;
+                UPDATE note SET iteration_joined_at = created_at;
+                CREATE TRIGGER note_iteration_joined AFTER INSERT ON note
+                BEGIN
+                    UPDATE note SET iteration_joined_at = strftime('%Y-%m-%d %H:%M:%f', 'now') WHERE id = NEW.id;
+                END;
+                UPDATE iteration SET start_hash = (SELECT previous.snapshot_hash FROM iteration AS previous
+                    WHERE previous.document_id = iteration.document_id AND previous.number = iteration.number - 1);
+                CREATE TRIGGER iteration_last_resolve AFTER UPDATE OF state ON note
+                WHEN OLD.state != 'resolved' AND NEW.state = 'resolved' AND OLD.deleted_at IS NULL AND NEW.deleted_at IS NULL
+                    AND OLD.iteration = NEW.iteration
+                    AND NEW.iteration = (SELECT current_iteration FROM document WHERE id = NEW.document_id)
+                    AND NOT EXISTS (SELECT 1 FROM note WHERE document_id = NEW.document_id
+                        AND iteration = NEW.iteration AND deleted_at IS NULL AND state != 'resolved')
+                BEGIN
+                    UPDATE iteration SET completion_generation = completion_generation + 1, completed_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+                        WHERE document_id = NEW.document_id AND number = NEW.iteration;
+                END;
+                CREATE TRIGGER iteration_last_trash AFTER UPDATE OF deleted_at ON note
+                WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL AND OLD.state != 'resolved'
+                    AND NEW.iteration = (SELECT current_iteration FROM document WHERE id = NEW.document_id)
+                    AND EXISTS (SELECT 1 FROM note WHERE document_id = NEW.document_id
+                        AND iteration = NEW.iteration AND deleted_at IS NULL)
+                    AND NOT EXISTS (SELECT 1 FROM note WHERE document_id = NEW.document_id
+                        AND iteration = NEW.iteration AND deleted_at IS NULL AND state != 'resolved')
+                BEGIN
+                    UPDATE iteration SET completion_generation = completion_generation + 1, completed_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+                        WHERE document_id = NEW.document_id AND number = NEW.iteration;
+                END;
+                """)
+        }
         return migrator
     }
 

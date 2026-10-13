@@ -575,7 +575,9 @@ path. Dropping on the Dock icon is not supported yet.
   leaves its notes, once resolved, at full strength with a teal "To review" pill (`eye.circle.fill`) and an open
   note's underline until accepted. A full-width teal "Review 3 Results" button (eye) sits under the panel's filters
   while any wait in the location in front; Notes › Review Resolved Notes does the same. Review is a card floating over
-  the bottom of the document (at most 560 pt wide, inset 14 pt, `readableGlass`, radius 12, the peek's shadow),
+  the bottom of the document, above the note outlines and paths (they draw behind its glass; it is hosted on its own layer
+  above theirs, joins the window's key-view loop while shown, and hides while the compact explorer slides over; the copy
+  HUD and update toast stay above it) (at most 560 pt wide, inset 14 pt, `readableGlass`, radius 12, the peek's shadow),
   sliding up; the note it shows is scrolled to the middle, clear of it. It reads as the note's card does: the note's
   color rail, the anchor and file in caption, `NoteCard.badge` (To review, then Resolved once accepted or Your turn
   once followed up; a Skipped pill beside it when the agent skipped) and a ✕; the comment; the agent's resolve

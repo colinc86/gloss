@@ -153,6 +153,24 @@ final class NoteLinkModel {
         updateShown()
         redraw()
         drawSelections()
+        NotificationCenter.default.post(name: Self.pathsInstalled, object: window)
+    }
+
+    static let pathsInstalled = Notification.Name("NoteLinkModel.pathsInstalled")
+
+    /// Floating document controls belong above the window-level paths, in the same window for focus and glass.
+    @discardableResult
+    func installReview(_ view: NSView, in window: NSWindow) -> Bool {
+        guard layerView.window === window, let parent = layerView.superview else { return false }
+        if view.superview !== parent { parent.addSubview(view, positioned: .above, relativeTo: layerView) }
+        return true
+    }
+
+    @discardableResult
+    func installHUD(_ view: NSView, in window: NSWindow) -> Bool {
+        guard layerView.window === window, let parent = layerView.superview else { return false }
+        if view.superview !== parent { parent.addSubview(view, positioned: .above, relativeTo: nil) }
+        return true
     }
 
     /// The viewer now in front, or nil for one without note positions (Quick Look, a folder).

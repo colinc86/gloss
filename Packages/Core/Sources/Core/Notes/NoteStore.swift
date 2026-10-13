@@ -600,31 +600,126 @@ public struct NoteStore: Sendable {
     /// (anything not resolved) move to the new iteration with `.carry` and stay with `.leave`; resolved notes always
     /// stay. Returns the new iteration's number.
     @discardableResult
-    public func startIteration(documentID: DocumentID, openNotes: OpenNotesChoice, snapshot: Data?, gitCommit: String? = nil, at date: Date = Date()) async throws -> Int {
+    public func startIteration(documentID: DocumentID, openNotes: OpenNotesChoice, snapshot: Data?, gitCommit: String? = nil, at date: Date = Date(), startHash: String? = nil, expectedIteration: Int? = nil) async throws -> Int {
         let date = Self.rounded(date)
         return try await queue.write { db in
             let current = try Self.openIteration(documentID, at: date, db)
-            let hash = try snapshot.map { try Self.storeSnapshot($0, at: date, db) }
+            if let expectedIteration, current != expectedIteration { return current }
+            return try Self.startIteration(documentID, openNotes: openNotes, snapshot: snapshot, gitCommit: gitCommit, startHash: startHash, at: date, db)
+        }
+    }
+
+    private static func startIteration(_ documentID: DocumentID, openNotes: OpenNotesChoice, snapshot: Data?, gitCommit: String?, startHash: String?, at date: Date, _ db: Database) throws -> Int {
+        let current = try openIteration(documentID, at: date, db)
+        let hash = try snapshot.map { try storeSnapshot($0, at: date, db) }
+        try db.execute(sql: """
+            UPDATE iteration SET ended_at = ?, snapshot_hash = ?, git_commit = COALESCE(?, git_commit),
+                handled_generation = completion_generation WHERE document_id = ? AND number = ?
+            """, arguments: [date, hash, gitCommit, documentID.rawValue, current])
+        let next = current + 1
+        try db.execute(sql: "UPDATE document SET current_iteration = ? WHERE id = ?", arguments: [next, documentID.rawValue])
+        try db.execute(sql: "INSERT INTO iteration (document_id, number, started_at, git_commit, start_hash) VALUES (?, ?, ?, ?, ?)",
+                       arguments: [documentID.rawValue, next, date, gitCommit, startHash ?? snapshot?.sha256Hex])
+        // A carried result is already resolved: moving it does not fire the last-resolve trigger.
+        try db.execute(sql: """
+            UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state = 'resolved'
+                AND review_requested = 1 AND accepted_at IS NULL AND deleted_at IS NULL
+            """, arguments: [next, documentID.rawValue, current])
+        if openNotes == .carry {
             try db.execute(sql: """
-                UPDATE iteration SET ended_at = ?, snapshot_hash = ?, git_commit = COALESCE(?, git_commit)
-                WHERE document_id = ? AND number = ?
-                """, arguments: [date, hash, gitCommit, documentID.rawValue, current])
-            let next = current + 1
-            try db.execute(sql: "UPDATE document SET current_iteration = ? WHERE id = ?", arguments: [next, documentID.rawValue])
-            // The next iteration starts at the commit this one ends on: the first commit after it is a change.
-            try db.execute(sql: "INSERT INTO iteration (document_id, number, started_at, git_commit) VALUES (?, ?, ?, ?)",
-                           arguments: [documentID.rawValue, next, date, gitCommit])
-            // A result waiting for review is the user's open work whatever was chosen: it comes along.
-            try db.execute(sql: """
-                UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state = 'resolved'
-                    AND review_requested = 1 AND accepted_at IS NULL AND deleted_at IS NULL
+                UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state != 'resolved' AND deleted_at IS NULL
                 """, arguments: [next, documentID.rawValue, current])
-            if openNotes == .carry {
-                try db.execute(sql: """
-                    UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND state != 'resolved' AND deleted_at IS NULL
-                    """, arguments: [next, documentID.rawValue, current])
+        }
+        return next
+    }
+
+    /// Captured before the first note, independently of the ended snapshot's retention.
+    public func recordIterationStart(documentID: DocumentID, content: Data) async throws {
+        try await queue.write { db in
+            let current = try Self.openIteration(documentID, at: Self.rounded(Date()), db)
+            // A legacy round with notes has no trustworthy starting content; never guess from its current file.
+            try db.execute(sql: """
+                UPDATE iteration SET start_hash = ? WHERE document_id = ? AND number = ? AND start_hash IS NULL
+                    AND NOT EXISTS (SELECT 1 FROM note WHERE document_id = ? AND iteration = ? AND deleted_at IS NULL)
+                """, arguments: [content.sha256Hex, documentID.rawValue, current, documentID.rawValue, current])
+        }
+    }
+
+    /// Check before reading bytes: a known baseline or a round with live notes needs no starting-content read.
+    public func needsIterationStart(documentID: DocumentID) async throws -> Bool {
+        try await queue.read { db in
+            try Bool.fetchOne(db, sql: """
+                SELECT NOT EXISTS (SELECT 1 FROM iteration WHERE document_id = document.id
+                    AND number = document.current_iteration AND start_hash IS NOT NULL)
+                    AND NOT EXISTS (SELECT 1 FROM note WHERE document_id = document.id
+                        AND iteration = document.current_iteration AND deleted_at IS NULL)
+                FROM document WHERE id = ?
+                """, arguments: [documentID.rawValue]) ?? false
+        }
+    }
+
+    public struct IterationCompletion: Sendable, Equatable {
+        public let documentID: DocumentID
+        public let number: Int
+        public let generation: Int
+        public let startHash: String?
+        public let completedAt: Date
+    }
+
+    private static func iterationCompletions(_ db: Database) throws -> [IterationCompletion] {
+        try Row.fetchAll(db, sql: """
+            SELECT iteration.* FROM iteration JOIN document ON document.id = iteration.document_id
+            WHERE number = document.current_iteration AND completion_generation > handled_generation
+            ORDER BY document_id
+            """).map { row in
+                IterationCompletion(documentID: DocumentID(rawValue: row["document_id"]), number: row["number"],
+                                    generation: row["completion_generation"], startHash: row["start_hash"], completedAt: row["completed_at"])
             }
-            return next
+    }
+
+    public func pendingIterationCompletions() async throws -> [IterationCompletion] {
+        try await queue.read { try Self.iterationCompletions($0) }
+    }
+
+    public func observeIterationCompletions() -> AsyncThrowingStream<[IterationCompletion], any Error> {
+        Self.stream(ValueObservation.tracking { try Self.iterationCompletions($0) }, in: queue)
+    }
+
+    /// Rechecks the generation, iteration and pre-completion open notes in the rollover transaction. A completion is consumed even
+    /// when unchanged or disabled, so an acceptance, carried result or later file reload cannot retrigger it.
+    @discardableResult
+    public func finishIteration(_ completion: IterationCompletion, content: Data?, snapshot: Data? = nil, gitCommit: String?, enabled: Bool) async throws -> Bool {
+        try await queue.write { db in
+            guard let pending = try Self.iterationCompletions(db).first(where: { $0.documentID == completion.documentID }),
+                  pending == completion else { return false }
+            try db.execute(sql: "UPDATE iteration SET handled_generation = ? WHERE document_id = ? AND number = ?",
+                           arguments: [completion.generation, completion.documentID.rawValue, completion.number])
+            let notes = try Self.notes(completion.documentID, iteration: completion.number, db)
+            let earlierOpen = try Bool.fetchOne(db, sql: """
+                SELECT EXISTS (SELECT 1 FROM note WHERE document_id = ? AND iteration = ? AND deleted_at IS NULL
+                    AND state != 'resolved' AND iteration_joined_at < ?)
+                """, arguments: [completion.documentID.rawValue, completion.number, completion.completedAt]) ?? false
+            guard enabled, !notes.isEmpty, !earlierOpen,
+                  let startHash = completion.startHash, let content, content.sha256Hex != startHash else { return false }
+            let web = try String.fetchOne(db, sql: "SELECT kind FROM document WHERE id = ?", arguments: [completion.documentID.rawValue]) == DocumentKind.web.rawValue
+            _ = try Self.startIteration(completion.documentID, openNotes: .leave, snapshot: web ? nil : (snapshot ?? content),
+                                        gitCommit: gitCommit, startHash: content.sha256Hex, at: Self.rounded(Date()), db)
+            // Inclusive comparison preserves new notes created in the same database timestamp tick as completion.
+            try db.execute(sql: """
+                UPDATE note SET iteration = ? WHERE document_id = ? AND iteration = ? AND deleted_at IS NULL
+                    AND state != 'resolved' AND iteration_joined_at >= ?
+                """, arguments: [completion.number + 1, completion.documentID.rawValue, completion.number, completion.completedAt])
+            return true
+        }
+    }
+
+    /// A failed comparison/rollover must not leave a pending event in front of later work on this document.
+    public func handleIterationCompletion(_ completion: IterationCompletion) async throws {
+        try await queue.write { db in
+            try db.execute(sql: """
+                UPDATE iteration SET handled_generation = MAX(handled_generation, ?)
+                    WHERE document_id = ? AND number = ?
+                """, arguments: [completion.generation, completion.documentID.rawValue, completion.number])
         }
     }
 

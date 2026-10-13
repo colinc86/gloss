@@ -135,8 +135,8 @@ private struct NotesSettings: View {
                     Text("Notes not yet resolved when an iteration starts come along to the new one, or stay with the one that ends.")
                 }
                 Toggle(isOn: $settings.iteratesAfterResolved) {
-                    Text("Start an iteration after every note is resolved")
-                    Text("The first note you add once all are resolved starts the next iteration. Resolving alone never empties the panel.")
+                    Text("Start an iteration when changes are resolved")
+                    Text("When the last open note is resolved, a new iteration starts if the document changed since this round began. Results waiting for review come along.")
                 }
                 Toggle(isOn: $settings.iteratesOnCommit) {
                     Text("Start an iteration when the file's git commit changes")

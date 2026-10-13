@@ -2065,6 +2065,7 @@ private struct UndoDeleteToast: View {
 /// Says which agent and why, and opens Settings › Agents, where Update fixes it. Dismissing it holds until something
 /// else needs updating.
 struct AgentsUpdateToast: View {
+    var showSettings: (() -> Void)? = nil
     @Environment(AppModel.self) private var model
     @Environment(\.openSettings) private var openSettings
 
@@ -2089,7 +2090,7 @@ struct AgentsUpdateToast: View {
                     InlineIconButton(title: "Dismiss", symbol: "xmark", emphasized: true) { hooks.dismissUpdateNotice() }
                     Button("Open Settings") {
                         model.settingsTab = .agents
-                        openSettings()
+                        if let showSettings { showSettings() } else { openSettings() }
                     }
                     .buttonStyle(.glassProminent)
                     .controlSize(.small)

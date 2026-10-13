@@ -8,6 +8,7 @@ import Viewers
 /// key of its own.
 struct ReviewBar: View {
     @Environment(AppModel.self) private var model
+    var onCardFrameChange: (CGRect) -> Void = { _ in }
     @State private var composing = false
     @State private var followUpText = ""
     @State private var followUpFailed = false
@@ -33,6 +34,7 @@ struct ReviewBar: View {
         .clipShape(Self.shape)
         .shadow(color: .black.opacity(0.2), radius: 12, y: 5)
         .frame(maxWidth: 560)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(ReviewOverlay.space)) } action: { onCardFrameChange($0) }
         .padding(DS.Space.l)
         .animation(DS.Motion.smooth, value: review.current?.note.id)
         .animation(DS.Motion.smooth, value: review.isFinished)
