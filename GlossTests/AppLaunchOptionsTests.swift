@@ -31,10 +31,10 @@ struct AppLaunchOptionsTests {
 
     @Test func parsesEveryOption() {
         let options = AppLaunchOptions(arguments: [
-            "/app", "--root", "/Users/me/proj", "--host", "asus", "--open", "/Users/me/proj/README.md", "--reset-db",
+            "/app", "--root", "/Users/me/proj", "--host", "devbox", "--open", "/Users/me/proj/README.md", "--reset-db",
         ])
         #expect(options.root == "/Users/me/proj")
-        #expect(options.host == "asus")
+        #expect(options.host == "devbox")
         #expect(options.open == "/Users/me/proj/README.md")
         #expect(options.resetDatabase)
     }

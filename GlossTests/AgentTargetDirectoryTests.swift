@@ -20,8 +20,8 @@ struct AgentTargetDirectoryTests {
     }
 
     @Test func requiresTheSameHostAndADirectory() {
-        #expect(!target(.herdr, host: HostID(rawValue: "asus"), directory: "/home/me/p").runs(inHost: .local, path: "/home/me/p"))
-        #expect(target(.herdr, host: HostID(rawValue: "asus"), directory: "/home/me/p").runs(inHost: HostID(rawValue: "asus"), path: "/home/me/p"))
+        #expect(!target(.herdr, host: HostID(rawValue: "devbox"), directory: "/home/me/p").runs(inHost: .local, path: "/home/me/p"))
+        #expect(target(.herdr, host: HostID(rawValue: "devbox"), directory: "/home/me/p").runs(inHost: HostID(rawValue: "devbox"), path: "/home/me/p"))
         #expect(!target(.clipboard, directory: "/p").runs(inHost: .local, path: "/p"))
         #expect(!target(.opencode, directory: "http://127.0.0.1:4096").runs(inHost: .local, path: "/"), "a server URL is not a directory")
         #expect(!target(.herdr, directory: nil).runs(inHost: .local, path: "/p"))

@@ -65,15 +65,15 @@ struct SSHConfigTests {
         Include \(directory)/conf.d/*.conf
         Host *
           ServerAliveInterval 10
-        Host asus work-? # the desktop
-          HostName asus.example
+        Host devbox work-? # the desktop
+          HostName devbox.example
         Host "quoted"
-        Match host asus
+        Match host devbox
           User other
         Host !negated extra1
         """, name: "config", in: directory)
         let aliases = SSHConfig.hostAliases(from: main).map(\.alias)
-        #expect(aliases == ["extra1", "extra2", "asus", "quoted"])
+        #expect(aliases == ["extra1", "extra2", "devbox", "quoted"])
         #expect(SSHConfig.split("HostName=foo.example") == ("HostName", "foo.example"))
         #expect(SSHConfig.split("Host \"a b\"") == ("Host", "a b"))
         #expect(SSHConfig.words("box # old one") == ["box"], "a # word starts a comment, as ssh reads it")

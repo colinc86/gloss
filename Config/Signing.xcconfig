@@ -1,0 +1,9 @@
+// Signing for every configuration. A fresh clone signs to run locally (ad hoc), with no Apple account.
+// To sign with your team, copy Signing.local.xcconfig.example to Signing.local.xcconfig (ignored by git).
+// Don't pick a team in Xcode's Signing & Capabilities tab: that writes DEVELOPMENT_TEAM into the project file.
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+CODE_SIGN_IDENTITY = -
+
+// Keep this last: the local file's settings win.
+#include? "Signing.local.xcconfig"

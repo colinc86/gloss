@@ -65,7 +65,7 @@ struct WebProxyMapTests {
 }
 
 struct WebNavigationPolicyTests {
-    let filePage = BrowserPage.file(path: "/home/colin/site/index.html")
+    let filePage = BrowserPage.file(path: "/home/me/site/index.html")
     let livePage = BrowserPage.live(URL(string: "https://example.com/")!)
     let proxy = WebProxyMap(hostID: .local, tunnels: [3000: 51_000])
 
@@ -76,28 +76,28 @@ struct WebNavigationPolicyTests {
     }
 
     @Test func filePages() {
-        #expect(decide("gloss-html://h_local/home/colin/site/index.html", type: .other) == .allow, "the page's own load")
-        #expect(decide("gloss-html://h_local/home/colin/site/index.html#section") == .allow, "a same-page anchor")
-        #expect(decide("gloss-html://h_local/home/colin/site/index.html", type: .reload) == .allow)
-        #expect(decide("gloss-html://h_local/home/colin/site/about.html") == .openFile("/home/colin/site/about.html"), "a relative link WebKit resolved")
-        #expect(decide("gloss-html://h_local/home/colin/docs/PLAN.md") == .openFile("/home/colin/docs/PLAN.md"), "any file, not only pages")
+        #expect(decide("gloss-html://h_local/home/me/site/index.html", type: .other) == .allow, "the page's own load")
+        #expect(decide("gloss-html://h_local/home/me/site/index.html#section") == .allow, "a same-page anchor")
+        #expect(decide("gloss-html://h_local/home/me/site/index.html", type: .reload) == .allow)
+        #expect(decide("gloss-html://h_local/home/me/site/about.html") == .openFile("/home/me/site/about.html"), "a relative link WebKit resolved")
+        #expect(decide("gloss-html://h_local/home/me/docs/PLAN.md") == .openFile("/home/me/docs/PLAN.md"), "any file, not only pages")
         #expect(decide("gloss-html://h_other/x") == .cancel, "a link cannot reach another host's files")
-        #expect(decide("gloss-html://h_local/home/colin/site/about.html", type: .other) == .cancel, "a script or redirect never switches the document")
-        #expect(decide("gloss-html://h_local/home/colin/site/about.html", type: .backForward) == .openFile("/home/colin/site/about.html"))
-        #expect(decide("file:///Users/colin/notes.md", type: .other) == .cancel, "only a click opens a file")
-        #expect(decide("file:///Users/colin/notes.md") == .openFile("/Users/colin/notes.md"))
-        #expect(decide("file:///Users/colin/notes.md", local: false) == .cancel, "a remote page cannot address this Mac")
+        #expect(decide("gloss-html://h_local/home/me/site/about.html", type: .other) == .cancel, "a script or redirect never switches the document")
+        #expect(decide("gloss-html://h_local/home/me/site/about.html", type: .backForward) == .openFile("/home/me/site/about.html"))
+        #expect(decide("file:///Users/me/notes.md", type: .other) == .cancel, "only a click opens a file")
+        #expect(decide("file:///Users/me/notes.md") == .openFile("/Users/me/notes.md"))
+        #expect(decide("file:///Users/me/notes.md", local: false) == .cancel, "a remote page cannot address this Mac")
     }
 
     @Test func livePagesAndTheWeb() {
         #expect(decide("https://example.com/docs/") == .allow)
         #expect(decide("https://example.com/docs/", page: livePage) == .allow)
         #expect(decide("gloss-html://h_local/etc/passwd", page: livePage) == .cancel, "a live page cannot address files")
-        #expect(decide("gloss-html://h_local/home/colin/site/index.html", type: .backForward, page: livePage) == .openFile("/home/colin/site/index.html"), "Back from a site to the file it came from")
-        #expect(decide("mailto:colin@example.com", type: .other) == .cancel, "a script cannot launch Mail")
+        #expect(decide("gloss-html://h_local/home/me/site/index.html", type: .backForward, page: livePage) == .openFile("/home/me/site/index.html"), "Back from a site to the file it came from")
+        #expect(decide("mailto:me@example.com", type: .other) == .cancel, "a script cannot launch Mail")
         #expect(decide("file:///etc/passwd", page: livePage) == .cancel)
         #expect(decide("about:blank", type: .other, page: livePage) == .allow)
-        #expect(decide("mailto:colin@example.com") == .external(URL(string: "mailto:colin@example.com")!))
+        #expect(decide("mailto:me@example.com") == .external(URL(string: "mailto:me@example.com")!))
         #expect(decide("tel:+441234") == .external(URL(string: "tel:+441234")!))
         #expect(decide("javascript:alert(1)") == .cancel)
         #expect(decide("ftp://example.com/x") == .cancel)

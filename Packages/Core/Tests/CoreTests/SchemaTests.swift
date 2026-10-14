@@ -78,13 +78,13 @@ struct SchemaTests {
         try Schema.migrator.migrate(queue, upTo: "v3-send-note-index")
         try queue.write { db in
             try db.execute(sql: """
-                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01HOST', 'asus', 'ssh', '2026-10-01 10:00:00', 'manual', '{"user":"colin"}');
+                INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01HOST', 'devbox', 'ssh', '2026-10-01 10:00:00', 'manual', '{"user":"me"}');
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01GITH', 'github', 'ssh', NULL, 'ssh_config', NULL);
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01WEB1', 'web', 'ssh', NULL, 'ssh_config', NULL);
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01WEB2', 'web-ssh', 'ssh', NULL, 'manual', '{"hostName":"10.0.0.9","user":"","identityFile":""}');
                 INSERT INTO host (id, name, kind, last_connected_at, origin, options_json) VALUES ('h_01ATSS', 'atlassian-ssh', 'ssh', NULL, 'ssh_config', NULL);
-                INSERT INTO root (id, host_id, path, last_opened_at, pinned) VALUES ('r_1', 'h_01HOST', '/home/colin', '2026-10-01 10:00:00', 1);
-                INSERT INTO document (id, host_id, path, kind, last_hash, last_mtime, last_size) VALUES ('d_1', 'h_01HOST', '/home/colin/a.md', 'markdown', 'abc', '2026-10-01 10:00:00', 12);
+                INSERT INTO root (id, host_id, path, last_opened_at, pinned) VALUES ('r_1', 'h_01HOST', '/home/me', '2026-10-01 10:00:00', 1);
+                INSERT INTO document (id, host_id, path, kind, last_hash, last_mtime, last_size) VALUES ('d_1', 'h_01HOST', '/home/me/a.md', 'markdown', 'abc', '2026-10-01 10:00:00', 12);
                 INSERT INTO note (id, document_id, anchor_json, anchor_type, body, state, created_at, updated_at, color, resolve_outcome, resolve_message)
                     VALUES ('n_1', 'd_1', '{}', 'file', 'hi', 'resolved', '2026-10-01 10:00:00', '2026-10-01 10:00:01', 'yellow', 'done', 'ok');
                 INSERT INTO attachment (id, note_id, kind, local_path, width, height) VALUES ('a_1', 'n_1', 'crop', '/tmp/c.png', 1, 2);

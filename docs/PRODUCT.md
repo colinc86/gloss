@@ -1,6 +1,6 @@
 # Gloss: Product Description
 
-Mirror of the living doc at https://claude.ai/code/artifact/01a13d3e-5f5a-491b-b910-b5f1a57cc70c (as of 2026-10-01). The Claude Doc is where comments and edits happen; update this file when a decision there changes.
+The product's scope, data model and acceptance checks. Keep this file in sync when a decision changes.
 
 ## Overview
 
@@ -19,8 +19,8 @@ The app is for a person working across a local Mac and several remote hosts, wit
 | --- | --- | --- |
 | Host | A machine the app can read files from: the local Mac, an SSH host imported from `~/.ssh/config`, or one added in Settings → Hosts | `local`, `workbox` |
 | Virtual host | A source that is not a machine: `github` serves pull requests, `atlassian` serves Jira issues and Confluence pages, `web` serves live pages, and `gloss` serves captured read-only review content under Reviews | `github:/o/r/pull/7`, `atlassian:/jira/acme/CP-7.md`, `web:https://example.com/docs/`, a `.gloss` review |
-| Root | A directory on a host that the explorer is showing | `workbox:/home/colin/proj` |
-| Document | One file opened in the viewer, identified by host and absolute path | `workbox:/home/colin/proj/PLAN.md` |
+| Root | A directory on a host that the explorer is showing | `workbox:/home/me/proj` |
+| Document | One file opened in the viewer, identified by host and absolute path | `workbox:/home/me/proj/PLAN.md` |
 | Anchor | A typed description of a subset of a document | lines 40 to 52; a rectangle in pixel space; page 3 region |
 | Note | An anchor plus your comment, with a lifecycle state | "This section contradicts the API doc" |
 | Context packet | The plain-text message built from one or more notes, with attachments on disk | the thing the agent actually reads |
@@ -135,7 +135,7 @@ Send loop: highlight → write a note (draft) → build packet (text, grouped by
 Milestone 2 adds sources `web`, `pull_request`, `jira` and `confluence`. A live web page's `File:` line is its URL. Pull requests, issues and pages keep their virtual path in `File:` and add a `Resource:` line with the canonical URL (`https://github.com/o/r/pull/123`, `https://<site>/browse/PROJ-123`, the Confluence page URL) plus `Path: Sources/App.swift at 0f3a9c1` for a PR file, `Field: description` or `Comment: <url>` for an issue or PR body, and `Version: 7` for a page, so the agent can act on the real thing with its own tools. Every note starts with `Note: <id>`, the id `resolve_note` takes, so an agent never matches ids to notes by position (decided 2026-10-06; the ids used to be listed in the closing line). Element notes carry `Element: <selector>`, `Text:`, `Rect:`, `Line` when the page is a file, a blockquoted `Snippet:` of the element's HTML, and a PNG crop attachment. A note on a picture adds `Image: <src> (WxH)` and `Whole image` or `Region: x= y= w= h=` right after `Element:`, as an embedded picture's note does, and its crop is of that part (decided 2026-10-06).
 
 ```markdown
-File: /home/colin/proj/docs/PLAN.md
+File: /home/me/proj/docs/PLAN.md
 Source: markdown
 
 Note: n_01J9X...
@@ -146,7 +146,7 @@ Excerpt:
 User comment: "This contradicts the 15 minute TTL in api.md. Pick one and fix both."
 
 
-File: /home/colin/proj/design/dashboard.png
+File: /home/me/proj/design/dashboard.png
 Source: image
 Original size: 2880x1800
 
@@ -282,16 +282,16 @@ Milestone 1 is the whole product. Done means every check passes on the local Mac
 
 **Acceptance checks.** Ticked items were verified at the end of milestone 1 (2026-10-02); the note says how. Items marked "user" need a real agent session or a keybinding and are left for the user to confirm.
 
-- [x] Browse a remote root over an ssh config alias while the only terminal connection to that host is mosh inside tmux — the app's ControlMaster is independent of any terminal; browsed `asus:/home/colin` in the app (Phase 3)
+- [x] Browse a remote root over an ssh config alias while the only terminal connection to that host is mosh inside tmux — the app's ControlMaster is independent of any terminal; browsed `devbox:/home/me` in the app (Phase 3)
 - [x] Open a markdown file, toggle rendered and source, and see the same note highlighted in both views — Phase 2 screenshots
-- [x] Edit and save a remote file, have an agent edit the same file, and get a conflict diff instead of a silent overwrite — conflict sheet locally (Phase 2); SFTP conflict detection against asus in `RemoteHostTests`
-- [x] Annotate a rectangle on a PNG and send it to Claude Code in a remote Herdr pane; the agent receives the crop path, the coordinates, and the comment, and can view the crop — `AcceptanceRemoteTests.stagedCropReachesARemoteHerdrPane` stages the crop on asus and reads the packet back from a Herdr pane there; the viewing step needs a real agent (user)
+- [x] Edit and save a remote file, have an agent edit the same file, and get a conflict diff instead of a silent overwrite — conflict sheet locally (Phase 2); SFTP conflict detection against devbox in `RemoteHostTests`
+- [x] Annotate a rectangle on a PNG and send it to Claude Code in a remote Herdr pane; the agent receives the crop path, the coordinates, and the comment, and can view the crop — `AcceptanceRemoteTests.stagedCropReachesARemoteHerdrPane` stages the crop on devbox and reads the packet back from a Herdr pane there; the viewing step needs a real agent (user)
 - [x] Annotate a PDF page region and send it the same way — same path; PDF region crops are covered by the Viewers tests
-- [x] Send three notes across two files as one packet and see all three flip to resolved when the agent calls the MCP tool — `AcceptanceRemoteTests.threeNotesAcrossTwoFilesResolveFromTheHost` resolves them from asus through the reverse-forwarded port
-- [x] Focus a different Herdr pane on another host and watch the tree follow it — follow events through the forwarded socket in `RemoteHerdrTests`; the in-app toggle was exercised locally (user: watch it on asus)
+- [x] Send three notes across two files as one packet and see all three flip to resolved when the agent calls the MCP tool — `AcceptanceRemoteTests.threeNotesAcrossTwoFilesResolveFromTheHost` resolves them from devbox through the reverse-forwarded port
+- [x] Focus a different Herdr pane on another host and watch the tree follow it — follow events through the forwarded socket in `RemoteHerdrTests`; the in-app toggle was exercised locally (user: watch it on devbox)
 - [~] ~~Type "address my notes" in Claude Code and in Codex with no manual paste and have the hook deliver pending notes~~ — withdrawn 2026-10-05 (issue #5): the hook also fired on the prompt a send submits and shipped every other draft, so drafts now leave only on Send
 - [x] Send a note to an OpenCode session through its HTTP API with an image part — verified against a real `opencode serve` (reply received)
-- [x] Send a note to an agent in a plain tmux pane with no Herdr — verified live, locally and on asus
+- [x] Send a note to an agent in a plain tmux pane with no Herdr — verified live, locally and on devbox
 - [x] Copy a packet to the clipboard and paste it into a bare mosh session — clipboard verified (Phase 2); pasting into mosh is the terminal's job
 - [x] Edit a file that has notes, reopen it after the agent rewrote the section, and see notes re-anchor or show as orphaned — Core re-anchoring tests and Phase 2 in-app check
 - [x] Quit, relaunch, reconnect to the remote host automatically, and find every note where it was — the most recent root on any host is reopened at launch, connecting the host; notes are keyed by host and path in SQLite
@@ -313,7 +313,7 @@ Milestone 2 (scoped 2026-10-03) runs the same loop, select → note → send →
 **Acceptance checks.** Ticked when verified; the note will say how.
 
 - [x] Open a local HTML file, click a relative link to another file and an absolute link to a web page: the file opens as a document with the explorer following, the page loads in place, and Back returns to the file — verified live on a fixture site with a throwaway database (2026-10-03): about.html and docs/PLAN.md opened as documents, example.com loaded in place as a web document, Back and Forward moved between them with the document following
-- [x] Open `http://localhost:3000` on a remote host while the dev server runs only there: the page loads through the app's ssh connection, relative links and hot reload work, and the document is stored against that host so the packet's `File:` line is right on the agent's machine — verified live against asus with a python http.server bound to its 127.0.0.1 (port 8766): opened via Open Location → Via asus (the sheet the address bar has since replaced), rendered through the master's forwarded port, a relative link stayed inside the tunnel, the document was asus's; `RemoteTests.forwardsALocalPortToARemoteLoopbackServer` covers the forward (hot reload needs a real dev server: user)
+- [x] Open `http://localhost:3000` on a remote host while the dev server runs only there: the page loads through the app's ssh connection, relative links and hot reload work, and the document is stored against that host so the packet's `File:` line is right on the agent's machine — verified live against devbox with a python http.server bound to its 127.0.0.1 (port 8766): opened via Open Location → Via devbox (the sheet the address bar has since replaced), rendered through the master's forwarded port, a relative link stayed inside the tunnel, the document was devbox's; `RemoteTests.forwardsALocalPortToARemoteLoopbackServer` covers the forward (hot reload needs a real dev server: user)
 - [x] Turn on Element Notes, click a button on a page, write a note, send it to the clipboard: the packet carries the selector, the HTML snippet, the rect and a PNG crop of the element, and the note draws as an outline on the page — verified live on the fixture's Save button: hover label, editor at the element, outline after commit, packet with `Element: [data-testid="save"]`, `Text`, `Rect … (crop attached)`, `Line 8`, `Snippet` and the staged 2x PNG; `ElementNoteTests` and `WebBridgeTests` cover the pieces
 - [x] Change the page under an element note (rename the id, keep the text): the note moves and is flagged for review; remove the element: the note is orphaned — `ElementNoteTests` drives rename → flagged under the new selector, removal → orphaned, and the element coming back → draft again; live, removing the button from the file orphaned the note (the page hash now covers the DOM, not only its text, so a renamed id counts as a change)
 - [ ] Click a picture on a page (one inside a link too): Add Note shows beside it and the note's crop is the whole picture; drag across an `object-fit` picture: the region's outline sits on that part and the packet has `Image:` and `Region:`; in Pick Element, ↑ steps from a picture to its card — `WebBridgeTests` (click, cover drag, stepping) and `ElementNoteTests` (region crop and anchor) cover the pieces; the live check is pending
@@ -333,6 +333,7 @@ Scoped 2026-10-04. Gloss is released from its GitHub repository (`colinc86/gloss
 - **Updates are Sparkle's.** Gloss › Check for Updates… (also in Help) and a daily check that Settings › General can turn off. When a newer version exists, Sparkle's dialog shows its release notes (the GitHub release's description) with Install Update, Remind Me Later and Skip This Version; installing replaces the app in place and relaunches it. Every release is notarized, and its zip is signed with the project's EdDSA key, which Sparkle checks before installing. `scripts/release.sh` builds, notarizes, publishes the release and lists it in `appcast.xml` at the repository root (see `docs/RELEASE.md`). Debug builds never check.
 - **While the repository is private**, the feed and the release files are read through the GitHub API with the key from Settings › Integrations; without a key there are no updates and a manual check says why. When the repository goes public the feed moves to a public URL and updates need no key.
 - **Feedback is a sheet.** The ladybug in the toolbar (and Help › Report a Bug or Request a Feature…) asks for Bug or Feature Request, a title and a description, and offers to include the app and macOS versions, shown before sending; nothing else about the machine is attached. With a GitHub key that can create issues it is filed as an issue on Gloss's repository, labeled `bug` or `enhancement`; otherwise, or when GitHub refuses the key, the same report opens on GitHub's new-issue form, filled in. A marker in the body lets the repository's `label-reports` workflow label reports from people without push access, whose requested labels GitHub drops.
+- **Open source.** Gloss is MIT licensed (`LICENSE`). Help › Acknowledgments lists the license of every package it is built on and of its theme palettes, generated by `scripts/acknowledgments.py`; a test fails when a package is added without it.
 - **The one write.** Filing feedback is the only write the app makes to GitHub, and only to its own repository, from its own client (`IssueReporter`); the integrations clients stay GET-only.
 
 **Acceptance checks.**

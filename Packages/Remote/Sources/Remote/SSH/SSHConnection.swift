@@ -32,7 +32,7 @@ final class PIDBox: Sendable {
 
 public enum SSHConnectionEvent: Sendable, Equatable {
     case connecting(HostID)
-    /// A stage from ssh's own verbose output, e.g. "Connecting to host", "Authenticating as colin".
+    /// A stage from ssh's own verbose output, e.g. "Connecting to host", "Authenticating as me".
     case progress(HostID, String)
     case connected(HostID)
     case waitingForAgent(HostID)

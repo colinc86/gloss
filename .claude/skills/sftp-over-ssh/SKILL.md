@@ -29,7 +29,7 @@ ssh -O exit <host>                               # tear down
 - First connection may need host key confirmation or a key passphrase. Run the master with a pty-less `Process`; if it exits with "Host key verification failed", surface the fingerprint and offer `-o StrictHostKeyChecking=accept-new` for that host only. Passphrases must come from ssh-agent; the app never prompts for them.
 - Detect disconnect by the master Process exiting or `-O check` failing; reconnect with backoff, then re-open the SFTP channel and re-add forwards.
 - `BatchMode=yes` and `ControlMaster=no` on everything except the master so nothing ever blocks on a prompt and a client never becomes a stray master.
-- The master MUST NOT use BatchMode: the `asus` key lives in the 1Password agent, which needs a GUI approval, and `ssh -o BatchMode=yes asus` fails with `communication with agent failed` (verified 2026-10-01). Give the master a 90 s connect budget, poll `-O check` every 500 ms, set `SSH_ASKPASS_REQUIRE=never` in its environment, and show "waiting for SSH agent" in the UI.
+- The master MUST NOT use BatchMode: the `devbox` key lives in the 1Password agent, which needs a GUI approval, and `ssh -o BatchMode=yes devbox` fails with `communication with agent failed` (verified 2026-10-01). Give the master a 90 s connect budget, poll `-O check` every 500 ms, set `SSH_ASKPASS_REQUIRE=never` in its environment, and show "waiting for SSH agent" in the UI.
 
 ## SFTP v3 wire format
 

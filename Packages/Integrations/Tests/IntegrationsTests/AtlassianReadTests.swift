@@ -9,7 +9,7 @@ struct AtlassianReadTests {
         AtlassianClient(site: URL(string: Self.site)!, email: "c@x.com", token: "t", session: stub.session())
     }
 
-    static let issueJSON = #"{"id":"10001","key":"CP-7","fields":{"summary":"Name the receiver","issuetype":{"name":"Task"},"status":{"name":"In Progress"},"priority":{"name":"High"},"assignee":{"displayName":"Colin Campbell"},"reporter":{"displayName":"Sam"},"labels":["infra"],"parent":{"key":"CP-1"},"project":{"key":"CP"},"created":"2026-10-01T09:00:00.000+0100","updated":"2026-10-03T12:00:00.000+0100","description":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Rename it."}]}]},"comment":{"comments":[{"id":"2","author":{"displayName":"Sam"},"created":"2026-10-02T10:00:00.000+0100","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Agreed."}]}]}},{"id":"1","author":{"displayName":"Colin Campbell"},"created":"2026-10-01T10:00:00.000+0100","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Why?"}]}]}}]}}}"#
+    static let issueJSON = #"{"id":"10001","key":"CP-7","fields":{"summary":"Name the receiver","issuetype":{"name":"Task"},"status":{"name":"In Progress"},"priority":{"name":"High"},"assignee":{"displayName":"Sam Rivera"},"reporter":{"displayName":"Sam"},"labels":["infra"],"parent":{"key":"CP-1"},"project":{"key":"CP"},"created":"2026-10-01T09:00:00.000+0100","updated":"2026-10-03T12:00:00.000+0100","description":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Rename it."}]}]},"comment":{"comments":[{"id":"2","author":{"displayName":"Sam"},"created":"2026-10-02T10:00:00.000+0100","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Agreed."}]}]}},{"id":"1","author":{"displayName":"Sam Rivera"},"created":"2026-10-01T10:00:00.000+0100","body":{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Why?"}]}]}}]}}}"#
 
     /// An issue whose discussion runs past the comments Jira sends with it reads all of them, from the comments' own
     /// listing, page by page.
@@ -34,7 +34,7 @@ struct AtlassianReadTests {
         stub.respond(to: "\(Self.site)/rest/api/3/issue/CP-7?fields=summary,issuetype,status,priority,assignee,reporter,labels,parent,created,updated,description,comment,project,attachment", with: .json(Self.issueJSON))
         let issue = try await client(stub).issue(key: "CP-7")
         #expect(issue.key == "CP-7" && issue.summary == "Name the receiver" && issue.status == "In Progress" && issue.priority == "High")
-        #expect(issue.assignee == "Colin Campbell" && issue.labels == ["infra"] && issue.parentKey == "CP-1" && issue.projectKey == "CP")
+        #expect(issue.assignee == "Sam Rivera" && issue.labels == ["infra"] && issue.parentKey == "CP-1" && issue.projectKey == "CP")
         #expect(issue.description == "Rename it.\n")
         #expect(issue.comments.map(\.id) == ["1", "2"], "oldest first")
         #expect(issue.comments[0].body == "Why?\n")

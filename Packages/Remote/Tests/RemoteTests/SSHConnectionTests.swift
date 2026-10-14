@@ -220,7 +220,7 @@ struct SSHConnectionTests {
         let connection = SSHConnection(hostID: .local, alias: "x", controlDirectory: "/tmp", sshPath: "/usr/bin/ssh", events: AsyncStream<SSHConnectionEvent> { _ in }.makeContinuationForTest())
         #expect(connection.classify(stderr: "Host key verification failed.", status: 255) == .hostKeyProblem(fingerprint: nil, offerAcceptNew: true))
         if case .hostKeyChanged = connection.classify(stderr: "@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @", status: 255) {} else { Issue.record("expected hostKeyChanged") }
-        if case .authenticationFailed = connection.classify(stderr: "colin@x: Permission denied (publickey).", status: 255) {} else { Issue.record("expected auth") }
+        if case .authenticationFailed = connection.classify(stderr: "me@x: Permission denied (publickey).", status: 255) {} else { Issue.record("expected auth") }
         if case .unreachable = connection.classify(stderr: "ssh: Could not resolve hostname x: nodename nor servname provided", status: 255) {} else { Issue.record("expected unreachable") }
         // As macOS's ssh says them; an auth failure is never retried on its own.
         let tooMany = connection.classify(stderr: "Received disconnect from 10.0.0.2 port 22:2: Too many authentication failures", status: 255)

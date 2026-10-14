@@ -6,8 +6,8 @@ import Testing
 
 struct HookInstallerTests {
     @Test func readsTheCodexMCPRegistration() {
-        let toml = "model = \"x\"\n\n[mcp_servers.gloss]\nurl = \"http://127.0.0.1:47831/mcp?host=asus\"\n\n[mcp_servers.other]\nurl = \"http://o\"\n"
-        #expect(HookInstaller.codexMCPURL(in: toml) == "http://127.0.0.1:47831/mcp?host=asus")
+        let toml = "model = \"x\"\n\n[mcp_servers.gloss]\nurl = \"http://127.0.0.1:47831/mcp?host=devbox\"\n\n[mcp_servers.other]\nurl = \"http://o\"\n"
+        #expect(HookInstaller.codexMCPURL(in: toml) == "http://127.0.0.1:47831/mcp?host=devbox")
         #expect(HookInstaller.codexMCPURL(in: "[mcp_servers.\"gloss\"]\nurl='http://a/mcp'\n") == "http://a/mcp")
         #expect(HookInstaller.codexMCPURL(in: "[mcp_servers.other]\nurl = \"http://o\"\n") == nil)
         #expect(HookInstaller.codexMCPURL(in: "[mcp_servers.gloss] # ours\nurl_note = \"x\"\nurl = \"http://a/mcp\" # comment\n") == "http://a/mcp", "comments and look-alike keys")
@@ -18,13 +18,13 @@ struct HookInstallerTests {
         let home = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcpurl-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: home) }
-        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "asus", port: 47831) { _ in
+        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "devbox", port: 47831) { _ in
             ExecResult(exitStatus: 0, stdout: Data(), stderr: Data())
         }
         #expect(await installer.status(.claude) == .notInstalled)
         try #"{"mcpServers":{"gloss":{"type":"http","url":"http://127.0.0.1:47831/mcp"}}}"#.write(toFile: "\(home)/.claude.json", atomically: true, encoding: .utf8)
         #expect(await installer.status(.claude) == .outdated("MCP url differs"), "registered before urls carried the host")
-        try #"{"mcpServers":{"gloss":{"type":"http","url":"http://127.0.0.1:47831/mcp?host=asus"}}}"#.write(toFile: "\(home)/.claude.json", atomically: true, encoding: .utf8)
+        try #"{"mcpServers":{"gloss":{"type":"http","url":"http://127.0.0.1:47831/mcp?host=devbox"}}}"#.write(toFile: "\(home)/.claude.json", atomically: true, encoding: .utf8)
         #expect(await installer.status(.claude) == .installed)
     }
 
@@ -47,7 +47,7 @@ struct HookInstallerTests {
         #expect(((object["hooks"] as? [String: Any])?["SessionStart"] as? [[String: Any]])?.count == 1)
         #expect((object["permissions"] as? [String: Any])?["allow"] as? [String] == ["Bash(ls *)"] && object["model"] as? String == "opus")
 
-        let shared = Data(#"{"hooks":{"UserPromptSubmit":[{"matcher":"x","hooks":[{"type":"command","command":"other"},{"type":"command","command":"GLOSS_HOST='asus' \"$HOME/.claude/hooks/gloss-notes.sh\" claude"}]}]}}"#.utf8)
+        let shared = Data(#"{"hooks":{"UserPromptSubmit":[{"matcher":"x","hooks":[{"type":"command","command":"other"},{"type":"command","command":"GLOSS_HOST='devbox' \"$HOME/.claude/hooks/gloss-notes.sh\" claude"}]}]}}"#.utf8)
         let sharedCleaned = try #require(((try JSONSerialization.jsonObject(with: try HookInstaller.removingLegacyEntry(from: shared)) as? [String: Any])?["hooks"] as? [String: Any])?["UserPromptSubmit"] as? [[String: Any]])
         #expect(sharedCleaned.count == 1 && (sharedCleaned[0]["hooks"] as? [[String: Any]])?.map { $0["command"] as? String } == ["other"] && sharedCleaned[0]["matcher"] as? String == "x")
 

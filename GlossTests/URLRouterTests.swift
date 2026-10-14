@@ -4,13 +4,13 @@ import Testing
 @testable import Gloss
 
 struct URLRouterTests {
-    let hosts: [String: HostID] = ["asus": HostID(rawValue: "h_01ARZ3NDEKTSV4RRFFQ69G5FAV")]
+    let hosts: [String: HostID] = ["devbox": HostID(rawValue: "h_01ARZ3NDEKTSV4RRFFQ69G5FAV")]
 
     @Test func parsesOpen() {
-        let route = URLRouter.parse(URL(string: "gloss://open?host=local&path=/Users/colin/proj/a.md")!, hosts: hosts)
-        #expect(route == .open(hostID: .local, path: "/Users/colin/proj/a.md"))
-        let remote = URLRouter.parse(URL(string: "gloss://open?host=asus&path=/home/colin/x.md")!, hosts: hosts)
-        #expect(remote == .open(hostID: hosts["asus"]!, path: "/home/colin/x.md"))
+        let route = URLRouter.parse(URL(string: "gloss://open?host=local&path=/Users/me/proj/a.md")!, hosts: hosts)
+        #expect(route == .open(hostID: .local, path: "/Users/me/proj/a.md"))
+        let remote = URLRouter.parse(URL(string: "gloss://open?host=devbox&path=/home/me/x.md")!, hosts: hosts)
+        #expect(remote == .open(hostID: hosts["devbox"]!, path: "/home/me/x.md"))
         #expect(URLRouter.parse(URL(string: "gloss://open?path=relative")!, hosts: hosts) == nil)
         #expect(URLRouter.parse(URL(string: "gloss://open?path=/a/b.swift&line=42")!, hosts: hosts) == .open(hostID: .local, path: "/a/b.swift", line: 42))
         #expect(URLRouter.parse(URL(string: "gloss://open?path=/a/b.swift&line=0")!, hosts: hosts) == .open(hostID: .local, path: "/a/b.swift"), "line numbers are 1-based")

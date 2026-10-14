@@ -15,11 +15,11 @@ struct AtlassianClientTests {
 
     @Test func statusUsesBasicAuthAndOnlyGets() async throws {
         let stub = Stub()
-        stub.respond(to: "https://x.atlassian.net/rest/api/3/myself", with: .json(#"{"accountId":"a1","displayName":"Colin Campbell","emailAddress":"c@x.com"}"#))
+        stub.respond(to: "https://x.atlassian.net/rest/api/3/myself", with: .json(#"{"accountId":"a1","displayName":"Sam Rivera","emailAddress":"c@x.com"}"#))
         stub.respond(to: "https://x.atlassian.net/wiki/api/v2/spaces?limit=1", with: .json(#"{"results":[]}"#))
         let client = AtlassianClient(site: URL(string: "https://x.atlassian.net")!, email: "c@x.com", token: "secret", session: stub.session())
         let status = try await client.status()
-        #expect(status.user.displayName == "Colin Campbell" && status.confluenceReachable)
+        #expect(status.user.displayName == "Sam Rivera" && status.confluenceReachable)
         let auth = stub.recorded.first?.value(forHTTPHeaderField: "Authorization")
         #expect(auth == "Basic " + Data("c@x.com:secret".utf8).base64EncodedString())
         #expect(Set(stub.recorded.map { $0.httpMethod ?? "" }) == ["GET"])

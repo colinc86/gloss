@@ -668,7 +668,7 @@ struct WebBridgeTests {
         let crossScheme = Task("gloss-html://h_local/site/index.html", mainDocument: "https://example.com/")
         handler.webView(browser.webView, start: crossScheme)
         #expect((crossScheme.error as? URLError)?.code == .noPermissionsToReadFile, "a page from another scheme cannot read through ours")
-        let otherHost = Task("gloss-html://h_asus/site/index.html", mainDocument: "gloss-html://h_local/site/index.html")
+        let otherHost = Task("gloss-html://h_devbox/site/index.html", mainDocument: "gloss-html://h_local/site/index.html")
         handler.webView(browser.webView, start: otherHost)
         #expect((otherHost.error as? URLError)?.code == .noPermissionsToReadFile, "a served page cannot reach another host's files")
     }
@@ -695,14 +695,14 @@ struct WebBridgeTests {
         let handler = HTMLSchemeHandler()
         handler.browser = browser
         let page = HTMLViewerController(source: TextEditorController(text: "<p>x</p>", languageName: "html"), documentPath: "/site/index.html", resourceRoot: { "/site" }) { _ in Data("bytes".utf8) }
-        page.hostID = HostID(rawValue: "h_asus")
+        page.hostID = HostID(rawValue: "h_devbox")
         page.isLocal = false
         page.resolveRemotePath = { path in path == "/site/link.txt" ? "/etc/passwd" : path }
         browser.attach(page, load: false)
 
-        let link = Task("gloss-html://h_asus/site/link.txt", mainDocument: "gloss-html://h_asus/site/index.html")
+        let link = Task("gloss-html://h_devbox/site/link.txt", mainDocument: "gloss-html://h_devbox/site/index.html")
         handler.webView(browser.webView, start: link)
-        let plain = Task("gloss-html://h_asus/site/style.css", mainDocument: "gloss-html://h_asus/site/index.html")
+        let plain = Task("gloss-html://h_devbox/site/style.css", mainDocument: "gloss-html://h_devbox/site/index.html")
         handler.webView(browser.webView, start: plain)
         for _ in 0..<100 where !(link.finished && plain.finished) { try await _Concurrency.Task.sleep(for: .milliseconds(20)) }
         #expect((link.error as? URLError)?.code == .noPermissionsToReadFile, "the link leads out of the site")
@@ -720,6 +720,6 @@ struct WebBridgeTests {
         #expect(!permits("gloss-html://h_local/a.css", nil, nil), "a request that says nothing about where it came from")
         #expect(!permits("gloss-html://h_local/a.css", "https://evil.example/", nil))
         #expect(!permits("gloss-html://h_local/a.css", "gloss-html://h_local/index.html", "https://evil.example/"), "an https frame inside a served page")
-        #expect(!permits("gloss-html://h_asus/a.css", "gloss-html://h_asus/index.html", nil), "another host than the one shown")
+        #expect(!permits("gloss-html://h_devbox/a.css", "gloss-html://h_devbox/index.html", nil), "another host than the one shown")
     }
 }

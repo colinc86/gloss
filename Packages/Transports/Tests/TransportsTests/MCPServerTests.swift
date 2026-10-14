@@ -87,7 +87,7 @@ struct MCPServerTests {
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: directory) }
         let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
-        _ = try await store.upsertHost(name: "asus", kind: .ssh)
+        _ = try await store.upsertHost(name: "devbox", kind: .ssh)
         let opened = OpenLog()
         var dependencies = Self.dependencies(store: store)
         dependencies.openDocument = { host, path, line, end in
@@ -111,7 +111,7 @@ struct MCPServerTests {
             return (((result?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "", result?["isError"] as? Bool ?? false)
         }
         let local = URL(string: "http://127.0.0.1:\(port)")!
-        let remote = URL(string: "http://127.0.0.1:\(port)/?host=asus")!
+        let remote = URL(string: "http://127.0.0.1:\(port)/?host=devbox")!
         #expect(try await call(local, ["path": "/tmp/a.swift", "line": 12]).text == "showing local:/tmp/a.swift at line 12")
         #expect(try await call(local, ["path": "/tmp/a.swift"]).isError == false)
         #expect(try await call(local, ["path": "relative.swift"]).isError, "relative paths are refused")
@@ -119,20 +119,20 @@ struct MCPServerTests {
         #expect(try await call(local, ["path": "/tmp/a.swift", "line": 1e300]).isError, "an absurd number is refused, not a crash")
         #expect(try await call(local, ["path": "/tmp/a.swift", "host": "nowhere"]).isError, "unknown hosts are refused")
         // The session URL's host is the default; a host in the call wins.
-        #expect(try await call(remote, ["path": "/home/colin/x.py", "line": 3]).text == "showing asus:/home/colin/x.py at line 3")
+        #expect(try await call(remote, ["path": "/home/me/x.py", "line": 3]).text == "showing devbox:/home/me/x.py at line 3")
         #expect(try await call(remote, ["path": "/Users/c/y.md", "host": "local"]).text == "showing local:/Users/c/y.md")
         #expect(try await call(local, ["url": "https://github.com/o/r/pull/12"]).text == "showing github:/o/r/pull/12/Pull request.md")
         #expect(try await call(local, ["url": "https://example.com/docs", "line": 4]).text == "showing web:https://example.com/docs at line 4")
         #expect(try await call(local, ["url": "ftp://example.com/x"]).isError, "a URL with no viewer is refused")
         #expect(try await call(local, ["url": "file:///tmp/My%20Notes.md", "line": 2]).text == "showing local:/tmp/My Notes.md at line 2", "a file link is its path")
-        #expect(try await call(remote, ["url": "file:///home/colin/x.py"]).text == "showing asus:/home/colin/x.py", "on the machine the agent runs on")
+        #expect(try await call(remote, ["url": "file:///home/me/x.py"]).text == "showing devbox:/home/me/x.py", "on the machine the agent runs on")
         #expect(try await call(local, ["url": "file://otherbox/tmp/a.md"]).isError, "a file link to another machine is refused")
         #expect(try await call(local, ["path": "/tmp/a.swift", "line": 3, "end_line": 9]).text == "showing local:/tmp/a.swift at lines 3-9")
         #expect(try await call(local, ["path": "/tmp/b.swift:7"]).text == "showing local:/tmp/b.swift at line 7", "the agent hears what was shown")
         #expect(try await call(local, ["path": "/tmp/a.swift", "line": 9, "end_line": 3]).isError, "a range must not run backwards")
         #expect(try await call(local, ["path": "/tmp/a.swift", "end_line": 3]).isError, "end_line needs line")
         #expect(try await call(local, [:]).isError, "path or url is required")
-        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "asus|/home/colin/x.py|3", "local|/Users/c/y.md|-", "github|/o/r/pull/12/Pull request.md|-", "web|https://example.com/docs|4", "local|/tmp/My Notes.md|2", "asus|/home/colin/x.py|-", "local|/tmp/a.swift|3-9", "local|/tmp/b.swift:7|-"])
+        #expect(await opened.lines == ["local|/tmp/a.swift|12", "local|/tmp/a.swift|-", "devbox|/home/me/x.py|3", "local|/Users/c/y.md|-", "github|/o/r/pull/12/Pull request.md|-", "web|https://example.com/docs|4", "local|/tmp/My Notes.md|2", "devbox|/home/me/x.py|-", "local|/tmp/a.swift|3-9", "local|/tmp/b.swift:7|-"])
     }
 
     /// Drafts stay in the app until the user sends them: no tool lists, reads or resolves one, and the old hook
@@ -367,7 +367,7 @@ struct MCPServerTests {
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: directory) }
         let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
-        _ = try await store.upsertHost(name: "asus", kind: .ssh)
+        _ = try await store.upsertHost(name: "devbox", kind: .ssh)
         let asked = QuestionLog()
         var dependencies = Self.dependencies(store: store)
         dependencies.askUser = { question in
@@ -387,10 +387,10 @@ struct MCPServerTests {
         }
         let ok = try await call("ask_user", ["path": .string("/tmp/demo/README.md"), "question": .string("Does this intro read right?"), "line": .int(2), "end_line": .int(4)])
         #expect(!ok.isError && ok.text.hasPrefix("asked the user"), "\(ok.text)")
-        _ = try await call("ask_user", ["path": .string("/home/me/x.md"), "question": .string("Keep this?"), "text": .string("keep me")], agentHost: "asus", agentName: "codex")
+        _ = try await call("ask_user", ["path": .string("/home/me/x.md"), "question": .string("Keep this?"), "text": .string("keep me")], agentHost: "devbox", agentName: "codex")
         #expect(await asked.questions == [
             AgentQuestion(host: "local", path: "/tmp/demo/README.md", question: "Does this intro read right?", line: 2, endLine: 4, agent: "claude"),
-            AgentQuestion(host: "asus", path: "/home/me/x.md", question: "Keep this?", text: "keep me", agent: "codex"),
+            AgentQuestion(host: "devbox", path: "/home/me/x.md", question: "Keep this?", text: "keep me", agent: "codex"),
         ])
         #expect(try await call("ask_user", ["path": .string("/tmp/a.md"), "question": .string("  ")]).isError, "a question is required")
         #expect(try await call("ask_user", ["path": .string("a.md"), "question": .string("q")]).isError, "paths are absolute")
@@ -398,9 +398,9 @@ struct MCPServerTests {
 
         #expect(try await call("add_favorite", ["path": .string("/Users/me/proj")]).text == "added local:/Users/me/proj to the favorites")
         #expect(try await call("add_favorite", ["path": .string("/Users/me/proj")]).text == "local:/Users/me/proj is already a favorite")
-        _ = try await call("add_favorite", ["path": .string("/home/me/app")], agentHost: "asus")
+        _ = try await call("add_favorite", ["path": .string("/home/me/app")], agentHost: "devbox")
         let favorites = try await call("list_favorites", [:]).text
-        #expect(favorites.contains("local:/Users/me/proj") && favorites.contains("asus:/home/me/app"), "\(favorites)")
+        #expect(favorites.contains("local:/Users/me/proj") && favorites.contains("devbox:/home/me/app"), "\(favorites)")
 
         #expect(MCPServer.agentName(client: "claude-code") == "claude" && MCPServer.agentName(client: "codex-mcp-client") == "codex")
         #expect(MCPServer.agentName(client: nil) == "agent")
@@ -561,7 +561,7 @@ struct MCPServerTests {
         #expect(MCPServer.url(port: 47831) == "http://127.0.0.1:47831/mcp")
         #expect(MCPServer.url(port: 47831, host: "local") == "http://127.0.0.1:47831/mcp")
         #expect(MCPServer.url(port: 47831, host: "my box") == "http://127.0.0.1:47831/mcp?host=my%20box")
-        #expect(MCPServer.snippets(port: 47831, host: "asus").claudeCommand == "claude mcp add -s user --transport http gloss 'http://127.0.0.1:47831/mcp?host=asus'")
+        #expect(MCPServer.snippets(port: 47831, host: "devbox").claudeCommand == "claude mcp add -s user --transport http gloss 'http://127.0.0.1:47831/mcp?host=devbox'")
     }
 
     /// The copy for any other agent: the endpoint and header apart, and a generic mcpServers entry that authorises

@@ -196,7 +196,7 @@ Show Paths to Notes, Show Earlier Notes), then Refresh Explorer ⌘R; **Go** mov
 in Explorer, Next/Previous Note, Next/Previous Change, Follow Herdr, Follow Page in Notes Panel); **Notes** makes,
 sends and reviews notes, ending with an Iteration submenu (New Iteration, All Iterations, Back to Current Iteration,
 Hide Changes), and Preview Packet… (⌥⌘↩) beside Copy; View also holds Layout (Automatic, Compact, Full);
-**Help** has Keyboard Shortcuts and Report a Bug. Items that show or hide a part of the window say
+**Help** has Keyboard Shortcuts, Report a Bug and Acknowledgments. Items that show or hide a part of the window say
 which (Show Notes Panel becomes Hide Notes Panel) rather than carrying a checkmark; filters and modes that are an
 attribute keep their checkmark. No command is in two menus, and two commands don't share a symbol.
 
@@ -219,6 +219,10 @@ Gloss › Check for Updates… sits under About, where Mac apps keep it; release
 Help › Keyboard Shortcuts (⌘/) opens a reference window (`ShortcutsWindow`): shortcuts grouped by where they work,
 each key a raised key cap, alternatives separated by a quiet "or", with a search field. It replaces the default
 help item, which pointed at a help book that does not exist. The menu groups are read from the menu bar itself (`ShortcutGroup.fromMenu`), so a new or changed shortcut appears there without anyone remembering to list it; the app menu and the standard Edit commands are left out. Only keys with no menu item (the note composer, viewers, the folder switcher) are listed by hand in `ShortcutGroup.contextual`.
+Help › Acknowledgments opens a plain window (`AcknowledgmentsWindow`) with the bundled `Acknowledgments.txt`:
+every resolved package's license and NOTICE, then the theme palettes' notices, in small monospaced, selectable
+text. `scripts/acknowledgments.py` writes the file; a test fails when a resolved package is missing from it. The
+About panel's credits end with "Open source under the MIT License. See Help › Acknowledgments."
 
 ## Drag and drop
 
@@ -353,7 +357,7 @@ path. Dropping on the Dock icon is not supported yet.
   open, or an integration root in front, the panel still opens, offering addresses and up to 30 pages.
   Files with open notes carry the tree's marker in the row (`NoteMarkBadge`: their colors as overlapping dots and
   the count, orange when one needs attention), so the files worth jumping to stand out in the list.
-- **Connection notice** (sidebar, remote hosts): Not connected (info, Connect); Connecting to asus (info, ssh's
+- **Connection notice** (sidebar, remote hosts): Not connected (info, Connect); Connecting to devbox (info, ssh's
   current stage as the detail, spinner, Details, Cancel); Waiting for your key agent (mode, pulsing key, "Approve
   the request… its prompt may be behind other windows", Cancel); Reconnecting (info, attempt n); Couldn't connect
   (warning, ssh's message, Details, Connect). A healthy connection says nothing; a connected host with a problem
@@ -877,7 +881,7 @@ path. Dropping on the Dock icon is not supported yet.
   address: at rest a quiet caption, the file's `<title>` with a globe for a served file, the logical URL for a live
   page (`http://localhost:3000/dashboard`, never the forwarded `127.0.0.1:<port>` form); a click makes it a field,
   Return opens what was typed (`localhost:3000` is enough, the scheme is filled in), Escape puts the address back. A
-  page reached through an ssh host's loopback wears a teal `via asus` chip (`network`), the same mark the status bar
+  page reached through an ssh host's loopback wears a teal `via devbox` chip (`network`), the same mark the status bar
   and the notes panel use. Trailing, in Rendered mode: Pick Element (`rectangle.dashed` and its name, accent-filled
   while on, also Notes › Pick Element on Page, ⇧⌘E, enabled only on a rendered page; while on, the hints `↑ ↓ Parent,
   child` and `esc Leave`), Reload (`arrow.clockwise`, for a file it runs the page and its scripts again
@@ -1095,7 +1099,7 @@ path. Dropping on the Dock icon is not supported yet.
   so there is one first step on screen, not two; the notes panel keeps its three steps for what comes next.
 - **Opening and failing**: a document that is still opening shows nothing for 250 ms (local files are there by
   then; a spinner that flashes reads as a glitch), then fades in the file's icon and name with a small spinner and
-  "Opening…" ("Opening on asus…" for remote hosts). A failed open says what happened in a sentence (not a Swift
+  "Opening…" ("Opening on devbox…" for remote hosts). A failed open says what happened in a sentence (not a Swift
   error) and offers Try Again (`DocumentSession.openFailure`, `retryOpen`).
 - **Pick up where you left off** (`OpenWorkList`): under the empty viewer's Open Quickly, up to five files in the
   open folder with notes still in play (drafts, sent, questions back, orphans), most recently touched first. Each
@@ -1213,7 +1217,7 @@ path. Dropping on the Dock icon is not supported yet.
   to match. A refusal shows in orange above the buttons and turns Send into Continue in Browser. Sent, the sheet
   becomes a green check that bounces once, "Thanks, we've got it.", with View Report and Done.
 - **Integrations** (`key`): one section per service, GitHub and Atlassian. Each has the Status line (dot and
-  sentence: "Signed in as colinc86 · repo, user", "Colin Campbell · Jira and Confluence", or the service's own error),
+  sentence: "Signed in as octocat · repo, user", "Sam Rivera · Jira and Confluence", or the service's own error),
   a `SecureField` for the token (its prompt says "Saved · paste a new one to replace it" once one is), Atlassian's
   site and email fields with the saved values as prompts, and Save (glass), Test Connection and Remove. The footer is
   the trust note, with `lock.shield` as on Hooks: the app only reads with these keys, the agent makes every change,

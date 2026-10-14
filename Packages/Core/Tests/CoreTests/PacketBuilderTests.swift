@@ -13,19 +13,19 @@ struct PacketBuilderTests {
     @Test func matchesTheSkillExampleByteForByte() {
         let notes = [
             PacketNote(
-                noteID: markdownID, agentPath: "/home/colin/proj/docs/PLAN.md", source: .markdown,
+                noteID: markdownID, agentPath: "/home/me/proj/docs/PLAN.md", source: .markdown,
                 anchor: textAnchor(40, 52), comment: "This contradicts the 15 minute TTL in api.md. Pick one and fix both.",
                 excerptLines: ["## Auth flow", "The client refreshes tokens every 5 minutes..."]
             ),
             PacketNote(
-                noteID: imageID, agentPath: "/home/colin/proj/design/dashboard.png", source: .image,
+                noteID: imageID, agentPath: "/home/me/proj/design/dashboard.png", source: .image,
                 anchor: .image(ImageAnchor(x: 1204, y: 312, w: 640, h: 220, imageW: 2880, imageH: 1800)),
                 comment: "The legend overlaps the chart here. Move it below.",
                 attachmentAgentPath: "/tmp/gloss/a1b2c3/dashboard-region-1.png"
             ),
         ]
         let expected = """
-        File: /home/colin/proj/docs/PLAN.md
+        File: /home/me/proj/docs/PLAN.md
         Source: markdown
 
         Note: n_01J9X0000000000000000000
@@ -36,7 +36,7 @@ struct PacketBuilderTests {
         User comment: "This contradicts the 15 minute TTL in api.md. Pick one and fix both."
 
 
-        File: /home/colin/proj/design/dashboard.png
+        File: /home/me/proj/design/dashboard.png
         Source: image
         Original size: 2880x1800
 

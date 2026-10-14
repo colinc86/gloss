@@ -45,7 +45,7 @@ final class HostsModel {
     /// connection and appear after this Mac and the web in the host menu.
     private(set) var virtualHosts: [Entry] = []
     private(set) var status: [HostID: Status] = [:]
-    /// The latest stage ssh reported while connecting, e.g. "Authenticating as colin…".
+    /// The latest stage ssh reported while connecting, e.g. "Authenticating as me…".
     private(set) var progress: [HostID: String] = [:]
 
     /// What ssh is doing for this host, for the Details popover: the resolved destination, the agent socket in

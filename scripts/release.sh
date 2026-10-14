@@ -12,6 +12,7 @@ set -euo pipefail
 
 REPO=colinc86/gloss
 PROFILE=AC_PASSWORD
+TEAM=4WS4246RA4   # passed to the archive, so a release never depends on Config/Signing.local.xcconfig
 ROOT=${0:A:h:h}
 cd "$ROOT"
 
@@ -84,7 +85,8 @@ sed -i '' -E "s/MARKETING_VERSION = [^;]+;/MARKETING_VERSION = $VERSION;/; s/CUR
 step "Archiving $VERSION ($BUILD)"
 rm -rf build && mkdir build
 xcodebuild -quiet -project Gloss.xcodeproj -scheme Gloss -configuration Release \
-  -archivePath build/Gloss.xcarchive -allowProvisioningUpdates archive
+  -archivePath build/Gloss.xcarchive -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM=$TEAM CODE_SIGN_IDENTITY="Apple Development" archive
 xcodebuild -quiet -exportArchive -archivePath build/Gloss.xcarchive \
   -exportOptionsPlist docs/ExportOptions.plist -exportPath build/export -allowProvisioningUpdates
 APP=build/export/Gloss.app

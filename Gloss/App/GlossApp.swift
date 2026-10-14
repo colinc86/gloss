@@ -42,6 +42,10 @@ struct GlossApp: App {
             ShortcutsWindow()
         }
         .windowResizability(.contentSize)
+
+        Window("Acknowledgments", id: "acknowledgments") {
+            AcknowledgmentsWindow()
+        }
     }
 }
 
@@ -59,6 +63,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("/", modifiers: [.command])
             Divider()
             Button { model.presentReport() } label: { Label("Report a Bug or Request a Feature…", systemImage: "ladybug") }
+            Divider()
+            Button { openWindow(id: "acknowledgments") } label: { Label("Acknowledgments", systemImage: "doc.text") }
         }
         CommandGroup(replacing: .appInfo) {
             Button("About Gloss") { AboutPanel.show() }
@@ -483,7 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// The standard About panel, with a line on what the app is for and what it is built on.
+/// The standard About panel, with a line on what the app is for, what it is built on, and its license.
 enum AboutPanel {
     static func show() {
         let center = NSMutableParagraphStyle()
@@ -496,7 +502,8 @@ enum AboutPanel {
             .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize - 1), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: center,
         ]
         let credits = NSMutableAttributedString(string: "Mark up any file and hand the notes to Claude Code, Codex, or OpenCode.\n", attributes: body)
-        credits.append(NSAttributedString(string: "Built with Tree-sitter, swift-markdown, GRDB, and the MCP Swift SDK.", attributes: quiet))
+        credits.append(NSAttributedString(string: "Built with Tree-sitter, swift-markdown, GRDB, and the MCP Swift SDK.\n", attributes: quiet))
+        credits.append(NSAttributedString(string: "Open source under the MIT License. See Help › Acknowledgments.", attributes: quiet))
         NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         NSApp.activate()
     }

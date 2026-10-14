@@ -7,7 +7,7 @@ struct NoteStoreTests {
         NoteStore(database: try AppDatabase.inMemory())
     }
 
-    func makeDocument(_ store: NoteStore, path: String = "/home/colin/proj/PLAN.md") async throws -> Document {
+    func makeDocument(_ store: NoteStore, path: String = "/home/me/proj/PLAN.md") async throws -> Document {
         try await store.upsertDocument(hostID: .local, path: path, kind: .markdown, fingerprint: Fingerprint(mtime: Date(timeIntervalSince1970: 1), size: 10, hash: "h"))
     }
 
@@ -235,10 +235,10 @@ struct NoteStoreTests {
 
     @Test func pendingNotesFilterByHostAndPathPrefix() async throws {
         let store = try makeStore()
-        let asus = try await store.upsertHost(name: "asus", kind: .ssh)
-        let localDocument = try await makeDocument(store, path: "/Users/colin/proj/a.md")
-        let remoteDocument = try await store.upsertDocument(hostID: asus.id, path: "/home/colin/proj/b.md", kind: .markdown, fingerprint: Fingerprint())
-        let remoteOther = try await store.upsertDocument(hostID: asus.id, path: "/home/colin/proj_2/c.md", kind: .markdown, fingerprint: Fingerprint())
+        let devbox = try await store.upsertHost(name: "devbox", kind: .ssh)
+        let localDocument = try await makeDocument(store, path: "/Users/me/proj/a.md")
+        let remoteDocument = try await store.upsertDocument(hostID: devbox.id, path: "/home/me/proj/b.md", kind: .markdown, fingerprint: Fingerprint())
+        let remoteOther = try await store.upsertDocument(hostID: devbox.id, path: "/home/me/proj_2/c.md", kind: .markdown, fingerprint: Fingerprint())
         let local = try await store.createNote(documentID: localDocument.id, anchor: .wholeFile, body: "l", color: .yellow)
         let remote = try await store.createNote(documentID: remoteDocument.id, anchor: .wholeFile, body: "r", color: .yellow)
         let other = try await store.createNote(documentID: remoteOther.id, anchor: .wholeFile, body: "o", color: .yellow)
@@ -247,11 +247,11 @@ struct NoteStoreTests {
 
         let all = try await store.pendingNotes()
         #expect(Set(all.map(\.note.id)) == [local.id, remote.id, other.id])
-        let onAsus = try await store.pendingNotes(hostID: asus.id)
-        #expect(Set(onAsus.map(\.note.id)) == [remote.id, other.id])
-        let inProj = try await store.pendingNotes(hostID: asus.id, pathPrefix: "/home/colin/proj")
+        let onDevbox = try await store.pendingNotes(hostID: devbox.id)
+        #expect(Set(onDevbox.map(\.note.id)) == [remote.id, other.id])
+        let inProj = try await store.pendingNotes(hostID: devbox.id, pathPrefix: "/home/me/proj")
         #expect(inProj.map(\.note.id) == [remote.id], "the LIKE prefix must not match proj_2")
-        let oneFile = try await store.pendingNotes(pathPrefix: "/Users/colin/proj/a.md")
+        let oneFile = try await store.pendingNotes(pathPrefix: "/Users/me/proj/a.md")
         #expect(oneFile.map(\.note.id) == [local.id])
     }
 
@@ -402,12 +402,12 @@ struct NoteStoreTests {
 
     @Test func prefixFilterIsLiteralAndCaseSensitive() async throws {
         let store = try makeStore()
-        let underscore = try await store.upsertDocument(hostID: .local, path: "/home/colin/my_proj/a.md", kind: .markdown, fingerprint: Fingerprint())
-        let upper = try await store.upsertDocument(hostID: .local, path: "/home/colin/MY_PROJ/b.md", kind: .markdown, fingerprint: Fingerprint())
+        let underscore = try await store.upsertDocument(hostID: .local, path: "/home/me/my_proj/a.md", kind: .markdown, fingerprint: Fingerprint())
+        let upper = try await store.upsertDocument(hostID: .local, path: "/home/me/MY_PROJ/b.md", kind: .markdown, fingerprint: Fingerprint())
         let note = try await store.createNote(documentID: underscore.id, anchor: .wholeFile, body: "u", color: .yellow)
         _ = try await store.createNote(documentID: upper.id, anchor: .wholeFile, body: "U", color: .yellow)
-        #expect(try await store.pendingNotes(pathPrefix: "/home/colin/my_proj").map(\.note.id) == [note.id])
-        #expect(try await store.pendingNotes(pathPrefix: "/home/colin/my_pro").isEmpty, "a prefix must end at a path component")
+        #expect(try await store.pendingNotes(pathPrefix: "/home/me/my_proj").map(\.note.id) == [note.id])
+        #expect(try await store.pendingNotes(pathPrefix: "/home/me/my_pro").isEmpty, "a prefix must end at a path component")
     }
 
     @Test func resolveStoresOutcomeAndMessage() async throws {

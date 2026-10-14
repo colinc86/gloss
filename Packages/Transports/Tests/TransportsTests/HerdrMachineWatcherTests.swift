@@ -8,7 +8,7 @@ struct HerdrMachineWatcherTests {
     private func makeStateDirectory() throws -> String {
         let directory = NSTemporaryDirectory() + "gloss-herdr-state-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        try Data(#"{"version":1,"ssh":[{"id":"0533c7e71e81fa46a658ff015042cbb7","label":"asus box","target":"asus","session":"default","enabled":true}]}"#.utf8)
+        try Data(#"{"version":1,"ssh":[{"id":"0533c7e71e81fa46a658ff015042cbb7","label":"devbox box","target":"devbox","session":"default","enabled":true}]}"#.utf8)
             .write(to: URL(fileURLWithPath: directory).appendingPathComponent("endpoints.json"))
         return directory
     }
@@ -24,9 +24,9 @@ struct HerdrMachineWatcherTests {
         try writeSelection(#"{"version":1,"selected_profile":null}"#, in: directory)
         #expect(HerdrMachineSelection.read(stateDirectory: directory) == .local)
         try writeSelection(#"{"version":1,"selected_profile":{"ssh":"0533c7e71e81fa46a658ff015042cbb7"}}"#, in: directory)
-        #expect(HerdrMachineSelection.read(stateDirectory: directory) == .remote(target: "asus", label: "asus box"))
+        #expect(HerdrMachineSelection.read(stateDirectory: directory) == .remote(target: "devbox", label: "devbox box"))
         try writeSelection(#"{"version":1,"selected_profile":"ssh:0533c7e71e81fa46a658ff015042cbb7"}"#, in: directory)
-        #expect(HerdrMachineSelection.read(stateDirectory: directory) == .remote(target: "asus", label: "asus box"), "the string spelling matches too")
+        #expect(HerdrMachineSelection.read(stateDirectory: directory) == .remote(target: "devbox", label: "devbox box"), "the string spelling matches too")
         try writeSelection(#"{"version":1,"selected_profile":{"ssh":"ffffffffffffffffffffffffffffffff"}}"#, in: directory)
         if case .unknown = HerdrMachineSelection.read(stateDirectory: directory) {} else { Issue.record("an id missing from endpoints.json is unknown") }
     }
@@ -41,7 +41,7 @@ struct HerdrMachineWatcherTests {
         #expect(first == .local, "the current selection is emitted first")
         try writeSelection(#"{"version":1,"selected_profile":{"ssh":"0533c7e71e81fa46a658ff015042cbb7"}}"#, in: directory)
         let second = await next(from: watcher.events, within: .seconds(10))
-        #expect(second == .remote(target: "asus", label: "asus box"))
+        #expect(second == .remote(target: "devbox", label: "devbox box"))
         await watcher.stop()
         let end = await next(from: watcher.events, within: .seconds(5))
         #expect(end == nil, "stop finishes the stream")

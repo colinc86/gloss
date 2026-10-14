@@ -21,3 +21,6 @@ integrations.env
 Packages/.build/
 *.profraw
 build/
+
+# Local signing (your team); see Config/Signing.xcconfig
+Config/Signing.local.xcconfig

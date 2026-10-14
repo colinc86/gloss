@@ -5,7 +5,7 @@
 <h1 align="center">Gloss</h1>
 
 <p align="center">
-  <b>Mark up any file and send to your agent.</b><br>
+  <b>Mark up any content and send it to your agent.</b><br>
   <a href="https://github.com/colinc86/gloss/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/colinc86/gloss?label=release&color=f5b942"></a>
   <img alt="macOS 26 or later" src="https://img.shields.io/badge/macOS-26%2B-555">
 </p>
@@ -19,10 +19,13 @@
 
 Gloss adds context to content. Highlight anything, write a note, and send it to your coding agent.
 
-- **Notes on anything.** Code, Markdown, images, PDFs, spreadsheets and web pages.
+- **Notes on anything.** Code, Markdown, images, PDFs, spreadsheets and web pages, down to a page's elements.
 - **Local or remote.** Files on your Mac or on any host you reach over ssh.
 - **Integrations.** GitHub pull requests, Jira issues and Confluence pages.
+- **Talk it through.** Each note is a thread: the agent replies, or asks you a question, sometimes with choices.
+- **Refine.** The agent reads a document for what's unclear and asks until it understands, then makes the changes.
 - **Iterate and review.** Iterate on your content and review changes made by your agent.
+- **Any agent, any terminal.** Claude Code, Codex or OpenCode, through [Herdr](https://herdr.dev), tmux, OpenCode or the clipboard.
 
 ## Install
 
@@ -69,6 +72,26 @@ Turn on **Review When Done** in the Send menu to review the results. Each note t
 until you've looked at it. **Review** steps through them, showing what the agent says it changed, and you accept
 each one or follow up.
 
+### Refine a document
+
+Choose **Notes › Refine This Document** and the agent reads it for anything ambiguous or left open. It asks
+questions beside the text they're about, some with choices to pick from. Answer them and press Send at the end of
+each round. The agent keeps asking until it has no more questions and has made its changes. End it whenever you
+like; its questions stay as ordinary notes.
+
+<!-- Picture to add: docs/media/refine.png, width 640. Alt: "A Refinement notice above a Markdown document, and an
+agent's question beside a sentence offering three choices, one picked." -->
+
+### Make it yours
+
+Pick a syntax theme for light mode and another for dark in **Settings › Themes**, edit one, or import one from Xcode,
+TextMate or VS Code. In a narrow window beside your terminal, Gloss switches to a compact layout with the notes in a
+tray under the document.
+
+<!-- Pictures to add: docs/media/themes.png and docs/media/compact.png, width 420 each, side by side. Alts: "The
+Themes settings with a dark theme chosen and its code preview." and "Gloss in a narrow window, with one note in the
+tray under the document." -->
+
 ## What agents can do with Gloss
 
 Gloss exposes an MCP server. Agents can:
@@ -83,6 +106,17 @@ Gloss exposes an MCP server. Agents can:
   highlight moves there. The card shows what moved, and you can put it back.
 - **Show you things.** `open_in_viewer` opens a file at the lines it means, or a pull request, Jira issue,
   Confluence page or web page.
-- **Ask you something.** `ask_user` puts a question beside the text it's about. Your answer goes back when you send
-  it.
+- **Ask you something.** `ask_user` puts a question beside the text it's about, with choices to pick from when they
+  help. Your answer goes back when you send it.
+- **Refine with you.** In Refinement, the agent asks in rounds and calls `finish_refinement` once it has no more
+  questions and has made its changes.
 - **Keep folders at hand.** `add_favorite` and `list_favorites` manage the folders in your explorer.
+
+## Build from source
+
+Open `Gloss.xcodeproj` in Xcode 26 and run the Gloss scheme. [CONTRIBUTING.md](CONTRIBUTING.md) covers signing,
+the tests and the guidelines. Report security problems privately, as [SECURITY.md](SECURITY.md) describes.
+
+## License
+
+MIT. See [LICENSE](LICENSE). The licenses of the packages Gloss is built on are in Help › Acknowledgments.

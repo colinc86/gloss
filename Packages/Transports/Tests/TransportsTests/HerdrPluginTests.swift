@@ -53,15 +53,15 @@ struct HerdrPluginTests {
         #expect(longURL.contains("&file=") && longURL.contains("Gloss%2Finbox%2Fselection-"), "long selections go through the app's inbox: \(longURL.prefix(160))")
         #expect(run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///srv/app.log"}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"]).isEmpty, "no port file: silent")
         try "47831\n".write(toFile: "\(home)/.config/gloss/mcp-port", atomically: true, encoding: .utf8)
-        try "asus\n".write(toFile: "\(home)/.config/gloss/host", atomically: true, encoding: .utf8)
+        try "devbox\n".write(toFile: "\(home)/.config/gloss/host", atomically: true, encoding: .utf8)
         let openBody = run("open", context: #"{"focused_pane_cwd":"/tmp/x","clicked_url":"file:///srv/app.log"}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
-        #expect((try? JSONSerialization.jsonObject(with: Data(openBody.utf8)) as? [String: String]) == ["host": "asus", "path": "/srv/app.log"])
+        #expect((try? JSONSerialization.jsonObject(with: Data(openBody.utf8)) as? [String: String]) == ["host": "devbox", "path": "/srv/app.log"])
         let lineBody = run("open", context: #"{"focused_pane_cwd":"/srv","selected_text":"app.py:88"}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
         let lineObject = try JSONSerialization.jsonObject(with: Data(lineBody.utf8)) as? [String: Any]
         #expect(lineObject?["path"] as? String == "/srv/app.py" && lineObject?["line"] as? Int == 88)
-        let body = run("note", context: #"{"focused_pane_cwd":"/home/colin","selected_text":"line1\nline2 \"q\""}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
+        let body = run("note", context: #"{"focused_pane_cwd":"/home/me","selected_text":"line1\nline2 \"q\""}"#, env: ["GLOSS_PLUGIN_TRANSPORT": "http"])
         let object = try JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any]
-        #expect(object?["host"] as? String == "asus" && object?["cwd"] as? String == "/home/colin" && object?["text"] as? String == "line1\nline2 \"q\"")
+        #expect(object?["host"] as? String == "devbox" && object?["cwd"] as? String == "/home/me" && object?["text"] as? String == "line1\nline2 \"q\"")
         // The URL route needs no files under HOME; the host file is simply absent, so the note targets local.
         #expect(run("note", context: #"{"focused_pane_cwd":"/tmp/x","selected_text":"x"}"#, env: ["HOME": "/nonexistent"]).hasPrefix("gloss://note?host=local"))
         // With the app's token file, a note link carries the token (a web page's link could not).
@@ -78,14 +78,14 @@ struct HerdrPluginTests {
         try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: home) }
         let commands = CommandLog()
-        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "asus", port: 47831) { line in
+        let installer = HookInstaller(fileSystem: LocalFileSystem(deleteBehavior: .permanent), home: home, hostAlias: "devbox", port: 47831) { line in
             await commands.record(line)
             if line.hasPrefix("herdr plugin list") { return ExecResult(exitStatus: 0, stdout: Data(#"{"result":{"plugins":[{"plugin_id":"gloss"}]}}"#.utf8), stderr: Data()) }
             return ExecResult(exitStatus: line.contains("unlink") ? 1 : 0, stdout: Data(), stderr: Data())
         }
         let report = try await installer.install(.herdrPlugin)
         #expect(report.changedFiles.contains(installer.hostFilePath) && report.changedFiles.contains("\(installer.pluginDirectory)/bin/gloss-plugin.sh"))
-        #expect(try String(contentsOfFile: installer.hostFilePath, encoding: .utf8) == "asus\n")
+        #expect(try String(contentsOfFile: installer.hostFilePath, encoding: .utf8) == "devbox\n")
         let mode = try FileManager.default.attributesOfItem(atPath: "\(installer.pluginDirectory)/bin/gloss-plugin.sh")[.posixPermissions] as? Int
         #expect(mode == 0o755)
         #expect(await commands.lines.contains("herdr plugin link '\(installer.pluginDirectory)'"))

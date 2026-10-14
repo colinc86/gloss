@@ -100,7 +100,7 @@ User replied: "Put a comment there instead."
 ## Example
 
 ```
-File: /home/colin/proj/docs/PLAN.md
+File: /home/me/proj/docs/PLAN.md
 Source: markdown
 
 Note: n_01J9X...
@@ -111,7 +111,7 @@ Excerpt:
 User comment: "This contradicts the 15 minute TTL in api.md. Pick one and fix both."
 
 
-File: /home/colin/proj/design/dashboard.png
+File: /home/me/proj/design/dashboard.png
 Source: image
 Original size: 2880x1800
 

@@ -8,17 +8,17 @@ import Testing
 struct ConnectionNoticeTests {
     @Test func eachStageSaysWhatIsHappeningAndOffersTheRightAction() {
         typealias C = ConnectionNoticeContent
-        #expect(C.make(host: "asus", status: nil, progress: nil, warning: nil, follow: nil) == nil, "this Mac needs no notice")
-        let idle = C.make(host: "asus", status: .idle, progress: nil, warning: nil, follow: nil)!
+        #expect(C.make(host: "devbox", status: nil, progress: nil, warning: nil, follow: nil) == nil, "this Mac needs no notice")
+        let idle = C.make(host: "devbox", status: .idle, progress: nil, warning: nil, follow: nil)!
         #expect(idle.offersConnect && !idle.isBusy)
-        let connecting = C.make(host: "asus", status: .connecting, progress: "Key accepted, opening session…", warning: nil, follow: nil)!
+        let connecting = C.make(host: "devbox", status: .connecting, progress: "Key accepted, opening session…", warning: nil, follow: nil)!
         #expect(connecting.isBusy && connecting.detail == "Key accepted, opening session…" && connecting.showsDetails)
-        let agent = C.make(host: "asus", status: .waitingForAgent, progress: nil, warning: nil, follow: nil)!
+        let agent = C.make(host: "devbox", status: .waitingForAgent, progress: nil, warning: nil, follow: nil)!
         #expect(agent.kind == .mode && agent.isBusy, "a key agent waiting on the user is a mode, not an error")
-        let failed = C.make(host: "asus", status: .failed("Permission denied (publickey)"), progress: nil, warning: nil, follow: nil)!
+        let failed = C.make(host: "devbox", status: .failed("Permission denied (publickey)"), progress: nil, warning: nil, follow: nil)!
         #expect(failed.kind == .warning && failed.offersConnect && failed.detail.contains("publickey"))
-        #expect(C.make(host: "asus", status: .connected, progress: nil, warning: nil, follow: nil) == nil, "a healthy connection is silent")
-        #expect(C.make(host: "asus", status: .connected, progress: nil, warning: "rg not found; search uses grep", follow: nil)?.kind == .warning)
+        #expect(C.make(host: "devbox", status: .connected, progress: nil, warning: nil, follow: nil) == nil, "a healthy connection is silent")
+        #expect(C.make(host: "devbox", status: .connected, progress: nil, warning: "rg not found; search uses grep", follow: nil)?.kind == .warning)
         #expect(C.make(host: "this Mac", status: nil, progress: nil, warning: nil, follow: "Herdr is not running")?.title == "Follow Herdr")
     }
 
@@ -26,12 +26,12 @@ struct ConnectionNoticeTests {
     @Test func rendersEveryStage() throws {
         let states: [(String, HostsModel.Status)] = [
             ("idle", .idle), ("connecting", .connecting), ("agent", .waitingForAgent),
-            ("reconnecting", .reconnecting(2)), ("failed", .failed("ssh: connect to host asus port 22: Operation timed out")),
+            ("reconnecting", .reconnecting(2)), ("failed", .failed("ssh: connect to host devbox port 22: Operation timed out")),
         ]
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-notices")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for (name, status) in states {
-            let content = try #require(ConnectionNoticeContent.make(host: "asus", status: status, progress: "Authenticating with key…", warning: nil, follow: nil))
+            let content = try #require(ConnectionNoticeContent.make(host: "devbox", status: status, progress: "Authenticating with key…", warning: nil, follow: nil))
             let view = ConnectionNotice(content: content) {
                 if content.offersConnect { Button("Connect") {}.buttonStyle(.borderedProminent) } else if content.isBusy { Button("Cancel") {} }
             }

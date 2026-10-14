@@ -92,7 +92,7 @@ Reach it from the Mac by forwarding the remote Unix socket over the app's own SS
 ssh -o ControlPath=<cp> -O forward -L <local-sock-path>:/home/<user>/.config/herdr/herdr.sock <host>
 ```
 
-Use `-o StreamLocalBindUnlink=yes` on the master so a stale local socket file is replaced. Fallbacks, in order: `herdr agent list --json` over the exec channel, then `herdr --machine <profile> agent list --json` locally when `herdr machine list --json` has a profile for that host (profile `asus` exists on this Mac).
+Use `-o StreamLocalBindUnlink=yes` on the master so a stale local socket file is replaced. Fallbacks, in order: `herdr agent list --json` over the exec channel, then `herdr --machine <profile> agent list --json` locally when `herdr machine list --json` has a profile for that host (profile `devbox` exists on this Mac).
 Herdr's own `[remote] manage_ssh_config` only affects Herdr's attach connection; it does not interfere with ours.
 
 ## Machines (verified on 0.9.3, 2026-10-02)

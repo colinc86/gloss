@@ -28,6 +28,7 @@
 /* Begin PBXFileReference section */
 		3B84F6A2306F03BD003DBBFF /* Gloss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Gloss.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B84F6B1306F03BF003DBBFF /* GlossTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "GlossTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		EE00000000000000000000A1 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Signing.xcconfig; path = Config/Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -81,6 +82,7 @@
 			children = (
 				3B84F6A4306F03BD003DBBFF /* Gloss */,
 				3B84F6B4306F03BF003DBBFF /* GlossTests */,
+				EE00000000000000000000A1 /* Signing.xcconfig */,
 				3B84F6A3306F03BD003DBBFF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -228,6 +230,7 @@
 /* Begin XCBuildConfiguration section */
 		3B84F6C1306F03BF003DBBFF /* Debug configuration for PBXProject "Gloss" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = EE00000000000000000000A1 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -261,7 +264,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = 4WS4246RA4;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -292,6 +294,7 @@
 		};
 		3B84F6C2306F03BF003DBBFF /* Release configuration for PBXProject "Gloss" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = EE00000000000000000000A1 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -325,7 +328,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = 4WS4246RA4;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -354,7 +356,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 415;
-				DEVELOPMENT_TEAM = 4WS4246RA4;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -385,7 +386,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 415;
-				DEVELOPMENT_TEAM = 4WS4246RA4;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -414,7 +414,6 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 415;
-				DEVELOPMENT_TEAM = 4WS4246RA4;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 0.6.0-beta.2;
@@ -435,7 +434,6 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 415;
-				DEVELOPMENT_TEAM = 4WS4246RA4;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 0.6.0-beta.2;

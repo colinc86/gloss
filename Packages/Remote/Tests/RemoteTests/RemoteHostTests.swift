@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import Remote
 
-/// Runs against `GLOSS_REMOTE_HOST=<alias>` (for example `asus`). The master may need the 1Password prompt, so this
+/// Runs against `GLOSS_REMOTE_HOST=<alias>` (for example `devbox`). The master may need the 1Password prompt, so this
 /// is for the phase gate, not CI. Everything it creates lives under the host's temp directory and is removed.
 struct RemoteHostTests {
     @Test(.enabled(if: TestGates.remoteHost != nil))

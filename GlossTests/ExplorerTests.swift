@@ -191,7 +191,7 @@ struct ExplorerNoteMarkTests {
         #expect(explorer.folderCount(for: root) == 4)
         let src = FileNode(hostID: .local, entry: DirectoryEntry(name: "src", path: "/tmp/p/src", kind: .directory), parent: root)
         #expect(explorer.folderCount(for: src) == 1)
-        let remote = FileNode(hostID: HostID(rawValue: "asus"), entry: DirectoryEntry(name: "p", path: "/tmp/p", kind: .directory), parent: nil)
+        let remote = FileNode(hostID: HostID(rawValue: "devbox"), entry: DirectoryEntry(name: "p", path: "/tmp/p", kind: .directory), parent: nil)
         #expect(explorer.folderCount(for: remote) == 0, "marks are per host")
     }
 }
@@ -223,8 +223,8 @@ struct RootSpellingTests {
         #expect(ExplorerModel.inRootSpelling("/private/tmp/p/src/a.swift", root: "/tmp/p", hostID: .local) == "/tmp/p/src/a.swift")
         #expect(ExplorerModel.inRootSpelling("/tmp/p", root: "/tmp/p", hostID: .local) == "/tmp/p")
         #expect(ExplorerModel.inRootSpelling("/tmp/p2/a", root: "/tmp/p", hostID: .local) == nil, "a shared prefix is not inside")
-        #expect(ExplorerModel.inRootSpelling("/private/tmp/p/a", root: "/tmp/p", hostID: HostID(rawValue: "asus")) == nil, "remote paths are taken literally")
-        #expect(ExplorerModel.inRootSpelling("/home/me/p/a", root: "/home/me/p", hostID: HostID(rawValue: "asus")) == "/home/me/p/a")
+        #expect(ExplorerModel.inRootSpelling("/private/tmp/p/a", root: "/tmp/p", hostID: HostID(rawValue: "devbox")) == nil, "remote paths are taken literally")
+        #expect(ExplorerModel.inRootSpelling("/home/me/p/a", root: "/home/me/p", hostID: HostID(rawValue: "devbox")) == "/home/me/p/a")
     }
 }
 

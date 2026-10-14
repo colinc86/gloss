@@ -123,13 +123,13 @@ struct GitHubPullRequestFileSystemTests {
     static let base = "https://api.github.com"
 
     static func pullJSON(sha: String, updated: String = "2026-10-03T10:00:00Z") -> String {
-        #"{"number":2,"title":"Name the receiver","state":"closed","merged":true,"html_url":"https://github.com/o/r/pull/2","body":"Why:\r\n\r\nbecause.","user":{"login":"colinc86"},"head":{"ref":"fix","sha":"\#(sha)","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"base000"},"updated_at":"\#(updated)","labels":[{"name":"infra"}],"requested_reviewers":[{"login":"sam"}],"additions":5,"deletions":5,"changed_files":3}"#
+        #"{"number":2,"title":"Name the receiver","state":"closed","merged":true,"html_url":"https://github.com/o/r/pull/2","body":"Why:\r\n\r\nbecause.","user":{"login":"octocat"},"head":{"ref":"fix","sha":"\#(sha)","repo":{"full_name":"o/r"}},"base":{"ref":"main","sha":"base000"},"updated_at":"\#(updated)","labels":[{"name":"infra"}],"requested_reviewers":[{"login":"sam"}],"additions":5,"deletions":5,"changed_files":3}"#
     }
 
     static func serve(_ stub: Stub, sha: String = "f00d123abcdef") {
         stub.respond(to: "\(base)/repos/o/r/pulls/2", with: .json(pullJSON(sha: sha)))
         stub.respond(to: "\(base)/repos/o/r/pulls/2/files?page=1&per_page=100", with: .json(#"[{"filename":"Sources/App.swift","status":"modified","additions":1,"deletions":1,"patch":"@@ -1,2 +1,2 @@\n-old\n+new\n ctx"},{"filename":"Sources/Deep/Nested.swift","status":"added","additions":2,"deletions":0,"patch":"@@ -0,0 +1,2 @@\n+a\n+b"},{"filename":"Gone.swift","status":"removed","additions":0,"deletions":4}]"#))
-        stub.respond(to: "\(base)/repos/o/r/issues/2/comments?page=1&per_page=100", with: .json(#"[{"id":1,"html_url":"https://github.com/o/r/pull/2#issuecomment-1","user":{"login":"sam"},"body":"Looks right.\r\n\r\nTwo more\nlines.","created_at":"2026-10-03T11:00:00Z"},{"id":3,"html_url":"https://github.com/o/r/pull/2#issuecomment-3","user":{"login":"colinc86"},"body":"Thanks.","created_at":"2026-10-03T11:10:00Z"}]"#))
+        stub.respond(to: "\(base)/repos/o/r/issues/2/comments?page=1&per_page=100", with: .json(#"[{"id":1,"html_url":"https://github.com/o/r/pull/2#issuecomment-1","user":{"login":"sam"},"body":"Looks right.\r\n\r\nTwo more\nlines.","created_at":"2026-10-03T11:00:00Z"},{"id":3,"html_url":"https://github.com/o/r/pull/2#issuecomment-3","user":{"login":"octocat"},"body":"Thanks.","created_at":"2026-10-03T11:10:00Z"}]"#))
         stub.respond(to: "\(base)/repos/o/r/pulls/2/comments?page=1&per_page=100", with: .json(#"[{"id":2,"html_url":"https://github.com/o/r/pull/2#discussion_r2","user":{"login":"sam"},"body":"Rename this.","created_at":"2026-10-03T11:30:00Z","path":"Sources/App.swift","line":2,"side":"RIGHT"}]"#))
         stub.respond(to: "\(base)/repos/o/r/contents/Sources/App.swift?ref=\(sha)", with: .init(headers: ["Content-Type": "application/vnd.github.raw"], body: Data("new\nctx\n".utf8)))
         stub.respond(to: "\(base)/repos/o/r/contents/Sources/Deep/Nested.swift?ref=\(sha)", with: .init(headers: ["Content-Type": "application/vnd.github.raw"], body: Data("a\nb\n".utf8)))
@@ -166,9 +166,9 @@ struct GitHubPullRequestFileSystemTests {
         #expect(sources.map { "\($0.name):\($0.kind)" } == ["App.swift:file", "Deep:directory"])
 
         let description = String(decoding: try await fs.read("/o/r/pull/2/Pull request.md"), as: UTF8.self)
-        #expect(description.hasPrefix("# Name the receiver\n\n- **o/r #2** · merged · by @colinc86\n- `main` ← `fix` (f00d123) · +5 −5 in 3 files\n- Labels: infra\n- Reviewers: @sam\n- Removed: Gone.swift\n- <https://github.com/o/r/pull/2>\n\nWhy:\n\nbecause.\n\n## Reviews\n\n### Sources/App.swift:2 · @sam · 2026-10-03T11:30:00Z\nRename this.\n"), Comment(rawValue: description))
+        #expect(description.hasPrefix("# Name the receiver\n\n- **o/r #2** · merged · by @octocat\n- `main` ← `fix` (f00d123) · +5 −5 in 3 files\n- Labels: infra\n- Reviewers: @sam\n- Removed: Gone.swift\n- <https://github.com/o/r/pull/2>\n\nWhy:\n\nbecause.\n\n## Reviews\n\n### Sources/App.swift:2 · @sam · 2026-10-03T11:30:00Z\nRename this.\n"), Comment(rawValue: description))
         let conversation = String(decoding: try await fs.read("/o/r/pull/2/Conversation.md"), as: UTF8.self)
-        #expect(conversation == "# Conversation\n\n### @sam · 2026-10-03T11:00:00Z\nLooks right.\n\nTwo more\nlines.\n\n### @colinc86 · 2026-10-03T11:10:00Z\nThanks.\n", Comment(rawValue: conversation))
+        #expect(conversation == "# Conversation\n\n### @sam · 2026-10-03T11:00:00Z\nLooks right.\n\nTwo more\nlines.\n\n### @octocat · 2026-10-03T11:10:00Z\nThanks.\n", Comment(rawValue: conversation))
         await #expect(throws: FileSystemError.notADirectory("/o/r/pull/2/changes/Sources/App.swift")) { try await fs.list("/o/r/pull/2/changes/Sources/App.swift") }
         #expect(String(decoding: try await fs.read("/o/r/pull/2/changes/Sources/App.swift"), as: UTF8.self) == "new\nctx\n")
         #expect(try await fs.stat("/o/r/pull/2/changes/Sources/Deep").kind == .directory)
