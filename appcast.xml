@@ -6,6 +6,32 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.2</title>
+      <pubDate>Wed, 14 Oct 2026 03:33:50 GMT</pubDate>
+      <sparkle:version>415</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">The second beta: theme your syntax highlighting, and paths for text notes on web pages.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Syntax themes.</strong> In Settings › Themes, pick one theme for light mode and one for dark. Gloss, the default, looks just as before; eight more come built in (Solar, Balanced, Earth, Frost and Midnight). A theme sets the colors of each kind of code (with bold and italic), the editor's background, selection, current line and line numbers, and the code font. Duplicate a theme to edit it, with live previews and a warning when something is hard to read. Import themes from Xcode, TextMate or VS Code, and export your own. Themes apply to the editor, Markdown source, code blocks in rendered Markdown, the minimap, and code excerpts in notes.</li>
+</ul>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>Text notes on a rendered web page now get an outline and a path to their card, like element notes, as you scroll and resize.</li>
+</ul>
+<p dir="auto">Sharing still hasn't been tried between two Macs.</p>]]></description>
+      <enclosure url="https://api.github.com/repos/colinc86/gloss/releases/assets/639100978" type="application/octet-stream" sparkle:edSignature="ILuoPV/pRT+bk9Em2KpP0XnCqgVQ9odEON+QCuGO6KXZXT/mgiRFYqlkahldwCqGatYVeQ0mUsb6sZIwgL5MCA==" length="29547330"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.1</title>
       <pubDate>Tue, 13 Oct 2026 21:55:44 GMT</pubDate>
       <sparkle:version>411</sparkle:version>
