@@ -32,7 +32,7 @@ struct WebBridgeTests {
         private var observation: NSKeyValueObservation?
         private let url: URL
 
-        init(html: String, url: URL = URL(string: "http://fixture.test/")!) {
+        init(html: String, url: URL = URL(string: "http://fixture.test/")!, offscreenAnimationFrames: Bool = false) {
             self.url = url
             page = HTMLViewerController(livePage: url)
             window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
@@ -41,6 +41,14 @@ struct WebBridgeTests {
             browser.onDocumentChange = { [unowned self] url, _, _ in documentChanges.append(url) }
             observation = browser.webView.observe(\.url, options: [.new]) { [unowned self] _, _ in urlObservations += 1 }
             browser.attach(page, load: false)
+            if offscreenAnimationFrames {
+                // Hidden WKWebViews suspend requestAnimationFrame. Keep the real scroll event/layout/bridge path,
+                // replacing only its frame scheduler so tests never need to present or drive a window.
+                browser.webView.configuration.userContentController.addUserScript(WKUserScript(source: """
+                    window.requestAnimationFrame = (callback) => setTimeout(() => callback(performance.now()), 0);
+                    window.cancelAnimationFrame = (handle) => clearTimeout(handle);
+                    """,injectionTime: .atDocumentStart,forMainFrameOnly: true,in: .defaultClient))
+            }
             browser.webView.loadHTMLString(html, baseURL: url)
         }
 
@@ -137,6 +145,111 @@ struct WebBridgeTests {
         #expect(try await harness.js("return document.querySelector('gloss-overlay div').style.borderStyle") as? String == "dashed")
         _ = try await harness.js("return window.__cc.highlightElements([])")
         #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
+    }
+
+    static let wrappedText = "aaaa bbbb cccc dddd"
+    static let textOnlyPage = """
+    <!doctype html><html><body style="margin:0;min-height:2000px">
+    <p id="wrapped" style="width:10ch;font:20px monospace;line-height:24px;margin:160px 0 0 30px">aaaa bbbb cccc dddd</p>
+    </body></html>
+    """
+
+    func addWrappedTextNote(_ harness: Harness,id: NoteID) async throws {
+        try await harness.ready()
+        // A live page may serialize after its first alignment; keep the anchor at its current source offset.
+        try await harness.wait("the wrapped text note") {
+            let range = (harness.page.source.text as NSString).range(of: Self.wrappedText)
+            guard range.location != NSNotFound else { return false }
+            let highlights = [TextHighlight(id: id,range: range,color: .yellow,state: .draft)]
+            if harness.page.source.highlights != highlights { harness.page.source.highlights = highlights }
+            return harness.page.elementRects[id]?.count == 2
+        }
+    }
+
+    func clientTextRects(_ harness: Harness) async throws -> [CGRect] {
+        let values = try #require(try await harness.js("""
+            const r = new Range(); r.selectNodeContents(document.querySelector('#wrapped'));
+            return [...r.getClientRects()].filter((b) => b.width > 0 && b.height > 0).map((b) => ({ x:b.left,y:b.top,w:b.width,h:b.height }));
+            """) as? [[String: Double]])
+        return values.map { CGRect(x: $0["x"]!,y: $0["y"]!,width: $0["w"]!,height: $0["h"]!) }
+    }
+
+    @Test func aWrappedTextNoteReportsEveryClientRect() async throws {
+        let harness = Harness(html: Self.textOnlyPage,offscreenAnimationFrames: true), id = NoteID.new()
+        try await addWrappedTextNote(harness,id: id)
+        let expected = try await clientTextRects(harness)
+        #expect(expected.count == 2)
+        let reported = try #require(try await harness.js("return window.__cc.elementRects()[id]",["id": id.rawValue]) as? [[String: Double]])
+        #expect(reported.count == expected.count)
+        let native = try #require(harness.page.elementRects[id])
+        for (index, rect) in expected.enumerated() {
+            #expect(reported[index]["x"] == rect.minX && reported[index]["y"] == rect.minY)
+            #expect(reported[index]["w"] == rect.width && reported[index]["h"] == rect.height)
+            let windowRect = try #require(harness.browser.webView.topLeftWindowRect(rect))
+            #expect(native[index] == windowRect)
+        }
+        #expect(harness.page.noteGeometry.visibleNoteRects()[id] == native)
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
+    }
+
+    @Test func aTextOnlyPagePostsNoteRectsAgainAfterScroll() async throws {
+        let harness = Harness(html: Self.textOnlyPage,offscreenAnimationFrames: true), id = NoteID.new()
+        var changes = 0
+        harness.page.noteGeometry.onChange = { changes += 1 }
+        try await addWrappedTextNote(harness,id: id)
+        let before = try #require(harness.page.elementRects[id]?.first)
+        let previousChanges = changes
+        _ = try await harness.js("window.scrollBy(0,64); return true")
+        try await harness.wait("the text-only scroll rects") {
+            changes > previousChanges && abs((harness.page.elementRects[id]?.first?.minY ?? before.minY)-before.minY+64) < 0.1
+        }
+        #expect(harness.page.elementHighlights.isEmpty)
+        #expect(try await harness.js("return document.querySelector('gloss-overlay') === null") as? Bool == true)
+        let rects = try await clientTextRects(harness)
+        #expect(harness.page.elementRects[id] == rects.compactMap { harness.browser.webView.topLeftWindowRect($0) })
+    }
+
+    @Test func removingATextNoteRemovesItsRectsAndPaths() async throws {
+        let harness = Harness(html: Self.textOnlyPage,offscreenAnimationFrames: true), id = NoteID.new()
+        harness.page.noteGeometry.onChange = {}
+        try await addWrappedTextNote(harness,id: id)
+        harness.page.source.highlights = []
+        try await harness.wait("the removed text rects") { harness.page.elementRects[id] == nil }
+        #expect(try await harness.js("return window.__cc.elementRects()[id] === undefined",["id": id.rawValue]) as? Bool == true)
+        _ = try await harness.js("window.scrollBy(0,32); return true")
+        #expect(harness.page.noteGeometry.visibleNoteRects()[id] == nil)
+        #expect(try await harness.js("return window.__cc.elementRects()[id] === undefined",["id": id.rawValue]) as? Bool == true)
+    }
+
+    @Test func aNoteMovedFromTextToAnElementKeepsItsNewElementGeometry() async throws {
+        let harness = Harness(html: Self.textOnlyPage,offscreenAnimationFrames: true), id = NoteID.new()
+        try await addWrappedTextNote(harness,id: id)
+        harness.page.elementHighlights = [ElementHighlight(id: id,selector: "#wrapped",tag: "p",text: Self.wrappedText,color: .systemYellow,state: .draft,needsReview: false)]
+        harness.browser.sync()
+        try await harness.wait("the replacement element geometry") { harness.page.elementRects[id]?.count == 1 }
+        let element = try #require(harness.page.elementRects[id])
+        // Await the text pass completion: it reports a geometry change even when the element is unchanged.
+        var changed = false
+        harness.page.noteGeometry.onChange = { changed = true }
+        harness.page.source.highlights = []
+        try await harness.wait("the cleared text pass") { changed }
+        #expect(harness.page.elementRects[id] == element)
+        #expect(harness.page.noteGeometry.visibleNoteRects()[id] == element)
+    }
+
+    @Test func scrolledOffTextNotesAreClippedOutOfVisibleGeometry() async throws {
+        let harness = Harness(html: Self.textOnlyPage,offscreenAnimationFrames: true), id = NoteID.new()
+        harness.page.noteGeometry.onChange = {}
+        try await addWrappedTextNote(harness,id: id)
+        #expect(harness.page.noteGeometry.visibleNoteRects()[id]?.count == 2)
+        _ = try await harness.js("window.scrollBy(0,800); return true")
+        try await harness.wait("the offscreen text geometry") {
+            harness.page.elementRects[id]?.last?.maxY ?? 1 < 0
+        }
+        #expect(harness.page.elementRects[id]?.count == 2, "keep measured fragments, even while offscreen")
+        #expect(harness.page.noteGeometry.visibleNoteRects()[id] == nil)
+        _ = try await harness.js("window.scrollBy(0,-800); return true")
+        try await harness.wait("the text note back onscreen") { harness.page.noteGeometry.visibleNoteRects()[id]?.count == 2 }
     }
 
     /// A note whose text was removed is a caret in the overlay, at the collapsed range, adding no text; drawn again
@@ -277,7 +390,7 @@ struct WebBridgeTests {
         let serialised = try #require(try await harness.js("return window.__cc.serialize()") as? [String: Any])
         #expect((serialised["html"] as? String)?.contains("gloss-overlay") == false)
         #expect(try await harness.js("return document.querySelector('gloss-overlay') !== null") as? Bool == true, "the overlay is put back after serialising")
-        #expect(harness.page.elementRects[id]?.width ?? 0 > 0)
+        #expect(harness.page.elementRects[id]?.first?.width ?? 0 > 0)
     }
 
     /// Edit › Find on a page: WKWebView takes no find actions on the Mac, so the app's web view answers them itself.

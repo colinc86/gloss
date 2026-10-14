@@ -311,6 +311,8 @@ enum WebBridge {
       const boxes = new Map();
       // Notes whose text was removed: a caret where it was, by note id, with the collapsed range it sits at.
       const carets = new Map();
+      // Text-note ranges supply one viewport rect per wrapped fragment, without adding DOM nodes.
+      const ranges = new Map();
       let hover = null;
       function ensureOverlay() {
         if (overlay && overlay.isConnected) return overlay;
@@ -358,8 +360,8 @@ enum WebBridge {
             // The Add Note button beside a chosen picture follows it as the page scrolls.
             if (chosen && chosen.selected) post({ pictureRect: regionRect(chosen.element, chosen.region) });
           }
-          // The app draws paths to element notes: it needs their boxes after every scroll and resize.
-          if (boxes.size || carets.size) post({ elementRects: elementRects() });
+          // The app draws outlines and paths for every note, including text-only pages.
+          if (boxes.size || carets.size || ranges.size) post({ elementRects: elementRects() });
         });
       }
       function findCandidates(item) {
@@ -393,7 +395,7 @@ enum WebBridge {
       function highlightElements(list) {
         for (const [, entry] of boxes) entry.box.remove();
         boxes.clear();
-        const rects = caretRects();
+        const rects = { ...textRects(), ...caretRects() };
         if (!list.length) { retireOverlayIfIdle(); return rects; }
         ensureOverlay();
         for (const item of list) {
@@ -425,7 +427,7 @@ enum WebBridge {
         return rects;
       }
       function elementRects() {
-        const rects = caretRects();
+        const rects = { ...textRects(), ...caretRects() };
         for (const [id, entry] of boxes) {
           if (entry.element) rects[id] = noteRect(entry.element, entry.region);
           else if (entry.rect) rects[id] = { x: entry.rect.x - scrollX, y: entry.rect.y - scrollY, w: entry.rect.w, h: entry.rect.h };
@@ -476,6 +478,16 @@ enum WebBridge {
           const r = entry.range.startContainer.isConnected ? caretRect(entry.range) : null;
           if (r) { placeRect(entry.box, r); entry.box.style.display = 'block'; } else entry.box.style.display = 'none';
         }
+      }
+      function textRects() {
+        const rects = {};
+        for (const [id, range] of ranges) {
+          if (!range.startContainer.isConnected || !range.endContainer.isConnected) continue;
+          const fragments = [...range.getClientRects()].filter((r) => r.width > 0 && r.height > 0)
+            .map((r) => ({ x: r.left, y: r.top, w: r.width, h: r.height }));
+          if (fragments.length) rects[id] = fragments;
+        }
+        return rects;
       }
       function caretRects() {
         const rects = {};
@@ -775,7 +787,7 @@ enum WebBridge {
           return true;
         },
         // Text notes as CSS highlights; a note whose text was removed (`caret`: its colour) as a caret in the
-        // overlay. Returns the carets' rects (viewport coordinates) by note id, for the app's paths.
+        // overlay. Returns text fragments and caret rects (viewport coordinates), for native outlines and paths.
         highlight(list, css) {
           ensureSheet();
           sheet.replaceSync(labelCSS + css);
@@ -784,6 +796,7 @@ enum WebBridge {
           if (painted) { for (const name of [...CSS.highlights.keys()]) { if (name.startsWith('gloss-note-')) CSS.highlights.delete(name); } }
           for (const [, entry] of carets) entry.box.remove();
           carets.clear();
+          ranges.clear();
           for (const item of list) {
             const range = item.caret ? pointAt(item.start) : rangeAt(item.start, item.end);
             if (!range) continue;
@@ -791,13 +804,14 @@ enum WebBridge {
               const box = makeCaret(item.caret);
               ensureOverlay().appendChild(box);
               carets.set(item.id, { box, range });
-            } else if (painted) {
-              CSS.highlights.set(item.name, new Highlight(range));
+            } else {
+              if (item.id) ranges.set(item.id, range);
+              if (painted) CSS.highlights.set(item.name, new Highlight(range));
             }
           }
           placeCarets();
           retireOverlayIfIdle();
-          return caretRects();
+          return { ...textRects(), ...caretRects() };
         },
         scrollTo(start, end, select) {
           const range = rangeAt(start, end);

@@ -152,11 +152,11 @@ public final class HTMLViewerController: RenderedDocumentController {
         didSet { elementHighlightsVersion += 1 }
     }
     public private(set) var elementHighlightsVersion = 0
-    /// Where each drawn element note is on screen (top-left window coordinates), after the last layout; the page
-    /// reports them again as it scrolls.
-    public internal(set) var elementRects: [NoteID: CGRect] = [:]
-    /// Where the rendered page's element notes are on screen, for the notes panel's link and paths (text notes on a
-    /// rendered page have no live position yet; in source mode the source editor's `noteGeometry` applies).
+    /// Each drawn text fragment, caret or element box in top-left window coordinates, after the last layout; the
+    /// page reports them again as it scrolls. Wrapped text notes have several rects.
+    public internal(set) var elementRects: [NoteID: [CGRect]] = [:]
+    /// Where rendered text and element notes sit for native outlines and paths. In source mode the source editor's
+    /// `noteGeometry` applies.
     @ObservationIgnored public let noteGeometry = NoteGeometry()
     /// A cheap hash of the page's text as last seen, so unchanged pages are not re-serialised.
     public internal(set) var textHash: String?

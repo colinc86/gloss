@@ -267,6 +267,7 @@ public final class WebBrowserController {
         current.alignment = nil
         // Its boxes were measured on this view; shown again, it has none until its page is laid out anew.
         current.elementRects = [:]
+        textNoteIDs = []
         current.noteGeometry.changed()
     }
 
@@ -658,18 +659,20 @@ public final class WebBrowserController {
                            windowRect: viewport.flatMap { webView.topLeftWindowRect($0) }, pageRect: page)
     }
 
-    /// The page's element boxes (viewport coordinates) in top-left window coordinates.
-    private func windowRects(_ map: [String: Any]) -> [NoteID: CGRect] {
-        var rects: [NoteID: CGRect] = [:]
+    /// Text fragments (arrays) and element/caret boxes (single objects) arrive in viewport coordinates.
+    private func windowRects(_ map: [String: Any]) -> [NoteID: [CGRect]] {
+        var rects: [NoteID: [CGRect]] = [:]
         for (id, entry) in map {
-            if let r = rect(entry), let window = webView.topLeftWindowRect(CGRect(x: r.x, y: r.y, width: max(r.w, 2), height: max(r.h, 2))) {
-                rects[NoteID(rawValue: id)] = window
+            let fragments = (entry as? [Any] ?? [entry]).compactMap { value -> CGRect? in
+                guard let r = rect(value), r.w > 0, r.h > 0 else { return nil }
+                return webView.topLeftWindowRect(CGRect(x: r.x,y: r.y,width: r.w,height: r.h))
             }
+            if !fragments.isEmpty { rects[NoteID(rawValue: id)] = fragments }
         }
         return rects
     }
 
-    /// Element notes as their boxes, clipped to the page on screen.
+    /// Every note fragment clipped to the page on screen, preserving DOM order for the first visible path endpoint.
     private func bindGeometry(_ controller: HTMLViewerController) {
         controller.noteGeometry.viewport = { [weak webView] in
             guard let webView, webView.window != nil else { return nil }
@@ -679,9 +682,12 @@ public final class WebBrowserController {
             // The view shows one page at a time; another page's boxes would point at whatever is there now.
             guard let controller, self?.current === controller, let webView, webView.window != nil,
                   let viewport = webView.topLeftWindowRect(webView.bounds) else { return [:] }
-            return controller.elementRects.compactMapValues { rect in
-                let clipped = rect.intersection(viewport)
-                return clipped.isNull || clipped.isEmpty ? nil : [clipped]
+            return controller.elementRects.compactMapValues { rects in
+                let visible = rects.compactMap { rect -> CGRect? in
+                    let clipped = rect.intersection(viewport)
+                    return clipped.isNull || clipped.isEmpty ? nil : clipped
+                }
+                return visible.isEmpty ? nil : visible
             }
         }
     }
@@ -795,8 +801,8 @@ public final class WebBrowserController {
                 if case .success(let value) = result, let map = value as? [String: Any] {
                     current.elementRects = self.windowRects(map)
                 } else {
-                    // The text pass's carets are still drawn: only the element boxes are gone.
-                    current.elementRects = current.elementRects.filter { self.caretIDs.contains($0.key) }
+                    // The text pass is still drawn: only the element boxes are gone.
+                    current.elementRects = current.elementRects.filter { self.textNoteIDs.contains($0.key) }
                 }
                 current.noteGeometry.changed()
             }
@@ -831,22 +837,25 @@ public final class WebBrowserController {
                 color = Theme.highlightBackground(for: highlight.highlight).usingColorSpace(.sRGB) ?? .clear
             }
             let name = "gloss-note-\(index)"
-            list.append(["name": name, "start": dom.location, "end": dom.location + dom.length])
+            list.append(["id": highlight.id.rawValue, "name": name, "start": dom.location, "end": dom.location + dom.length])
             css += "::highlight(\(name)) { background-color: rgba(\(Int(color.redComponent * 255)), \(Int(color.greenComponent * 255)), \(Int(color.blueComponent * 255)), \(color.alphaComponent)); }\n"
         }
         let started = current
-        let pointIDs = Set(current.source.drawnHighlights.lazy.filter { $0.range.length == 0 }.map(\.id))
+        let requestedIDs = Set(list.compactMap { ($0["id"] as? String).map(NoteID.init(rawValue:)) })
         webView.callAsyncJavaScript("return window.__cc ? window.__cc.highlight(list, css) : {}", arguments: ["list": list, "css": css], in: nil, in: .defaultClient) { [weak self] result in
             MainActor.assumeIsolated {
                 guard let self, let current = self.current, current === started else { return }
-                // Carets share the element boxes' map, so paths reach them; the ones drawn before are replaced.
-                var rects = current.elementRects.filter { !pointIDs.contains($0.key) && !self.caretIDs.contains($0.key) }
+                // Replace all text-note geometry, including deleted or newly unmappable ranges, keeping element boxes.
+                let elementIDs = Set(current.elementHighlights.map(\.id))
+                var rects = current.elementRects.filter {
+                    !requestedIDs.contains($0.key) && (!self.textNoteIDs.contains($0.key) || elementIDs.contains($0.key))
+                }
                 if case .success(let value) = result, let map = value as? [String: Any] {
-                    let carets = self.windowRects(map)
-                    rects.merge(carets) { _, new in new }
-                    self.caretIDs = Set(carets.keys)
+                    let textRects = self.windowRects(map)
+                    rects.merge(textRects) { _, new in new }
+                    self.textNoteIDs = requestedIDs
                 } else {
-                    self.caretIDs = []
+                    self.textNoteIDs = []
                 }
                 if rects != current.elementRects { current.elementRects = rects }
                 current.noteGeometry.changed()
@@ -854,8 +863,8 @@ public final class WebBrowserController {
         }
     }
 
-    /// The notes drawn as carets in the last text pass, so the next pass takes their rects away before adding its own.
-    @ObservationIgnored private var caretIDs: Set<NoteID> = []
+    /// IDs from the last text pass, including ranges with no measurable box, for removing stale paths.
+    @ObservationIgnored private var textNoteIDs: Set<NoteID> = []
 
     private func applyPendingScroll() {
         guard isLoaded, let current, appliedScrollVersion != current.pendingScrollVersion, let pending = current.pendingScroll,

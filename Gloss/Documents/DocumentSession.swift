@@ -1655,7 +1655,7 @@ final class DocumentSession: Identifiable {
            let found = rendered?.rect(forSource: range) ?? controller.rect(for: range) {
             rect = found
         }
-        if let html, case .element = note.anchor, let found = html.elementRects[note.id] ?? html.pageRect {
+        if let html, case .element = note.anchor, let found = html.elementRects[note.id]?.first ?? html.pageRect {
             rect = found
         }
         if let csv = csvController, case .text = note.anchor, let place = csv.place(of: note.id), let found = csv.rectProvider(place) {
