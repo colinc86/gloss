@@ -132,6 +132,7 @@ struct SearchResultsView: View {
 
 /// One matching line: its number in a gutter, the line with every match highlighted, and a hover state.
 struct SearchHitRow: View {
+    @Environment(\.colorScheme) private var codeAppearance
     let hit: SearchHit
     let pattern: (text: String, regex: Bool)?
     /// The file's language, so the line keeps the editor's colours under the match wash.
@@ -164,7 +165,7 @@ struct SearchHitRow: View {
         .onHover { hovering = $0 }
         .animation(DS.Motion.snappy, value: hovering)
         .help("Open at line \(hit.line)")
-        .task(id: hit.text) {
+        .task(id: CodeSnippetKey(hit.text,language: language,dark: codeAppearance == .dark)) {
             guard language != nil else { return }
             coloured = SearchHitRow.highlighted(hit.text, pattern: pattern, language: language)
         }

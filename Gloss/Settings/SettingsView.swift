@@ -7,7 +7,7 @@ import Viewers
 
 /// The Settings tabs, so a part of the app can open Settings on one.
 enum SettingsTab: Hashable {
-    case general, editor, notes, agents, hosts, integrations, attachments
+    case general, editor, themes, notes, agents, hosts, integrations, attachments
 }
 
 struct SettingsView: View {
@@ -49,7 +49,7 @@ struct SettingsView: View {
 
             Form {
                 Section {
-                    LabeledContent("Font size") {
+                    LabeledContent("Default code font size") {
                         HStack(spacing: DS.Space.m) {
                             Slider(value: $settings.editorFontSize, in: SettingsStore.editorFontSizeRange, step: 0.5)
                                 .frame(width: 200)
@@ -82,6 +82,11 @@ struct SettingsView: View {
             .animation(DS.Motion.smooth, value: settings.showIndentGuides)
             .tabItem { Label("Editor", systemImage: "text.alignleft") }
             .tag(SettingsTab.editor)
+
+            ThemesSettings(model: model.themes)
+                .frame(height: 620)
+                .tabItem { Label("Themes", systemImage: "paintpalette") }
+                .tag(SettingsTab.themes)
 
             NotesSettings(settings: settings)
                 .frame(height: 560)
@@ -182,64 +187,64 @@ private struct EditorPreview: View {
     let fontSize: Double
     let wraps: Bool
     let guides: Bool
-
+    @Environment(\.colorScheme) private var colorScheme
+    private var theme: CodeTheme {
+        _ = CodeThemeUpdates.shared.revision
+        return colorScheme == .dark ? ActiveCodeTheme.dark : ActiveCodeTheme.light
+    }
+    private var font: NSFont { theme.font.resolved(defaultSize: fontSize) }
+    private var appearance: NSAppearance.Name { colorScheme == .dark ? .darkAqua : .aqua }
+    private func line(_ text: String) -> Text {
+        Text(SyntaxTheme.highlighted(text,language: "swift",theme: theme,appearance: appearance,background: theme.editor.background.nsColor) ?? AttributedString(text))
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
-            Text(verbatim: "func pace(_ leg: Leg) -> Double {")
+            line("func pace(_ leg: Leg) -> Double {")
             HangingLine(text: "    leg.minutes / max(leg.km, 0.1)   // minutes per kilometre, never dividing by zero",
-                        fontSize: fontSize, wraps: wraps)
-                // The guide the editor would draw at the first indentation level, the caret's block, so stronger.
+                        font: font, theme: theme, appearance: appearance, wraps: wraps)
                 .overlay(alignment: .leading) {
                     if guides {
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.22))
-                            .frame(width: 1)
-                            .transition(.opacity)
+                        Rectangle().fill(Color(nsColor: theme.editor.invisibles.nsColor)).frame(width: 1).transition(.opacity)
                     }
                 }
-            Text(verbatim: "}")
+            line("}")
         }
-        .font(.system(size: fontSize, design: .monospaced))
-        .foregroundStyle(.primary)
+        .font(Font(font))
+        .foregroundStyle(Color(nsColor: theme.editor.foreground.nsColor))
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DS.Space.m)
-        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+        .background(Color(nsColor: theme.editor.background.nsColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
-        .overlay(alignment: .bottomTrailing) {
-            Text("Open documents change as you adjust these")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .padding(DS.Space.s)
-        }
         .padding(.top, DS.Space.s)
-        .accessibilityLabel("Preview of the editor font at \(fontSize, specifier: "%.1f") points")
+        .accessibilityLabel("Editor preview at \(font.pointSize.formatted()) points")
     }
 }
 
-/// One preview line laid out as the editor lays it out: wrapped rows continue at the line's indentation plus one step
-/// (`SourceTextView.wrapIndent`), which SwiftUI's `Text` cannot do, so an AppKit label draws it.
+/// A preview line uses the editor's hanging indent and active font, without changing Settings' UI fonts.
 private struct HangingLine: NSViewRepresentable {
     let text: String
-    let fontSize: Double
+    let font: NSFont
+    let theme: CodeTheme
+    let appearance: NSAppearance.Name
     let wraps: Bool
-
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField(wrappingLabelWithString: "")
         field.isSelectable = false
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return field
     }
-
     func updateNSView(_ field: NSTextField, context: Context) {
-        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let space = (" " as NSString).size(withAttributes: [.font: font]).width
         let style = NSMutableParagraphStyle()
         style.headIndent = SourceTextView.wrapIndent(forLine: text, spaceWidth: space, tabWidth: NSParagraphStyle.default.defaultTabInterval, limit: .greatestFiniteMagnitude)
         style.lineBreakMode = wraps ? .byWordWrapping : .byTruncatingTail
+        style.lineHeightMultiple = theme.font.lineSpacing ?? 1
         field.maximumNumberOfLines = wraps ? 0 : 1
-        field.attributedStringValue = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: style])
+        let quote = SyntaxTheme.highlighted(text,language: "swift",theme: theme,appearance: appearance,background: theme.editor.background.nsColor) ?? AttributedString(text)
+        let attributed = NSMutableAttributedString(attributedString: NSAttributedString(quote))
+        attributed.addAttributes([.font: font,.paragraphStyle: style],range: NSRange(location: 0,length: attributed.length))
+        field.attributedStringValue = attributed
     }
-
     func sizeThatFits(_ proposal: ProposedViewSize, nsView field: NSTextField, context: Context) -> CGSize? {
         let width = proposal.width ?? 400
         field.preferredMaxLayoutWidth = width

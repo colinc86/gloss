@@ -1,0 +1,60 @@
+{
+  "appearance": "light",
+  "editor": {
+    "background": "#FBF1C7",
+    "currentLine": "#F2E5BC",
+    "currentLineNumber": "#3C3836",
+    "cursor": "#3C3836",
+    "foreground": "#3C3836",
+    "gutterBackground": "#F2E5BC",
+    "invisibles": "#A89984",
+    "lineNumbers": "#7C6F64",
+    "selection": "#D3DEB3"
+  },
+  "formatVersion": 1,
+  "id": "earth-light",
+  "license": "Adapted from the gruvbox palette by morhetz, MIT/X11 License. https://github.com/morhetz/gruvbox",
+  "name": "Earth Light",
+  "tokens": {
+    "attribute": "#AF3A03",
+    "comment": "#7C6F64",
+    "constant": "#AF3A03",
+    "diff.header": "#7C6F64",
+    "diff.hunk": "#9D0006",
+    "diff.minus": "#9D0006",
+    "diff.plus": "#79740E",
+    "escape": "#AF3A03",
+    "function": "#427B58",
+    "keyword": "#9D0006",
+    "markup.bold": {
+      "bold": true,
+      "color": "#9D0006"
+    },
+    "markup.heading": {
+      "bold": true,
+      "color": "#427B58"
+    },
+    "markup.italic": {
+      "color": "#9D0006",
+      "italic": true
+    },
+    "markup.link": "#427B58",
+    "markup.link.label": "#8F3F71",
+    "markup.list": "#7C6F64",
+    "markup.quote": "#7C6F64",
+    "markup.raw": "#79740E",
+    "markup.strikethrough": "#7C6F64",
+    "namespace": "#8F3F71",
+    "none": "#3C3836",
+    "number": "#AF3A03",
+    "operator": "#3C3836",
+    "property": "#076678",
+    "punctuation": "#3C3836",
+    "punctuation.special": "#9D0006",
+    "string": "#79740E",
+    "tag": "#427B58",
+    "type": "#8F3F71",
+    "variable": "#3C3836",
+    "variable.builtin": "#076678"
+  }
+}

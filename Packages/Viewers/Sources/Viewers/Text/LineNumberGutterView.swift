@@ -73,7 +73,7 @@ final class LineNumberGutterView: NSView {
             let back = NSBezierPath(roundedRect: card.offsetBy(dx: 1.5, dy: -1.5), xRadius: 1.5, yRadius: 1.5)
             back.lineWidth = 1
             back.stroke()
-            NSColor.windowBackgroundColor.setFill()
+            ActiveCodeTheme.editorColor(\.gutterBackground).setFill()
             NSBezierPath(roundedRect: card, xRadius: 1.5, yRadius: 1.5).fill()
         }
         let front = NSBezierPath(roundedRect: card, xRadius: 1.5, yRadius: 1.5)
@@ -155,14 +155,14 @@ final class LineNumberGutterView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let textView, let controller, let layoutManager = textView.textLayoutManager,
               let contentManager = layoutManager.textContentManager else { return }
-        NSColor.windowBackgroundColor.setFill()
+        ActiveCodeTheme.editorColor(\.gutterBackground).setFill()
         bounds.fill()
         markerRects = []
 
         let visible = textView.visibleRect
         let inset = textView.textContainerInset
-        let attributes: [NSAttributedString.Key: Any] = [.font: Theme.gutterFont, .foregroundColor: NSColor.tertiaryLabelColor]
-        let currentAttributes: [NSAttributedString.Key: Any] = [.font: Theme.gutterFont, .foregroundColor: NSColor.labelColor]
+        let attributes: [NSAttributedString.Key: Any] = [.font: Theme.gutterFont, .foregroundColor: ActiveCodeTheme.editorColor(\.lineNumbers)]
+        let currentAttributes: [NSAttributedString.Key: Any] = [.font: Theme.gutterFont, .foregroundColor: ActiveCodeTheme.editorColor(\.currentLineNumber)]
         let currentLine = controller.lineIndex.position(forUTF16Offset: controller.selection.location).line
         let documentStart = contentManager.documentRange.location
 
@@ -226,7 +226,7 @@ final class LineNumberGutterView: NSView {
             guard let highlight = controller.highlights.first(where: { $0.id == span.id }) else { continue }
             let hovered = span.id == hoveredNoteID
             let lane = CGFloat(lanes[span.id] ?? 0)
-            let color = Theme.color(for: highlight.color)
+            let color = Theme.codeColor(for: highlight.color)
             // A removal point is a hollow dot on its caret's row: there is no text left for a bar to span. Placed by
             // the caret itself, since the empty last line after a final newline has no layout fragment of its own.
             if highlight.range.length == 0 {

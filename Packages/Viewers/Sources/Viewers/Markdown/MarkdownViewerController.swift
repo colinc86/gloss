@@ -205,6 +205,11 @@ public final class MarkdownViewerController {
                 self.rebuildNow()
             }
         }
+        for notification in [ActiveCodeTheme.didChange, Theme.editorSettingsDidChange] {
+            codeThemeObservers.append(NotificationCenter.default.addObserver(forName: notification,object: nil,queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.codeThemeChanged() }
+            })
+        }
         let previous = source.onTextChange
         source.onTextChange = { [weak self] in
             previous()
@@ -214,6 +219,7 @@ public final class MarkdownViewerController {
 
     isolated deinit {
         fetchTasks.values.forEach { $0.cancel() }
+        codeThemeObservers.forEach { NotificationCenter.default.removeObserver($0) }
         if let displayOptionsObserver { NSWorkspace.shared.notificationCenter.removeObserver(displayOptionsObserver) }
     }
 
@@ -242,10 +248,34 @@ public final class MarkdownViewerController {
         }
     }
 
+    @ObservationIgnored private var codeThemeObservers: [any NSObjectProtocol] = []
+    @ObservationIgnored private var lastCodeTheme: CodeTheme?
+    @ObservationIgnored private var lastCodeFontSize: CGFloat = 0
+    @ObservationIgnored private var themeRebuildPending = false
+    private func codeThemeChanged() {
+        let appearance = NSAppearance(named: darkDiagrams ? .darkAqua : .aqua) ?? Theme.effectiveAppearance
+        let theme = ActiveCodeTheme.theme(for: appearance)
+        guard theme != lastCodeTheme || lastCodeFontSize != Theme.editorFontSize else { return }
+        guard mode == .rendered else { renderOwed = true; return }
+        guard !themeRebuildPending else { return }
+        themeRebuildPending = true
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.themeRebuildPending else { return }
+                self.themeRebuildPending = false
+                if self.mode == .rendered { self.rebuildNow() }
+                else { self.renderOwed = true }
+            }
+        }
+    }
     public func rebuildNow() {
+        themeRebuildPending = false
         renderOwed = false
         renderedContentVersion = source.contentVersion
-        let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion)
+        let codeAppearance: NSAppearance.Name = darkDiagrams ? .darkAqua : .aqua
+        lastCodeTheme = ActiveCodeTheme.theme(for: NSAppearance(named: codeAppearance) ?? Theme.effectiveAppearance)
+        lastCodeFontSize = Theme.editorFontSize
+        let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion, codeAppearance: codeAppearance)
         rendered = output.text
         map = output.map
         renderedVersion += 1
@@ -288,6 +318,7 @@ public final class MarkdownViewerController {
     public func setDarkAppearance(_ dark: Bool) {
         guard dark != darkDiagrams else { return }
         darkDiagrams = dark
+        codeThemeChanged()
         let pending = drawingDiagrams
         drawingDiagrams.removeAll()
         draw(Array(Set(diagrams.keys).union(pending)))

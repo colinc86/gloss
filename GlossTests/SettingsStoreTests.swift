@@ -40,3 +40,16 @@ struct SettingsStoreTests {
         #expect(settings.stagedFileExpiryDays == 1)
     }
 }
+
+
+extension SettingsStoreTests {
+    @Test func syntaxThemeIdsDefaultToGlossAndPersistIndependently() async throws {
+        let store = NoteStore(database: try AppDatabase.inMemory())
+        let settings = SettingsStore(noteStore: store); await settings.load()
+        #expect(settings.codeThemeLight == "gloss" && settings.codeThemeDark == "gloss")
+        settings.codeThemeLight = "fixture-light"; settings.codeThemeDark = "fixture-dark"
+        for _ in 0..<100 where try await store.setting("codeTheme.dark") != "fixture-dark" { try await Task.sleep(for: .milliseconds(10)) }
+        let fresh = SettingsStore(noteStore: store); await fresh.load()
+        #expect(fresh.codeThemeLight == "fixture-light" && fresh.codeThemeDark == "fixture-dark")
+    }
+}

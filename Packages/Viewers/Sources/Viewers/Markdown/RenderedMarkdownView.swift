@@ -188,8 +188,11 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         }
 
         private func invalidateHighlights() {
-            backdrop?.entries = controller.renderedHighlights().filter { !$0.isInvalidated }.map {
-                HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.source.isFocused($0.id))
+            let highlights = controller.renderedHighlights().filter { !$0.isInvalidated }
+            let codeIDs = Set(highlights.filter { MarkdownRenderer.isCode(at: $0.range.location,in: controller.rendered) }.map(\.id))
+            controller.noteGeometry.codeNoteIDs = codeIDs
+            backdrop?.entries = highlights.map {
+                HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.source.isFocused($0.id),code: codeIDs.contains($0.id))
             }
             // An iteration's changes, tinted on the paragraphs that show the changed lines.
             backdrop?.lineChanges = controller.source.lineChanges
@@ -220,9 +223,13 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             if appliedVersion != controller.renderedVersion {
                 appliedVersion = controller.renderedVersion
                 let selection = textView.selectedRange()
+                let top = textView.topVisibleCharacterIndex
+                let sameText = textView.string == controller.rendered.string
                 textView.textStorage?.setAttributedString(controller.rendered)
                 let length = textView.string.utf16.count
-                textView.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
+                let location = min(selection.location,length)
+                textView.setSelectedRange(NSRange(location: location,length: sameText ? min(selection.length,length-location) : 0))
+                if sameText, let top { textView.scrollToTop(top) }
                 animatedPictures?.textChanged()
             }
             // Waits for a window like the source editor does (see `SourceTextView.onAttachedToWindow`).

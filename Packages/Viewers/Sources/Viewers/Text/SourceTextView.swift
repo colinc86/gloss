@@ -240,10 +240,12 @@ public final class SourceTextView: NSTextView {
         isContinuousSpellCheckingEnabled = false
         isGrammarCheckingEnabled = false
         smartInsertDeleteEnabled = false
-        font = Theme.editorFont
-        textColor = .textColor
-        typingAttributes = [.font: Theme.editorFont, .foregroundColor: NSColor.textColor]
-        backgroundColor = .textBackgroundColor
+        font = Theme.editorFont(for: effectiveAppearance)
+        appliedEditorFont = font
+        textColor = ActiveCodeTheme.editorColor(\.foreground)
+        typingAttributes = [.font: font!, .foregroundColor: textColor!]
+        backgroundColor = ActiveCodeTheme.editorColor(\.background)
+        updateThemeColors()
         drawsBackground = true
         textContainerInset = NSSize(width: 6, height: 8)
         isVerticallyResizable = true
@@ -274,17 +276,50 @@ public final class SourceTextView: NSTextView {
     /// Restyles an open editor after Settings › Editor changed: font, wrapping, and the wrapped rows' indents. The line at
     /// the top of the view stays at the top, so a bigger font never loses your place. Attributes only; the text, undo,
     /// and every anchor are untouched.
-    public func applyEditorSettings(font newFont: NSFont = Theme.editorFont, wraps: Bool = Theme.wrapsLines) {
+    public var onAppearanceChange: (() -> Void)?
+    private var hasCustomCaretColor = false
+    private var appliedLineSpacing: CGFloat = 1
+    private(set) var appliedEditorFont: NSFont?
+
+    override public func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        if let onAppearanceChange { onAppearanceChange() }
+        else { applyEditorSettings() }
+    }
+
+    private func updateThemeColors() {
+        textColor = ActiveCodeTheme.editorColor(\.foreground)
+        backgroundColor = ActiveCodeTheme.editorColor(\.background)
+        let cursor = ActiveCodeTheme.theme(for: effectiveAppearance).editor.cursor
+        if cursor.isSystem {
+            if hasCustomCaretColor { insertionPointColor = nil; hasCustomCaretColor = false }
+        } else {
+            insertionPointColor = cursor.nsColor
+            hasCustomCaretColor = true
+        }
+        let selection = Theme.selectedColors(for: effectiveAppearance)
+        selectedTextAttributes = [.backgroundColor: selection.background, .foregroundColor: selection.foreground]
+        typingAttributes[.foregroundColor] = textColor
+        needsDisplay = true
+    }
+
+    public func applyEditorSettings(font proposedFont: NSFont? = nil, wraps: Bool = Theme.wrapsLines) {
+        let newFont = proposedFont ?? Theme.editorFont(for: effectiveAppearance)
+        let spacing = Theme.lineSpacing(for: effectiveAppearance)
+        updateThemeColors()
         guard let storage = textStorage, let layoutManager = textLayoutManager, let contentManager = layoutManager.textContentManager else { return }
         let documentStart = contentManager.documentRange.location
         let topOffset = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: max(0, visibleRect.minY - textContainerInset.height)))
             .map { contentManager.offset(from: documentStart, to: $0.rangeInElement.location) }
 
         // Only what changed: a guides toggle restyles nothing here, a font step re-measures indents once.
-        let fontChanged = font != newFont
+        let fontChanged = appliedEditorFont != newFont
         let wrapChanged = wrapsLines != wraps
-        guard fontChanged || wrapChanged else { return }
+        let spacingChanged = spacing != appliedLineSpacing
+        guard fontChanged || wrapChanged || spacingChanged else { return }
+        appliedLineSpacing = spacing
         if fontChanged {
+            appliedEditorFont = newFont
             font = newFont
             typingAttributes[.font] = newFont
         }
@@ -296,7 +331,7 @@ public final class SourceTextView: NSTextView {
             }
         }
         let all = NSRange(location: 0, length: storage.length)
-        if wraps {
+        if wraps || spacing != 1 {
             applyWrapIndents(in: all)
         } else {
             storage.removeAttribute(.paragraphStyle, range: all)
@@ -384,10 +419,12 @@ public final class SourceTextView: NSTextView {
     /// and so every anchor offset, is untouched. Does nothing when lines don't wrap. Pass `insideEdit` from the storage's
     /// `willProcessEditing`, where the change joins the edit in progress instead of starting another.
     public func applyWrapIndents(in range: NSRange, insideEdit: Bool = false) {
-        guard wrapsLines, let storage = textStorage, storage.length > 0 else { return }
+        guard let storage = textStorage, storage.length > 0 else { return }
+        let spacing = Theme.lineSpacing(for: effectiveAppearance)
+        guard wrapsLines || spacing != 1 else { return }
         let text = storage.string as NSString
         let paragraphs = text.paragraphRange(for: NSRange(location: min(range.location, storage.length), length: min(range.length, storage.length - min(range.location, storage.length))))
-        let font = font ?? Theme.editorFont
+        let font = appliedEditorFont ?? Theme.editorFont
         let space = (" " as NSString).size(withAttributes: [.font: font]).width
         let tab = NSParagraphStyle.default.defaultTabInterval
         // Before the view is laid out the container has no width yet; leave the cap off rather than cap at zero.
@@ -398,10 +435,11 @@ public final class SourceTextView: NSTextView {
         if !insideEdit { storage.beginEditing() }
         text.enumerateSubstrings(in: paragraphs, options: [.byParagraphs, .substringNotRequired]) { _, _, enclosing, _ in
             let line = text.substring(with: enclosing)
-            let indent = Self.wrapIndent(forLine: line, spaceWidth: space, tabWidth: tab, limit: limit)
+            let indent = self.wrapsLines ? Self.wrapIndent(forLine: line, spaceWidth: space, tabWidth: tab, limit: limit) : 0
             let style = styles[indent] ?? {
                 let made = NSMutableParagraphStyle()
                 made.headIndent = indent
+                if spacing != 1 { made.lineHeightMultiple = spacing }
                 styles[indent] = made
                 return made
             }()

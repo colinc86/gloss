@@ -1,0 +1,60 @@
+{
+  "appearance": "dark",
+  "editor": {
+    "background": "#282A36",
+    "currentLine": "#343746",
+    "currentLineNumber": "#F8F8F2",
+    "cursor": "#F8F8F2",
+    "foreground": "#F8F8F2",
+    "gutterBackground": "#282A36",
+    "invisibles": "#6272A4",
+    "lineNumbers": "#8292C4",
+    "selection": "#465077"
+  },
+  "formatVersion": 1,
+  "id": "midnight-dark",
+  "license": "Adapted from the Dracula OSS palette by Dracula Theme (2023), MIT License. https://github.com/dracula/dracula-theme",
+  "name": "Midnight Dark",
+  "tokens": {
+    "attribute": "#BD93F9",
+    "comment": "#8292C4",
+    "constant": "#BD93F9",
+    "diff.header": "#8292C4",
+    "diff.hunk": "#FF79C6",
+    "diff.minus": "#FF5555",
+    "diff.plus": "#50FA7B",
+    "escape": "#BD93F9",
+    "function": "#50FA7B",
+    "keyword": "#FF79C6",
+    "markup.bold": {
+      "bold": true,
+      "color": "#FF79C6"
+    },
+    "markup.heading": {
+      "bold": true,
+      "color": "#50FA7B"
+    },
+    "markup.italic": {
+      "color": "#FF79C6",
+      "italic": true
+    },
+    "markup.link": "#50FA7B",
+    "markup.link.label": "#8BE9FD",
+    "markup.list": "#8292C4",
+    "markup.quote": "#8292C4",
+    "markup.raw": "#F1FA8C",
+    "markup.strikethrough": "#8292C4",
+    "namespace": "#8BE9FD",
+    "none": "#F8F8F2",
+    "number": "#BD93F9",
+    "operator": "#F8F8F2",
+    "property": "#BD93F9",
+    "punctuation": "#F8F8F2",
+    "punctuation.special": "#FF79C6",
+    "string": "#F1FA8C",
+    "tag": "#50FA7B",
+    "type": "#8BE9FD",
+    "variable": "#F8F8F2",
+    "variable.builtin": "#BD93F9"
+  }
+}

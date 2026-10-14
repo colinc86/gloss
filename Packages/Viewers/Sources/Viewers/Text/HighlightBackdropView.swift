@@ -8,11 +8,13 @@ final class HighlightBackdropView: NSView {
         var range: NSRange
         var noteColor: NoteColor
         var mark: Theme.NoteMark
+        var code: Bool
         /// How strong a removal point's caret is: the state ladder, full while in focus.
         var strength: CGFloat
 
-        init(range: NSRange, color: NoteColor, state: NoteState, focused: Bool) {
+        init(range: NSRange, color: NoteColor, state: NoteState, focused: Bool, code: Bool = true) {
             self.range = range
+            self.code = code
             noteColor = color
             mark = Theme.mark(for: state, focused: focused)
             strength = focused ? 1 : Theme.strength(for: state)
@@ -64,21 +66,21 @@ final class HighlightBackdropView: NSView {
     }
 
     /// Hairlines quiet enough to sit under text without competing with it; the caret's block is a step stronger.
-    static let guideColor = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.08) : NSColor(white: 0, alpha: 0.07)
+    static var guideColor: NSColor { ActiveCodeTheme.editorColor(\.invisibles) }
+    static var activeGuideColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let theme = ActiveCodeTheme.theme(for: appearance)
+            let dark = appearance.bestMatch(from: [.darkAqua,.aqua]) == .darkAqua
+            if theme.id == "gloss" { return NSColor(white: dark ? 1 : 0,alpha: dark ? 0.24 : 0.22) }
+            return theme.editor.foreground.nsColor.withAlphaComponent(0.23)
+        }
     }
-    static let activeGuideColor = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(white: 1, alpha: 0.24) : NSColor(white: 0, alpha: 0.22)
-    }
-
-    static let currentLineColor = NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 1, alpha: 0.05)
-            : NSColor(white: 0, alpha: 0.04)
-    }
+    static var currentLineColor: NSColor { ActiveCodeTheme.editorColor(\.currentLine) }
 
     /// The round cap on a removal point's caret.
     static let caretCap: CGFloat = 5
+
+    private weak var selectionMarks: SelectionMarksView?
 
     override var isFlipped: Bool { true }
 
@@ -92,7 +94,38 @@ final class HighlightBackdropView: NSView {
         backdrop.autoresizingMask = [.width, .height]
         backdrop.wantsLayer = true
         textView.addSubview(backdrop, positioned: .below, relativeTo: nil)
+        let marks = SelectionMarksView(frame: textView.bounds)
+        marks.backdrop = backdrop; marks.autoresizingMask = [.width,.height]
+        textView.addSubview(marks,positioned: .above,relativeTo: nil)
+        backdrop.selectionMarks = marks
         return backdrop
+    }
+
+    override var needsDisplay: Bool {
+        didSet { if needsDisplay { selectionMarks?.needsDisplay = true } }
+    }
+    /// Selection is painted by TextKit above the backdrop. Repeat only the covered underline segments above it.
+    fileprivate func drawSelectionMarks(_ dirtyRect: NSRect) {
+        guard let textView, textView.selectedRange().length > 0, let manager = textView.textLayoutManager,
+              let content = manager.textContentManager else { return }
+        let start = content.documentRange.location
+        for entry in entries where entry.mark != .fill {
+            let covered = NSIntersectionRange(entry.range,textView.selectedRange())
+            guard covered.length > 0, let from = content.location(start,offsetBy: covered.location),
+                  let to = content.location(start,offsetBy: NSMaxRange(covered)),
+                  let selectedRange = NSTextRange(location: from,end: to) else { continue }
+            let color = (entry.code ? Theme.codeColor(for: entry.noteColor) : Theme.color(for: entry.noteColor))
+            manager.enumerateTextSegments(in: selectedRange,type: .highlight,options: [.rangeNotRequired]) { _, frame, _, _ in
+                let rect = frame.offsetBy(dx: textView.textContainerOrigin.x,dy: textView.textContainerOrigin.y)
+                guard rect.intersects(dirtyRect) else { return true }
+                let path = NSBezierPath(); path.move(to: NSPoint(x: rect.minX,y: rect.maxY-1)); path.line(to: NSPoint(x: rect.maxX,y: rect.maxY-1))
+                path.lineWidth = 1
+                if entry.mark == .dottedUnderline { path.setLineDash([1,2],count: 2,phase: 0) }
+                if entry.mark == .dashedUnderline { path.setLineDash([3,2],count: 2,phase: 0) }
+                color.withAlphaComponent(entry.strength).setStroke(); path.stroke()
+                return true
+            }
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -119,7 +152,7 @@ final class HighlightBackdropView: NSView {
                 let path = NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3)
                 path.lineWidth = 1
                 path.setLineDash([2, 2], count: 2, phase: 0)
-                Theme.color(for: earlier.color).withAlphaComponent(0.4).setStroke()
+                Theme.codeColor(for: earlier.color).withAlphaComponent(0.4).setStroke()
                 path.stroke()
                 return true
             }
@@ -128,7 +161,7 @@ final class HighlightBackdropView: NSView {
             // Text an agent or an edit removed: a caret where it was, in the note's colour, with a round cap on top.
             if entry.range.length == 0 {
                 guard let caret = textView.caretRect(at: entry.range.location), caret.insetBy(dx: -3, dy: -3).intersects(dirtyRect) else { continue }
-                Theme.color(for: entry.noteColor).withAlphaComponent(entry.strength).setFill()
+                (entry.code ? Theme.codeColor(for: entry.noteColor) : Theme.color(for: entry.noteColor)).withAlphaComponent(entry.strength).setFill()
                 NSBezierPath(roundedRect: caret, xRadius: caret.width / 2, yRadius: caret.width / 2).fill()
                 let cap = Self.caretCap
                 NSBezierPath(ovalIn: NSRect(x: caret.midX - cap / 2, y: caret.minY, width: cap, height: cap)).fill()
@@ -140,10 +173,10 @@ final class HighlightBackdropView: NSView {
             layoutManager.enumerateTextSegments(in: textRange, type: .highlight, options: [.rangeNotRequired]) { _, frame, _, _ in
                 let rect = frame.offsetBy(dx: inset.x, dy: inset.y)
                 guard rect.intersects(dirtyRect) else { return true }
-                let color = Theme.color(for: entry.noteColor)
+                let color = (entry.code ? Theme.codeColor(for: entry.noteColor) : Theme.color(for: entry.noteColor))
                 switch entry.mark {
                 case .fill:
-                    Theme.highlightFill(for: entry.noteColor).setFill()
+                    Theme.highlightFill(for: entry.noteColor,code: entry.code).setFill()
                     NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
                 case .underline, .dottedUnderline, .dashedUnderline:
                     let path = NSBezierPath()
@@ -302,4 +335,11 @@ final class HighlightBackdropView: NSView {
         let height = fragment.textLineFragments.filter { $0.characterRange.length > 0 }.reduce(0) { $0 + $1.typographicBounds.height }
         return NSRect(x: 0, y: frame.minY + textView.textContainerOrigin.y, width: bounds.width, height: height > 0 ? height : frame.height)
     }
+}
+
+private final class SelectionMarksView: NSView {
+    weak var backdrop: HighlightBackdropView?
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) { backdrop?.drawSelectionMarks(dirtyRect) }
 }

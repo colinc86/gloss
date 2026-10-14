@@ -75,6 +75,7 @@ public struct TextEditorView: NSViewRepresentable {
             textView.delegate = self
             textView.textStorage?.delegate = self
             textView.onAttachedToWindow = { [weak self] in self?.sync() }
+            textView.onAppearanceChange = { [weak self] in self?.scheduleEditorSettings() }
             textView.onFocusChange = { [weak self] in self?.updateCurrentLine() }
             textView.onAddNote = controller.onAddNote.map { _ in { [weak controller] in controller?.onAddNote?() } }
             textView.onEndLiveResize = { [weak self] in
@@ -98,7 +99,7 @@ public struct TextEditorView: NSViewRepresentable {
                 // Arrives from inside the text storage's edit processing; touching the layout manager there let
                 // TextKit drop the colors of every paragraph but the edited one. Run once the edit has finished.
                 RunLoop.main.perform(inModes: [.common]) {
-                    MainActor.assumeIsolated { self?.invalidateRendering(range) }
+                    MainActor.assumeIsolated { self?.applySyntaxFonts(in: range,force: range == nil); self?.invalidateRendering(range) }
                 }
             }
             highlightToken = controller.addHighlightObserver { [weak self] in self?.invalidateHighlights() }
@@ -123,6 +124,9 @@ public struct TextEditorView: NSViewRepresentable {
                     scrollView?.hasHorizontalScroller = !Theme.wrapsLines   // before the text view resizes to the new mode
                     self?.scheduleEditorSettings()
                 }
+            })
+            observers.append(NotificationCenter.default.addObserver(forName: ActiveCodeTheme.didChange, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.scheduleEditorSettings() }
             })
             scrollView.contentView.postsBoundsChangedNotifications = true
             observers.append(NotificationCenter.default.addObserver(
@@ -173,7 +177,12 @@ public struct TextEditorView: NSViewRepresentable {
 
         /// Settings › Editor changed while this editor is open: restyle it now rather than on the next open.
         private func applyEditorSettings() {
+            let previousFont = textView?.appliedEditorFont
             textView?.applyEditorSettings()
+            applySyntaxFonts(in: nil,force: previousFont != textView?.appliedEditorFont)
+            colouredAt.removeAllObjects()
+            invalidateRendering(nil)
+            minimap?.textDidChange()
             backdrop?.showsIndentGuides = Theme.showsIndentGuides
             backdrop?.invalidateIndentGuides()
             gutter?.updateWidth()
@@ -186,6 +195,7 @@ public struct TextEditorView: NSViewRepresentable {
             for observer in observers { NotificationCenter.default.removeObserver(observer) }
             observers = []
             textView?.textLayoutManager?.renderingAttributesValidator = nil
+            textView?.onAppearanceChange = nil
             textView?.delegate = nil
             textView?.textStorage?.delegate = nil
         }
@@ -197,6 +207,7 @@ public struct TextEditorView: NSViewRepresentable {
             isApplyingContent = false
             // Styled at this width (none yet before layout, so the first real width restyles once with its cap).
             styledWidth = (textView.textContainer?.size.width ?? 0) > 100 ? textView.textContainer?.size.width ?? 0 : 0
+            applySyntaxFonts(in: nil,force: true)
             loadedContentVersion = controller.contentVersion
             textView.isEditable = controller.isEditable
             minimap?.textDidChange()
@@ -305,6 +316,7 @@ public struct TextEditorView: NSViewRepresentable {
 
         private func invalidateHighlights() {
             appliedHighlightsVersion = controller.highlightsVersion
+            controller.noteGeometry.codeNoteIDs = Set(controller.drawnHighlights.filter { !$0.isInvalidated }.map(\.id))
             backdrop?.entries = controller.drawnHighlights.filter { !$0.isInvalidated }.map {
                 HighlightBackdropView.Entry(range: $0.range, color: $0.color, state: $0.state, focused: controller.isFocused($0.id))
             }
@@ -407,7 +419,7 @@ public struct TextEditorView: NSViewRepresentable {
             if let highlighter = controller.highlighter {
                 colouredAt.setObject(NSNumber(value: highlighter.generation), forKey: fragment)
                 for capture in highlighter.captures(in: NSRange(location: fragmentStart, length: fragmentEnd - fragmentStart)) {
-                    guard let color = SyntaxTheme.color(forCapture: capture.name) else { continue }
+                    guard let color = ActiveCodeTheme.color(forCapture: capture.name) else { continue }
                     let start = max(capture.range.location, fragmentStart)
                     let end = min(capture.range.location + capture.range.length, fragmentEnd)
                     guard start < end,
@@ -417,6 +429,40 @@ public struct TextEditorView: NSViewRepresentable {
                     layoutManager.addRenderingAttribute(.foregroundColor, value: color, for: range)
                 }
             }
+        }
+
+        private struct FontTraits: Equatable { let bold: Bool; let italic: Bool }
+        private struct FontState: Equatable { let font: NSFont; let traits: [String: FontTraits] }
+        private var fontState: FontState?
+        private var hasStyledFonts = false
+        private func applySyntaxFonts(in changed: NSRange?,force: Bool = false) {
+            guard let textView, let storage = textView.textStorage, storage.length > 0 else { return }
+            let theme = ActiveCodeTheme.theme(for: textView.effectiveAppearance)
+            let base = Theme.editorFont(for: textView.effectiveAppearance)
+            let state = FontState(font: base,traits: theme.tokens.mapValues { FontTraits(bold: $0.bold,italic: $0.italic) })
+            // Colors and editor washes do not affect glyph metrics or font traits.
+            let stateChanged = state != fontState
+            guard changed != nil || force || stateChanged else { return }
+            fontState = state
+            let stylesFonts = theme.tokens.values.contains { $0.bold || $0.italic }
+            guard stylesFonts || hasStyledFonts else { return }
+            let all = NSRange(location: 0,length: storage.length)
+            let range = !stateChanged && !force ? changed.map { (storage.string as NSString).paragraphRange(for: NSIntersectionRange($0,all)) } ?? all : all
+            storage.beginEditing()
+            storage.addAttribute(.font,value: base,range: range)
+            if stylesFonts {
+                var fonts: [TokenStyle: NSFont] = [:]
+                for capture in controller.highlighter?.captures(in: range) ?? [] {
+                    guard let style = theme.style(forCapture: capture.name), style.bold || style.italic else { continue }
+                    let covered = NSIntersectionRange(range,capture.range)
+                    guard covered.length > 0 else { continue }
+                    let font = fonts[style] ?? style.font(from: base)
+                    fonts[style] = font
+                    storage.addAttribute(.font,value: font,range: covered)
+                }
+            }
+            storage.endEditing()
+            hasStyledFonts = stylesFonts
         }
 
         // MARK: NSTextViewDelegate

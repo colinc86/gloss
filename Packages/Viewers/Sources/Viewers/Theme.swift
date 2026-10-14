@@ -3,15 +3,21 @@ import Core
 
 /// Colors and fonts shared by every viewer.
 public enum Theme {
+    /// UI, prose and non-code documents keep the original system note colors.
     public static func color(for noteColor: NoteColor) -> NSColor {
         switch noteColor {
-        case .yellow: NSColor.systemYellow
-        case .green: NSColor.systemGreen
-        case .blue: NSColor.systemBlue
-        case .pink: NSColor.systemPink
-        case .purple: NSColor.systemPurple
-        case .orange: NSColor.systemOrange
+        case .yellow: .systemYellow
+        case .green: .systemGreen
+        case .blue: .systemBlue
+        case .pink: .systemPink
+        case .purple: .systemPurple
+        case .orange: .systemOrange
         }
+    }
+
+    /// Only code surfaces adapt note marks to the selected code palette.
+    public static func codeColor(for noteColor: NoteColor) -> NSColor {
+        NSColor(name: nil) { appearance in ActiveCodeTheme.theme(for: appearance).noteColor(noteColor) }
     }
 
     /// Background tint for a note's range in text.
@@ -55,8 +61,8 @@ public enum Theme {
     }
 
     /// The fill a note's text gets when it fills: a draft's tint, whatever the state of a note in focus.
-    public static func highlightFill(for noteColor: NoteColor) -> NSColor {
-        let base = color(for: noteColor)
+    public static func highlightFill(for noteColor: NoteColor,code: Bool = false) -> NSColor {
+        let base = code ? codeColor(for: noteColor) : color(for: noteColor)
         return NSColor(name: nil) { appearance in
             base.withAlphaComponent(0.28 * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkBoost : 1))
         }
@@ -67,12 +73,12 @@ public enum Theme {
 
     /// A row a change added or rewrote: quieter than a resolved note, so a green note on an added line still reads.
     public static let changeAddedBackground = NSColor(name: nil) { appearance in
-        NSColor.systemGreen.withAlphaComponent(0.10 * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkBoost : 1))
+        (ActiveCodeTheme.color(forCapture: "diff.plus") ?? NSColor.systemGreen).withAlphaComponent(0.10 * (appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? darkBoost : 1))
     }
     /// The gutter's strip beside an added row, and the minimap's mark for a hunk.
-    public static let changeBar = NSColor.systemGreen.withAlphaComponent(0.85)
+    public static var changeBar: NSColor { (ActiveCodeTheme.color(forCapture: "diff.plus") ?? .systemGreen).withAlphaComponent(0.85) }
     /// The hairline where a change took lines out.
-    public static let changeDeletedMarker = NSColor.systemRed.withAlphaComponent(0.9)
+    public static var changeDeletedMarker: NSColor { (ActiveCodeTheme.color(forCapture: "diff.minus") ?? .systemRed).withAlphaComponent(0.9) }
 
     /// Settings > Editor. Open editors restyle as soon as one changes (`editorSettingsDidChange`), so a setting is
     /// seen while it is being adjusted.
@@ -95,8 +101,10 @@ public enum Theme {
         NotificationCenter.default.post(name: editorSettingsDidChange, object: nil)
     }
 
+    static var effectiveAppearance: NSAppearance { NSApp?.effectiveAppearance ?? NSAppearance(named: .aqua)! }
+
     public static var editorFont: NSFont {
-        NSFont.monospacedSystemFont(ofSize: editorFontSize, weight: .regular)
+        editorFont(for: effectiveAppearance)
     }
 
     public static var gutterFont: NSFont {

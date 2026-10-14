@@ -14,6 +14,8 @@ public final class NoteGeometry {
     public var visibleNoteRects: () -> [NoteID: [CGRect]] = { [:] }
     /// Set by the app; called after the view scrolls, resizes, lays out again, or its highlights change.
     public var onChange: (() -> Void)?
+    /// Updated with highlights, so native path redraws can classify a code note in constant time.
+    public var codeNoteIDs: Set<NoteID> = []
 
     public func changed() {
         onChange?()

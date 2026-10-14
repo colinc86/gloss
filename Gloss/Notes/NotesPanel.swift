@@ -503,6 +503,7 @@ struct TargetPicker: View {
 }
 
 struct NoteCard: View {
+    @Environment(\.colorScheme) private var codeAppearance
     @Environment(AppModel.self) private var model
     let note: Note
     let document: Core.Document
@@ -862,8 +863,8 @@ struct NoteCard: View {
             .help(excerpt)
             .accessibilityHidden(true)
             .transition(.opacity)
-            .task(id: excerpt) {
-                colouredExcerpt = SyntaxTheme.highlighted(excerpt, language: GrammarCatalog.languageName(forPath: document.path))
+            .task(id: CodeSnippetKey(excerpt,language: GrammarCatalog.languageName(forPath: document.path),dark: codeAppearance == .dark)) {
+                colouredExcerpt = SyntaxTheme.highlighted(excerpt, language: GrammarCatalog.languageName(forPath: document.path),appearance: codeAppearance == .dark ? .darkAqua : .aqua)
             }
         }
     }
@@ -1047,7 +1048,7 @@ struct NoteCard: View {
             if open {
                 VStack(alignment: .leading, spacing: DS.Space.xs) {
                     if let old = move.oldExcerpt {
-                        Text(old)
+                        Text(verbatim: old)
                             .strikethrough()
                             .font(.caption.monospaced())
                             .foregroundStyle(.tertiary)

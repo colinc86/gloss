@@ -60,8 +60,12 @@ without `.calmed`. Tests set `Motion.reducedOverride`.
 
 ## Type
 
-System font only. Body text `.callout` in panels; metadata `.caption` medium, monospaced digits for line numbers;
-pills `.caption2` semibold. Secondary information uses `.secondary`, never a smaller size alone.
+UI typography stays system: body text `.callout` in panels; metadata `.caption` medium, monospaced digits for
+line numbers; pills `.caption2` semibold. Secondary information uses `.secondary`, never a smaller size alone.
+Code pages and rendered code blocks use the active syntax theme's optional font family, size and token traits
+(2026-10-13); an unset size uses Editor's Default code font size. Gloss keeps its existing source font and its
+normally 13 pt rendered fences. Rendered prose keeps its own font; inline code uses the theme family at its
+prose-relative size. Quoted code in UI surfaces keeps UI sizing. Themes never change the chrome's typography.
 
 ## Accessibility
 
@@ -1004,8 +1008,8 @@ path. Dropping on the Dock icon is not supported yet.
     scroll notification, so outlines move in the same frame as the text; ribbons follow the cards as the list
     scrolls and fade out over the last 12 pt as a card leaves the list. Showing and hiding fades in 0.2 s.
   Every viewer that can place a note reports it through `NoteGeometry` (text by line fragment, rendered Markdown,
-  PDF regions and text, image regions, grid cells and rows, a web page's element notes); Quick Look and text notes on
-  a rendered HTML page have no place to point at, so the toggles hide there or the note goes without a path.
+  PDF regions and text, image regions, grid cells and rows, a web page's element notes and text notes); Quick Look
+  has no place to point at, so its note goes without a path.
 - **Landing on a note**: every jump to a range (a minimap mark, a card in the notes panel, a search result) ends with
   AppKit's find indicator over the target, the brief yellow pop Xcode uses, so the eye finds where it landed
   instead of scanning. A note over several lines pops on its first line only; caret moves (no range) don't pop.
@@ -1114,6 +1118,56 @@ path. Dropping on the Dock icon is not supported yet.
 
 ### Settings
 
+- **Themes tab** (2026-10-13): `paintpalette`, after Editor, a scrollable grouped form at the standard 600 pt
+  Settings width and 620 pt height. “Colors and fonts for code. Gloss follows your Mac's appearance and uses the
+  theme you choose for each.” Light Appearance and Dark Appearance each have a Theme picker, a 164 pt sample
+  drawn in that section's appearance, and Edit…, Duplicate, Export… and Delete…. Gloss is the adaptive default
+  in both; built-ins say “Built-in theme · Duplicate to edit” and disable Edit/Delete. Import… is common to both,
+  with “Reading theme…” while parsing, quiet file problems and the Theme palette licenses disclosure below.
+  Changing a picker restyles open code immediately; an inactive choice changes its preview until that appearance
+  is active. Missing/broken files say “Solar Copy isn't available. Using Gloss.” without a document banner;
+  preserving the chosen id lets a repaired file return. Editor keeps Default code font size, wrap, guides and minimap.
+- **Theme editor** (2026-10-13): a fitted, resizable sheet, 760 × 580 pt initially, up to 1100 × 900 pt. Name has
+  initial focus, beside Light/Dark Appearance; the title is Edit Theme, Duplicate Theme or Import Theme. An
+  `HSplitView` keeps Tokens | Editor | Font controls at the left and Code | Markdown | Diff preview at the right.
+  Token rows show names and swatches; the selected row has a color well, hex field, Use Foreground, Bold and
+  Italic. Additional token styles expands imported/specific keys. Editing a row clears only the descendants
+  and aliases owned by that row (PM decision, 2026-10-13), never another editable row or its keys. Punctuation
+  keeps Special Punctuation, Variable keeps Built-in Variable, and Link keeps Link Label and text.reference;
+  Heading still replaces its own text.title override. Ownership uses the longest editable-key match, then its alias. Editor lists Background, Foreground,
+  Selection, Current Line, Gutter Background, Line Numbers, Current Line Number, Invisibles, Caret and Code Block
+  Background. Caret stays the system accent unless a theme sets a custom cursor; choosing a system cursor
+  restores AppKit's native caret rather than pinning a sampled color. Font offers System Monospaced/installed families, fractional 9–20 pt Size and 1–2× Line Spacing,
+  each numeric field with Use Default; “Font not installed. Using System Monospaced.” explains a fallback.
+  Source and license and the warning count stay secondary in the footer; Cancel and Save (Add Theme for an import)
+  are always visible. Theme colors belong to the preview/code page; controls and other reading surfaces stay system.
+- **Saving a theme** (2026-10-13): existing-theme edits preview live in open code without changing text, undo,
+  selection or the line at the top. Cancel loads the current file; Duplicate/import saves no file and selects
+  nothing until Save/Add Theme. “This theme changed outside Gloss.” keeps the draft and offers Replace File or
+  Save a Copy; canceling the editor uses the current disk version. A failed save keeps its fields and offers
+  Try Again. Delete asks “Delete ‘Solar Copy’?” and says “This removes the theme file from Gloss. Any appearance
+  using it will use Gloss.” Cancel and Delete Theme are the actions; deletion moves the user file to Trash,
+  resetting every affected choice. Export uses the native save panel and keeps source/license metadata.
+- **Importing a theme** (2026-10-13): the native file panel says “Choose Gloss JSON, an Xcode color theme, a
+  TextMate theme, or a VS Code theme.” The Import Theme sheet uses the same editor/preview, with a disclosure
+  headed by the actual mapping report, such as “Mapped 18 token styles from 64 rules; 9 scopes had no match.”
+  Unmatched scopes/skipped features stay in its detail; “No token styles mapped. Unmapped tokens use Foreground.”
+  explains an empty token mapping. Name/appearance can be changed before Add Theme; a fresh id protects existing
+  files. Xcode imports use a fixed key priority rather than dictionary order: type prefers identifier.type,
+  identifier.class, then declaration.type; function prefers identifier.function, then declaration.other.
+  Doc-comment markup fills only unset captures, and unreadable mapped colors are reported as skipped. No code
+  runs and no external include or path-valued tokenColors file is read. Failure stays in Settings and leaves the
+  chosen theme alone.
+- **Theme legibility and accessibility** (2026-10-13): token contrast below 3:1 and foreground below 4.5:1 shows a
+  warning symbol and “Low contrast · 2.4:1”; the footer says “3 colors may be hard to read.” Low contrast never
+  disables Save; malformed color/font input does. Wells/hex fields name their token or editor color, Bold/Italic
+  are separate controls, and the Name field starts focus. Selection clashes say “Selection resembles a note fill.
+  The editor uses a distinct tint.” Notes keep their six identities, state symbols and fill/underline/dotted/dashed
+  grammar. Their colors stay plain system colors on prose, PDF paper, image regions, cards and other UI
+  surfaces. Only editor/gutter/source minimap and rendered code-block notes use contrast-adjusted colors on a
+  non-system theme background; Gloss is unchanged. Selection draws covered note underlines again above it. Code quotes get legible token colors on their own UI surface while
+  keeping UI sizing. Chrome and note legends remain system colors. Verify focus/VoiceOver and all preview modes
+  live; no theme change needs a moving transition or overrides Reduce Motion.
 - **Agents tab**: one place for everything that connects an agent, top to bottom: the MCP server's status and port;
   a section per machine (This Mac, then each connected host) with Claude Code, Codex and OpenCode, each installed
   by its row, whose copy icon (its tooltip says what it copies) takes the registration Install runs, for whoever
@@ -1126,12 +1180,12 @@ path. Dropping on the Dock icon is not supported yet.
   Install touches and how to undo it: nothing changes until you press Install, each edited settings file is first
   copied beside itself (`*.gloss-backup-…`, the last three kept), and Remove takes out only what was added.
 - **Settings**: every tab is a `.formStyle(.grouped)` form, 600 pt wide, with its own height so the window
-  resizes to each tab as System Settings does (General 684 with its Updates section, 540 without it, Editor 330, Notes 560, Agents 640, Integrations 660, Attachments 380, Hosts 440). The Notes tab holds Review (Review agents' work), Iterations (open notes, the two
+  resizes to each tab as System Settings does (General 684 with its Updates section, 540 without it, Editor 380, Themes 620, Notes 560, Agents 640, Integrations 660, Attachments 380, Hosts 440). The Notes tab holds Review (Review agents' work), Iterations (open notes, the two
   automatic starts, snapshots kept) and Recently Deleted's retention. Toggles
   carry a second line saying what they do; words match the rest of the app ("folder", never "root"). A setting
   shows its effect where it can: the editor font slider drives a live code preview, with the size in monospaced
-  digits beside it. A setting must do something, at once: Editor's font size, wrapping, and indent guides
-  restyle every open editor as they change (`Theme.editorSettingsDidChange`), keeping the line at the top of the view
+  digits beside it. A setting must do something, at once: Editor's default code font size (for themes without an
+  explicit size), wrapping, and indent guides restyle every open editor as they change (`Theme.editorSettingsDidChange`), keeping the line at the top of the view
   in place, so the slider can be dragged while watching real code. Attributes only: text, undo, and anchors stay.
   Sections have a header and a footer that explains them; explanations never sit as rows of their own. Live state
   reads as a status line with a colored dot (MCP: green listening, red with the error). Text people copy into a

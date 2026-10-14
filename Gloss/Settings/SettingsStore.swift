@@ -68,6 +68,11 @@ final class SettingsStore {
         }
     }
     @ObservationIgnored var onDockSettingChange: () -> Void = {}
+    var codeThemeLight = "gloss" { didSet { persist("codeTheme.light",codeThemeLight); onCodeThemeChange() } }
+    var codeThemeDark = "gloss" { didSet { persist("codeTheme.dark",codeThemeDark); onCodeThemeChange() } }
+    var codeThemeLightName: String? { didSet { if let name = codeThemeLightName { persist("codeTheme.lightName",name) } } }
+    var codeThemeDarkName: String? { didSet { if let name = codeThemeDarkName { persist("codeTheme.darkName",name) } } }
+    @ObservationIgnored var onCodeThemeChange: () -> Void = {}
     var editorFontSize: Double = 12.5 {
         didSet {
             Theme.editorFontSize = editorFontSize
@@ -185,6 +190,10 @@ final class SettingsStore {
         if let value = await read("layout.explorerCloses") { compactExplorerClosesOnOpen = value == "1" }
         if let value = await read("layout.trayHeight"), let height = Double(value), height.isFinite { compactTrayHeight = max(160, height) }
         if let value = await read("mcp.port"), let port = Int(value), Self.mcpPortRange.contains(port) { mcpPort = port }
+        codeThemeLightName = await read("codeTheme.lightName")
+        codeThemeDarkName = await read("codeTheme.darkName")
+        codeThemeLight = await read("codeTheme.light") ?? "gloss"
+        codeThemeDark = await read("codeTheme.dark") ?? "gloss"
         yourName = await read("collaboration.name") ?? ""
         if let id = try? await noteStore.collaborationAuthorID() { authorID = id }
         loaded = true

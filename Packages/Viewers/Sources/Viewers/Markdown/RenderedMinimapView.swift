@@ -317,7 +317,7 @@ final class RenderedMinimapView: NSView {
             // The lines the note covers, across the page: at this scale a word is a pixel, so its lines are the mark.
             let rect = NSRect(x: Self.inset, y: union.minY, width: thumbnailWidth, height: max(2, union.height))
             MinimapStyle.drawNote(rect, barX: bounds.width - 3, color: highlight.color, state: highlight.state,
-                                  isPoint: highlight.range.length == 0, hovered: highlight.id == hovered || controller.source.isFocused(highlight.id))
+                                  isPoint: highlight.range.length == 0, hovered: highlight.id == hovered || controller.source.isFocused(highlight.id),code: MarkdownRenderer.isCode(at: highlight.range.location,in: controller.rendered))
             hits.append((rect.insetBy(dx: 0, dy: -2), highlight.id))
         }
         // Notes on pictures are their regions of the picture.

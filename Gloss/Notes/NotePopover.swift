@@ -7,6 +7,7 @@ import Viewers
 /// colour, and the way out. Save is the one prominent action; Return saves, Shift-Return adds a line (standard enough
 /// that the popover does not spell it out).
 struct NotePopover: View {
+    @Environment(\.colorScheme) private var codeAppearance
     @State var state: NoteEditorState
     let onSave: (NoteEditorState) -> Void
     let onDelete: (NoteID) -> Void
@@ -51,7 +52,7 @@ struct NotePopover: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .help("The text this note is about")
-                .task(id: quote) { colouredQuote = SyntaxTheme.highlighted(quote, language: language) }
+                .task(id: CodeSnippetKey(quote,language: language,dark: codeAppearance == .dark)) { colouredQuote = SyntaxTheme.highlighted(quote, language: language,appearance: codeAppearance == .dark ? .darkAqua : .aqua) }
             }
             ZStack(alignment: .topLeading) {
                 NoteBodyEditor(text: $state.body, onSubmit: { if canSave { onSave(state) } }, onCancel: onCancel)

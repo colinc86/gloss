@@ -1,0 +1,60 @@
+{
+  "appearance": "dark",
+  "editor": {
+    "background": "#282C34",
+    "currentLine": "#303640",
+    "currentLineNumber": "#ABB2BF",
+    "cursor": "#ABB2BF",
+    "foreground": "#ABB2BF",
+    "gutterBackground": "#282C34",
+    "invisibles": "#5C6370",
+    "lineNumbers": "#828997",
+    "selection": "#3E4E68"
+  },
+  "formatVersion": 1,
+  "id": "balanced-dark",
+  "license": "Adapted from the One Light and One Dark palettes by GitHub Inc. (2016), MIT License. https://github.com/atom/one-dark-syntax",
+  "name": "Balanced Dark",
+  "tokens": {
+    "attribute": "#D19A66",
+    "comment": "#828997",
+    "constant": "#D19A66",
+    "diff.header": "#828997",
+    "diff.hunk": "#C678DD",
+    "diff.minus": "#E06C75",
+    "diff.plus": "#98C379",
+    "escape": "#D19A66",
+    "function": "#61AFEF",
+    "keyword": "#C678DD",
+    "markup.bold": {
+      "bold": true,
+      "color": "#C678DD"
+    },
+    "markup.heading": {
+      "bold": true,
+      "color": "#61AFEF"
+    },
+    "markup.italic": {
+      "color": "#C678DD",
+      "italic": true
+    },
+    "markup.link": "#61AFEF",
+    "markup.link.label": "#E5C07B",
+    "markup.list": "#828997",
+    "markup.quote": "#828997",
+    "markup.raw": "#98C379",
+    "markup.strikethrough": "#828997",
+    "namespace": "#E5C07B",
+    "none": "#ABB2BF",
+    "number": "#D19A66",
+    "operator": "#ABB2BF",
+    "property": "#E06C75",
+    "punctuation": "#ABB2BF",
+    "punctuation.special": "#C678DD",
+    "string": "#98C379",
+    "tag": "#61AFEF",
+    "type": "#E5C07B",
+    "variable": "#ABB2BF",
+    "variable.builtin": "#E06C75"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "appearance": "light",
+  "editor": {
+    "background": "#FDF6E3",
+    "currentLine": "#EEE8D5",
+    "currentLineNumber": "#586E75",
+    "cursor": "#586E75",
+    "foreground": "#586E75",
+    "gutterBackground": "#EEE8D5",
+    "invisibles": "#93A1A1",
+    "lineNumbers": "#657B83",
+    "selection": "#C7DCE5"
+  },
+  "formatVersion": 1,
+  "id": "solar-light",
+  "license": "Adapted from the Solarized palette by Ethan Schoonover (2011), MIT License. https://github.com/altercation/solarized",
+  "name": "Solar Light",
+  "tokens": {
+    "attribute": "#A86A00",
+    "comment": "#657B83",
+    "constant": "#A86A00",
+    "diff.header": "#657B83",
+    "diff.hunk": "#6C71C4",
+    "diff.minus": "#DC322F",
+    "diff.plus": "#657600",
+    "escape": "#A86A00",
+    "function": "#268BD2",
+    "keyword": "#6C71C4",
+    "markup.bold": {
+      "bold": true,
+      "color": "#6C71C4"
+    },
+    "markup.heading": {
+      "bold": true,
+      "color": "#268BD2"
+    },
+    "markup.italic": {
+      "color": "#6C71C4",
+      "italic": true
+    },
+    "markup.link": "#268BD2",
+    "markup.link.label": "#147D76",
+    "markup.list": "#657B83",
+    "markup.quote": "#657B83",
+    "markup.raw": "#657600",
+    "markup.strikethrough": "#657B83",
+    "namespace": "#147D76",
+    "none": "#586E75",
+    "number": "#A86A00",
+    "operator": "#586E75",
+    "property": "#B13C79",
+    "punctuation": "#586E75",
+    "punctuation.special": "#6C71C4",
+    "string": "#657600",
+    "tag": "#268BD2",
+    "type": "#147D76",
+    "variable": "#586E75",
+    "variable.builtin": "#B13C79"
+  }
+}

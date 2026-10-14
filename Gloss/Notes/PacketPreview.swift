@@ -154,6 +154,10 @@ struct PacketPreview: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                if !note.excerptLines.isEmpty {
+                    CodeQuote(text: note.excerptLines.joined(separator: "\n"),language: GrammarCatalog.languageName(forPath: note.agentPath))
+                        .font(.caption.monospaced()).lineLimit(4)
+                }
                 Text(NoteCard.styledBody(Self.readableText(note)))
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)

@@ -1,5 +1,7 @@
+import AppKit
 import Core
 import SwiftUI
+import Viewers
 
 /// Shown when the file on disk changed since it was opened: your edits next to the disk's, against the version you
 /// started from, with what each choice will do.
@@ -9,7 +11,7 @@ struct ConflictSheet: View {
 
     var body: some View {
         ConflictContent(
-            fileName: session.fileName, regions: conflict.regions, originals: conflict.originals, canMerge: conflict.canMerge, canSaveAs: session.hostID == .local,
+            fileName: session.fileName, language: GrammarCatalog.languageName(forPath: session.path), regions: conflict.regions, originals: conflict.originals, canMerge: conflict.canMerge, canSaveAs: session.hostID == .local,
             saveAs: { Task { await session.saveAs() } },
             takeDisk: { Task { await session.takeTheirs() } },
             keepMine: { Task { await session.keepMine() } },
@@ -21,6 +23,7 @@ struct ConflictSheet: View {
 /// The sheet's content without a session, so every case can be rendered and reviewed on its own.
 struct ConflictContent: View {
     let fileName: String
+    var language: String? = nil
     let regions: [MergeRegion]
     /// The lines each region stands in for, as opened (empty when not known).
     var originals: [[String]] = []
@@ -111,7 +114,7 @@ struct ConflictContent: View {
     private var regionList: some View {
         VStack(alignment: .leading, spacing: DS.Space.xs) {
             ForEach(Array(regions.enumerated()), id: \.offset) { index, region in
-                MergeRegionView(region: region, original: index < originals.count ? originals[index] : [])
+                MergeRegionView(region: region, original: index < originals.count ? originals[index] : [],language: language)
             }
         }
         .padding(DS.Space.s)
@@ -139,6 +142,7 @@ private struct MergeRegionView: View {
     let region: MergeRegion
     /// The lines the region stands in for, as opened.
     let original: [String]
+    var language: String? = nil
 
     var body: some View {
         switch region {
@@ -209,18 +213,53 @@ private struct MergeRegionView: View {
     }
 
     private func lineBlock(_ lines: [String], tint: Color?, struck: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                Text(line.isEmpty ? " " : line)
-                    .font(.system(.callout, design: .monospaced))
+        ConflictCodeLines(lines: lines,language: language,tint: tint,struck: struck)
+    }
+}
+
+/// Parse one bounded block, rather than creating a highlighter/task for every displayed line.
+/// Context/removal text remains muted; Gloss keeps the original uncolored conflict-sheet appearance.
+struct ConflictCodeLines: View {
+    let lines: [String]
+    let language: String?
+    let tint: Color?
+    let struck: Bool
+    @Environment(\.colorScheme) private var appearance
+    @State private var styled: [AttributedString] = []
+    private struct TaskKey: Hashable { let snippet: CodeSnippetKey; let muted: Bool }
+    private var muted: Bool { tint == nil || struck }
+    private var source: String { lines.map { $0.isEmpty ? " " : $0 }.joined(separator: "\n") }
+    var body: some View {
+        VStack(alignment: .leading,spacing: 0) {
+            ForEach(Array(lines.enumerated()),id: \.offset) { index, line in
+                Text(!muted && styled.indices.contains(index) ? styled[index] : AttributedString(line.isEmpty ? " " : line))
+                    .font(.system(.callout,design: .monospaced))
                     .foregroundStyle(tint == nil || struck ? (line.hasPrefix("⋯") ? Color.secondary.opacity(0.7) : Color.secondary) : Color.primary)
                     .strikethrough(struck)
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, DS.Space.s)
-                    .padding(.vertical, 1)
+                    .frame(maxWidth: .infinity,alignment: .leading)
+                    .padding(.horizontal,DS.Space.s)
+                    .padding(.vertical,1)
                     .background(tint.map { $0.opacity(0.1) } ?? .clear)
             }
+        }
+        .task(id: TaskKey(snippet: CodeSnippetKey(source,language: language,dark: appearance == .dark),muted: muted)) {
+            styled = Self.highlightedLines(lines,language: language,muted: tint == nil || struck,appearance: appearance == .dark ? .darkAqua : .aqua)
+        }
+    }
+    static func highlightedLines(_ lines: [String],language: String?,muted: Bool,appearance: NSAppearance.Name) -> [AttributedString] {
+        let theme = ActiveCodeTheme.theme(for: NSAppearance(named: appearance) ?? NSApp.effectiveAppearance)
+        guard !muted, theme.id != "gloss" else { return [] }
+        let text = lines.map { $0.isEmpty ? " " : $0 }.joined(separator: "\n")
+        guard let highlighted = SyntaxTheme.highlighted(text,language: language,appearance: appearance) else { return [] }
+        var offset = 0
+        return lines.map { line in
+            let length = (line.isEmpty ? " " : line).utf16.count
+            defer { offset += length + 1 }
+            guard let range = Range(NSRange(location: offset,length: length),in: text),
+                  let lower = AttributedString.Index(range.lowerBound,within: highlighted),
+                  let upper = AttributedString.Index(range.upperBound,within: highlighted) else { return AttributedString(line) }
+            return AttributedString(highlighted[lower..<upper])
         }
     }
 }

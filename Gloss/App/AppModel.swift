@@ -21,6 +21,7 @@ final class AppModel {
     let noteLink: NoteLinkModel
     let send: SendCoordinator
     let settings: SettingsStore
+    let themes: ThemesModel
     let iterations: IterationsModel
     let refinement: RefinementModel
     let review: ReviewModel
@@ -269,6 +270,10 @@ final class AppModel {
         notesPanel = NotesPanelModel(noteStore: store)
         noteLink = NoteLinkModel(noteStore: store)
         settings = SettingsStore(noteStore: store)
+        let themeFolder = launchOptions.resetDatabase || launchOptions.isTestHost
+            ? database.retainedAttachmentsURL.deletingLastPathComponent().appendingPathComponent("Themes")
+            : CodeThemeStore.defaultFolder
+        themes = ThemesModel(settings: settings,store: CodeThemeStore(folder: themeFolder,watches: !launchOptions.isTestHost))
         collaboration = CollaborationModel(store: store, settings: settings)
         iterations = IterationsModel(noteStore: store, settings: settings)
         review = ReviewModel(noteStore: store)
@@ -2620,6 +2625,7 @@ final class AppModel {
         workspaceSave?.cancel()
         // Quitting while a restore still waits (a host's key agent) keeps the saved workspace whole.
         if !isRestoringWorkspace { _ = await withDeadline(.seconds(1)) { await self.saveWorkspace() } }
+        themes.stop()
         refinement.stop()
         notesPanel.stop()
         iterations.stop()
@@ -2644,6 +2650,7 @@ final class AppModel {
         hosts.killMasters()
         guard !isShutDown else { return }
         isShutDown = true
+        themes.stop()
         refinement.stop()
         notesPanel.stop()
         iterations.stop()

@@ -1,0 +1,60 @@
+{
+  "appearance": "dark",
+  "editor": {
+    "background": "#2E3440",
+    "currentLine": "#3B4252",
+    "currentLineNumber": "#D8DEE9",
+    "cursor": "#D8DEE9",
+    "foreground": "#D8DEE9",
+    "gutterBackground": "#2E3440",
+    "invisibles": "#4C566A",
+    "lineNumbers": "#7B88A1",
+    "selection": "#465A73"
+  },
+  "formatVersion": 1,
+  "id": "frost-dark",
+  "license": "Adapted from the Nord palette by Sven Greb, MIT License. https://github.com/nordtheme/nord",
+  "name": "Frost Dark",
+  "tokens": {
+    "attribute": "#B48EAD",
+    "comment": "#7B88A1",
+    "constant": "#B48EAD",
+    "diff.header": "#7B88A1",
+    "diff.hunk": "#81A1C1",
+    "diff.minus": "#BF616A",
+    "diff.plus": "#A3BE8C",
+    "escape": "#B48EAD",
+    "function": "#88C0D0",
+    "keyword": "#81A1C1",
+    "markup.bold": {
+      "bold": true,
+      "color": "#81A1C1"
+    },
+    "markup.heading": {
+      "bold": true,
+      "color": "#88C0D0"
+    },
+    "markup.italic": {
+      "color": "#81A1C1",
+      "italic": true
+    },
+    "markup.link": "#88C0D0",
+    "markup.link.label": "#8FBCBB",
+    "markup.list": "#7B88A1",
+    "markup.quote": "#7B88A1",
+    "markup.raw": "#A3BE8C",
+    "markup.strikethrough": "#7B88A1",
+    "namespace": "#8FBCBB",
+    "none": "#D8DEE9",
+    "number": "#B48EAD",
+    "operator": "#D8DEE9",
+    "property": "#D8DEE9",
+    "punctuation": "#D8DEE9",
+    "punctuation.special": "#81A1C1",
+    "string": "#A3BE8C",
+    "tag": "#88C0D0",
+    "type": "#8FBCBB",
+    "variable": "#D8DEE9",
+    "variable.builtin": "#D8DEE9"
+  }
+}

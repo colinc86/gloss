@@ -52,8 +52,8 @@ let package = Package(
                 .product(name: "TreeSitterHTML", package: "tree-sitter-html"),
                 .product(name: "TreeSitterCSS", package: "tree-sitter-css"),
             ],
-            // Mermaid (MIT, pinned; see MermaidRenderer.version) draws diagrams offline.
-            resources: [.copy("Resources/Mermaid")],
+            // Mermaid (MIT, pinned; see MermaidRenderer.version) draws diagrams offline. Presets are the built-in syntax themes.
+            resources: [.copy("Resources/Mermaid"), .copy("Highlighting/Themes/Presets")],
             swiftSettings: [
                 .defaultIsolation(MainActor.self),
                 .enableUpcomingFeature("ExistentialAny"),

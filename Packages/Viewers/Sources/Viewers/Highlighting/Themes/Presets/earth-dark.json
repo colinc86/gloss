@@ -1,0 +1,60 @@
+{
+  "appearance": "dark",
+  "editor": {
+    "background": "#282828",
+    "currentLine": "#32302F",
+    "currentLineNumber": "#EBDBB2",
+    "cursor": "#EBDBB2",
+    "foreground": "#EBDBB2",
+    "gutterBackground": "#282828",
+    "invisibles": "#665C54",
+    "lineNumbers": "#A89984",
+    "selection": "#46564B"
+  },
+  "formatVersion": 1,
+  "id": "earth-dark",
+  "license": "Adapted from the gruvbox palette by morhetz, MIT/X11 License. https://github.com/morhetz/gruvbox",
+  "name": "Earth Dark",
+  "tokens": {
+    "attribute": "#FE8019",
+    "comment": "#A89984",
+    "constant": "#FE8019",
+    "diff.header": "#A89984",
+    "diff.hunk": "#FB4934",
+    "diff.minus": "#FB4934",
+    "diff.plus": "#B8BB26",
+    "escape": "#FE8019",
+    "function": "#8EC07C",
+    "keyword": "#FB4934",
+    "markup.bold": {
+      "bold": true,
+      "color": "#FB4934"
+    },
+    "markup.heading": {
+      "bold": true,
+      "color": "#8EC07C"
+    },
+    "markup.italic": {
+      "color": "#FB4934",
+      "italic": true
+    },
+    "markup.link": "#8EC07C",
+    "markup.link.label": "#D3869B",
+    "markup.list": "#A89984",
+    "markup.quote": "#A89984",
+    "markup.raw": "#B8BB26",
+    "markup.strikethrough": "#A89984",
+    "namespace": "#D3869B",
+    "none": "#EBDBB2",
+    "number": "#FE8019",
+    "operator": "#EBDBB2",
+    "property": "#83A598",
+    "punctuation": "#EBDBB2",
+    "punctuation.special": "#FB4934",
+    "string": "#B8BB26",
+    "tag": "#8EC07C",
+    "type": "#D3869B",
+    "variable": "#EBDBB2",
+    "variable.builtin": "#83A598"
+  }
+}

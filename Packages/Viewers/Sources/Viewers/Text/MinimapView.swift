@@ -205,6 +205,8 @@ final class MinimapView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let controller, let context = NSGraphicsContext.current?.cgContext else { return }
+        ActiveCodeTheme.editorColor(\.background).setFill()
+        bounds.fill()
         MinimapStyle.drawSeparator(height: bounds.height)
         let layout = layout
 
@@ -239,7 +241,7 @@ final class MinimapView: NSView {
             guard span.y + span.height >= 0, span.y <= bounds.height else { continue }
             let rect = NSRect(x: Self.codeInset - 1, y: span.y, width: bounds.width - Self.codeInset + 1, height: span.height)
             MinimapStyle.drawNote(rect, barX: bounds.width - 3, color: mark.color, state: mark.state, isPoint: mark.isPoint,
-                                  hovered: mark.noteID == hovered || controller.isFocused(mark.noteID))
+                                  hovered: mark.noteID == hovered || controller.isFocused(mark.noteID),code: true)
             // A generous target: a one-line note is two points tall.
             hits.append((rect.insetBy(dx: 0, dy: -2), mark))
         }
@@ -270,7 +272,7 @@ final class MinimapView: NSView {
             }
         }
         for (capture, rects) in byCapture {
-            let color = capture.flatMap(SyntaxTheme.color(forCapture:)) ?? NSColor.textColor
+            let color = capture.flatMap(ActiveCodeTheme.color(forCapture:)) ?? ActiveCodeTheme.editorColor(\.foreground)
             context.setFillColor(color.withAlphaComponent(0.55).cgColor)
             context.fill(rects)
         }
@@ -284,7 +286,7 @@ final class MinimapView: NSView {
         // The colour under each character, as TextKit draws it: later (inner) captures win.
         var names = [String?](repeating: nil, count: units.count)
         for capture in controller.highlighter?.captures(in: NSRange(location: range.location, length: units.count)) ?? []
-        where SyntaxTheme.color(forCapture: capture.name) != nil {
+        where ActiveCodeTheme.color(forCapture: capture.name) != nil {
             let start = max(0, capture.range.location - range.location)
             let end = min(units.count, capture.range.location + capture.range.length - range.location)
             if start < end { for index in start..<end { names[index] = capture.name } }
@@ -383,8 +385,8 @@ enum MinimapStyle {
     /// A note's place: its span tinted, with a solid bar at `barX` (the trailing edge) so it is found at a glance, on
     /// the state ladder. A removal is a hairline where the text was, as the gutter's hollow dot: a place, not text; an
     /// orphan is outlined.
-    static func drawNote(_ rect: NSRect, barX: CGFloat, color noteColor: NoteColor, state: NoteState, isPoint: Bool, hovered: Bool) {
-        let color = Theme.color(for: noteColor)
+    static func drawNote(_ rect: NSRect, barX: CGFloat, color noteColor: NoteColor, state: NoteState, isPoint: Bool, hovered: Bool, code: Bool = false) {
+        let color = code ? Theme.codeColor(for: noteColor) : Theme.color(for: noteColor)
         let strength = Theme.strength(for: state)
         if isPoint {
             color.withAlphaComponent(hovered ? 1 : max(0.6, strength)).setFill()

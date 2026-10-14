@@ -123,16 +123,24 @@ final class NoteLinkModel {
     @ObservationIgnored private var settlePending = false
     /// What was drawn last, so a card moving redraws only its own ribbon.
     @ObservationIgnored private var drawn: [NoteID: NotePathLayerView.Item] = [:]
+    @ObservationIgnored private var themeObserver: (any NSObjectProtocol)?
     @ObservationIgnored private let layerView = NotePathLayerView(frame: .zero)
     /// Outlines are rebuilt only when a note's rects change, not on every redraw.
     @ObservationIgnored private var outlines: [NoteID: (rects: [CGRect], shapes: [NoteOutline.Shape], path: CGPath)] = [:]
 
     init(noteStore: NoteStore) {
         self.noteStore = noteStore
+        themeObserver = NotificationCenter.default.addObserver(forName: ActiveCodeTheme.didChange,object: nil,queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.redraw(); self?.drawSelections() }
+        }
         layerView.onAppearanceChange = { [weak self] in
             self?.redraw()
             self?.drawSelections()
         }
+    }
+
+    isolated deinit {
+        if let themeObserver { NotificationCenter.default.removeObserver(themeObserver) }
     }
 
     func start() {
@@ -266,7 +274,7 @@ final class NoteLinkModel {
                 outlines[id] = outline
             }
             items.append(NotePathLayerView.Item(id: id, shapes: outline.shapes, outline: outline.path, card: cardRects[id],
-                                                color: Theme.color(for: style.color), strength: style.strength, strong: strong.contains(id)))
+                                                color: geometry?.codeNoteIDs.contains(id) == true ? Theme.codeColor(for: style.color) : Theme.color(for: style.color), strength: style.strength, strong: strong.contains(id)))
         }
         outlines = outlines.filter { viewerRects[$0.key] != nil }
         drawn = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

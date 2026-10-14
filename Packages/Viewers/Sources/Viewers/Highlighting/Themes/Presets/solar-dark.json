@@ -1,0 +1,60 @@
+{
+  "appearance": "dark",
+  "editor": {
+    "background": "#002B36",
+    "currentLine": "#073642",
+    "currentLineNumber": "#93A1A1",
+    "cursor": "#93A1A1",
+    "foreground": "#93A1A1",
+    "gutterBackground": "#073642",
+    "invisibles": "#586E75",
+    "lineNumbers": "#839496",
+    "selection": "#174B60"
+  },
+  "formatVersion": 1,
+  "id": "solar-dark",
+  "license": "Adapted from the Solarized palette by Ethan Schoonover (2011), MIT License. https://github.com/altercation/solarized",
+  "name": "Solar Dark",
+  "tokens": {
+    "attribute": "#B58900",
+    "comment": "#839496",
+    "constant": "#B58900",
+    "diff.header": "#839496",
+    "diff.hunk": "#B48AD4",
+    "diff.minus": "#DC322F",
+    "diff.plus": "#859900",
+    "escape": "#B58900",
+    "function": "#268BD2",
+    "keyword": "#B48AD4",
+    "markup.bold": {
+      "bold": true,
+      "color": "#B48AD4"
+    },
+    "markup.heading": {
+      "bold": true,
+      "color": "#268BD2"
+    },
+    "markup.italic": {
+      "color": "#B48AD4",
+      "italic": true
+    },
+    "markup.link": "#268BD2",
+    "markup.link.label": "#2AA198",
+    "markup.list": "#839496",
+    "markup.quote": "#839496",
+    "markup.raw": "#859900",
+    "markup.strikethrough": "#839496",
+    "namespace": "#2AA198",
+    "none": "#93A1A1",
+    "number": "#B58900",
+    "operator": "#93A1A1",
+    "property": "#D33682",
+    "punctuation": "#93A1A1",
+    "punctuation.special": "#B48AD4",
+    "string": "#859900",
+    "tag": "#268BD2",
+    "type": "#2AA198",
+    "variable": "#93A1A1",
+    "variable.builtin": "#D33682"
+  }
+}

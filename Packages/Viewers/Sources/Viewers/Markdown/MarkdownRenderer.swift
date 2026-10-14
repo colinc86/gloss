@@ -31,12 +31,15 @@ public struct MarkdownRenderer {
     /// draws a source meant for reduced motion. `diagrams` are Mermaid blocks already drawn (or refused), by their
     /// source; any other Mermaid block shows as code until it is.
     public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], diagrams: [String: MermaidRenderer.Result] = [:],
-                              reduceMotion: Bool = false) -> Output {
+                              reduceMotion: Bool = false, codeTheme: CodeTheme? = nil, codeAppearance: NSAppearance.Name? = nil) -> Output {
         let document = Document(parsing: source, options: [.disableSmartOpts])
         var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
         walker.images = images
         walker.diagrams = diagrams
         walker.reduceMotion = reduceMotion
+        let appearance = codeAppearance.flatMap(NSAppearance.init(named:)) ?? Theme.effectiveAppearance
+        walker.theme = codeTheme ?? ActiveCodeTheme.theme(for: appearance)
+        walker.dynamicTheme = codeTheme == nil
         walker.visit(document)
         walker.finish()
         var output = Output(text: walker.output, map: RenderedSourceMap(spans: walker.spans, blocks: walker.blocks))
@@ -116,6 +119,8 @@ public struct MarkdownRenderer {
         var italic = false
         var monospaced = false
         var codeBackground = false
+        var codeTheme: CodeTheme?
+        var blockCode = false
         var strikethrough = false
         var underline = false
         /// Superscript (1) or subscript (-1): smaller, off the baseline.
@@ -123,7 +128,14 @@ public struct MarkdownRenderer {
         var link: String?
 
         var attributes: [NSAttributedString.Key: Any] {
-            var font = monospaced ? MarkdownRenderer.codeFont.withSize((self.font.pointSize * 0.9).rounded()) : self.font
+            var font = self.font
+            if monospaced {
+                let size = (self.font.pointSize * 0.9).rounded()
+                if let theme = codeTheme {
+                    if blockCode { font = theme.font.resolved(defaultSize: theme.id == "gloss" ? size : Theme.editorFontSize) }
+                    else { var family = theme.font; family.size = nil; font = family.resolved(defaultSize: size) }
+                } else { font = MarkdownRenderer.codeFont.withSize(size) }
+            }
             var traits: NSFontTraitMask = []
             if bold { traits.insert(.boldFontMask) }
             if italic { traits.insert(.italicFontMask) }
@@ -189,6 +201,8 @@ public struct MarkdownRenderer {
         var spans: [SourceSpan] = []
         var blocks: [SourceSpan] = []
         private var style = Style()
+        var theme = CodeTheme.gloss { didSet { style.codeTheme = theme } }
+        var dynamicTheme = true
         private var needsBlockSeparator = false
         private var listNumbers: [Int?] = []   // nil for bullet lists
         private var listMarkerWidths: [CGFloat] = []
@@ -238,7 +252,12 @@ public struct MarkdownRenderer {
 
         private mutating func append(_ string: String, source: NSRange?, exact: Bool, extra: [NSAttributedString.Key: Any] = [:]) {
             guard !string.isEmpty else { return }
-            var attributes = style.attributes.merging(extra) { _, new in new }
+            var runStyle = style
+            if kind == .codeBlock {
+                runStyle.blockCode = true
+                runStyle.color = theme.id == "gloss" ? .textColor : (dynamicTheme ? ActiveCodeTheme.editorColor(\.foreground) : theme.editor.foreground.nsColor)
+            }
+            var attributes = runStyle.attributes.merging(extra) { _, new in new }
             attributes[.paragraphStyle] = paragraphStyle()
             attributes[MarkdownRenderer.blockKey] = decoration
             let rendered = NSRange(location: output.length, length: (string as NSString).length)
@@ -267,7 +286,7 @@ public struct MarkdownRenderer {
             paragraph.paragraphSpacingBefore = gap
             switch kind {
             case .codeBlock:
-                paragraph.lineHeightMultiple = 1.15
+                paragraph.lineHeightMultiple = CGFloat(theme.font.lineSpacing ?? 1.15)
                 paragraph.tailIndent = -MarkdownRenderer.codePadding
                 paragraph.paragraphSpacingBefore = gap + MarkdownRenderer.codeVerticalPadding
                 paragraph.paragraphSpacing = MarkdownRenderer.codeVerticalPadding
@@ -326,6 +345,10 @@ public struct MarkdownRenderer {
             }
             let bars = quotes.map { MarkdownBlockDecoration.QuoteBar(x: $0.x, continuesFromAbove: blockCount > $0.openedAt, alert: $0.alert) }
             decoration = MarkdownBlockDecoration(kind: kind, leading: indent, quoteBars: bars)
+            if kind == .codeBlock {
+                decoration = decoration.withCodeColors(background: theme.id == "gloss" ? MarkdownLayoutFragment.fill : (dynamicTheme ? ActiveCodeTheme.editorColor(\.codeBlockBackground) : theme.editor.codeBlockBackground.nsColor),
+                                                        foreground: theme.id == "gloss" ? nil : (dynamicTheme ? ActiveCodeTheme.editorColor(\.foreground) : theme.editor.foreground.nsColor))
+            }
             blockCount += 1
             if case .heading(let level) = kind { lastBlock = .heading(level) } else { lastBlock = .other }
             if let marker = pendingMarker {
@@ -441,8 +464,12 @@ public struct MarkdownRenderer {
         private mutating func drawCode(_ codeBlock: CodeBlock) {
             openBlock(.codeBlock)
             decoration = decoration.labelled(MarkdownBlockDecoration.languageName(codeBlock.language))
+            decoration = decoration.withCodeColors(background: theme.id == "gloss" ? MarkdownLayoutFragment.fill : (dynamicTheme ? ActiveCodeTheme.editorColor(\.codeBlockBackground) : theme.editor.codeBlockBackground.nsColor),
+                                                    foreground: theme.id == "gloss" ? nil : (dynamicTheme ? ActiveCodeTheme.editorColor(\.foreground) : theme.editor.foreground.nsColor))
             let saved = style
             style.monospaced = true
+            style.blockCode = true
+            style.color = theme.id == "gloss" ? .textColor : (dynamicTheme ? ActiveCodeTheme.editorColor(\.foreground) : theme.editor.foreground.nsColor)
             style.font = MarkdownRenderer.bodyFont
             let codeStart = output.length
             // One span per code line, so a note on code inside markdown is line-precise.
@@ -485,11 +512,17 @@ public struct MarkdownRenderer {
                   let captures = MarkdownRenderer.highlightCaptures(grammar: name, code: code) else { return }
             let renderedLength = output.length - renderedStart
             for capture in captures {
-                guard let color = SyntaxTheme.color(forCapture: capture.name) else { continue }
+                let token = theme.style(forCapture: capture.name)
+                let color = dynamicTheme && theme.id != "gloss" ? ActiveCodeTheme.color(forCapture: capture.name) : token?.color?.nsColor
                 let location = capture.range.location
                 let end = min(location + capture.range.length, renderedLength)
                 guard location < end else { continue }
-                output.addAttribute(.foregroundColor, value: color, range: NSRange(location: renderedStart + location, length: end - location))
+                let range = NSRange(location: renderedStart + location,length: end - location)
+                if let color { output.addAttribute(.foregroundColor,value: color,range: range) }
+                if let token, token.bold || token.italic,
+                   let base = output.attribute(.font,at: range.location,effectiveRange: nil) as? NSFont {
+                    output.addAttribute(.font,value: token.font(from: base),range: range)
+                }
             }
         }
 
@@ -1493,16 +1526,23 @@ public nonisolated final class MarkdownBlockDecoration: NSObject, Sendable {
     public let quoteBars: [QuoteBar]
     /// A code block's language, as people name it ("Swift", "Shell"), drawn small in its corner.
     public let label: String?
+    public let codeBackground: NSColor?
+    public let codeForeground: NSColor?
 
-    public init(kind: Kind, leading: CGFloat, quoteBars: [QuoteBar], label: String? = nil) {
+    public init(kind: Kind, leading: CGFloat, quoteBars: [QuoteBar], label: String? = nil, codeBackground: NSColor? = nil, codeForeground: NSColor? = nil) {
         self.kind = kind
         self.leading = leading
         self.quoteBars = quoteBars
         self.label = label
+        self.codeBackground = codeBackground; self.codeForeground = codeForeground
     }
 
     func labelled(_ label: String?) -> MarkdownBlockDecoration {
-        MarkdownBlockDecoration(kind: kind, leading: leading, quoteBars: quoteBars, label: label)
+        MarkdownBlockDecoration(kind: kind, leading: leading, quoteBars: quoteBars, label: label, codeBackground: codeBackground, codeForeground: codeForeground)
+    }
+
+    func withCodeColors(background: NSColor,foreground: NSColor?) -> MarkdownBlockDecoration {
+        MarkdownBlockDecoration(kind: kind,leading: leading,quoteBars: quoteBars,label: label,codeBackground: background,codeForeground: foreground)
     }
 
     /// A fence's info string as a language name: the common ones spelled as their communities spell them, anything
@@ -1662,5 +1702,13 @@ nonisolated public enum MarkdownAlert: String, CaseIterable, Sendable {
         case .warning: .systemOrange
         case .caution: .systemRed
         }
+    }
+}
+
+// Classification is cached with highlights, never looked up by scanning notes during native path drawing.
+extension MarkdownRenderer {
+    static func isCode(at location: Int,in text: NSAttributedString) -> Bool {
+        guard location >= 0, location < text.length else { return false }
+        return (text.attribute(blockKey,at: location,effectiveRange: nil) as? MarkdownBlockDecoration)?.kind == .codeBlock
     }
 }

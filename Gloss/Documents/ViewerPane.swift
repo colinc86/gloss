@@ -692,6 +692,7 @@ struct GoToLineSheet: View {
     @FocusState private var focused: Bool
     /// Coloured lines by number, filled as the preview reaches them (each one parses its line).
     @State private var coloured: [Int: AttributedString] = [:]
+    @Environment(\.colorScheme) private var codeAppearance
 
     private var parsed: (line: Int, column: Int?)? { DocumentSession.parseGoToLine(text) }
     /// The line the jump will land on: past the end snaps to the last line.
@@ -735,9 +736,10 @@ struct GoToLineSheet: View {
         }
         .frame(width: 460)
         .onAppear { focused = true }
-        .task(id: target) {
+        .task(id: CodeSnippetKey("\(target ?? 0)",language: language,dark: codeAppearance == .dark)) {
+            coloured = [:]
             guard let target, language != nil else { return }
-            for line in max(1, target - 1)...min(lineCount, target + 1) where coloured[line] == nil {
+            for line in max(1, target - 1)...min(lineCount, target + 1) {
                 if let text = lineText(line), let syntax = SyntaxTheme.highlighted(text, language: language) { coloured[line] = syntax }
             }
         }

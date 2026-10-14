@@ -101,7 +101,7 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
     private func drawLabel(_ label: String, in fill: CGRect, context: CGContext) {
         let text = NSAttributedString(string: label, attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .medium),
-            .foregroundColor: NSColor.tertiaryLabelColor,
+            .foregroundColor: decoration.codeForeground?.withAlphaComponent(0.7) ?? NSColor.tertiaryLabelColor,
             .kern: 0.3,
         ])
         let size = text.size()
@@ -119,7 +119,7 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
             if let fill = shapes.fill {
                 let path = shapes.fillRounded ? CGPath(roundedRect: fill, cornerWidth: 6, cornerHeight: 6, transform: nil) : CGPath(rect: fill, transform: nil)
                 context.addPath(path)
-                context.setFillColor(Self.fill.cgColor)
+                context.setFillColor((decoration.codeBackground ?? Self.fill).cgColor)
                 context.fillPath()
                 if shapes.fillRounded {
                     context.addPath(CGPath(roundedRect: fill.insetBy(dx: 0.5, dy: 0.5), cornerWidth: 6, cornerHeight: 6, transform: nil))
