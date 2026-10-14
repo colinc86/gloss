@@ -42,7 +42,7 @@ publish() {
     step "Already in the appcast"
     return
   fi
-  local asset=$(gh api "repos/$REPO/releases/tags/v$VERSION" --jq ".assets[] | select(.name == \"Gloss-$VERSION.zip\") | .url")
+  local asset=$(gh api "repos/$REPO/releases/tags/v$VERSION" --jq ".assets[] | select(.name == \"Gloss-$VERSION.zip\") | .browser_download_url")
   [[ -n $asset ]] || fail "the release has no Gloss-$VERSION.zip"
   step "Listing it in the appcast"
   gh api markdown -f mode=gfm -f context="$REPO" -f text="$(cat "$NOTES")" > build/notes.html

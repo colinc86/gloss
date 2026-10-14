@@ -50,16 +50,18 @@ The notes are what people see twice: as the release's description on GitHub and 
 
 ## How updates reach people
 
-- `SUFeedURL` is `https://raw.githubusercontent.com/colinc86/gloss/main/appcast.xml`; each item's enclosure is the
-  release asset's API URL. While the repository is private both need the GitHub key from Settings › Integrations:
-  `UpdaterDelegate` puts `Authorization` on Sparkle's requests (and `Accept: application/octet-stream` on the
-  download, whose redirect to storage URLSession follows without the key) and refuses a check when no key is saved.
-  The feed can't come from the contents API: Sparkle sets the feed's `Accept` itself, and that API then answers with
-  JSON. (0.1.0 shipped with that URL, so 0.1.0 can't update itself.)
-- **Going public:** the feed URL stays. Write enclosures with the asset's `browser_download_url` (and rewrite the
-  existing items), remove the delegate's key handling and the "needs GitHub" wording (in the app's Settings), and release once. In the repository's
-  Security settings, turn on private vulnerability reporting (`SECURITY.md` links to it), secret scanning and push
-  protection.
+- `SUFeedURL` is `https://raw.githubusercontent.com/colinc86/gloss/main/appcast.xml`, read without a key now that
+  the repository is public. `scripts/release.sh` lists each release's asset by its `browser_download_url`. Items
+  published while the repository was private list the asset's API URL instead; it serves the bytes without a key
+  when asked for an octet stream, which `UpdaterDelegate` does on every download. No request carries a key.
+- The feed can't come from the contents API: Sparkle sets the feed's `Accept` itself, and that API then answers with
+  JSON. (0.1.0 shipped with that URL, so 0.1.0 can't update itself.) Builds up to 0.6.0-beta.2 still refuse to check
+  without a GitHub key saved; the first release after going public lifts that for everyone who installs it. They
+  also send the saved key with every request, and raw.githubusercontent.com answers an invalid key with 404 even
+  for a public file: someone on such a build whose key has expired or been revoked should remove it in Settings ›
+  Integrations (or download the new release by hand) to update.
+- **Repository settings** (once, after going public): turn on private vulnerability reporting (`SECURITY.md` links
+  to it), secret scanning and push protection in the repository's Security settings.
 - Debug builds never start the updater. To try an update, build Release with an older version
   (`MARKETING_VERSION=0.0.9 CURRENT_PROJECT_VERSION=1`) into a scratch folder and run it from there.
 

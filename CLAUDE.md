@@ -22,7 +22,7 @@ Milestone 1 is built, reviewed, and committed on `main`: explorer and viewers, a
 - Notes are created from a floating "Add Note" button beside the selection in every viewer; its shortcut, ⌘↩ while it shows (⌘⇧N otherwise, e.g. whole-file notes), is secondary, never the only path.
 - MCP registration and the Herdr plugin are installed only from Settings → Agents, with backups, never silently. Install (and Remove) also take out the prompt hook older builds added; a machine that still has it shows Update.
 - Not sandboxed, Developer ID signed and notarized (see `docs/RELEASE.md`). Releases come from `scripts/release.sh`, which publishes to GitHub and lists the release in `appcast.xml` at the repo root.
-- Updates are Sparkle 2 (linked directly by the app target, `Gloss/Services/UpdaterService.swift`); debug builds never start it. While the repo is private, the feed (`appcast.xml` on raw.githubusercontent.com) and release assets are read with the GitHub integration key, put on Sparkle's requests by its delegate, and a check without a key is refused. Going public moves the feed to a public URL and drops the key.
+- Updates are Sparkle 2 (linked directly by the app target, `Gloss/Services/UpdaterService.swift`); debug builds never start it. The repository is public: the feed (`appcast.xml` on raw.githubusercontent.com) and the release assets are read without a key; the delegate only asks downloads for an octet stream (releases from the private days list the asset's API URL).
 - Feedback (the toolbar ladybug) is the app's one write to GitHub: `IssueReporter` files issues on `colinc86/gloss` only, falling back to GitHub's filled-in new-issue form; the integrations clients stay GET-only.
 
 ## Layout

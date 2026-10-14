@@ -874,7 +874,7 @@ private struct IntegrationsSettings: View {
             } header: {
                 Label("GitHub", systemImage: "arrow.triangle.pull")
             } footer: {
-                Text("Pull requests open as documents: description, conversation, changed files at the head commit. A read-only fine-grained token with Pull requests and Contents access is enough. While Gloss's repository is private, the same key fetches updates; sending feedback from the app also needs a key that can create issues, otherwise feedback finishes on GitHub.")
+                Text("Pull requests open as documents: description, conversation, changed files at the head commit. A read-only fine-grained token with Pull requests and Contents access is enough. Sending feedback from the app needs a key that can create issues; otherwise feedback finishes on GitHub.")
             }
             Section {
                 statusLine(integrations.atlassianStatus, unset: "No key saved")
@@ -1072,7 +1072,7 @@ private struct UpdatesSection: View {
             }
             LabeledContent {
                 Button("Check Now") { updates.checkForUpdates() }
-                    .disabled(!updates.canCheckForUpdates || model.integrations.github == nil)
+                    .disabled(!updates.canCheckForUpdates)
             } label: {
                 Text("Last checked")
                 if let last = updates.lastCheck {
@@ -1083,10 +1083,6 @@ private struct UpdatesSection: View {
             }
         } header: {
             Text("Updates")
-        } footer: {
-            if model.integrations.github == nil {
-                Text("While Gloss's repository is private, updates need GitHub connected in Integrations.")
-            }
         }
     }
 }

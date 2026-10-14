@@ -250,7 +250,7 @@ final class AppModel {
         #else
         let updatable = !launchOptions.isTestHost
         #endif
-        updates = UpdaterService(enabled: updatable) { [weak integrations] in integrations?.github?.token }
+        updates = UpdaterService(enabled: updatable)
         self.launchOptions = launchOptions
         let database: AppDatabase
         do {

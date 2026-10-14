@@ -1205,8 +1205,7 @@ path. Dropping on the Dock icon is not supported yet.
   state, with an "ssh config" tag, since their address lives in that file). Hosts added in the app can be edited
   and removed; removal asks first.
 - **General › Updates** (release builds): "Check for updates automatically" (Sparkle's own setting), "Last checked"
-  with the relative date and Check Now; while the repository is private and no GitHub key is saved, the footer says
-  updates need GitHub connected in Integrations and Check Now is off. The update dialog itself is Sparkle's
+  with the relative date and Check Now. The update dialog itself is Sparkle's
   standard one; the release notes in it use the system font and follow light and dark (the appcast's stylesheet).
 - **Feedback sheet** (`ladybug` in the toolbar, before the notes toggle; Help › Report a Bug or Request a Feature…):
   480 pt, title "Send Feedback" and a line saying what it is for; a segmented Bug / Feature Request (ladybug,
