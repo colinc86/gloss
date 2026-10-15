@@ -6,6 +6,28 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.3</title>
+      <pubDate>Thu, 15 Oct 2026 01:53:41 GMT</pubDate>
+      <sparkle:version>419</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">The third beta: Gloss is open source under the MIT License.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Open source.</strong> The code is on GitHub under the MIT License. Help › Acknowledgments lists the licenses of the packages Gloss is built on.</li>
+<li><strong>Updates without a GitHub key.</strong> Gloss now checks for and downloads updates from the public repository, so Check for Updates works with no GitHub key in Settings › Integrations. Your key is now only for pull requests and for sending feedback from the app.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/colinc86/gloss/releases/download/v0.6.0-beta.3/Gloss-0.6.0-beta.3.zip" type="application/octet-stream" sparkle:edSignature="wagtqvPN8VV45xCRqHlTsskLhIKNhmrIQzf3KD3DadvHq05+c3RCp00YBsHECt7zOmMN52lpY2AmbBY86uuECg==" length="29757215"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.2</title>
       <pubDate>Wed, 14 Oct 2026 03:33:50 GMT</pubDate>
       <sparkle:version>415</sparkle:version>
