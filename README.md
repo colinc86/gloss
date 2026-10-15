@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Mark up any content and send it to your agent.</b><br>
-  <a href="https://github.com/colinc86/gloss/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/colinc86/gloss?label=release&color=f5b942"></a>
+  <a href="https://github.com/colinc86/gloss/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/colinc86/gloss?include_prereleases&label=release&color=f5b942"></a>
   <img alt="macOS 26 or later" src="https://img.shields.io/badge/macOS-26%2B-555">
 </p>
 
@@ -25,13 +25,15 @@ Gloss adds context to content. Highlight anything, write a note, and send it to 
 - **Talk it through.** Each note is a thread: the agent replies, or asks you a question, sometimes with choices.
 - **Refine.** The agent reads a document for what's unclear and asks until it understands, then makes the changes.
 - **Iterate and review.** Iterate on your content and review changes made by your agent.
+- **Share for review.** Share a document and its notes through iCloud Drive. Others add notes; you send them to your agent.
 - **Any agent, any terminal.** Claude Code, Codex or OpenCode, through [Herdr](https://herdr.dev), tmux, OpenCode or the clipboard.
 
 ## Install
 
 Gloss needs macOS 26 or later.
 
-1. Download the [latest release](https://github.com/colinc86/gloss/releases/latest).
+1. Download the newest release from [Releases](https://github.com/colinc86/gloss/releases). Releases marked
+   Pre-release are betas. Gloss keeps itself up to date from then on.
 2. Open **Settings › Agents** and add the MCP to the agent of your choice.
 
 ## How it works
@@ -92,6 +94,14 @@ tray under the document.
 Themes settings with a dark theme chosen and its code preview." and "Gloss in a narrow window, with one note in the
 tray under the document." -->
 
+### Share a review
+
+Click **Share** in the toolbar to share the document in front with its sent notes; drafts stay on your Mac.
+**Collaborate…** puts a live review in iCloud Drive and invites people to it, and **Send a Copy…** sends a copy that
+stays separate. The people you share with read the document as you last shared it, add notes and answers,
+and send them to you. Only you send them on to your agent. Sharing between two Macs is new in the 0.6 betas and
+still being tested.
+
 ## What agents can do with Gloss
 
 Gloss exposes an MCP server. Agents can:
@@ -111,6 +121,12 @@ Gloss exposes an MCP server. Agents can:
 - **Refine with you.** In Refinement, the agent asks in rounds and calls `finish_refinement` once it has no more
   questions and has made its changes.
 - **Keep folders at hand.** `add_favorite` and `list_favorites` manage the folders in your explorer.
+
+## Feedback
+
+Click the ladybug in the toolbar, or choose **Help › Report a Bug or Request a Feature…**. With a GitHub key that can
+create issues, Gloss files the report itself; otherwise it opens GitHub's issue form, filled in. You can also
+[open an issue](https://github.com/colinc86/gloss/issues/new/choose) directly.
 
 ## Build from source
 
