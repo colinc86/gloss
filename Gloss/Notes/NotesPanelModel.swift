@@ -155,6 +155,53 @@ final class NotesPanelModel {
         }
     }
     @ObservationIgnored private var isRestoringSeparateResolved = false
+
+    /// What the list shows (2026-10-18): the document in front's notes, or every document's in the location. Only the
+    /// list, its counts and the tray follow it; Send keeps its own This File / This Location, and the page its filters.
+    enum ListScope: String, CaseIterable, Identifiable {
+        case file
+        case location
+        var id: Self { self }
+        var title: String { self == .file ? "This File" : "This Location" }
+    }
+
+    var listScope: ListScope = .location {
+        didSet {
+            guard listScope != oldValue else { return }
+            trimSelectionToList()
+            guard !isRestoringListScope else { return }
+            Task { try? await noteStore.setSetting("notes.listScope", listScope.rawValue) }
+        }
+    }
+    @ObservationIgnored private var isRestoringListScope = false
+
+    /// The document in front, as `ExplorerModel.markKey` spells it; nil with none.
+    private(set) var frontDocumentKey: String?
+
+    func setFrontDocument(hostID: HostID?, path: String?) {
+        let key = hostID.flatMap { host in path.map { ExplorerModel.markKey(host, $0) } }
+        guard key != frontDocumentKey else { return }
+        frontDocumentKey = key
+        trimSelectionToList()
+    }
+
+    /// With This File, cards another file's notes had selected leave the selection, so nothing selected is unseen.
+    private func trimSelectionToList() {
+        guard listScope == .file, location?.exactDocument != true, !selection.isEmpty else { return }
+        let listed = Set(visibleGroups.flatMap { $0.notes.map(\.id) })
+        if !selection.isSubset(of: listed) { selection.formIntersection(listed) }
+    }
+
+    /// With This File, no document in front to list.
+    var listsNoFile: Bool { listScope == .file && location?.exactDocument != true && frontDocumentKey == nil }
+
+    /// `groups` the list shows: with This File, the document in front's alone (a location that is one document is
+    /// that file already).
+    func inListScope(_ groups: [DocumentNotes]) -> [DocumentNotes] {
+        guard listScope == .file, location?.exactDocument != true else { return groups }
+        guard let front = frontDocumentKey else { return [] }
+        return groups.filter { ExplorerModel.markKey($0.document.hostID, $0.document.path) == front }
+    }
     /// Matched against note text, file name, resolve message, and the thread's messages, case-insensitively.
     @ObservationIgnored var mayEdit: (Note) -> Bool = { _ in true }
     @ObservationIgnored var mayDelete: (Note) -> Bool = { _ in true }
@@ -197,6 +244,14 @@ final class NotesPanelModel {
         let initialShowResolved = showResolved
         let initialSeparateResolved = separateResolved
         let initialShowEarlierNotes = showEarlierNotes
+        let initialListScope = listScope
+        Task { [weak self] in
+            guard let self, let stored = try? await noteStore.setting("notes.listScope"), let restored = ListScope(rawValue: stored) else { return }
+            guard listScope == initialListScope else { return }
+            isRestoringListScope = true
+            listScope = restored
+            isRestoringListScope = false
+        }
         Task { [weak self] in
             guard let self, let stored = try? await noteStore.setting("notes.showEarlier") else { return }
             guard showEarlierNotes == initialShowEarlierNotes else { return }
@@ -474,7 +529,7 @@ final class NotesPanelModel {
     var isFiltering: Bool { filter != .all || !receivedFilter.isEmpty || !peopleFilter.isEmpty || !colorFilter.isEmpty || !searchText.trimmingCharacters(in: .whitespaces).isEmpty || isHidingResolved }
 
     /// Show Resolved is off and there are resolved notes for it to hide.
-    var isHidingResolved: Bool { !showResolved && groups.contains { $0.notes.contains { !Self.isOpen($0) } } }
+    var isHidingResolved: Bool { !showResolved && inListScope(groups).contains { $0.notes.contains { !Self.isOpen($0) } } }
 
     /// What an empty list says, by what made it empty: a search names the words, a colour names the colour, and each tab
     /// says what belongs there and how notes arrive. An empty Attention list is good news and says so.
@@ -538,7 +593,7 @@ final class NotesPanelModel {
     /// document, then the resolved ones by document in the same document order (only the runs with notes). A
     /// document with both kinds is in both runs.
     var sections: [Run] {
-        let groups = sortedGroups
+        let groups = inListScope(sortedGroups)
         guard separateResolved, showResolved else { return [Run(id: .all, groups: groups)] }
         func run(_ kind: Run.Kind, _ keep: (Note) -> Bool) -> Run {
             Run(id: kind, groups: groups.compactMap { group in
@@ -553,6 +608,10 @@ final class NotesPanelModel {
 
     /// Every listed group in the order shown, the runs one after the other (a document can appear in both).
     var visibleGroups: [DocumentNotes] { sections.flatMap(\.groups) }
+
+    /// Every document's groups after the filters, whatever the list's scope: what Send chooses from, and what each
+    /// page draws.
+    var filteredGroups: [DocumentNotes] { sortedGroups }
 
     /// Groups after the state, color, and text filters, with notes sorted by `sort` and documents ordered by
     /// their first note under that sort (so "newest" lists the document with the newest note first).
@@ -619,7 +678,7 @@ final class NotesPanelModel {
     /// Notes in each state across every document, for the filter bar's counts (before search and color filters,
     /// so a count says how much work exists, not how much is on screen; hidden resolved notes aren't counted).
     func count(for filter: Filter) -> Int {
-        groups.reduce(0) { total, group in total + group.notes.filter { listed(in: filter, $0) }.count }
+        inListScope(groups).reduce(0) { total, group in total + group.notes.filter { listed(in: filter, $0) }.count }
     }
 
     /// The tab's rule, with resolved notes left out of every tab but Resolved while they're hidden.
@@ -627,9 +686,9 @@ final class NotesPanelModel {
         matches(filter, note) && (showResolved || filter == .resolved || Self.isOpen(note))
     }
 
-    /// The notes the list shows for a document, for drawing only those on its page.
+    /// The notes the filters let a document's page draw, whatever the list's scope.
     func listedIDs(for documentID: DocumentID) -> Set<NoteID> {
-        Set(visibleGroups.filter { $0.document.id == documentID }.flatMap { $0.notes.map(\.id) })
+        Set(filteredGroups.filter { $0.document.id == documentID }.flatMap { $0.notes.map(\.id) })
     }
 
     /// A document's notes left off its page: with the panel shown, every note the list doesn't show; with it

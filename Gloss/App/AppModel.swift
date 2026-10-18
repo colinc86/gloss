@@ -186,6 +186,7 @@ final class AppModel {
                 rememberDocumentLeft(oldValue)
             }
             explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
+            notesPanel.setFrontDocument(hostID: activeSession?.hostID, path: activeSession?.path)
             // The document in front just changed: a location change this causes brings back only that location's
             // panel, never another document over the one just opened.
             isChangingActiveSession = true
@@ -2345,7 +2346,7 @@ final class AppModel {
     }
 
     func sendSelection(scope: SendScope) -> SendSelection {
-        let notes = notesPanel.visibleGroups.flatMap { group -> [Note] in
+        let notes = notesPanel.filteredGroups.flatMap { group -> [Note] in
             guard scope == .all || (group.document.id == activeSession?.document?.id && !isShowingPastIteration) else { return [] }
             return group.notes.filter { collaboration.isSendable($0) && $0.iteration == group.document.currentIteration && !notesPanel.isPast($0) }
         }
@@ -2378,7 +2379,7 @@ final class AppModel {
         guard let location = notesPanel.location else { return [] }
         let activeID = activeSession?.document?.id
         let sending = Set(sendSelection(scope: scope).ids)
-        let shown = Set(notesPanel.visibleGroups.flatMap { $0.notes.map(\.id) })
+        let shown = Set(notesPanel.filteredGroups.flatMap { $0.notes.map(\.id) })
         var filtered = 0, otherFiles = 0
         for group in notesPanel.groups {
             for note in group.notes where note.isSendable && note.iteration == group.document.currentIteration && !sending.contains(note.id) {
@@ -2428,7 +2429,7 @@ final class AppModel {
     /// Whether Send and Copy can take this note: in the location in front, in its document's current iteration,
     /// and listed by the panel. Controls outside the panel (the page's peek) offer Send only then.
     func isInSendScope(_ note: Note) -> Bool {
-        guard let group = notesPanel.visibleGroups.first(where: { $0.document.id == note.documentID }),
+        guard let group = notesPanel.filteredGroups.first(where: { $0.document.id == note.documentID }),
               notesPanel.location?.contains(group.document) == true else { return false }
         return note.iteration == group.document.currentIteration && group.notes.contains { $0.id == note.id }
     }
@@ -2523,7 +2524,8 @@ final class AppModel {
         notesPanel.clearFilters()
         notesPanel.filter = .attention
         showNotesPanel = true
-        guard !notesPanel.groups.contains(where: { $0.notes.contains(where: \.waitingOnUser) }) else { return }
+        // What the list shows: with This File, a question in another file is opened, not left behind "All clear".
+        guard !notesPanel.inListScope(notesPanel.groups).contains(where: { $0.notes.contains(where: \.waitingOnUser) }) else { return }
         let waiting = notesPanel.allGroups.flatMap { group in group.notes.filter(\.waitingOnUser).map { (note: $0, document: group.document) } }
         guard let newest = waiting.max(by: { $0.note.updatedAt < $1.note.updatedAt }) else { return }
         reveal(note: newest.note, in: newest.document)
@@ -2756,6 +2758,7 @@ extension AppModel {
         locationStates = Workspace.relocated(locationStates, move)
         await explorer.applyRelocation(move)
         explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
+        notesPanel.setFrontDocument(hostID: activeSession?.hostID, path: activeSession?.path)
         syncNotesLocation()
         if started, !isRestoringWorkspace { await saveWorkspace() }
         try await noteStore.finishRelocation(move)

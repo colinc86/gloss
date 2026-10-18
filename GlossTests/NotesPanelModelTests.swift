@@ -139,6 +139,36 @@ struct NotesPanelModelTests {
         #expect(!model.isFiltering)
     }
 
+    @Test func thisFileListsOnlyTheDocumentInFrontAndLeavesSendAndPagesAlone() async throws {
+        let (model, store) = try await makeModel()
+        defer { model.stop() }
+        let alpha = try #require(model.groups.first { $0.document.fileName == "alpha.swift" }?.document)
+        let ids = model.groups.flatMap(\.notes).filter { $0.body != "Check the café import" }.map(\.id)
+        model.selection = Set(ids)
+        model.setFrontDocument(hostID: .local, path: "/p/beta.md")
+        model.listScope = .file
+        #expect(bodies(model) == ["Expand this section"])
+        // A card selected in another file leaves the selection with its card.
+        #expect(model.selection.map { id in model.groups.flatMap(\.notes).first { $0.id == id }?.body } == ["Expand this section"])
+        #expect(model.count(for: .all) == 1)
+        // Send and each page still see every document's notes through the filters.
+        #expect(model.filteredGroups.flatMap(\.notes).count == 3)
+        #expect(model.listedIDs(for: alpha.id).count == 2)
+        model.setFrontDocument(hostID: .local, path: "/p/alpha.swift")
+        #expect(Set(bodies(model)) == ["Rename the helper", "Check the café import"])
+        model.setFrontDocument(hostID: nil, path: nil)
+        #expect(bodies(model).isEmpty)
+        #expect(model.listsNoFile)
+        // A location that is one document lists it whatever the scope.
+        model.setLocation(NotesLocation(hostID: .local, path: "/p/beta.md", exactDocument: true))
+        #expect(bodies(model) == ["Expand this section"])
+        #expect(!model.listsNoFile)
+        model.listScope = .location
+        model.listScope = .file
+        for _ in 0..<100 where (try? await store.setting("notes.listScope")) != "file" { try? await Task.sleep(for: .milliseconds(20)) }
+        #expect(try await store.setting("notes.listScope") == "file")
+    }
+
     @Test func aNoteJustMadeUnderAFilterIsBroughtIntoTheList() async throws {
         let (model, store) = try await makeModel()
         defer { model.stop() }

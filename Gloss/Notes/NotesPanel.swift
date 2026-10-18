@@ -13,6 +13,8 @@ struct NotesPanel: View {
     /// keyboard for the list so arrows browse, Return reveals, and Delete deletes.
     @FocusState private var listFocused: Bool
     @FocusState private var searchFocused: Bool
+    /// The scope bar's height, which the toasts stay above.
+    @State private var scopeBarHeight: CGFloat = 0
     @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
@@ -38,6 +40,8 @@ struct NotesPanel: View {
             Divider()
             if panel.location == nil {
                 EmptyState(symbol: "folder", title: "Choose a location", message: "Open a folder or page to see its notes.")
+            } else if panel.listsNoFile {
+                EmptyState(symbol: "doc", title: "No file open", message: "Open a file to see its notes. This Location lists every file's.")
             } else if visible.isEmpty, panel.isFiltering {
                 let copy = NotesPanelModel.emptyCopy(filter: panel.filter, colors: panel.colorFilter, search: panel.searchText,
                                                      hidingResolved: panel.isHidingResolved)
@@ -53,6 +57,9 @@ struct NotesPanel: View {
                 // A new reason to be empty is a new message: fade between them as the tab changes.
                 .id(copy)
                 .transition(.opacity)
+            } else if visible.isEmpty, panel.listScope == .file, panel.location?.exactDocument != true {
+                EmptyState(symbol: "note.text", title: "No notes in this file",
+                           message: "Select something in the file and click Add Note. This Location lists every file's notes.")
             } else if visible.isEmpty {
                 EmptyState(
                     symbol: "note.text",
@@ -151,6 +158,12 @@ struct NotesPanel: View {
                 }
                 }
             }
+            // Under the list, not over it, so no card scrolls behind it (and no path runs to one there).
+            if panel.location.map({ !$0.exactDocument }) == true {
+                scopeBar
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { scopeBarHeight = $0 }
+                    .onDisappear { scopeBarHeight = 0 }
+            }
         }
         .overlay(alignment: .bottom) {
             VStack(spacing: DS.Space.s) {
@@ -159,6 +172,7 @@ struct NotesPanel: View {
                 SendToast()
             }
             .padding(DS.Space.m)
+            .padding(.bottom, scopeBarHeight)
             // Paths stop short of cards these cover.
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
                 model.noteLink.panelToasts = frame.height > 2 * DS.Space.m + 1 ? frame : nil
@@ -214,6 +228,24 @@ struct NotesPanel: View {
         case .confluencePage(let space, _, _, _)?: return "Confluence · \(space)"
         default: return path.hasPrefix("/jira/") ? "Jira" : "Confluence"
         }
+    }
+
+    /// This File or This Location: what the list shows. A location that is one document has nothing to choose.
+    private var scopeBar: some View {
+        @Bindable var panel = model.notesPanel
+        return VStack(spacing: 0) {
+            Divider()
+            Picker("Show notes from", selection: $panel.listScope) {
+                ForEach(NotesPanelModel.ListScope.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .help("List the open file's notes, or every file's in this location")
+        }
+        .background(.bar)
     }
 
     private var header: some View {
@@ -341,7 +373,7 @@ struct NotesPanel: View {
     /// Notes per colour across every document (before search and filters, like the state counts).
     private var colorCounts: [(color: NoteColor, count: Int)] {
         var tally: [NoteColor: Int] = [:]
-        for group in model.notesPanel.groups { for note in group.notes { tally[note.color, default: 0] += 1 } }
+        for group in model.notesPanel.inListScope(model.notesPanel.groups) { for note in group.notes { tally[note.color, default: 0] += 1 } }
         return NoteColor.allCases.compactMap { color in tally[color].map { (color, $0) } }
     }
 

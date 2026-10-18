@@ -493,6 +493,11 @@ path. Dropping on the Dock icon is not supported yet.
   every note is drawn. Show Resolved Notes (the sort menu, and View) off takes resolved notes out of every tab but
   Resolved, open or closed; a question back from an agent stays. A note revealed from elsewhere that the filters
   hide brings itself into the list (All, resolved shown), so a selected note is never invisible.
+- **This File | This Location** (2026-10-18): a small segmented control in a bar at the bottom of the notes panel,
+  under the toasts, chooses what the list shows: the document in front's notes or every file's in the location.
+  Remembered (`notes.listScope`), This Location by default; hidden when the location is one document. With This
+  File and no file open the list says "No file open"; with a file and no notes, "No notes in this file". Send's own
+  scope, in its menu, is separate (`NotesPanelModel.filteredGroups`), as are the page's highlights.
 - **A note arrives**: a card for a note that just appeared (made anywhere, or brought back by Undo) glows in its
   own color at 20% for 1.6 s, then fades over 0.9 s, so the panel answers "where did it go?" the way Things and
   Linear light a new item. Nothing glows on the first load, when everything is new and nothing arrived
