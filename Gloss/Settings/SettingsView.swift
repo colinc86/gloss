@@ -75,7 +75,7 @@ struct SettingsView: View {
                 } footer: {
                     EditorPreview(fontSize: settings.editorFontSize, wraps: settings.wrapLines, guides: settings.showIndentGuides)
                 }
-                Section("Rendered Markdown") {
+                Section {
                     LabeledContent("Text size") {
                         HStack(spacing: DS.Space.m) {
                             Slider(value: $settings.markdownTextSize, in: SettingsStore.markdownTextSizeRange, step: 1)
@@ -89,7 +89,7 @@ struct SettingsView: View {
                     }
                     Toggle(isOn: $settings.markdownFillsWindow) {
                         Text("Fill the window")
-                        Text("The page grows with the window instead of stopping at a reading width.")
+                        Text("Tables grow with the window instead of stopping at the page width.")
                     }
                     LabeledContent("Page width") {
                         HStack(spacing: DS.Space.m) {
@@ -103,6 +103,10 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(settings.markdownFillsWindow)
+                } header: {
+                    Text("Rendered Markdown")
+                } footer: {
+                    Text("Text keeps a comfortable line length that grows with its size. Wider tables use the page.")
                 }
             }
             .formStyle(.grouped)

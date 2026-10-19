@@ -56,6 +56,10 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
         textLayoutManager?.textContainer?.size.width ?? layoutFragmentFrame.maxX
     }
 
+    private var paragraphStyle: NSParagraphStyle? {
+        (textElement as? NSTextParagraph).flatMap { $0.attributedString.length > 0 ? $0.attributedString.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle : nil }
+    }
+
     private var lineBounds: CGRect? {
         textLineFragments.reduce(nil as CGRect?) { union, line in union.map { $0.union(line.typographicBounds) } ?? line.typographicBounds }
     }
@@ -73,7 +77,11 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
         guard let text = lineBounds else { return nil }
         let originX = layoutFragmentFrame.minX
         let left = decoration.leading - originX
-        let right = max(left, containerWidth - originX)
+        // Chrome ends where the text does: short of the container's edge when text is set in to make room for
+        // tables, and past the code's own padding.
+        let paragraph = paragraphStyle
+        let tail = min(0, paragraph?.tailIndent ?? 0) + (decoration.kind == .codeBlock ? MarkdownRenderer.codePadding : 0)
+        let right = max(left, containerWidth + min(0, tail) - originX)
         var shapes = Shapes()
         switch decoration.kind {
         case .plain:
@@ -92,7 +100,6 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
         }
         if !decoration.quoteBars.isEmpty {
             // Bars span the paragraph's own spacing so consecutive paragraphs of one quote join up.
-            let paragraph = (textElement as? NSTextParagraph).flatMap { $0.attributedString.length > 0 ? $0.attributedString.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle : nil }
             let below = paragraph?.paragraphSpacing ?? 0
             for bar in decoration.quoteBars {
                 let above = bar.continuesFromAbove ? paragraph?.paragraphSpacingBefore ?? 0 : 2

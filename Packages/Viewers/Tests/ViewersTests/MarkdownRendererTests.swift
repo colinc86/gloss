@@ -276,14 +276,14 @@ struct MarkdownRendererTests {
     }
 
     @Test func aRightAlignedFirstColumnStillTabsToItsStop() {
-        let output = MarkdownRenderer.render("| n | name |\n| --: | :-- |\n| 12 | alpha |\n")
+        let output = MarkdownRenderer.render("| n | name |\n| --: | :-- |\n| 12 | alpha |\n", pageWidth: 500)
         #expect(output.text.string.contains("\t12\talpha"))
         #expect(paragraph(output, at: "alpha")?.firstLineHeadIndent == 0)
     }
 
     @Test func tableCellsAreExactAndAlignedByTabStops() {
         let source = "| name | n |\n| :-- | --: |\n| alpha | 1 |\n| b | 200 |\n"
-        let output = MarkdownRenderer.render(source)
+        let output = MarkdownRenderer.render(source, pageWidth: 500)
         // A left-aligned first column starts at the row's first-line indent: a leading tab drew a sliver in TextKit.
         #expect(output.text.string.contains("\nalpha\t1"))
         #expect(paragraph(output, at: "alpha")?.firstLineHeadIndent == MarkdownRenderer.tableCellPadding)
@@ -673,6 +673,28 @@ struct MarkdownRendererTests {
         #expect(paragraph(narrow, at: "1")?.tabStops.count == 2)
         #expect(!(narrow.text.string.contains("\u{2028}")))
         #expect(output.hasTables && !MarkdownRenderer.render("no table").hasTables)
+    }
+
+    @Test func textIsSetInBesideTablesWiderThanIt() throws {
+        let prose = MarkdownRenderer.proseWidth(readingSize: 14)
+        let long = Array(repeating: "spread", count: 80).joined(separator: " ")
+        let source = "Some text.\n\n| a | b |\n| - | - |\n| \(long) | wide |\n\n| n | m |\n| - | - |\n| 1 | 2 |\n\n```\ncode\n```\n"
+        let output = MarkdownRenderer.render(source, pageWidth: 1200, readingSize: 14)
+        let inset = ((1200 - prose) / 2).rounded(.down)
+        let text = try #require(paragraph(output, at: "Some"))
+        #expect(text.headIndent == inset && text.tailIndent == -inset, "the text keeps its line length, centred")
+        #expect(paragraph(output, at: "code")?.tailIndent == -inset - MarkdownRenderer.codePadding)
+        let wide = try #require(decoration(output, at: "spread"))
+        guard case .tableRow(_, let width) = wide.kind else { Issue.record("no row"); return }
+        #expect(width > prose && width <= 1200, "a wide table uses the page")
+        #expect(abs(wide.leading - (1200 - width) / 2) <= 1, "centred on it")
+        #expect(decoration(output, at: "1")?.leading == inset, "a narrow table lines up with the text")
+        let nested = MarkdownRenderer.render("- item\n\n  | a | b |\n  | - | - |\n  | \(long) | x |\n", pageWidth: 1200, readingSize: 14)
+        let row = try #require(decoration(nested, at: "spread"))
+        guard case .tableRow(_, let nestedWidth) = row.kind else { Issue.record("no row"); return }
+        #expect(row.leading + nestedWidth <= inset + prose + 2, "a table in a list keeps to the text beside it")
+        let plain = MarkdownRenderer.render("Some text.\n", pageWidth: 1200, readingSize: 14)
+        #expect(paragraph(plain, at: "Some")?.headIndent == 0 && paragraph(plain, at: "Some")?.tailIndent == 0, "a page of text is the text's width")
     }
 
     @Test func columnsShareSpaceByContent() throws {

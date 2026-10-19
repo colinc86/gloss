@@ -248,15 +248,31 @@ public final class MarkdownViewerController {
         }
     }
 
-    /// The reading column's width, set by the rendered view as it sizes the column. Tables are laid out for it, so a
-    /// page with tables renders again when it changes; any other page just wraps anew.
+    /// The page's width, set by the rendered view as it sizes the column (never during a live resize). A page with
+    /// tables is laid out for it, its text set in, so it renders again when it changes, on the next turn of the run
+    /// loop rather than after an edit's pause; the view keeps it at its old width until then. Any other page just
+    /// wraps anew.
     @ObservationIgnored public var pageWidth: CGFloat? {
         didSet {
             guard pageWidth != oldValue, hasTables else { return }
-            scheduleRebuild()
+            guard mode == .rendered else { renderOwed = true; return }
+            guard !widthRebuildPending else { return }
+            widthRebuildPending = true
+            RunLoop.main.perform(inModes: [.common]) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.widthRebuildPending else { return }
+                    self.widthRebuildPending = false
+                    if self.mode == .rendered { self.rebuildNow() } else { self.renderOwed = true }
+                }
+            }
         }
     }
     @ObservationIgnored private var hasTables = false
+    @ObservationIgnored private var widthRebuildPending = false
+    /// The width the shown page was laid out for when it spans the page (its tables do, with its text set in);
+    /// nil when it is only as wide as its text.
+    var laidOutPageWidth: CGFloat? { hasTables ? renderedPageWidth : nil }
+    @ObservationIgnored private var renderedPageWidth: CGFloat = 0
     @ObservationIgnored private var codeThemeObservers: [any NSObjectProtocol] = []
     @ObservationIgnored private var lastCodeTheme: CodeTheme?
     @ObservationIgnored private var lastCodeFontSize: CGFloat = 0
@@ -279,6 +295,8 @@ public final class MarkdownViewerController {
         }
     }
     public func rebuildNow() {
+        rebuildTask?.cancel()
+        widthRebuildPending = false
         themeRebuildPending = false
         renderOwed = false
         renderedContentVersion = source.contentVersion
@@ -289,6 +307,7 @@ public final class MarkdownViewerController {
         let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion,
                                              codeAppearance: codeAppearance, pageWidth: pageWidth)
         hasTables = output.hasTables
+        renderedPageWidth = output.pageWidth
         rendered = output.text
         map = output.map
         renderedVersion += 1

@@ -22,6 +22,24 @@ public struct MarkdownRenderer {
         public var diagramSources: [Int: String] = [:]
         /// Tables are laid out for the page's width, so a page that changes width renders again; nothing else needs to.
         public var hasTables = false
+        /// The page width tables were laid out for.
+        public var pageWidth: CGFloat = 0
+    }
+
+    /// The longest a line of text gets: about 90 characters of body text, a comfortable line to read. Text keeps
+    /// to it however wide the page is; only tables use the page's full width.
+    public static func proseWidth(readingSize: CGFloat = Theme.readingFontSize) -> CGFloat {
+        (readingSize * 42).rounded()
+    }
+
+    /// Whether `document` has a table (Markdown or HTML), checked before rendering so text can be set in from the
+    /// start to make room for tables wider than it. An HTML `<table>` is looked for in the source; a false match
+    /// only lays the page out for its width.
+    static func hasTables(_ document: Markdown.Document, source: String) -> Bool {
+        func contains(_ markup: any Markup) -> Bool {
+            markup is Markdown.Table || markup.children.contains { contains($0) }
+        }
+        return contains(document) || source.range(of: "<table", options: .caseInsensitive) != nil
     }
 
     public static let sourceSpanKey = NSAttributedString.Key("gloss.sourceSpan")
@@ -43,6 +61,11 @@ public struct MarkdownRenderer {
         let document = Document(parsing: source, options: [.disableSmartOpts])
         var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
         walker.pageWidth = pageWidth ?? Theme.renderedPageWidth ?? 900
+        let tables = hasTables(document, source: source)
+        if tables {
+            // Text keeps its line length in the middle of the page; tables wider than it spread either side.
+            walker.setInset(max(0, ((walker.pageWidth - proseWidth(readingSize: readingFontSize)) / 2).rounded(.down)))
+        }
         walker.images = images
         walker.diagrams = diagrams
         walker.reduceMotion = reduceMotion
@@ -55,7 +78,8 @@ public struct MarkdownRenderer {
         output.unresolvedImages = walker.unresolvedImages
         output.unresolvedDiagrams = walker.unresolvedDiagrams
         output.diagramSources = walker.diagramSources
-        output.hasTables = walker.tableCount > 0
+        output.hasTables = tables || walker.tableCount > 0
+        output.pageWidth = walker.pageWidth
         return output
     }
 
@@ -203,6 +227,9 @@ public struct MarkdownRenderer {
         var diagramSources: [Int: String] = [:]
         /// The reading column's width, which tables fit.
         var pageWidth: CGFloat = 900
+        /// How far text is set in from either side of the page, so it keeps its line length while tables use the
+        /// page's width; zero unless the page has tables.
+        private(set) var inset: CGFloat = 0
         /// Tables laid out so far; cells are numbered across the document (`SourceSpan.cell`).
         var tableCount = 0
         private var cellCount = 0
@@ -300,20 +327,21 @@ public struct MarkdownRenderer {
             paragraph.defaultTabInterval = 28
             paragraph.alignment = alignment
             paragraph.paragraphSpacingBefore = gap
+            paragraph.tailIndent = -inset
             switch kind {
             case .codeBlock:
                 paragraph.lineHeightMultiple = CGFloat(theme.font.lineSpacing ?? 1.15)
-                paragraph.tailIndent = -MarkdownRenderer.codePadding
+                paragraph.tailIndent = -inset - MarkdownRenderer.codePadding
                 paragraph.paragraphSpacingBefore = gap + MarkdownRenderer.codeVerticalPadding
                 paragraph.paragraphSpacing = MarkdownRenderer.codeVerticalPadding
             case .heading:
-                paragraph.lineHeightMultiple = 1.1
+                paragraph.lineHeightMultiple = 1.15
             case .rule:
                 paragraph.lineHeightMultiple = 1
             case .tableRow:
                 paragraph.lineHeightMultiple = 1.2
             case .plain:
-                paragraph.lineHeightMultiple = 1.3
+                paragraph.lineHeightMultiple = 1.4
             }
             return paragraph
         }
@@ -353,12 +381,14 @@ public struct MarkdownRenderer {
             } else if let gapOverride {
                 gap = gapOverride
             } else if case .heading(let level) = kind {
-                gap = level <= 2 ? 26 : 20
+                gap = level == 1 ? 32 : level == 2 ? 28 : 22
             } else if case .heading(let level) = lastBlock {
                 gap = level <= 2 ? 16 : 10
             } else {
-                gap = kind == .rule ? 16 : 12
+                gap = kind == .rule ? 18 : 14
             }
+            // Spacing written for 14 pt text grows and shrinks with it.
+            gap = (gap * MarkdownRenderer.readingFontSize / 14).rounded()
             let bars = quotes.map { MarkdownBlockDecoration.QuoteBar(x: $0.x, continuesFromAbove: blockCount > $0.openedAt, alert: $0.alert) }
             decoration = MarkdownBlockDecoration(kind: kind, leading: indent, quoteBars: bars)
             if kind == .codeBlock {
@@ -381,6 +411,11 @@ public struct MarkdownRenderer {
         }
 
         mutating func finish() {}
+
+        mutating func setInset(_ inset: CGFloat) {
+            self.inset = inset
+            indent = inset
+        }
 
         /// Exact when the node's rendered string equals its source bytes (no escapes or entities).
         private func exactness(_ markup: any Markup, rendered: String) -> (NSRange?, Bool) {
@@ -1222,7 +1257,9 @@ public struct MarkdownRenderer {
             let tableID = tableCount
             tableCount += 1
             let padding = MarkdownRenderer.tableCellPadding
-            let available = max(CGFloat(24 * columns), pageWidth - indent - CGFloat(columns) * padding * 2 - 2)
+            // A table of its own may use the whole page; one in a list or quote keeps to the text beside it.
+            let topLevel = inset > 0 && indent == inset
+            let available = max(CGFloat(24 * columns), (topLevel ? pageWidth : pageWidth - indent - inset) - CGFloat(columns) * padding * 2 - 2)
 
             // Natural widths; the narrowest each column can be only when they don't all fit.
             var maximum = [CGFloat](repeating: 24, count: columns)
@@ -1264,13 +1301,16 @@ public struct MarkdownRenderer {
                     }
                 }
             }
+            // Lined up with the text when it is no wider, otherwise centred on the page.
+            let tableWidth = widths.reduce(0, +) + CGFloat(columns) * padding * 2
+            let left = topLevel && tableWidth > MarkdownRenderer.proseWidth(readingSize: MarkdownRenderer.readingFontSize)
+                ? max(0, ((pageWidth - tableWidth) / 2).rounded(.down)) : indent
             var starts: [CGFloat] = []
-            var x = indent + padding
+            var x = left + padding
             for width in widths {
                 starts.append(x)
                 x += width + padding * 2
             }
-            let tableWidth = x - padding - indent
             let stops = (0..<columns).map { column -> NSTextTab in
                 let alignment = column < alignments.count ? alignments[column] : nil
                 return switch alignment {
@@ -1373,14 +1413,16 @@ public struct MarkdownRenderer {
             output.replaceCharacters(in: region, with: rebuilt)
 
             let bars = decoration.quoteBars
+            // A quote's bar runs on through the padding between rows, not only beside each row's text.
+            let continued = bars.map { MarkdownBlockDecoration.QuoteBar(x: $0.x, continuesFromAbove: true, alert: $0.alert) }
             let dividers = starts.dropFirst().map { $0 - padding }
             var body = 0
             for (row, range) in newRows.enumerated() {
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.tabStops = stops
                 paragraph.defaultTabInterval = 24
-                paragraph.headIndent = indent + padding
-                paragraph.firstLineHeadIndent = leadingTab ? indent : indent + padding
+                paragraph.headIndent = left + padding
+                paragraph.firstLineHeadIndent = leadingTab ? left : left + padding
                 paragraph.lineHeightMultiple = 1.2
                 paragraph.paragraphSpacingBefore = (row == 0 ? gap : 0) + MarkdownRenderer.tableRowPadding
                 paragraph.paragraphSpacing = MarkdownRenderer.tableRowPadding
@@ -1388,7 +1430,7 @@ public struct MarkdownRenderer {
                 let chrome = MarkdownBlockDecoration.TableChrome(dividers: Array(dividers), striped: !header && body % 2 == 1,
                                                                   first: row == 0, last: row == newRows.count - 1)
                 if !header { body += 1 }
-                let rowDecoration = MarkdownBlockDecoration(kind: .tableRow(header: header, width: tableWidth), leading: indent, quoteBars: bars, table: chrome)
+                let rowDecoration = MarkdownBlockDecoration(kind: .tableRow(header: header, width: tableWidth), leading: left, quoteBars: row == 0 ? bars : continued, table: chrome)
                 // Include the newline that ends the row so the paragraph's attributes are uniform.
                 let full = NSRange(location: range.location, length: min(range.length + 1, output.length - range.location))
                 output.addAttribute(.paragraphStyle, value: paragraph, range: full)

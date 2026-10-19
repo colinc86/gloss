@@ -228,6 +228,8 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 let top = textView.topVisibleCharacterIndex
                 let sameText = textView.string == controller.rendered.string
                 textView.textStorage?.setAttributedString(controller.rendered)
+                // A page that gained or lost its tables changes how wide its column is.
+                (textView as? RenderedTextView)?.updateColumn(force: true)
                 let length = textView.string.utf16.count
                 let location = min(selection.location,length)
                 textView.setSelectedRange(NSRange(location: location,length: sameText ? min(selection.length,length-location) : 0))
@@ -349,8 +351,10 @@ final class RenderedTextView: NSTextView {
         onLayout?()
     }
 
-    /// The reading column: at most `maximumColumnWidth` wide (the page width setting, or the whole view when the
-    /// page fills the window), centred, with at least `minimumMargin` either side. Centred by moving the
+    /// The reading column: as wide as a comfortable line of text (`MarkdownRenderer.proseWidth`), or, on a page with
+    /// tables, the page: at most `maximumColumnWidth` wide (the page width setting, or the whole view when the page
+    /// fills the window), with the text set in so its lines stay as long. Centred, with at least `minimumMargin`
+    /// either side. Centred by moving the
     /// container's origin, never by changing `textContainerInset` or letting the container track the view's width:
     /// either makes TextKit lay the whole document out again on every step of a window resize (#20), blanking and
     /// re-wrapping the text. So while the window is dragged wider the column only moves, and takes its new width
@@ -360,7 +364,10 @@ final class RenderedTextView: NSTextView {
 
     override var textContainerOrigin: NSPoint {
         let column = textContainer?.size.width ?? 0
-        return NSPoint(x: max(Self.minimumMargin, ((bounds.width - column) / 2).rounded(.down)), y: textContainerInset.height)
+        let centred = ((bounds.width - column) / 2).rounded(.down)
+        // A page with tables wider than the view while it waits to be laid out again stays centred, its edges cut off,
+        // so its text column stays whole.
+        return NSPoint(x: controller?.laidOutPageWidth != nil ? centred : max(Self.minimumMargin, centred), y: textContainerInset.height)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -371,15 +378,19 @@ final class RenderedTextView: NSTextView {
     /// Sizes the column for the view and re-centres it; `force` after the page width setting changes or a resize ends.
     private var centredFor: CGFloat = -1
     func updateColumn(force: Bool = false) {
-        guard let container = textContainer, force || bounds.width != centredFor else { return }
+        // Not before the view has a width: a page laid out for a zero-width view would be thrown away at once.
+        guard let container = textContainer, bounds.width > Self.minimumMargin * 2, force || bounds.width != centredFor else { return }
         centredFor = bounds.width
-        var column = max(1, min(Self.maximumColumnWidth, bounds.width - Self.minimumMargin * 2))
+        let page = max(1, min(Self.maximumColumnWidth, bounds.width - Self.minimumMargin * 2))
+        // Text keeps its line length. A page with tables spans the width it was laid out for, its text set in by
+        // that width, until it is laid out again for the new one; narrowing it sooner would squeeze its text.
+        var column = controller?.laidOutPageWidth ?? min(page, MarkdownRenderer.proseWidth())
         if inLiveResize, column > container.size.width { column = container.size.width }
         if container.size.width != column {
             container.size = NSSize(width: column, height: CGFloat.greatestFiniteMagnitude)
         }
         // Tables are laid out again for the new width once, when a resize ends, not whenever a drag pauses.
-        if !inLiveResize { controller?.pageWidth = column }
+        if !inLiveResize { controller?.pageWidth = page }
         invalidateTextContainerOrigin()
     }
     weak var controller: MarkdownViewerController?
