@@ -248,14 +248,24 @@ public final class MarkdownViewerController {
         }
     }
 
+    /// The reading column's width, set by the rendered view as it sizes the column. Tables are laid out for it, so a
+    /// page with tables renders again when it changes; any other page just wraps anew.
+    @ObservationIgnored public var pageWidth: CGFloat? {
+        didSet {
+            guard pageWidth != oldValue, hasTables else { return }
+            scheduleRebuild()
+        }
+    }
+    @ObservationIgnored private var hasTables = false
     @ObservationIgnored private var codeThemeObservers: [any NSObjectProtocol] = []
     @ObservationIgnored private var lastCodeTheme: CodeTheme?
     @ObservationIgnored private var lastCodeFontSize: CGFloat = 0
+    @ObservationIgnored private var lastReadingSize: CGFloat = 0
     @ObservationIgnored private var themeRebuildPending = false
     private func codeThemeChanged() {
         let appearance = NSAppearance(named: darkDiagrams ? .darkAqua : .aqua) ?? Theme.effectiveAppearance
         let theme = ActiveCodeTheme.theme(for: appearance)
-        guard theme != lastCodeTheme || lastCodeFontSize != Theme.editorFontSize else { return }
+        guard theme != lastCodeTheme || lastCodeFontSize != Theme.editorFontSize || lastReadingSize != Theme.readingFontSize else { return }
         guard mode == .rendered else { renderOwed = true; return }
         guard !themeRebuildPending else { return }
         themeRebuildPending = true
@@ -275,7 +285,10 @@ public final class MarkdownViewerController {
         let codeAppearance: NSAppearance.Name = darkDiagrams ? .darkAqua : .aqua
         lastCodeTheme = ActiveCodeTheme.theme(for: NSAppearance(named: codeAppearance) ?? Theme.effectiveAppearance)
         lastCodeFontSize = Theme.editorFontSize
-        let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion, codeAppearance: codeAppearance)
+        lastReadingSize = Theme.readingFontSize
+        let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion,
+                                             codeAppearance: codeAppearance, pageWidth: pageWidth)
+        hasTables = output.hasTables
         rendered = output.text
         map = output.map
         renderedVersion += 1

@@ -20,20 +20,29 @@ public struct MarkdownRenderer {
         public var unresolvedDiagrams: [String] = []
         /// Each drawn diagram's source, by its occurrence, so a region note's crop reads the right PNG.
         public var diagramSources: [Int: String] = [:]
+        /// Tables are laid out for the page's width, so a page that changes width renders again; nothing else needs to.
+        public var hasTables = false
     }
 
     public static let sourceSpanKey = NSAttributedString.Key("gloss.sourceSpan")
     nonisolated public static let blockKey = NSAttributedString.Key("gloss.markdownBlock")
+    /// Every character of a laid-out table carries its `TableCellMark`, so a copy can put the cells back in order.
+    nonisolated public static let tableCellKey = NSAttributedString.Key("gloss.tableCell")
 
     /// `baseURL` is the document's folder on this Mac; relative images resolve against it. `images` are pictures
     /// already fetched from a document's own host (an ssh host, a ticket's attachments), by source as written.
     /// Anything else shows as a placeholder. Under `reduceMotion` animated pictures hold still, and a `<picture>`
     /// draws a source meant for reduced motion. `diagrams` are Mermaid blocks already drawn (or refused), by their
     /// source; any other Mermaid block shows as code until it is.
+    /// Tables fit `pageWidth` (the reading column's width; the page width setting when it is not known yet), and
+    /// text is `readingSize` points (`Theme.readingFontSize` by default).
     public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], diagrams: [String: MermaidRenderer.Result] = [:],
-                              reduceMotion: Bool = false, codeTheme: CodeTheme? = nil, codeAppearance: NSAppearance.Name? = nil) -> Output {
+                              reduceMotion: Bool = false, codeTheme: CodeTheme? = nil, codeAppearance: NSAppearance.Name? = nil,
+                              pageWidth: CGFloat? = nil, readingSize: CGFloat? = nil) -> Output {
+        readingFontSize = readingSize ?? Theme.readingFontSize
         let document = Document(parsing: source, options: [.disableSmartOpts])
         var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
+        walker.pageWidth = pageWidth ?? Theme.renderedPageWidth ?? 900
         walker.images = images
         walker.diagrams = diagrams
         walker.reduceMotion = reduceMotion
@@ -46,6 +55,7 @@ public struct MarkdownRenderer {
         output.unresolvedImages = walker.unresolvedImages
         output.unresolvedDiagrams = walker.unresolvedDiagrams
         output.diagramSources = walker.diagramSources
+        output.hasTables = walker.tableCount > 0
         return output
     }
 
@@ -56,21 +66,22 @@ public struct MarkdownRenderer {
 
     // MARK: Styles
 
-    nonisolated static var bodyFont: NSFont { NSFont.systemFont(ofSize: 14) }
+    /// The body size of the render under way; set by `render` on the main thread before anything reads it.
+    nonisolated(unsafe) static var readingFontSize: CGFloat = 14
+    nonisolated static var bodyFont: NSFont { NSFont.systemFont(ofSize: readingFontSize) }
     nonisolated static var codeFont: NSFont { NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular) }
 
+    /// Heading sizes for 14 pt text, scaled with the reading size.
     nonisolated static func headingFont(level: Int) -> NSFont {
         let sizes: [CGFloat] = [28, 22, 18, 16, 14, 13]
-        return NSFont.systemFont(ofSize: sizes[max(0, min(5, level - 1))], weight: .semibold)
+        return NSFont.systemFont(ofSize: (sizes[max(0, min(5, level - 1))] * readingFontSize / 14).rounded(), weight: .semibold)
     }
 
     /// Inner padding of code blocks and table cells, shared with `MarkdownLayoutFragment`.
     nonisolated static let codePadding: CGFloat = 14
     nonisolated static let codeVerticalPadding: CGFloat = 10
     nonisolated static let tableRowPadding: CGFloat = 6
-    nonisolated static let tableCellPadding: CGFloat = 10
-    /// Widest table laid out in aligned columns; wider tables flow (see `layOutTable`).
-    static let tableFitWidth: CGFloat = 620
+    nonisolated static let tableCellPadding: CGFloat = 12
     /// Line separator between code lines: one paragraph per code block, so its fill is one shape.
     nonisolated static let lineSeparator = "\u{2028}"
     /// Code blocks longer than this are shown without syntax colours.
@@ -190,6 +201,11 @@ public struct MarkdownRenderer {
         var unresolvedImages: [String] = []
         var unresolvedDiagrams: [String] = []
         var diagramSources: [Int: String] = [:]
+        /// The reading column's width, which tables fit.
+        var pageWidth: CGFloat = 900
+        /// Tables laid out so far; cells are numbered across the document (`SourceSpan.cell`).
+        var tableCount = 0
+        private var cellCount = 0
         /// Where each picture is embedded, by `EmbedScanner` (read on the first picture), so a repeated one is told
         /// apart exactly as the re-anchorer tells it apart.
         private var embedLocations: [String: [Int]]?
@@ -1193,31 +1209,69 @@ public struct MarkdownRenderer {
             endBlock(table)
         }
 
-        /// Column widths from the widest cell, then one tab stop per column (aligned as the table asks) and a row
-        /// decoration that knows the table's width.
+        /// Lays the rows drawn so far out as columns that fit the page, as a browser lays out an automatic table:
+        /// columns keep their natural widths when they all fit, otherwise each gets its longest word and the space
+        /// left is shared by how much more each wants. A cell wider than its column wraps within it: a row of several
+        /// lines is drawn line by line, each line holding every cell's piece at its column's tab stop, with generated
+        /// line separators between. Pieces stay exact runs of their cell's source, so notes, Find and highlights
+        /// work in tables as in any text.
         private mutating func layOutTable(rowRanges: [NSRange], cellRanges: [[NSRange]], alignments: [Table.ColumnAlignment?], leadingTab: Bool,
                                           headers: [Bool]? = nil) {
             let columns = cellRanges.map(\.count).max() ?? 0
-            guard columns > 0 else { return }
-            var widths = [CGFloat](repeating: 24, count: columns)
+            guard columns > 0, let firstRow = rowRanges.first, let lastRow = rowRanges.last else { return }
+            let tableID = tableCount
+            tableCount += 1
+            let padding = MarkdownRenderer.tableCellPadding
+            let available = max(CGFloat(24 * columns), pageWidth - indent - CGFloat(columns) * padding * 2 - 2)
+
+            // Natural widths; the narrowest each column can be only when they don't all fit.
+            var maximum = [CGFloat](repeating: 24, count: columns)
             for cells in cellRanges {
                 for (column, range) in cells.enumerated() where range.length > 0 {
-                    widths[column] = max(widths[column], ceil(output.attributedSubstring(from: range).size().width))
+                    maximum[column] = max(maximum[column], Self.measure(output.attributedSubstring(from: range)).width)
                 }
             }
-            let padding = MarkdownRenderer.tableCellPadding
+            var widths = maximum
+            if maximum.reduce(0, +) > available {
+                var minimum = [CGFloat](repeating: 24, count: columns)
+                for cells in cellRanges {
+                    for (column, range) in cells.enumerated() where range.length > 0 {
+                        minimum[column] = max(minimum[column], Self.longestWord(in: output.attributedSubstring(from: range)))
+                    }
+                }
+                var least = minimum.reduce(0, +)
+                if least > available {
+                    // Even the words don't fit: the longest give way (a URL, say, breaks between characters) while
+                    // columns of short words keep theirs whole, rather than every column breaking its words.
+                    let sorted = minimum.sorted()
+                    var cap = available / CGFloat(columns)
+                    var used: CGFloat = 0
+                    for (index, width) in sorted.enumerated() {
+                        let share = (available - used) / CGFloat(columns - index)
+                        if width > share { cap = share; break }
+                        used += width
+                    }
+                    minimum = minimum.map { min($0, cap.rounded(.down)) }
+                    least = minimum.reduce(0, +)
+                }
+                if least >= available {
+                    widths = minimum
+                } else {
+                    let wanted = zip(maximum, minimum).map { max(0, $0 - $1) }.reduce(0, +)
+                    widths = (0..<columns).map { column in
+                        let extra = wanted > 0 ? (maximum[column] - minimum[column]) * (available - least) / wanted : 0
+                        return (minimum[column] + max(0, extra)).rounded(.down)
+                    }
+                }
+            }
             var starts: [CGFloat] = []
             var x = indent + padding
             for width in widths {
                 starts.append(x)
                 x += width + padding * 2
             }
-            var tableWidth = x - padding - indent
-            // Tab stops cannot wrap a cell, so a table wider than a narrow pane would overprint its own columns.
-            // Wide tables use the default tab interval instead: cells flow and wrap, never overlap.
-            let fits = tableWidth <= MarkdownRenderer.tableFitWidth - indent
-            if !fits { tableWidth = .greatestFiniteMagnitude }
-            let stops = !fits ? [] : (0..<columns).map { column -> NSTextTab in
+            let tableWidth = x - padding - indent
+            let stops = (0..<columns).map { column -> NSTextTab in
                 let alignment = column < alignments.count ? alignments[column] : nil
                 return switch alignment {
                 case .right?: NSTextTab(textAlignment: .right, location: starts[column] + widths[column], options: [:])
@@ -1225,8 +1279,103 @@ public struct MarkdownRenderer {
                 default: NSTextTab(textAlignment: .left, location: starts[column], options: [:])
                 }
             }
+
+            // Each cell's pieces: the lines it wraps to in its column, without the whitespace or breaks between them.
+            struct Piece { var old: NSRange; var new = 0; var cell: Int; var joined: String }
+            var rowPieces: [[[Piece]]] = []
+            for cells in cellRanges {
+                var row: [[Piece]] = []
+                for (column, range) in cells.enumerated() {
+                    let id = cellCount
+                    cellCount += 1
+                    let text = output.attributedSubstring(from: range)
+                    text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
+                        (value as? FittedImageAttachment)?.maximumWidth = widths[column]
+                    }
+                    let lines = maximum[column] <= widths[column] ? Self.forcedLines(in: text) : Self.wrappedLines(of: text, width: widths[column])
+                    row.append(Self.trimmedPieces(lines, in: text).map { Piece(old: NSRange(location: range.location + $0.range.location, length: $0.range.length), cell: id, joined: $0.joined) })
+                }
+                rowPieces.append(row)
+            }
+
+            // The rows again, line by line, from the pieces.
+            let region = NSRange(location: firstRow.location, length: NSMaxRange(lastRow) - firstRow.location)
+            let rebuilt = NSMutableAttributedString()
+            var newRows: [NSRange] = []
+            for (rowIndex, row) in rowPieces.enumerated() {
+                // The row's own style; an empty row (or table) takes what comes before it, if anything does.
+                let styled = rowRanges[rowIndex].length > 0 ? rowRanges[rowIndex].location : region.length > 0 ? region.location : region.location - 1
+                var generated = styled >= 0 && styled < output.length ? output.attributes(at: styled, effectiveRange: nil) : [:]
+                for key in [MarkdownRenderer.sourceSpanKey, .link, .toolTip, .backgroundColor, .attachment, .underlineStyle, .strikethroughStyle, .baselineOffset] {
+                    generated[key] = nil
+                }
+                func separator(_ string: String, column: Int = -1) {
+                    var attributes = generated
+                    attributes[MarkdownRenderer.tableCellKey] = TableCellMark(table: tableID, row: rowIndex, column: column, joined: "")
+                    rebuilt.append(NSAttributedString(string: string, attributes: attributes))
+                }
+                if rowIndex > 0 { separator("\n") }
+                let rowStart = rebuilt.length
+                let lineCount = max(1, row.map(\.count).max() ?? 0)
+                for line in 0..<lineCount {
+                    if line > 0 { separator(MarkdownRenderer.lineSeparator) }
+                    for column in row.indices {
+                        if column > 0 || leadingTab { separator("\t") }
+                        guard line < row[column].count else { continue }
+                        var piece = row[column][line]
+                        piece.new = rebuilt.length
+                        let text = NSMutableAttributedString(attributedString: output.attributedSubstring(from: piece.old))
+                        text.addAttribute(MarkdownRenderer.tableCellKey, value: TableCellMark(table: tableID, row: rowIndex, column: column, joined: piece.joined),
+                                          range: NSRange(location: 0, length: text.length))
+                        rebuilt.append(text)
+                        rowPieces[rowIndex][column][line] = piece
+                    }
+                }
+                newRows.append(NSRange(location: region.location + rowStart, length: rebuilt.length - rowStart))
+            }
+
+            // Runs of source follow their characters into the pieces; a run split by a wrap becomes one per piece.
+            let pieces = rowPieces.flatMap { $0.flatMap { $0 } }.sorted { $0.old.location < $1.old.location }
+            /// The pieces from the first that could overlap `range` on (they are in their old order and don't overlap).
+            func candidates(_ range: NSRange) -> ArraySlice<Piece> {
+                var low = 0, high = pieces.count
+                while low < high {
+                    let middle = (low + high) / 2
+                    if NSMaxRange(pieces[middle].old) < range.location {
+                        low = middle + 1
+                    } else {
+                        high = middle
+                    }
+                }
+                var end = low
+                while end < pieces.count, pieces[end].old.location <= NSMaxRange(range) { end += 1 }
+                return pieces[low..<end]
+            }
+            var kept = spans.filter { $0.rendered.location < region.location || $0.rendered.location >= NSMaxRange(region) }
+            for span in spans where span.rendered.location >= region.location && span.rendered.location < NSMaxRange(region) {
+                for piece in candidates(span.rendered) {
+                    let overlap = NSIntersectionRange(span.rendered, piece.old)
+                    guard overlap.length > 0 else { continue }
+                    let rendered = NSRange(location: region.location + piece.new + overlap.location - piece.old.location, length: overlap.length)
+                    let source = span.exact ? NSRange(location: span.source.location + overlap.location - span.rendered.location, length: overlap.length) : span.source
+                    kept.append(SourceSpan(rendered: rendered, source: source, exact: span.exact, cell: piece.cell))
+                }
+            }
+            spans = kept
+            // A cell's block becomes one per piece: its pieces are no longer one range.
+            var keptBlocks = blocks.filter { $0.rendered.location < region.location || $0.rendered.location >= NSMaxRange(region) }
+            for block in blocks where block.rendered.location >= region.location && block.rendered.location < NSMaxRange(region) {
+                for piece in candidates(block.rendered) where NSIntersectionRange(block.rendered, piece.old).length > 0 || (piece.old.length == 0 && piece.old.location == block.rendered.location) {
+                    keptBlocks.append(SourceSpan(rendered: NSRange(location: region.location + piece.new, length: piece.old.length), source: block.source, exact: false))
+                }
+            }
+            blocks = keptBlocks
+            output.replaceCharacters(in: region, with: rebuilt)
+
             let bars = decoration.quoteBars
-            for (row, range) in rowRanges.enumerated() {
+            let dividers = starts.dropFirst().map { $0 - padding }
+            var body = 0
+            for (row, range) in newRows.enumerated() {
                 let paragraph = NSMutableParagraphStyle()
                 paragraph.tabStops = stops
                 paragraph.defaultTabInterval = 24
@@ -1236,12 +1385,99 @@ public struct MarkdownRenderer {
                 paragraph.paragraphSpacingBefore = (row == 0 ? gap : 0) + MarkdownRenderer.tableRowPadding
                 paragraph.paragraphSpacing = MarkdownRenderer.tableRowPadding
                 let header = headers.map { row < $0.count && $0[row] } ?? (row == 0)
-                let rowDecoration = MarkdownBlockDecoration(kind: .tableRow(header: header, width: tableWidth), leading: indent, quoteBars: bars)
+                let chrome = MarkdownBlockDecoration.TableChrome(dividers: Array(dividers), striped: !header && body % 2 == 1,
+                                                                  first: row == 0, last: row == newRows.count - 1)
+                if !header { body += 1 }
+                let rowDecoration = MarkdownBlockDecoration(kind: .tableRow(header: header, width: tableWidth), leading: indent, quoteBars: bars, table: chrome)
                 // Include the newline that ends the row so the paragraph's attributes are uniform.
                 let full = NSRange(location: range.location, length: min(range.length + 1, output.length - range.location))
                 output.addAttribute(.paragraphStyle, value: paragraph, range: full)
                 output.addAttribute(MarkdownRenderer.blockKey, value: rowDecoration, range: full)
             }
+        }
+
+        /// A cell's text as it measures alone: no row indents or tab stops.
+        private static func measurable(_ text: NSAttributedString) -> NSAttributedString {
+            let plain = NSMutableAttributedString(attributedString: text)
+            plain.removeAttribute(.paragraphStyle, range: NSRange(location: 0, length: plain.length))
+            return plain
+        }
+
+        /// The widest line of a cell set unwrapped (it breaks only where it has line breaks).
+        private static func measure(_ text: NSAttributedString) -> CGSize {
+            let size = measurable(text).size()
+            return CGSize(width: ceil(size.width), height: ceil(size.height))
+        }
+
+        /// The widest run of a cell's text without whitespace: the narrowest its column can be without breaking a word.
+        private static func longestWord(in text: NSAttributedString) -> CGFloat {
+            let plain = measurable(text)
+            let string = plain.string as NSString
+            var widest: CGFloat = 0
+            var start: Int?
+            for index in 0...string.length {
+                let breaks = index == string.length || CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(string.character(at: index)) ?? " ")
+                if breaks {
+                    if let from = start { widest = max(widest, ceil(plain.attributedSubstring(from: NSRange(location: from, length: index - from)).size().width)) }
+                    start = nil
+                } else if start == nil {
+                    start = index
+                }
+            }
+            return widest
+        }
+
+        /// A cell's lines where it has line breaks; the breaks stay at the ends of their lines.
+        private static func forcedLines(in text: NSAttributedString) -> [NSRange] {
+            let string = text.string as NSString
+            var lines: [NSRange] = []
+            var start = 0
+            for index in 0..<string.length where string.character(at: index) == 0x2028 || string.character(at: index) == 0x0A {
+                lines.append(NSRange(location: start, length: index + 1 - start))
+                start = index + 1
+            }
+            lines.append(NSRange(location: start, length: string.length - start))
+            return lines
+        }
+
+        /// A cell's lines wrapped to `width`, as TextKit wraps them (words, then characters for a word too long).
+        private static func wrappedLines(of text: NSAttributedString, width: CGFloat) -> [NSRange] {
+            let storage = NSTextStorage(attributedString: measurable(text))
+            let manager = NSLayoutManager()
+            let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+            container.lineFragmentPadding = 0
+            manager.addTextContainer(container)
+            storage.addLayoutManager(manager)
+            manager.ensureLayout(for: container)
+            var lines: [NSRange] = []
+            manager.enumerateLineFragments(forGlyphRange: manager.glyphRange(for: container)) { _, _, _, glyphs, _ in
+                lines.append(manager.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil))
+            }
+            return lines.isEmpty ? [NSRange(location: 0, length: text.length)] : lines
+        }
+
+        /// Lines without the whitespace and breaks at their ends (they would push a right-aligned piece off its
+        /// stop), each saying what joined it to the line before: a space where some was taken out, nothing where a
+        /// long word was broken.
+        private static func trimmedPieces(_ lines: [NSRange], in text: NSAttributedString) -> [(range: NSRange, joined: String)] {
+            let string = text.string as NSString
+            func isSpace(_ index: Int) -> Bool {
+                let unit = string.character(at: index)
+                return unit == 0x2028 || CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(unit) ?? " ")
+            }
+            var pieces: [(range: NSRange, joined: String)] = []
+            var trimmed = false
+            for (index, line) in lines.enumerated() {
+                var from = line.location, to = NSMaxRange(line)
+                var leading = false
+                while from < to, isSpace(from) { from += 1; leading = true }
+                var trailing = false
+                while to > from, isSpace(to - 1) { to -= 1; trailing = true }
+                guard to > from || index == 0 else { trimmed = trimmed || leading || trailing; continue }
+                pieces.append((NSRange(location: from, length: to - from), index == 0 ? "" : (trimmed || leading ? " " : "")))
+                trimmed = trailing
+            }
+            return pieces
         }
 
         // MARK: Inlines
@@ -1501,6 +1737,22 @@ public struct MarkdownRenderer {
     }
 }
 
+/// Where a character of a laid-out table belongs: its table, row and column (-1 for the tabs and separators
+/// between cells), and for the first character of a cell's later piece, what joined it to the piece before.
+public nonisolated final class TableCellMark: NSObject, Sendable {
+    public let table: Int
+    public let row: Int
+    public let column: Int
+    public let joined: String
+
+    init(table: Int, row: Int, column: Int, joined: String) {
+        self.table = table
+        self.row = row
+        self.column = column
+        self.joined = joined
+    }
+}
+
 /// Paragraph chrome drawn by `MarkdownLayoutFragment`. Immutable; one instance per block.
 public nonisolated final class MarkdownBlockDecoration: NSObject, Sendable {
     public enum Kind: Equatable, Sendable {
@@ -1528,21 +1780,34 @@ public nonisolated final class MarkdownBlockDecoration: NSObject, Sendable {
     public let label: String?
     public let codeBackground: NSColor?
     public let codeForeground: NSColor?
+    /// A table row's place in its table: where its column rules go and which edges of the outline it draws.
+    public let table: TableChrome?
 
-    public init(kind: Kind, leading: CGFloat, quoteBars: [QuoteBar], label: String? = nil, codeBackground: NSColor? = nil, codeForeground: NSColor? = nil) {
+    public struct TableChrome: Equatable, Sendable {
+        /// The rules between columns, in container coordinates.
+        public var dividers: [CGFloat]
+        /// Every other body row is shaded.
+        public var striped: Bool
+        public var first: Bool
+        public var last: Bool
+    }
+
+    public init(kind: Kind, leading: CGFloat, quoteBars: [QuoteBar], label: String? = nil, codeBackground: NSColor? = nil, codeForeground: NSColor? = nil,
+                table: TableChrome? = nil) {
         self.kind = kind
         self.leading = leading
         self.quoteBars = quoteBars
         self.label = label
         self.codeBackground = codeBackground; self.codeForeground = codeForeground
+        self.table = table
     }
 
     func labelled(_ label: String?) -> MarkdownBlockDecoration {
-        MarkdownBlockDecoration(kind: kind, leading: leading, quoteBars: quoteBars, label: label, codeBackground: codeBackground, codeForeground: codeForeground)
+        MarkdownBlockDecoration(kind: kind, leading: leading, quoteBars: quoteBars, label: label, codeBackground: codeBackground, codeForeground: codeForeground, table: table)
     }
 
     func withCodeColors(background: NSColor,foreground: NSColor?) -> MarkdownBlockDecoration {
-        MarkdownBlockDecoration(kind: kind,leading: leading,quoteBars: quoteBars,label: label,codeBackground: background,codeForeground: foreground)
+        MarkdownBlockDecoration(kind: kind,leading: leading,quoteBars: quoteBars,label: label,codeBackground: background,codeForeground: foreground,table: table)
     }
 
     /// A fence's info string as a language name: the common ones spelled as their communities spell them, anything
@@ -1611,6 +1876,8 @@ enum MarkdownImageLoader {
 /// `maximumHeight`, so a large picture does not fill the whole view.
 nonisolated final class FittedImageAttachment: NSTextAttachment {
     var naturalSize = CGSize.zero
+    /// The widest it is drawn: its table column's width, in a table.
+    var maximumWidth: CGFloat?
     /// The picture as the Markdown names it, and which embed of it this is (0 for the first).
     var source: String?
     var occurrence = 0
@@ -1642,7 +1909,13 @@ nonisolated final class FittedImageAttachment: NSTextAttachment {
 
     override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?,
                                    proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
-        Self.fitted(naturalSize, width: proposedLineFragment.width - position.x)
+        Self.fitted(naturalSize, width: min(maximumWidth ?? .greatestFiniteMagnitude, proposedLineFragment.width - position.x))
+    }
+
+    /// TextKit 1's question, asked when a table measures and wraps its cells.
+    override func attachmentBounds(for textContainer: NSTextContainer?, proposedLineFragment lineFrag: CGRect, glyphPosition position: CGPoint,
+                                   characterIndex charIndex: Int) -> CGRect {
+        Self.fitted(naturalSize, width: min(maximumWidth ?? .greatestFiniteMagnitude, lineFrag.width > 0 ? lineFrag.width - position.x : .greatestFiniteMagnitude))
     }
 
     /// Corner radius for a picture of this size: soft on photos, barely there on icons, so neither looks pasted on

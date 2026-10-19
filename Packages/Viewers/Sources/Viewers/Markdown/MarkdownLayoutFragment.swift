@@ -32,6 +32,23 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
             ? NSColor(white: 1, alpha: 0.10)
             : NSColor(white: 0, alpha: 0.08)
     }
+    /// A table's outline and the rules between its cells: firmer than a code block's border, quieter than text.
+    static let tableRule = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.14)
+            : NSColor(white: 0, alpha: 0.12)
+    }
+    static let headerFill = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.07)
+            : NSColor(white: 0, alpha: 0.045)
+    }
+    static let stripe = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.03)
+            : NSColor(white: 0, alpha: 0.018)
+    }
+    static let tableCorner: CGFloat = 6
 
     // MARK: Geometry (fragment coordinates)
 
@@ -48,6 +65,8 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
         var fillRounded = false
         var lines: [CGRect] = []
         var bars: [CGRect] = []
+        /// A table row: its rect, and which of the table's rounded corners it holds.
+        var tableRow: CGRect?
     }
 
     private func shapes() -> Shapes? {
@@ -67,14 +86,9 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
             shapes.lines.append(CGRect(x: left, y: text.midY.rounded(.down), width: right - left, height: 1))
         case .heading(let level):
             if level <= 2 { shapes.lines.append(CGRect(x: left, y: text.maxY + 5, width: right - left, height: 1)) }
-        case .tableRow(let header, let width):
+        case .tableRow(_, let width):
             let pad = MarkdownRenderer.tableRowPadding
-            let row = CGRect(x: left, y: text.minY - pad, width: min(width, right - left), height: text.height + pad * 2)
-            if header {
-                shapes.fill = row
-                shapes.lines.append(CGRect(x: row.minX, y: row.minY, width: row.width, height: 1))
-            }
-            shapes.lines.append(CGRect(x: row.minX, y: row.maxY - 1, width: row.width, height: 1))
+            shapes.tableRow = CGRect(x: left, y: text.minY - pad, width: min(width, right - left), height: text.height + pad * 2)
         }
         if !decoration.quoteBars.isEmpty {
             // Bars span the paragraph's own spacing so consecutive paragraphs of one quote join up.
@@ -91,7 +105,7 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
     override var renderingSurfaceBounds: CGRect {
         var bounds = super.renderingSurfaceBounds
         guard let shapes = shapes() else { return bounds }
-        for rect in [shapes.fill].compactMap({ $0 }) + shapes.lines + shapes.bars {
+        for rect in [shapes.fill, shapes.tableRow].compactMap({ $0 }) + shapes.lines + shapes.bars {
             bounds = bounds.union(rect.insetBy(dx: -1, dy: -1))
         }
         return bounds
@@ -112,10 +126,83 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    /// A row of a table: its shading, the rules between its columns and below it, and its part of the table's
+    /// rounded outline (the top corners on the first row, the bottom ones on the last).
+    private func drawTableRow(_ row: CGRect, context: CGContext) {
+        guard case .tableRow(let header, _) = decoration.kind else { return }
+        let chrome = decoration.table
+        let first = chrome?.first ?? header, last = chrome?.last ?? false
+        let radius = min(Self.tableCorner, row.height / 2)
+        let inset = row.insetBy(dx: 0.5, dy: 0)
+        let top = first ? inset.minY + 0.5 : inset.minY
+        let bottom = last ? inset.maxY - 0.5 : inset.maxY
+        let outline = CGMutablePath()
+        // Clockwise from the bottom left, rounding only the corners this row holds.
+        outline.move(to: CGPoint(x: inset.minX, y: bottom - (last ? radius : 0)))
+        if first {
+            outline.addLine(to: CGPoint(x: inset.minX, y: top + radius))
+            outline.addArc(tangent1End: CGPoint(x: inset.minX, y: top), tangent2End: CGPoint(x: inset.minX + radius, y: top), radius: radius)
+            outline.addArc(tangent1End: CGPoint(x: inset.maxX, y: top), tangent2End: CGPoint(x: inset.maxX, y: top + radius), radius: radius)
+        } else {
+            outline.addLine(to: CGPoint(x: inset.minX, y: top))
+            outline.addLine(to: CGPoint(x: inset.maxX, y: top))
+        }
+        if last {
+            outline.addLine(to: CGPoint(x: inset.maxX, y: bottom - radius))
+            outline.addArc(tangent1End: CGPoint(x: inset.maxX, y: bottom), tangent2End: CGPoint(x: inset.maxX - radius, y: bottom), radius: radius)
+            outline.addArc(tangent1End: CGPoint(x: inset.minX, y: bottom), tangent2End: CGPoint(x: inset.minX, y: bottom - radius), radius: radius)
+        } else {
+            outline.addLine(to: CGPoint(x: inset.maxX, y: bottom))
+            outline.addLine(to: CGPoint(x: inset.minX, y: bottom))
+        }
+        outline.closeSubpath()
+        if header || chrome?.striped == true {
+            context.addPath(outline)
+            context.setFillColor((header ? Self.headerFill : Self.stripe).cgColor)
+            context.fillPath()
+        }
+        context.setFillColor(Self.tableRule.cgColor)
+        let originX = layoutFragmentFrame.minX
+        for divider in chrome?.dividers ?? [] {
+            let x = (divider - originX).rounded(.down)
+            guard x > row.minX, x < row.maxX - 1 else { continue }
+            context.fill(CGRect(x: x, y: row.minY, width: 1, height: row.height))
+        }
+        if !last {
+            // The rule under the header row is the separator's own colour, as GitHub draws it a little firmer.
+            context.setFillColor((header ? NSColor.separatorColor : Self.tableRule).cgColor)
+            context.fill(CGRect(x: row.minX, y: row.maxY - 1, width: row.width, height: 1))
+        }
+        // The outline: its sides on every row, its rounded top and bottom on the rows that hold them.
+        context.setFillColor(Self.tableRule.cgColor)
+        let sideTop = first ? row.minY + radius : row.minY
+        let sideBottom = last ? row.maxY - radius : row.maxY
+        context.fill(CGRect(x: row.minX, y: sideTop, width: 1, height: max(0, sideBottom - sideTop)))
+        context.fill(CGRect(x: row.maxX - 1, y: sideTop, width: 1, height: max(0, sideBottom - sideTop)))
+        let edges = CGMutablePath()
+        if first {
+            edges.move(to: CGPoint(x: inset.minX, y: sideTop))
+            edges.addArc(tangent1End: CGPoint(x: inset.minX, y: top), tangent2End: CGPoint(x: inset.minX + radius, y: top), radius: radius)
+            edges.addArc(tangent1End: CGPoint(x: inset.maxX, y: top), tangent2End: CGPoint(x: inset.maxX, y: sideTop), radius: radius)
+        }
+        if last {
+            edges.move(to: CGPoint(x: inset.maxX, y: sideBottom))
+            edges.addArc(tangent1End: CGPoint(x: inset.maxX, y: bottom), tangent2End: CGPoint(x: inset.maxX - radius, y: bottom), radius: radius)
+            edges.addArc(tangent1End: CGPoint(x: inset.minX, y: bottom), tangent2End: CGPoint(x: inset.minX, y: sideBottom), radius: radius)
+        }
+        if !edges.isEmpty {
+            context.addPath(edges)
+            context.setStrokeColor(Self.tableRule.cgColor)
+            context.setLineWidth(1)
+            context.strokePath()
+        }
+    }
+
     override func draw(at point: CGPoint, in context: CGContext) {
         if let shapes = shapes() {
             context.saveGState()
             context.translateBy(x: point.x, y: point.y)
+            if let row = shapes.tableRow { drawTableRow(row, context: context) }
             if let fill = shapes.fill {
                 let path = shapes.fillRounded ? CGPath(roundedRect: fill, cornerWidth: 6, cornerHeight: 6, transform: nil) : CGPath(rect: fill, transform: nil)
                 context.addPath(path)

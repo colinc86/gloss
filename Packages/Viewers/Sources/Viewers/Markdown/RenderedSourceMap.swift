@@ -6,11 +6,14 @@ public struct SourceSpan: Equatable, Sendable {
     public var source: NSRange
     /// Rendered characters equal source characters one to one, so offsets inside the run map directly.
     public var exact: Bool
+    /// The table cell the run is in: a wrapped cell's pieces lie on several lines, between other cells' pieces.
+    public var cell: Int?
 
-    public init(rendered: NSRange, source: NSRange, exact: Bool) {
+    public init(rendered: NSRange, source: NSRange, exact: Bool, cell: Int? = nil) {
         self.rendered = rendered
         self.source = source
         self.exact = exact
+        self.cell = cell
     }
 }
 
@@ -48,6 +51,11 @@ public struct RenderedSourceMap: Sendable {
         if touched.isEmpty {
             guard let block = blocks.first(where: { NSIntersectionRange($0.rendered, rendered).length > 0 || ($0.rendered.location <= rendered.location && rendered.location <= $0.rendered.location + $0.rendered.length) }) else { return nil }
             return Mapping(source: block.source, exact: false)
+        }
+        // A selection that starts and ends in one table cell is about that cell, not the other cells' pieces lying
+        // between its own on the lines it wraps over.
+        if let cell = touched.first?.cell, touched.last?.cell == cell {
+            touched = touched.filter { $0.cell == cell }
         }
         // Exact only inside one exact run: generated text (bullets, separators) between runs has no source.
         var exact = touched.count == 1 && touched[0].exact

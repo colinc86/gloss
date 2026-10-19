@@ -644,12 +644,98 @@ struct MarkdownRendererTests {
         #expect(text.hasSuffix("•\t"), "an empty item still shows its marker")
     }
 
-    @Test func tablesTooWideForAlignedColumnsFlowInstead() {
+    @Test func wideTablesWrapCellsWithinTheirColumns() throws {
         let long = Array(repeating: "word", count: 60).joined(separator: " ")
-        let output = MarkdownRenderer.render("| a | b |\n| - | - |\n| \(long) | x |\n")
-        #expect(paragraph(output, at: "word")?.tabStops.isEmpty == true, "no stops that a wrapped cell would overprint")
-        let narrow = MarkdownRenderer.render("| a | b |\n| - | - |\n| 1 | 2 |\n")
+        let source = "| a | b |\n| - | - |\n| \(long) | x |\n"
+        let output = MarkdownRenderer.render(source, pageWidth: 600)
+        let row = try #require(paragraph(output, at: "word"))
+        #expect(row.tabStops.count == 2, "columns keep their stops")
+        let text = output.text.string as NSString
+        #expect(text.contains("\u{2028}"), "the long cell wraps over lines of its row")
+        // Every piece is an exact run of the cell, and together they are the cell less the spaces at the wraps.
+        let cell = (source as NSString).range(of: long)
+        let pieces = output.map.spans.filter { NSIntersectionRange($0.source, cell).length > 0 }
+        #expect(pieces.count > 1 && pieces.allSatisfy(\.exact))
+        #expect(Set(pieces.compactMap(\.cell)).count == 1)
+        for piece in pieces {
+            #expect(text.substring(with: piece.rendered) == (source as NSString).substring(with: piece.source))
+        }
+        #expect(pieces.map { text.substring(with: $0.rendered) }.joined(separator: " ") == long)
+        // No piece is wider than the table leaves the column.
+        let width = MarkdownRenderer.tableCellPadding
+        let stops = row.tabStops.map(\.location)
+        for piece in pieces {
+            #expect(output.text.attributedSubstring(from: piece.rendered).size().width <= stops[1] - stops[0] - width * 2 + 1)
+        }
+        // "x" is on the row's first line, beside the cell's first piece.
+        #expect(text.contains("word\tx\u{2028}"))
+        let narrow = MarkdownRenderer.render("| a | b |\n| - | - |\n| 1 | 2 |\n", pageWidth: 600)
         #expect(paragraph(narrow, at: "1")?.tabStops.count == 2)
+        #expect(!(narrow.text.string.contains("\u{2028}")))
+        #expect(output.hasTables && !MarkdownRenderer.render("no table").hasTables)
+    }
+
+    @Test func columnsShareSpaceByContent() throws {
+        let long = Array(repeating: "longer", count: 40).joined(separator: " ")
+        let output = MarkdownRenderer.render("| id | text |\n| - | - |\n| 7 | \(long) |\n", pageWidth: 500)
+        let stops = try #require(paragraph(output, at: "7")?.tabStops.map(\.location))
+        let idColumn = stops[1] - stops[0] - MarkdownRenderer.tableCellPadding * 2
+        #expect(idColumn < 40, "a short column keeps its natural width: \(idColumn)")
+        let header = try #require(decoration(output, at: "id"))
+        guard case .tableRow(_, let width) = header.kind else { Issue.record("no row"); return }
+        #expect(width <= 500, "the table fits the page")
+        #expect(header.table?.dividers.count == 1 && header.table?.first == true)
+        #expect(decoration(output, at: "7")?.table?.last == true)
+    }
+
+    @Test func unbreakableWordsBreakByCharacter() {
+        let url = "https://example.com/" + String(repeating: "abcdefghij", count: 30)
+        let source = "| link | n |\n| - | - |\n| \(url) | 1 |\n"
+        let output = MarkdownRenderer.render(source, pageWidth: 400)
+        let text = output.text.string as NSString
+        let pieces = output.map.spans.filter { NSIntersectionRange($0.source, (source as NSString).range(of: url)).length > 0 }
+        #expect(pieces.count > 1)
+        #expect(pieces.map { text.substring(with: $0.rendered) }.joined() == url, "nothing lost or added where the word broke")
+    }
+
+    @Test func aSelectionInsideOneWrappedCellMapsToThatCellOnly() throws {
+        let long = (1...40).map { "w\($0)" }.joined(separator: " ")
+        let source = "| a | b |\n| - | - |\n| \(long) | \(long.uppercased()) |\n"
+        let output = MarkdownRenderer.render(source, pageWidth: 400)
+        let text = output.text.string as NSString
+        // From w3 on the first line to w30 on a later one: the other cell's pieces lie between them.
+        let from = text.range(of: "w3 ").location
+        let to = NSMaxRange(text.range(of: "w30"))
+        let selected = NSRange(location: from, length: to - from)
+        #expect(text.substring(with: selected).contains("W1"), "the selection crosses the other column")
+        let mapping = try #require(output.map.sourceRange(forRendered: selected))
+        let quoted = (source as NSString).substring(with: mapping.source)
+        #expect(quoted.hasPrefix("w3 ") && quoted.hasSuffix("w30") && !quoted.contains("W"), "\(quoted)")
+        // And back: the cell's text highlights its own pieces only.
+        let ranges = output.map.renderedRanges(forSource: mapping.source)
+        #expect(ranges.count > 1 && ranges.allSatisfy { !text.substring(with: $0).contains("W") })
+    }
+
+    @Test func tablesWithNothingInThemStillRender() {
+        for source in ["x\n\n| |\n| - |\n", "| |\n| - |\n", "<table><tr><td></td></tr></table>\n"] {
+            let output = MarkdownRenderer.render(source)
+            #expect(output.hasTables, "\(source)")
+        }
+    }
+
+    @Test func copyingTableRowsKeepsCellsInOrder() {
+        let long = (1...30).map { "w\($0)" }.joined(separator: " ")
+        let output = MarkdownRenderer.render("| a | b |\n| - | - |\n| \(long) | x y |\n| 2 | 3 |\n\nafter\n", pageWidth: 360)
+        let copied = RenderedTextView.copiedText(output.text)
+        #expect(copied.hasPrefix("a\tb\n\(long)\tx y\n2\t3"), "\(copied.debugDescription)")
+        #expect(copied.hasSuffix("\nafter"))
+    }
+
+    @Test func readingSizeScalesBodyAndHeadings() {
+        let output = MarkdownRenderer.render("# Title\n\nBody\n", readingSize: 18)
+        #expect(font(output, at: "Body")?.pointSize == 18)
+        #expect(font(output, at: "Title")?.pointSize == 36)
+        #expect(font(MarkdownRenderer.render("Body\n", readingSize: 14), at: "Body")?.pointSize == 14)
     }
 }
 

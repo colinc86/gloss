@@ -75,9 +75,38 @@ struct SettingsView: View {
                 } footer: {
                     EditorPreview(fontSize: settings.editorFontSize, wraps: settings.wrapLines, guides: settings.showIndentGuides)
                 }
+                Section("Rendered Markdown") {
+                    LabeledContent("Text size") {
+                        HStack(spacing: DS.Space.m) {
+                            Slider(value: $settings.markdownTextSize, in: SettingsStore.markdownTextSizeRange, step: 1)
+                                .frame(width: 200)
+                            Text("\(settings.markdownTextSize, specifier: "%.0f") pt")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 48, alignment: .trailing)
+                                .contentTransition(.numericText(value: settings.markdownTextSize))
+                        }
+                    }
+                    Toggle(isOn: $settings.markdownFillsWindow) {
+                        Text("Fill the window")
+                        Text("The page grows with the window instead of stopping at a reading width.")
+                    }
+                    LabeledContent("Page width") {
+                        HStack(spacing: DS.Space.m) {
+                            Slider(value: $settings.markdownPageWidth, in: SettingsStore.markdownPageWidthRange, step: 20)
+                                .frame(width: 200)
+                            Text("\(settings.markdownPageWidth, specifier: "%.0f") pt")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 48, alignment: .trailing)
+                                .contentTransition(.numericText(value: settings.markdownPageWidth))
+                        }
+                    }
+                    .disabled(settings.markdownFillsWindow)
+                }
             }
             .formStyle(.grouped)
-            .frame(height: 380)
+            .frame(height: 560)
             .animation(DS.Motion.snappy, value: settings.editorFontSize)
             .animation(DS.Motion.smooth, value: settings.showIndentGuides)
             .tabItem { Label("Editor", systemImage: "text.alignleft") }

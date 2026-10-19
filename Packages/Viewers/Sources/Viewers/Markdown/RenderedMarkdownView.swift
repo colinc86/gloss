@@ -36,7 +36,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         // The column is sized and centred by the view itself (`RenderedTextView.updateColumn`), not by tracking it.
         textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(width: RenderedTextView.maximumColumnWidth, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.containerSize = NSSize(width: Theme.renderedPageWidth ?? 900, height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = context.coordinator
         let scroll = NSScrollView()
         scroll.documentView = textView
@@ -141,8 +141,10 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 }
             }
             // Settings › Editor › Show minimap, while this view is open.
+            // and the page width.
             settingsObserver = NotificationCenter.default.addObserver(forName: Theme.editorSettingsDidChange, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
+                    (self?.textView as? RenderedTextView)?.updateColumn(force: true)
                     self?.minimap?.superview?.needsLayout = true
                     self?.minimap?.needsDisplay = true
                 }
@@ -333,18 +335,28 @@ final class RenderedTextView: NSTextView {
 
     @objc func addNoteFromMenu(_ sender: Any?) { controller?.source.onAddNote?() }
 
-    /// The notes list held its place while the window was resized; it follows the page again now.
+    /// Under a card floated over the page (Review), the card has the pointer, not the page's I-beam.
+    override func mouseMoved(with event: NSEvent) {
+        if isCovered(at: event) { return }
+        super.mouseMoved(with: event)
+    }
+
+    /// The notes list held its place while the window was resized; it follows the page again now, and a column held
+    /// back while the window grew takes its new width.
     override func viewDidEndLiveResize() {
         super.viewDidEndLiveResize()
+        updateColumn(force: true)
         onLayout?()
     }
 
-    /// The reading column: at most `maximumColumnWidth` wide, centred, with at least `minimumMargin` either side.
-    /// Centred by moving the container's origin, never by changing `textContainerInset` or letting the container
-    /// track the view's width: either makes TextKit lay the whole document out again on every step of a window
-    /// resize (#20), blanking and re-wrapping the text, while a column that keeps its width needs no layout at all.
+    /// The reading column: at most `maximumColumnWidth` wide (the page width setting, or the whole view when the
+    /// page fills the window), centred, with at least `minimumMargin` either side. Centred by moving the
+    /// container's origin, never by changing `textContainerInset` or letting the container track the view's width:
+    /// either makes TextKit lay the whole document out again on every step of a window resize (#20), blanking and
+    /// re-wrapping the text. So while the window is dragged wider the column only moves, and takes its new width
+    /// once, when the drag ends; dragged narrower it narrows at once, or it would be clipped.
     static let minimumMargin: CGFloat = 24
-    static let maximumColumnWidth: CGFloat = 780
+    static var maximumColumnWidth: CGFloat { Theme.renderedPageWidth ?? .greatestFiniteMagnitude }
 
     override var textContainerOrigin: NSPoint {
         let column = textContainer?.size.width ?? 0
@@ -356,13 +368,18 @@ final class RenderedTextView: NSTextView {
         updateColumn()
     }
 
-    /// Narrows the column only when the view is too narrow for the widest one; otherwise just re-centres it.
+    /// Sizes the column for the view and re-centres it; `force` after the page width setting changes or a resize ends.
     private var centredFor: CGFloat = -1
-    func updateColumn() {
-        guard let container = textContainer, bounds.width != centredFor else { return }
+    func updateColumn(force: Bool = false) {
+        guard let container = textContainer, force || bounds.width != centredFor else { return }
         centredFor = bounds.width
-        let column = max(1, min(Self.maximumColumnWidth, bounds.width - Self.minimumMargin * 2))
-        if container.size.width != column { container.size = NSSize(width: column, height: CGFloat.greatestFiniteMagnitude) }
+        var column = max(1, min(Self.maximumColumnWidth, bounds.width - Self.minimumMargin * 2))
+        if inLiveResize, column > container.size.width { column = container.size.width }
+        if container.size.width != column {
+            container.size = NSSize(width: column, height: CGFloat.greatestFiniteMagnitude)
+        }
+        // Tables are laid out again for the new width once, when a resize ends, not whenever a drag pauses.
+        if !inLiveResize { controller?.pageWidth = column }
         invalidateTextContainerOrigin()
     }
     weak var controller: MarkdownViewerController?
@@ -467,12 +484,46 @@ final class RenderedTextView: NSTextView {
 
     /// Copies plain text: code lines are joined by line separators and images are attachment characters, neither
     /// of which pastes well into a terminal or an editor.
+    /// A table's cells are copied in order, a tab between cells and a line between rows, however they wrapped.
     override func copy(_ sender: Any?) {
-        let text = selectedRanges.map { (string as NSString).substring(with: $0.rangeValue) }.joined(separator: "\n")
+        guard let storage = textStorage else { return super.copy(sender) }
+        let text = selectedRanges.map { Self.copiedText(storage.attributedSubstring(from: $0.rangeValue)) }.joined(separator: "\n")
         let plain = Self.plainText(text)
         guard !plain.isEmpty else { return super.copy(sender) }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(plain, forType: .string)
+    }
+
+    /// The selected text with each table's wrapped pieces put back together as rows of cells.
+    static func copiedText(_ selected: NSAttributedString) -> String {
+        var result = ""
+        var table: (id: Int, rows: [Int: [Int: String]])?
+        func flush() {
+            guard let finished = table else { return }
+            result += finished.rows.keys.sorted().map { row in
+                let cells = finished.rows[row] ?? [:]
+                return (0...(cells.keys.max() ?? 0)).map { cells[$0] ?? "" }.joined(separator: "\t")
+            }.joined(separator: "\n")
+            table = nil
+        }
+        let string = selected.string as NSString
+        selected.enumerateAttribute(MarkdownRenderer.tableCellKey, in: NSRange(location: 0, length: selected.length)) { value, range, _ in
+            guard let mark = value as? TableCellMark else {
+                flush()
+                result += string.substring(with: range)
+                return
+            }
+            if table?.id != mark.table {
+                flush()
+                table = (mark.table, [:])
+            }
+            if table?.rows[mark.row] == nil { table?.rows[mark.row] = [:] }
+            guard mark.column >= 0 else { return }
+            let cell = table?.rows[mark.row]?[mark.column]
+            table?.rows[mark.row]?[mark.column] = (cell.map { $0 + mark.joined } ?? "") + string.substring(with: range)
+        }
+        flush()
+        return result
     }
 
     static func plainText(_ rendered: String) -> String {

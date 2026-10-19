@@ -37,7 +37,7 @@ struct RenderedColumnTests {
             guard let window = textView.window else { return -1 }
             return textView.convert(window.convertFromScreen(screen), from: nil).minX
         }
-        #expect(abs(firstCharacterX() - (textView.bounds.width - 780) / 2) < 2, "centred")
+        #expect(abs(firstCharacterX() - (textView.bounds.width - RenderedTextView.maximumColumnWidth) / 2) < 2, "centred")
         let fragment = layoutManager.textLayoutFragment(for: layoutManager.documentRange.location)
 
         // A wider window moves the column; the text keeps the layout it had.
@@ -45,7 +45,7 @@ struct RenderedColumnTests {
         hosting.frame = NSRect(x: 0, y: 0, width: 1500, height: 500)
         hosting.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
-        #expect(abs(firstCharacterX() - (textView.bounds.width - 780) / 2) < 2, "still centred")
+        #expect(abs(firstCharacterX() - (textView.bounds.width - RenderedTextView.maximumColumnWidth) / 2) < 2, "still centred")
         #expect(layoutManager.textLayoutFragment(for: layoutManager.documentRange.location) === fragment, "not laid out again")
 
         // A pane narrower than the column narrows it.
@@ -55,6 +55,21 @@ struct RenderedColumnTests {
         window.displayIfNeeded()
         #expect((textView.textContainer?.size.width ?? 0) < 600)
         #expect(abs(firstCharacterX() - RenderedTextView.minimumMargin) < 2)
+        #expect(controller.pageWidth == textView.textContainer?.size.width, "the renderer hears the column's width, for tables")
 
+        // A page that fills the window grows with it.
+        let saved = Theme.renderedPageWidth
+        defer { Theme.renderedPageWidth = saved }
+        Theme.renderedPageWidth = nil
+        window.setContentSize(NSSize(width: 1500, height: 500))
+        hosting.frame = NSRect(x: 0, y: 0, width: 1500, height: 500)
+        hosting.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        #expect(textView.textContainer?.size.width == textView.bounds.width - RenderedTextView.minimumMargin * 2)
+
+        // A narrower page width takes effect at once.
+        Theme.renderedPageWidth = 640
+        #expect(textView.textContainer?.size.width == 640)
+        #expect(abs(firstCharacterX() - (textView.bounds.width - 640) / 2) < 2)
     }
 }
