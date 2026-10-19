@@ -6,6 +6,39 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.5</title>
+      <pubDate>Mon, 19 Oct 2026 18:43:17 GMT</pubDate>
+      <sparkle:version>429</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">The fifth beta: rendered Markdown that is easier to read, and tables that finally fit.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Tables with real columns.</strong> Columns keep their natural width when they fit; otherwise long cells wrap inside their column, and a word too long for any column (a URL, say) breaks rather than pushing the table off the page. Tables have column lines, a shaded header, striped rows and rounded corners, and HTML tables look the same. Notes, Find and highlights work in table cells, and copying table rows gives you tab-separated cells in order.</li>
+<li><strong>Rendered Markdown settings.</strong> Settings › Editor › Rendered Markdown sets the text size (12–20 pt), how wide tables may grow (600–1600 pt), or lets them fill the window.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li><strong>A comfortable line length.</strong> Text stops at about 90 characters, centered, however wide the window is, and grows with the text size. Tables wider than the text spread out on both sides of it.</li>
+<li><strong>More room to read.</strong> Lines are a little taller, headings and paragraphs have more space around them, and the spacing grows with the text size.</li>
+<li>The page lays itself out again once a window resize ends, without flickering while you drag.</li>
+</ul>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>The pointer over the Review card is an arrow again, not a text cursor.</li>
+<li>Accept and Accept All no longer stay disabled while a slow follow-up send is still going through. Accept All is now drawn as a button, not as gray text that looked disabled.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/colinc86/gloss/releases/download/v0.6.0-beta.5/Gloss-0.6.0-beta.5.zip" type="application/octet-stream" sparkle:edSignature="Z0glxUAulvcsfgG9BiCNGvX6z292CctuQsjvsqTgB4eVjbEHDh4h7cVaUzZUX0prZO1qZ8Tlc6dQpnK82mh0Aw==" length="29836036"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.4</title>
       <pubDate>Mon, 19 Oct 2026 01:58:02 GMT</pubDate>
       <sparkle:version>424</sparkle:version>
