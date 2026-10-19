@@ -272,7 +272,7 @@ private struct StatusBar: View {
         .foregroundStyle(.secondary)
         .monospacedDigit()
         .padding(.horizontal, DS.Space.m)
-        .padding(.vertical, DS.Space.xs)
+        .frame(height: DS.statusBarHeight)
         .animation(DS.Motion.snappy, value: session.isDirty)
     }
 

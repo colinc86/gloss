@@ -160,7 +160,7 @@ struct NotesPanel: View {
             }
             // Under the list, not over it, so no card scrolls behind it (and no path runs to one there).
             if panel.location.map({ !$0.exactDocument }) == true {
-                scopeBar
+                scopeBar(count: visible.reduce(0) { $0 + $1.notes.count })
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { scopeBarHeight = $0 }
                     .onDisappear { scopeBarHeight = 0 }
             }
@@ -231,21 +231,26 @@ struct NotesPanel: View {
     }
 
     /// This File or This Location: what the list shows. A location that is one document has nothing to choose.
-    private var scopeBar: some View {
+    /// Drawn like the viewer's status bar beside it: same height, divider and type, with the notes listed on the right.
+    private func scopeBar(count: Int) -> some View {
         @Bindable var panel = model.notesPanel
         return VStack(spacing: 0) {
             Divider()
-            Picker("Show notes from", selection: $panel.listScope) {
-                ForEach(NotesPanelModel.ListScope.allCases) { Text($0.title).tag($0) }
+            HStack(spacing: DS.Space.m) {
+                ScopeSwitch(selection: $panel.listScope)
+                Spacer(minLength: DS.Space.m)
+                if panel.location != nil, !panel.listsNoFile {
+                    Text(count == 1 ? "1 note" : "\(count) notes")
+                        .contentTransition(.numericText())
+                        .animation(DS.Motion.snappy, value: count)
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .controlSize(.small)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .help("List the open file's notes, or every file's in this location")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
+            .padding(.horizontal, DS.Space.m)
+            .frame(height: DS.statusBarHeight)
         }
-        .background(.bar)
     }
 
     private var header: some View {
@@ -2285,5 +2290,37 @@ private struct IterationRunHeader: View {
             .listRowSeparator(.hidden)
             .selectionDisabled()
             .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// This File | This Location as two words, one highlighted, in the style of the status bar's toggles.
+private struct ScopeSwitch: View {
+    @Binding var selection: NotesPanelModel.ListScope
+    @State private var hovered: NotesPanelModel.ListScope?
+
+    var body: some View {
+        HStack(spacing: DS.Space.xxs) {
+            ForEach(NotesPanelModel.ListScope.allCases) { scope in
+                let isOn = scope == selection
+                Button { selection = scope } label: {
+                    Text(scope.title)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(isOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(hovered == scope ? .primary : .secondary))
+                        .padding(.horizontal, DS.Space.s)
+                        .frame(height: 16)
+                        .background(isOn ? Color.accentColor.opacity(0.14) : hovered == scope ? Color.primary.opacity(0.08) : .clear,
+                                    in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableStyle())
+                .onHover { hovered = $0 ? scope : (hovered == scope ? nil : hovered) }
+                .help(scope == .file ? "List the open file's notes" : "List the notes on every file in this location")
+                .accessibilityAddTraits(isOn ? .isSelected : [])
+            }
+        }
+        .animation(DS.Motion.snappy, value: selection)
+        .animation(DS.Motion.snappy, value: hovered)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Show notes from")
     }
 }

@@ -22,6 +22,9 @@ enum DS {
         static let l: CGFloat = 12
     }
 
+    /// The strips under the viewer and under the notes list share one height, so their dividers line up.
+    static let statusBarHeight: CGFloat = 24
+
     /// Motion is quick and physical: snappy for direct feedback (hover, press), smooth for content that moves.
     /// See `Viewers.Motion`: the same curves, calmed when Reduce Motion is on.
     enum Motion {

@@ -493,8 +493,11 @@ path. Dropping on the Dock icon is not supported yet.
   every note is drawn. Show Resolved Notes (the sort menu, and View) off takes resolved notes out of every tab but
   Resolved, open or closed; a question back from an agent stays. A note revealed from elsewhere that the filters
   hide brings itself into the list (All, resolved shown), so a selected note is never invisible.
-- **This File | This Location** (2026-10-18): a small segmented control in a bar at the bottom of the notes panel,
-  under the toasts, chooses what the list shows: the document in front's notes or every file's in the location.
+- **This File | This Location** (2026-10-18): a bar at the bottom of the notes panel, under the toasts, drawn like the
+  viewer's status bar beside it (same 24-pt height, divider and caption type, so the two read as one strip). On the
+  left, two words with one highlighted in the status bar toggles' style (accent text on a faint accent chip) choose
+  what the list shows: the document in front's notes or every file's in the location. On the right, "N notes": how
+  many the list shows.
   Remembered (`notes.listScope`), This Location by default; hidden when the location is one document. With This
   File and no file open the list says "No file open"; with a file and no notes, "No notes in this file". Send's own
   scope, in its menu, is separate (`NotesPanelModel.filteredGroups`), as are the page's highlights.
