@@ -25,7 +25,9 @@ final class ReviewModel {
     private(set) var index = 0
     private(set) var isActive = false
     /// A write is under way: the bar's actions wait for it, so a second press acts on nothing twice.
+    /// Saving an accept or a follow-up: the card waits for it.
     private(set) var isBusy = false
+    private(set) var isSending = false
     /// Notes accepted or followed up in this review: done here, whatever the panel's observation still says.
     private var settled: Set<NoteID> = []
 
@@ -121,12 +123,14 @@ final class ReviewModel {
     /// Whether the note on screen was accepted or followed up in this review (or elsewhere since it began).
     var isCurrentReviewed: Bool { current.map { !isPending($0.note.id) } ?? false }
 
-    /// Sends the follow-ups written during this review, in one packet.
+    /// Sends the follow-ups written during this review, in one packet. It doesn't make the card busy: a send can take
+    /// a long time (staging on a slow host, an agent that is slow to take it), and this model outlives the review, so
+    /// it kept Accept disabled in the next review until it ended. The Send button waits on the send itself.
     func sendFollowUps() async {
         let ids = unsentFollowUps
-        guard !isBusy, !ids.isEmpty else { return }
-        isBusy = true
-        defer { isBusy = false }
+        guard !isSending, !ids.isEmpty else { return }
+        isSending = true
+        defer { isSending = false }
         await send(ids)
     }
 

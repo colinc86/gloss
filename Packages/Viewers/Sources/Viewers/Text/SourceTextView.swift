@@ -164,6 +164,11 @@ public final class SourceTextView: NSTextView {
     }
 
     override public func mouseMoved(with event: NSEvent) {
+        // Under a card floated over the document (Review), the card has the pointer: no I-beam, no peeks.
+        if isCovered(at: event) {
+            onHoverCharacter?(nil, nil)
+            return
+        }
         super.mouseMoved(with: event)
         // No peeks while a button is down (selecting) or text is selected.
         guard NSEvent.pressedMouseButtons == 0, selectedRange().length == 0 else {
@@ -453,5 +458,15 @@ public final class SourceTextView: NSTextView {
         guard shouldChangeText(in: range, replacementString: string) else { return }
         textStorage?.replaceCharacters(in: range, with: string)
         didChangeText()
+    }
+}
+
+extension NSView {
+    /// Whether a view floated over the window's content (a card added beside the content view, such as Review)
+    /// is what the pointer is over, not this view. Tracking areas and cursor rects don't know what lies on top, so
+    /// a text view under such a card would set its I-beam there on every move.
+    func isCovered(at event: NSEvent) -> Bool {
+        guard let frameView = window?.contentView?.superview, let hit = frameView.hitTest(event.locationInWindow) else { return false }
+        return !hit.isDescendant(of: self)
     }
 }

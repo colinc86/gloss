@@ -32,6 +32,8 @@ struct ReviewBar: View {
         .overlay(alignment: .top) { progress }
         .readableGlass(in: Self.shape)
         .clipShape(Self.shape)
+        // The card floats above the document in its own host; without this the text's I-beam shows through.
+        .pointerStyle(.default)
         .shadow(color: .black.opacity(0.2), radius: 12, y: 5)
         .frame(maxWidth: 560)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(ReviewOverlay.space)) } action: { onCardFrameChange($0) }
@@ -169,8 +171,8 @@ struct ReviewBar: View {
     @ViewBuilder
     private var acceptAll: some View {
         if review.remaining.count > 1 {
-            Button { confirmingAcceptAll = true } label: { Text("Accept All…").foregroundStyle(.secondary) }
-                .buttonStyle(.borderless)
+            // A plain button, not grey text: grey read as disabled.
+            Button("Accept All…") { confirmingAcceptAll = true }
                 .help("Accept every note left in this review")
         }
     }
@@ -273,7 +275,7 @@ struct ReviewBar: View {
                     Button("Done") { review.end() }
                     Button(followUps == 1 ? "Send Follow-Up" : "Send \(followUps) Follow-Ups") { Task { await review.sendFollowUps() } }
                         .buttonStyle(.glassProminent)
-                        .disabled(!model.send.isTargetAvailable || model.send.isSending)
+                        .disabled(!model.send.isTargetAvailable || model.send.isSending || review.isSending)
                         .help(model.send.lastTarget.map { "Send the follow-ups you wrote to \($0.label)" } ?? "Choose an agent to send to")
                 } else {
                     Button("Done") { review.end() }
