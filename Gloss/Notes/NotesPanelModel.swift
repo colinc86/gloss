@@ -217,6 +217,33 @@ final class NotesPanelModel {
     @ObservationIgnored var searchFocusPending = false
     /// Empty means every color.
     var colorFilter: Set<NoteColor> = []
+    // MARK: Whole-file composer
+
+    /// The file a composer note is for.
+    struct ComposerKey: Hashable {
+        let hostID: HostID
+        let path: String
+    }
+
+    /// The composer under the list is open.
+    var composerExpanded = false
+    /// Bumped to put the caret in the composer's field.
+    var composerFocusRequest = 0
+    /// Opened and not yet shown: the field takes the caret when it appears, and only then, so a composer rebuilt for
+    /// another file or a panel shown again never takes the keyboard from the page.
+    @ObservationIgnored var composerFocusPending = false
+    /// Text typed into the composer and not yet added, by file, until the app quits.
+    var composerDrafts: [ComposerKey: String] = [:]
+    /// A note the list scrolls to once it is listed: the one the composer just added.
+    var scrollTarget: NoteID?
+
+    /// Opens the composer with the caret in it.
+    func openComposer() {
+        composerExpanded = true
+        composerFocusPending = true
+        composerFocusRequest += 1
+    }
+
     /// The selected cards: one by a click, several by ⌘-click, ⇧-click or ⌘A (issue #8).
     var selection: Set<NoteID> = [] {
         didSet {

@@ -2299,6 +2299,24 @@ final class AppModel {
         }
     }
 
+    /// A whole-file note on `session`'s file, from the notes panel's composer. The new card is selected and the list
+    /// scrolls to it, unless another file came to the front meanwhile; false when the file takes no note now.
+    func addWholeFileNote(in session: DocumentSession, body: String, color: NoteColor) async -> Bool {
+        guard let note = await session.addWholeFileNote(body: body, color: color) else { return false }
+        if activeSession === session {
+            notesPanel.selectedNoteID = note.id
+            notesPanel.scrollTarget = note.id
+        }
+        return true
+    }
+
+    /// Opens the notes panel's composer for a note on the whole file in front.
+    func beginWholeFileNote() {
+        guard activeSession?.canAddNotes == true else { return }
+        showNotesPanel = true
+        notesPanel.openComposer()
+    }
+
     /// A whole-file note from the explorer's context menu. An open session for the file picks it up through its
     /// note observation.
     func createWholeFileNote(hostID: HostID, path: String, body: String, color: NoteColor) async {

@@ -35,6 +35,7 @@ struct NotesPanel: View {
             .filter { $0.count > 1 }
             .map { $0.map { NoteLinkModel.SelectedCard(id: $0.id, color: $0.color) } }
         let inRuns = Set(selectionRuns.joined().map(\.id))
+        let listsScrollTarget = panel.scrollTarget.map { target in visible.contains { $0.notes.contains { $0.id == target } } } == true
         VStack(spacing: 0) {
             header
             Divider()
@@ -152,17 +153,36 @@ struct NotesPanel: View {
                 .onChange(of: selectionRuns, initial: true) { _, runs in model.noteLink.selectionRuns = runs }
                 .onChange(of: listFocused && controlActiveState == .key, initial: true) { _, active in model.noteLink.listActive = active }
                 .onDisappear { model.noteLink.selectionRuns = [] }
+                // A note just added from the composer comes into view once it is listed.
+                .onChange(of: listsScrollTarget, initial: true) { _, listed in
+                    guard listed, let id = panel.scrollTarget else { return }
+                    panel.scrollTarget = nil
+                    withAnimation(Motion.isReduced ? nil : DS.Motion.smooth) { proxy.scrollTo(id, anchor: .center) }
+                }
                 .onChange(of: model.noteLink.focusRequest) {
                     guard let id = model.noteLink.focusNoteID else { return }
                     withAnimation(Motion.isReduced ? nil : DS.Motion.smooth) { proxy.scrollTo(id, anchor: .center) }
                 }
                 }
             }
-            // Under the list, not over it, so no card scrolls behind it (and no path runs to one there).
-            if panel.location.map({ !$0.exactDocument }) == true {
-                scopeBar(count: visible.reduce(0) { $0 + $1.notes.count })
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { scopeBarHeight = $0 }
-                    .onDisappear { scopeBarHeight = 0 }
+            // Under the list, not over it, so no card scrolls behind it (and no path runs to one there). The composer
+            // opens above the bar, pushing the list up rather than covering its last cards.
+            let showsSwitch = panel.location.map({ !$0.exactDocument }) == true
+            let session = model.activeSession
+            if showsSwitch || session != nil {
+                VStack(spacing: 0) {
+                    if panel.composerExpanded, let session {
+                        Divider()
+                        WholeFileComposer(session: session)
+                            .id("\(session.hostID.rawValue)|\(session.path)|\(session.pastIteration ?? -1)")
+                            .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
+                    }
+                    scopeBar(count: visible.reduce(0) { $0 + $1.notes.count }, showsSwitch: showsSwitch, session: session)
+                }
+                .clipped()
+                .animation(DS.Motion.snappy, value: panel.composerExpanded)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { scopeBarHeight = $0 }
+                .onDisappear { scopeBarHeight = 0 }
             }
         }
         .overlay(alignment: .bottom) {
@@ -230,20 +250,22 @@ struct NotesPanel: View {
         }
     }
 
-    /// This File or This Location: what the list shows. A location that is one document has nothing to choose.
-    /// Drawn like the viewer's status bar beside it: same height, divider and type, with the notes listed on the right.
-    private func scopeBar(count: Int) -> some View {
+    /// This File or This Location: what the list shows (a location that is one document has nothing to choose), and
+    /// the composer's toggle. Drawn like the viewer's status bar beside it: same height, divider and type, with the
+    /// notes listed on the right.
+    private func scopeBar(count: Int, showsSwitch: Bool, session: DocumentSession?) -> some View {
         @Bindable var panel = model.notesPanel
         return VStack(spacing: 0) {
             Divider()
             HStack(spacing: DS.Space.m) {
-                ScopeSwitch(selection: $panel.listScope)
+                if showsSwitch { ScopeSwitch(selection: $panel.listScope) }
                 Spacer(minLength: DS.Space.m)
                 if panel.location != nil, !panel.listsNoFile {
                     Text(count == 1 ? "1 note" : "\(count) notes")
                         .contentTransition(.numericText())
                         .animation(DS.Motion.snappy, value: count)
                 }
+                if session != nil { ComposerToggle(session: session) }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -2290,6 +2312,139 @@ private struct IterationRunHeader: View {
             .listRowSeparator(.hidden)
             .selectionDisabled()
             .accessibilityAddTraits(.isHeader)
+    }
+}
+
+/// Opens and closes the composer, in the bar's own quiet style; a dot while it holds text not yet added.
+private struct ComposerToggle: View {
+    @Environment(AppModel.self) private var model
+    let session: DocumentSession?
+    @State private var hovered = false
+
+    var body: some View {
+        let panel = model.notesPanel
+        let isOn = panel.composerExpanded
+        let enabled = session?.canAddNotes == true
+        let waiting = session.map { panel.composerDrafts[.init(hostID: $0.hostID, path: $0.path)]?.isEmpty == false } ?? false
+        Button {
+            if isOn { panel.composerExpanded = false } else { panel.openComposer() }
+        } label: {
+            Image(systemName: "note.text.badge.plus")
+                .fontWeight(.semibold)
+                .foregroundStyle(isOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(hovered && enabled ? .primary : .secondary))
+                .frame(width: 24, height: 16)
+                .background(isOn ? Color.accentColor.opacity(0.14) : hovered && enabled ? Color.primary.opacity(0.08) : .clear,
+                            in: RoundedRectangle(cornerRadius: DS.Radius.s, style: .continuous))
+                .overlay(alignment: .topTrailing) {
+                    if waiting, !isOn {
+                        Circle().fill(Color.accentColor).frame(width: 5, height: 5).offset(x: -1, y: 1)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .disabled(!enabled && !isOn)
+        .onHover { hovered = $0 }
+        .help(!enabled && !isOn ? "This file takes no notes now" : isOn ? "Close the note on the whole file" : "Note on the whole file (⌥⇧⌘N)")
+        .accessibilityLabel("Note on the whole file")
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .animation(DS.Motion.snappy, value: hovered)
+        .animation(DS.Motion.snappy, value: waiting)
+    }
+}
+
+/// A note about the file in front as a whole, rather than a passage of it: written here, under the list, and added to
+/// the drafts like any note. The packet names the file with `Whole file` in place of a quote, so the agent reads it.
+private struct WholeFileComposer: View {
+    @Environment(AppModel.self) private var model
+    let session: DocumentSession
+    @State private var color: NoteColor
+    @State private var adding = false
+
+    init(session: DocumentSession) {
+        self.session = session
+        _color = State(initialValue: session.lastUsedColor)
+    }
+
+    private var key: NotesPanelModel.ComposerKey { .init(hostID: session.hostID, path: session.path) }
+
+    var body: some View {
+        let panel = model.notesPanel
+        let text = Binding(get: { panel.composerDrafts[key] ?? "" },
+                           set: { panel.composerDrafts[key] = $0.isEmpty ? nil : $0 })
+        let tint = Color(nsColor: Theme.color(for: color))
+        let blank = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            HStack(spacing: DS.Space.s) {
+                Label("Whole file · \((session.path as NSString).lastPathComponent)", systemImage: Anchor.wholeFile.symbol)
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, DS.Space.s)
+                    .padding(.vertical, DS.Space.xxs)
+                    .background(tint.opacity(0.14), in: Capsule())
+                    .help("The note is about the whole file; the agent reads it")
+                Spacer(minLength: DS.Space.s)
+                InlineIconButton(title: "Close", symbol: "chevron.down", emphasized: false) { panel.composerExpanded = false }
+            }
+            ZStack(alignment: .topLeading) {
+                NoteBodyEditor(text: text, onSubmit: { add(text) }, onCancel: { panel.composerExpanded = false },
+                               focusesOnAppear: false, focusRequest: panel.composerFocusRequest,
+                               commandReturnSubmits: true, label: "Note on the whole file")
+                if text.wrappedValue.isEmpty {
+                    Text("What should the agent know about this file?")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 5)
+                        .padding(.top, 2)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .frame(minHeight: 44, maxHeight: 120)
+            .padding(DS.Space.s)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(tint.opacity(0.45), lineWidth: 1))
+            .animation(DS.Motion.snappy, value: text.wrappedValue.isEmpty)
+            HStack(spacing: DS.Space.m) {
+                ColorSwatches(selection: $color)
+                Spacer(minLength: DS.Space.s)
+                Button("Add Note") { add(text) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(blank || adding || !session.canAddNotes)
+                    .help(session.canAddNotes ? "Add to the drafts (Return)" : "This file takes no notes now")
+            }
+        }
+        .padding(DS.Space.m)
+        .animation(DS.Motion.smooth, value: color)
+        .onAppear {
+            // Just opened: the caret goes in now that the field exists.
+            guard panel.composerFocusPending else { return }
+            panel.composerFocusPending = false
+            panel.composerFocusRequest += 1
+        }
+    }
+
+    private func add(_ text: Binding<String>) {
+        let body = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, !adding else { return }
+        let submitted = text.wrappedValue
+        let session = session
+        adding = true
+        Task {
+            if await model.addWholeFileNote(in: session, body: body, color: color) {
+                // Text typed while the note was being added stays, and so does the composer.
+                if text.wrappedValue == submitted {
+                    text.wrappedValue = ""
+                    if model.activeSession === session { model.notesPanel.composerExpanded = false }
+                }
+            }
+            adding = false
+        }
     }
 }
 

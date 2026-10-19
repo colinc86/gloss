@@ -228,6 +228,10 @@ struct NoteBodyEditor: NSViewRepresentable {
     var focusRequest = 0
     /// The note whose card the field is in, so the notes list knows whose keyboard it is.
     var owner: NoteID? = nil
+    /// ⌘↩ submits too, ahead of the menu's Send: a field whose text is not a note yet would otherwise be left behind.
+    var commandReturnSubmits = false
+    /// What VoiceOver calls the field; the placeholder drawn over it is not read.
+    var label: String? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = SubmitTextView()
@@ -249,6 +253,8 @@ struct NoteBodyEditor: NSViewRepresentable {
         textView.onCancel = onCancel
         textView.focusesOnAppear = focusesOnAppear
         textView.owner = owner
+        textView.commandReturnSubmits = commandReturnSubmits
+        if let label { textView.setAccessibilityLabel(label) }
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
@@ -304,6 +310,17 @@ struct NoteBodyEditor: NSViewRepresentable {
         var onCancel: () -> Void = {}
         var focusesOnAppear = true
         var owner: NoteID?
+        var commandReturnSubmits = false
+
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if commandReturnSubmits, window?.firstResponder === self, modifiers == .command,
+               event.charactersIgnoringModifiers == "\r" {
+                onSubmit()
+                return true
+            }
+            return super.performKeyEquivalent(with: event)
+        }
 
         /// Escape. NSTextView would otherwise take it for word completion, so it never reached Cancel.
         override func cancelOperation(_ sender: Any?) {

@@ -719,5 +719,15 @@ struct NoteInlineEditTests {
         #expect(await panel.update(note.id, body: "mine", color: .blue, editedFrom: "better words") == .changedMeanwhile)
         #expect(try await store.note(note.id)?.body == "better words\nAgent asked: why?")
     }
-}
 
+    @Test func theComposerOpensFocusedAndKeepsTextPerFile() throws {
+        let panel = NotesPanelModel(noteStore: NoteStore(database: try AppDatabase.inMemory()))
+        #expect(!panel.composerExpanded)
+        panel.openComposer()
+        #expect(panel.composerExpanded && panel.composerFocusRequest == 1)
+        let one = NotesPanelModel.ComposerKey(hostID: .local, path: "/tmp/one.md")
+        let two = NotesPanelModel.ComposerKey(hostID: .local, path: "/tmp/two.md")
+        panel.composerDrafts[one] = "About one"
+        #expect(panel.composerDrafts[two] == nil, "each file keeps its own unsent text")
+    }
+}

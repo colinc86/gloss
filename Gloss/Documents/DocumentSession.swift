@@ -1680,6 +1680,25 @@ final class DocumentSession: Identifiable {
         noteEditor = NoteEditorState(existingID: note.id, anchor: note.anchor, body: note.body, color: note.color, anchorRect: rect, columns: columns)
     }
 
+    /// Whether a note can be added now: on the iteration in progress, to a document that takes notes.
+    var canAddNotes: Bool { pastIteration == nil && document != nil && mayAddNotes() }
+
+    /// A note on the whole file, from the notes panel's composer: a draft like any other, with no selection to
+    /// clear and nothing to crop. Nil when no note can be added now.
+    func addWholeFileNote(body: String, color: NoteColor) async -> Note? {
+        guard canAddNotes, let document else { return nil }
+        lastUsedColor = color
+        do {
+            await beforeCreatingNote(document.id)
+            let note = try await noteStore.createNote(documentID: document.id, anchor: .wholeFile, body: body, color: color)
+            onNoteCommitted(note)
+            return note
+        } catch {
+            lastError = "Adding the note failed: \(error.userMessage)"
+            return nil
+        }
+    }
+
     func commitNote(_ state: NoteEditorState) async {
         guard let document else { return }
         lastUsedColor = state.color
@@ -1829,6 +1848,18 @@ final class DocumentSession: Identifiable {
         if let csv = csvController, case .text = note.anchor {
             // Its cells, columns or records in the grid, which shows no text to select.
             csv.show(note.id)
+            return
+        }
+        if case .wholeFile = note.anchor {
+            // Browsing past the card leaves the page alone; revealing it (a review step) shows the file from its top.
+            guard select else { return }
+            if let pdf = pdfController {
+                pdf.scroll(toPage: 0, bounds: nil)
+            } else if let markdown, markdown.mode == .rendered {
+                markdown.scroll(toSource: NSRange(location: 0, length: 0), select: false, atTop: true)
+            } else if let controller = textController {
+                controller.scroll(to: NSRange(location: 0, length: 0), select: false, atTop: true)
+            }
             return
         }
         guard let controller = textController, let range = controller.highlights.first(where: { $0.id == note.id })?.range else { return }

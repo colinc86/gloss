@@ -255,6 +255,10 @@ struct AppCommands: Commands {
         Button { model.beginNoteInMainWindow() } label: { Label("New Note from Selection", systemImage: "note.text.badge.plus") }
             .keyboardShortcut(model.selectionAwaitsNote ? KeyboardShortcut(.return, modifiers: .command) : KeyboardShortcut("n", modifiers: [.command, .shift]))
             .disabled(model.activeSession == nil || model.isShowingPastIteration)
+        // The notes panel's composer: a note about the whole file rather than a passage of it.
+        Button { model.beginWholeFileNote() } label: { Label("New Note on Whole File", systemImage: "doc.badge.plus") }
+            .keyboardShortcut("n", modifiers: [.command, .option, .shift])
+            .disabled(model.activeSession?.canAddNotes != true)
         // The rendered page's pick mode, for any element; pictures need no mode.
         let page = model.activeSession?.html
         Toggle(isOn: Binding(get: { page?.isNoteMode ?? false }, set: { page?.isNoteMode = $0 })) {

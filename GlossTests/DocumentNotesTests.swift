@@ -56,6 +56,32 @@ struct DocumentNotesTests {
         session.close()
     }
 
+    /// The notes panel's composer: a draft on the whole file, leaving the reader's selection where it was.
+    @Test func aWholeFileNoteFromTheComposerIsADraftOnTheFile() async throws {
+        let (directory, path) = try makeFile("one\ntwo\nthree\n")
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (session, store) = try makeSession(path: path)
+        await session.open()
+        let controller = try #require(session.textController)
+        session.markdown?.mode = .source
+        let selected = controller.lineIndex.contentRange(ofLine: 2)
+        controller.selection = selected
+        #expect(session.canAddNotes)
+        let note = try #require(await session.addWholeFileNote(body: "Tighten the whole thing", color: .blue))
+        #expect(note.anchor == .wholeFile && note.state == .draft && note.body == "Tighten the whole thing")
+        #expect(session.lastUsedColor == .blue)
+        #expect(controller.selection == selected, "the selection is not the note's, so it stays")
+        #expect(try await store.notes(for: note.documentID).map(\.id) == [note.id])
+        await waitUntil { session.notes.contains { $0.id == note.id } }
+        session.close()
+
+        let past = DocumentSession(hostID: .local, path: path, fileSystem: LocalFileSystem(deleteBehavior: .permanent), noteStore: store, pastIteration: 1)
+        await past.open()
+        #expect(!past.canAddNotes)
+        #expect(await past.addWholeFileNote(body: "No", color: .blue) == nil, "an earlier iteration takes no new notes")
+        past.close()
+    }
+
     @Test func liveShiftPersistsOnSave() async throws {
         let (directory, path) = try makeFile("one\ntwo\nthree\n")
         defer { try? FileManager.default.removeItem(atPath: directory) }
