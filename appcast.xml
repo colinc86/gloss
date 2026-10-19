@@ -6,6 +6,32 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.4</title>
+      <pubDate>Mon, 19 Oct 2026 01:58:02 GMT</pubDate>
+      <sparkle:version>424</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">The fourth beta: choose whether the notes panel lists the file in front or the whole location.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>This File | This Location.</strong> A bar at the bottom of the notes panel switches the list between the notes on the file you're looking at and the notes on every file in the location. Gloss remembers your choice; This Location is the default. It changes only the list: Send keeps its own This File / This Location in its menu.</li>
+<li><strong>A note count.</strong> The same bar shows how many notes the list is showing, with your filters and search applied.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li>The bar under the viewer keeps one height, so it no longer shifts when the follow and path buttons appear.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/colinc86/gloss/releases/download/v0.6.0-beta.4/Gloss-0.6.0-beta.4.zip" type="application/octet-stream" sparkle:edSignature="MFpxu5fUP4MYeHovUZrP2FI7IfL3uX6vkMqOLGMRgZEjJ9vZwl0M47gnxab9vQ3PfOoTpG9ODU+7vgUk6aEoAw==" length="29786953"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.3</title>
       <pubDate>Thu, 15 Oct 2026 01:53:41 GMT</pubDate>
       <sparkle:version>419</sparkle:version>
