@@ -18,7 +18,7 @@ import Observation
 
 extension Theme {
     public static func editorFont(for appearance: NSAppearance) -> NSFont {
-        ActiveCodeTheme.theme(for: appearance).font.resolved(defaultSize: editorFontSize)
+        ActiveCodeTheme.theme(for: appearance).font.resolved(defaultSize: fontSize)
     }
     public static func lineSpacing(for appearance: NSAppearance) -> CGFloat {
         CGFloat(ActiveCodeTheme.theme(for: appearance).font.lineSpacing ?? 1)

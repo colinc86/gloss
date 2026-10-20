@@ -63,8 +63,8 @@ without `.calmed`. Tests set `Motion.reducedOverride`.
 UI typography stays system: body text `.callout` in panels; metadata `.caption` medium, monospaced digits for
 line numbers; pills `.caption2` semibold. Secondary information uses `.secondary`, never a smaller size alone.
 Code pages and rendered code blocks use the active syntax theme's optional font family, size and token traits
-(2026-10-13); an unset size uses Editor's Default code font size. Gloss keeps its existing source font and its
-normally 13 pt rendered fences. Rendered prose keeps its own font; inline code uses the theme family at its
+(2026-10-13); an unset size uses Editor's Font size, the one base size for all content (2026-10-19). Rendered
+fences are 0.9× the page's text (12 pt at the default 13). Rendered prose keeps its own font; inline code uses the theme family at its
 prose-relative size. Quoted code in UI surfaces keeps UI sizing. Themes never change the chrome's typography.
 
 ## Accessibility
@@ -1138,7 +1138,7 @@ path. Dropping on the Dock icon is not supported yet.
   with “Reading theme…” while parsing, quiet file problems and the Theme palette licenses disclosure below.
   Changing a picker restyles open code immediately; an inactive choice changes its preview until that appearance
   is active. Missing/broken files say “Solar Copy isn't available. Using Gloss.” without a document banner;
-  preserving the chosen id lets a repaired file return. Editor keeps Default code font size, wrap, guides and minimap.
+  preserving the chosen id lets a repaired file return. Editor keeps Font size, page width, wrap, guides and minimap.
 - **Theme editor** (2026-10-13): a fitted, resizable sheet, 760 × 580 pt initially, up to 1100 × 900 pt. Name has
   initial focus, beside Light/Dark Appearance; the title is Edit Theme, Duplicate Theme or Import Theme. An
   `HSplitView` keeps Tokens | Editor | Font controls at the left and Code | Markdown | Diff preview at the right.

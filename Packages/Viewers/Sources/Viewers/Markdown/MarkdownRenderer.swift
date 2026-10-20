@@ -44,12 +44,12 @@ public struct MarkdownRenderer {
     /// draws a source meant for reduced motion. `diagrams` are Mermaid blocks already drawn (or refused), by their
     /// source; any other Mermaid block shows as code until it is.
     /// Text and tables fit `columnWidth` (the page's width; `defaultPageWidth` when it is not known yet), and
-    /// text is `readingSize` points (`Theme.readingFontSize` by default). A table that can't fit without breaking
+    /// text is `readingSize` points (`Theme.fontSize` by default). A table that can't fit without breaking
     /// its words keeps its width and scrolls sideways within the column (`MarkdownTableScroll`).
     public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], diagrams: [String: MermaidRenderer.Result] = [:],
                               reduceMotion: Bool = false, codeTheme: CodeTheme? = nil, codeAppearance: NSAppearance.Name? = nil,
                               columnWidth: CGFloat? = nil, readingSize: CGFloat? = nil) -> Output {
-        readingFontSize = readingSize ?? Theme.readingFontSize
+        readingFontSize = readingSize ?? Theme.fontSize
         let document = Document(parsing: source, options: [.disableSmartOpts])
         let column = max(1, columnWidth ?? defaultPageWidth)
         func walk(inset: CGFloat) -> Walker {
@@ -165,7 +165,8 @@ public struct MarkdownRenderer {
             if monospaced {
                 let size = (self.font.pointSize * 0.9).rounded()
                 if let theme = codeTheme {
-                    if blockCode { font = theme.font.resolved(defaultSize: theme.id == "gloss" ? size : Theme.editorFontSize) }
+                    // Code in a page is a step smaller than its text, unless the theme sets a size of its own.
+                    if blockCode { font = theme.font.resolved(defaultSize: size) }
                     else { var family = theme.font; family.size = nil; font = family.resolved(defaultSize: size) }
                 } else { font = MarkdownRenderer.codeFont.withSize(size) }
             }
@@ -500,7 +501,7 @@ public struct MarkdownRenderer {
             openBlock(gapOverride: 6)
             let saved = style
             style.color = .secondaryLabelColor
-            style.font = NSFont.systemFont(ofSize: 12)
+            style.font = NSFont.systemFont(ofSize: (MarkdownRenderer.readingFontSize * 12 / 14).rounded())
             if let symbol = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "Diagram error")?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(paletteColors: [.secondaryLabelColor])) {
                 let attachment = NSTextAttachment()

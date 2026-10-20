@@ -276,13 +276,12 @@ public final class MarkdownViewerController {
     @ObservationIgnored private var renderedColumn: (width: CGFloat, inset: CGFloat) = (0, 0)
     @ObservationIgnored private var codeThemeObservers: [any NSObjectProtocol] = []
     @ObservationIgnored private var lastCodeTheme: CodeTheme?
-    @ObservationIgnored private var lastCodeFontSize: CGFloat = 0
-    @ObservationIgnored private var lastReadingSize: CGFloat = 0
+    @ObservationIgnored private var lastFontSize: CGFloat = 0
     @ObservationIgnored private var themeRebuildPending = false
     private func codeThemeChanged() {
         let appearance = NSAppearance(named: darkDiagrams ? .darkAqua : .aqua) ?? Theme.effectiveAppearance
         let theme = ActiveCodeTheme.theme(for: appearance)
-        guard theme != lastCodeTheme || lastCodeFontSize != Theme.editorFontSize || lastReadingSize != Theme.readingFontSize else { return }
+        guard theme != lastCodeTheme || lastFontSize != Theme.fontSize else { return }
         guard mode == .rendered else { renderOwed = true; return }
         guard !themeRebuildPending else { return }
         themeRebuildPending = true
@@ -303,8 +302,7 @@ public final class MarkdownViewerController {
         renderedContentVersion = source.contentVersion
         let codeAppearance: NSAppearance.Name = darkDiagrams ? .darkAqua : .aqua
         lastCodeTheme = ActiveCodeTheme.theme(for: NSAppearance(named: codeAppearance) ?? Theme.effectiveAppearance)
-        lastCodeFontSize = Theme.editorFontSize
-        lastReadingSize = Theme.readingFontSize
+        lastFontSize = Theme.fontSize
         let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion,
                                              codeAppearance: codeAppearance, columnWidth: columnWidth)
         hasTables = output.hasTables

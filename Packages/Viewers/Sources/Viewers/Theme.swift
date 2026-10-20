@@ -82,8 +82,12 @@ public enum Theme {
 
     /// Settings > Editor. Open editors restyle as soon as one changes (`editorSettingsDidChange`), so a setting is
     /// seen while it is being adjusted.
-    public static var editorFontSize: CGFloat = 12.5 {
-        didSet { if oldValue != editorFontSize { announceEditorSettings() } }
+    ///
+    /// The base size of everything shown in a font of Gloss's choosing: code and text, a Markdown file's source and
+    /// its rendered page, a spreadsheet's cells. What is sized relative to it (headings, code in a page, line
+    /// numbers) scales with it; what sets its own size exactly (a code theme's font size, a web page, a PDF) keeps it.
+    public static var fontSize: CGFloat = 13 {
+        didSet { if oldValue != fontSize { announceEditorSettings() } }
     }
     public static var wrapsLines = true {
         didSet { if oldValue != wrapsLines { announceEditorSettings() } }
@@ -94,13 +98,10 @@ public enum Theme {
     public static var showsMinimap = true {
         didSet { if oldValue != showsMinimap { announceEditorSettings() } }
     }
-    /// The widest the rendered Markdown page (its text and tables) grows; nil fills the window.
+    /// The widest a rendered page (Markdown, a Jira issue, a Confluence page: its text and tables) grows; nil fills
+    /// the window.
     public static var renderedPageWidth: CGFloat? = 900 {
         didSet { if oldValue != renderedPageWidth { announceEditorSettings() } }
-    }
-    /// Rendered Markdown's body size; headings and inline code scale with it.
-    public static var readingFontSize: CGFloat = 14 {
-        didSet { if oldValue != readingFontSize { announceEditorSettings() } }
     }
 
     public static let editorSettingsDidChange = Notification.Name("Viewers.editorSettingsDidChange")
@@ -115,7 +116,8 @@ public enum Theme {
         editorFont(for: effectiveAppearance)
     }
 
+    /// Line numbers, a step smaller than the code beside them.
     public static var gutterFont: NSFont {
-        NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        NSFont.monospacedDigitSystemFont(ofSize: (fontSize * 0.84 * 2).rounded() / 2, weight: .regular)
     }
 }

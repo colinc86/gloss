@@ -2,6 +2,25 @@ import AppKit
 import Core
 import SwiftUI
 
+/// The grid's fonts, scaled from the base font size (`Theme.fontSize`, 13 pt by default): cells a step smaller than
+/// text, column letters and line numbers smaller still.
+enum CSVFonts {
+    static var scale: CGFloat { Theme.fontSize / 13 }
+    static func size(_ size: CGFloat) -> CGFloat { (size * scale * 2).rounded() / 2 }
+    static var cell: NSFont { .systemFont(ofSize: size(12)) }
+    static var numericCell: NSFont { .monospacedDigitSystemFont(ofSize: size(12), weight: .regular) }
+    static var lineNumber: NSFont { .monospacedDigitSystemFont(ofSize: size(10.5), weight: .regular) }
+    static var letter: NSFont { .monospacedSystemFont(ofSize: size(10), weight: .medium) }
+    static var name: NSFont { .systemFont(ofSize: size(11.5), weight: .semibold) }
+    static var field: NSFont { .monospacedSystemFont(ofSize: size(11.5), weight: .regular) }
+    static var rowHeight: CGFloat { (17 * scale).rounded() }
+    /// The header row: as tall as AppKit makes it, taller when its names are set bigger.
+    static func fitHeader(_ header: NSTableHeaderView?, standard: CGFloat) {
+        guard let header else { return }
+        header.frame.size.height = max(standard, (NSLayoutManager().defaultLineHeight(for: name) + 10).rounded(.up))
+    }
+}
+
 public struct CSVGridView: NSViewRepresentable {
     public let controller: CSVGridController
 
@@ -21,13 +40,14 @@ public struct CSVGridView: NSViewRepresentable {
         table.allowsColumnSelection = false
         table.allowsColumnReordering = false
         table.selectionHighlightStyle = .none
-        table.rowSizeStyle = .small
+        table.rowSizeStyle = .custom
+        table.rowHeight = CSVFonts.rowHeight
         table.columnAutoresizingStyle = .noColumnAutoresizing
         table.style = .plain
         // Source line of each record; clicking it selects rows.
         let numbers = NSTableColumn(identifier: Coordinator.lineColumn)
         numbers.title = "Line"
-        numbers.width = 44
+        numbers.width = (44 * CSVFonts.scale).rounded()
         numbers.minWidth = 32
         table.addTableColumn(numbers)
         let columns = max(1, controller.table.columnCount)
@@ -35,25 +55,14 @@ public struct CSVGridView: NSViewRepresentable {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("col\(index)"))
             let header = index < controller.table.header.count ? controller.table.header[index] : ""
             column.title = header.isEmpty ? CellSelection.columnName(index) : "\(CellSelection.columnName(index))  \(header)"
-            // The letter quiet, the name strong; numeric columns align their header right like their values.
-            let title = NSMutableAttributedString(string: CellSelection.columnName(index), attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .medium), .foregroundColor: NSColor.tertiaryLabelColor,
-            ])
-            if !header.isEmpty {
-                title.append(NSAttributedString(string: "  " + header, attributes: [
-                    .font: NSFont.systemFont(ofSize: 11.5, weight: .semibold), .foregroundColor: NSColor.labelColor,
-                ]))
-            }
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = controller.numericColumns.contains(index) ? .right : .left
-            paragraph.lineBreakMode = .byTruncatingTail
-            title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
-            column.headerCell.attributedStringValue = title
+            column.headerCell.attributedStringValue = Self.headerTitle(index, controller: controller)
             column.headerToolTip = "Click to select column \(CellSelection.columnName(index)); ⌘-click to add columns"
             column.width = controller.columnWidths[index]
             column.minWidth = 40
             table.addTableColumn(column)
         }
+        context.coordinator.standardHeaderHeight = table.headerView?.frame.height ?? 0
+        CSVFonts.fitHeader(table.headerView, standard: context.coordinator.standardHeaderHeight)
         table.dataSource = context.coordinator
         table.delegate = context.coordinator
         table.coordinator = context.coordinator
@@ -77,10 +86,30 @@ public struct CSVGridView: NSViewRepresentable {
         }
         controller.noteGeometry.visibleNoteRects = { [weak coordinator = context.coordinator] in coordinator?.visibleNoteRects() ?? [:] }
         scroll.contentView.postsBoundsChangedNotifications = true
+        // Settings › Editor › Font size, while the grid is open.
+        context.coordinator.settingsObserver = NotificationCenter.default.addObserver(forName: Theme.editorSettingsDidChange, object: nil, queue: .main) { [weak coordinator = context.coordinator] _ in
+            MainActor.assumeIsolated { coordinator?.fontSizeChanged() }
+        }
         context.coordinator.scrollObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak controller] _ in
             MainActor.assumeIsolated { controller?.noteGeometry.changed() }
         }
         return scroll
+    }
+
+    /// A column's header: the letter quiet, the name strong; numeric columns align their header right like their values.
+    static func headerTitle(_ index: Int, controller: CSVGridController) -> NSAttributedString {
+        let header = index < controller.table.header.count ? controller.table.header[index] : ""
+        let title = NSMutableAttributedString(string: CellSelection.columnName(index), attributes: [
+            .font: CSVFonts.letter, .foregroundColor: NSColor.tertiaryLabelColor,
+        ])
+        if !header.isEmpty {
+            title.append(NSAttributedString(string: "  " + header, attributes: [.font: CSVFonts.name, .foregroundColor: NSColor.labelColor]))
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = controller.numericColumns.contains(index) ? .right : .left
+        paragraph.lineBreakMode = .byTruncatingTail
+        title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
+        return title
     }
 
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
@@ -90,6 +119,8 @@ public struct CSVGridView: NSViewRepresentable {
     public static func dismantleNSView(_ nsView: NSScrollView, coordinator: Coordinator) {
         if let observer = coordinator.scrollObserver { NotificationCenter.default.removeObserver(observer) }
         coordinator.scrollObserver = nil
+        if let observer = coordinator.settingsObserver { NotificationCenter.default.removeObserver(observer) }
+        coordinator.settingsObserver = nil
     }
 
     @MainActor
@@ -103,6 +134,28 @@ public struct CSVGridView: NSViewRepresentable {
         }
 
         var scrollObserver: (any NSObjectProtocol)?
+        var settingsObserver: (any NSObjectProtocol)?
+        private var appliedFontSize = Theme.fontSize
+        var standardHeaderHeight: CGFloat = 0
+
+        /// Sets the grid in the new size: its rows, headers and cells.
+        func fontSizeChanged() {
+            guard let table, appliedFontSize != Theme.fontSize else { return }
+            // Columns grow and shrink with their text, however the user had sized them.
+            let ratio = Theme.fontSize / appliedFontSize
+            appliedFontSize = Theme.fontSize
+            for column in table.tableColumns { column.width = (column.width * ratio).rounded() }
+            table.rowHeight = CSVFonts.rowHeight
+            for (offset, column) in table.tableColumns.dropFirst().enumerated() {
+                column.headerCell.attributedStringValue = CSVGridView.headerTitle(offset, controller: controller)
+            }
+            CSVFonts.fitHeader(table.headerView, standard: standardHeaderHeight)
+            table.headerView?.needsDisplay = true
+            table.enclosingScrollView?.tile()
+            table.reloadData()
+            // Note outlines and the Add Note button follow the rows.
+            refreshAppearance()
+        }
 
         /// Each note's cells on screen: a row note as its rows, a cell or column note as its cells (the overlay joins
         /// touching ones into one outline).
@@ -202,12 +255,12 @@ public struct CSVGridView: NSViewRepresentable {
                 cell.textField?.stringValue = column < fields.count ? fields[column] : ""
                 cell.textField?.textColor = .labelColor
                 cell.textField?.alignment = numeric ? .right : .natural
-                cell.textField?.font = numeric ? .monospacedDigitSystemFont(ofSize: 12, weight: .regular) : .systemFont(ofSize: 12)
+                cell.textField?.font = numeric ? CSVFonts.numericCell : CSVFonts.cell
             } else {
                 cell.textField?.stringValue = "\(controller.table.rows[row].firstLine)"
                 cell.textField?.textColor = .tertiaryLabelColor
                 cell.textField?.alignment = .right
-                cell.textField?.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+                cell.textField?.font = CSVFonts.lineNumber
             }
             configure(cell, row: row, tableColumn: tableColumnIndex)
             return cell
@@ -380,7 +433,7 @@ final class CSVCellView: NSTableCellView {
         self.identifier = identifier
         let field = NSTextField(labelWithString: "")
         field.lineBreakMode = .byTruncatingTail
-        field.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        field.font = CSVFonts.field
         field.translatesAutoresizingMaskIntoConstraints = false
         addSubview(field)
         textField = field

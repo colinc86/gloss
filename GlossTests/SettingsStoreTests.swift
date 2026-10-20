@@ -36,7 +36,7 @@ struct SettingsStoreTests {
         try await store.setSetting("attachments.expiryDays", "0")
         let settings = SettingsStore(noteStore: store)
         await settings.load()
-        #expect(settings.editorFontSize == 20)
+        #expect(settings.fontSize == SettingsStore.fontSizeRange.upperBound)
         #expect(settings.stagedFileExpiryDays == 1)
     }
 }

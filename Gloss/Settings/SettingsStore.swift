@@ -73,10 +73,12 @@ final class SettingsStore {
     var codeThemeLightName: String? { didSet { if let name = codeThemeLightName { persist("codeTheme.lightName",name) } } }
     var codeThemeDarkName: String? { didSet { if let name = codeThemeDarkName { persist("codeTheme.darkName",name) } } }
     @ObservationIgnored var onCodeThemeChange: () -> Void = {}
-    var editorFontSize: Double = 12.5 {
+    /// The base font size of everything Gloss sets in its own fonts (`Theme.fontSize`). Kept under the key the code
+    /// font size had, which it replaces along with the rendered Markdown text size.
+    var fontSize: Double = 13 {
         didSet {
-            Theme.editorFontSize = editorFontSize
-            persist("editor.fontSize", String(editorFontSize))
+            Theme.fontSize = fontSize
+            persist("editor.fontSize", String(fontSize))
         }
     }
     var wrapLines = true {
@@ -97,7 +99,8 @@ final class SettingsStore {
             persist("editor.minimap", showMinimap ? "1" : "0")
         }
     }
-    /// The rendered Markdown page: as wide as the window allows up to `markdownPageWidth`, or the whole window.
+    /// A rendered page (Markdown, Jira, Confluence): as wide as the window allows up to `markdownPageWidth`, or the
+    /// whole window.
     var markdownFillsWindow = false {
         didSet {
             Theme.renderedPageWidth = markdownFillsWindow ? nil : markdownPageWidth
@@ -108,12 +111,6 @@ final class SettingsStore {
         didSet {
             if !markdownFillsWindow { Theme.renderedPageWidth = markdownPageWidth }
             persist("markdown.pageWidth", String(markdownPageWidth))
-        }
-    }
-    var markdownTextSize: Double = 14 {
-        didSet {
-            Theme.readingFontSize = markdownTextSize
-            persist("markdown.textSize", String(markdownTextSize))
         }
     }
     var stagedFileExpiryDays = 7 {
@@ -168,9 +165,8 @@ final class SettingsStore {
         }
     }
     /// The font size slider's range, and the attachment expiry stepper's.
-    static let editorFontSizeRange: ClosedRange<Double> = 9...20
+    static let fontSizeRange: ClosedRange<Double> = 9...24
     static let markdownPageWidthRange: ClosedRange<Double> = 600...1600
-    static let markdownTextSizeRange: ClosedRange<Double> = 12...20
     static let stagedExpiryRange = 1...90
     /// Ports an unprivileged server may take; 0 would ask for any port, which agents registered on this one can't find.
     static let mcpPortRange = 1024...65535
@@ -194,13 +190,12 @@ final class SettingsStore {
         if let value = await read("general.showDotfiles") { showDotfilesByDefault = value == "1" }
         if let value = await read("general.dockQuestions") { showsQuestionsOnDock = value == "1" }
         // Kept to what the controls offer: a value from elsewhere (an older build, a hand edit) is brought in range.
-        if let value = await read("editor.fontSize"), let size = Double(value), size.isFinite { editorFontSize = min(max(size, Self.editorFontSizeRange.lowerBound), Self.editorFontSizeRange.upperBound) }
+        if let value = await read("editor.fontSize"), let size = Double(value), size.isFinite { fontSize = min(max(size, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound) }
         if let value = await read("editor.wrap") { wrapLines = value == "1" }
         if let value = await read("editor.guides") { showIndentGuides = value == "1" }
         if let value = await read("editor.minimap") { showMinimap = value == "1" }
         if let value = await read("markdown.pageWidth"), let width = Double(value), width.isFinite { markdownPageWidth = min(max(width, Self.markdownPageWidthRange.lowerBound), Self.markdownPageWidthRange.upperBound) }
         if let value = await read("markdown.fillWindow") { markdownFillsWindow = value == "1" }
-        if let value = await read("markdown.textSize"), let size = Double(value), size.isFinite { markdownTextSize = min(max(size, Self.markdownTextSizeRange.lowerBound), Self.markdownTextSizeRange.upperBound) }
         if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = min(max(days, Self.stagedExpiryRange.lowerBound), Self.stagedExpiryRange.upperBound) }
         if let value = await read("notes.trashDays"), let days = Int(value), Self.trashRetentionChoices.contains(days) { trashRetentionDays = days }
         if let value = await read("iterations.openNotes"), let choice = IterationOpenNotes(rawValue: value) { iterationOpenNotes = choice }

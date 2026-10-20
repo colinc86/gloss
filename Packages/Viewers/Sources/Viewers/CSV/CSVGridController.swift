@@ -118,9 +118,9 @@ public final class CSVGridController {
     /// Starting width per data column: the header or the widest of the first rows, whichever is wider, plus padding,
     /// held between 64 and 320 points so a one-digit column stays narrow and prose doesn't push the rest away.
     @ObservationIgnored public private(set) lazy var columnWidths: [CGFloat] = {
-        let body = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        let name = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
-        let letter = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
+        let body = CSVFonts.numericCell
+        let name = CSVFonts.name
+        let letter = CSVFonts.letter
         return (0..<max(1, table.columnCount)).map { column in
             let header = column < table.header.count ? table.header[column] : ""
             var widest = (CellSelection.columnName(column) as NSString).size(withAttributes: [.font: letter]).width

@@ -49,16 +49,38 @@ struct SettingsView: View {
 
             Form {
                 Section {
-                    LabeledContent("Default code font size") {
+                    LabeledContent {
                         HStack(spacing: DS.Space.m) {
-                            Slider(value: $settings.editorFontSize, in: SettingsStore.editorFontSizeRange, step: 0.5)
+                            Slider(value: $settings.fontSize, in: SettingsStore.fontSizeRange, step: 0.5)
                                 .frame(width: 200)
-                            Text("\(settings.editorFontSize, specifier: "%.1f") pt")
+                            Text("\(settings.fontSize, specifier: "%.1f") pt")
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
                                 .frame(width: 48, alignment: .trailing)
-                                .contentTransition(.numericText(value: settings.editorFontSize))
+                                .contentTransition(.numericText(value: settings.fontSize))
                         }
+                    } label: {
+                        Text("Font size")
+                        Text("Code, text, Markdown and spreadsheets. Headings and code in a page scale with it; web pages and PDFs keep their own sizes.")
+                    }
+                    LabeledContent {
+                        HStack(spacing: DS.Space.m) {
+                            Slider(value: $settings.markdownPageWidth, in: SettingsStore.markdownPageWidthRange, step: 20)
+                                .frame(width: 200)
+                            Text("\(settings.markdownPageWidth, specifier: "%.0f") pt")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 48, alignment: .trailing)
+                                .contentTransition(.numericText(value: settings.markdownPageWidth))
+                        }
+                    } label: {
+                        Text("Page width")
+                        Text("Rendered Markdown, Jira issues and Confluence pages. A table wider than the page scrolls sideways.")
+                    }
+                    .disabled(settings.markdownFillsWindow)
+                    Toggle(isOn: $settings.markdownFillsWindow) {
+                        Text("Fill the window")
+                        Text("Pages grow with the window instead of stopping at the page width.")
                     }
                     Toggle(isOn: $settings.wrapLines) {
                         Text("Wrap long lines")
@@ -73,45 +95,12 @@ struct SettingsView: View {
                         Text("A small map of the file beside the scroll bar (the code, or the rendered page) with your notes and changes.")
                     }
                 } footer: {
-                    EditorPreview(fontSize: settings.editorFontSize, wraps: settings.wrapLines, guides: settings.showIndentGuides)
-                }
-                Section {
-                    LabeledContent("Text size") {
-                        HStack(spacing: DS.Space.m) {
-                            Slider(value: $settings.markdownTextSize, in: SettingsStore.markdownTextSizeRange, step: 1)
-                                .frame(width: 200)
-                            Text("\(settings.markdownTextSize, specifier: "%.0f") pt")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .frame(width: 48, alignment: .trailing)
-                                .contentTransition(.numericText(value: settings.markdownTextSize))
-                        }
-                    }
-                    Toggle(isOn: $settings.markdownFillsWindow) {
-                        Text("Fill the window")
-                        Text("The page grows with the window instead of stopping at the page width.")
-                    }
-                    LabeledContent("Page width") {
-                        HStack(spacing: DS.Space.m) {
-                            Slider(value: $settings.markdownPageWidth, in: SettingsStore.markdownPageWidthRange, step: 20)
-                                .frame(width: 200)
-                            Text("\(settings.markdownPageWidth, specifier: "%.0f") pt")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .frame(width: 48, alignment: .trailing)
-                                .contentTransition(.numericText(value: settings.markdownPageWidth))
-                        }
-                    }
-                    .disabled(settings.markdownFillsWindow)
-                } header: {
-                    Text("Rendered Markdown")
-                } footer: {
-                    Text("Text fills the page, as wide as the window allows up to the page width. A table wider than the page scrolls sideways.")
+                    EditorPreview(fontSize: settings.fontSize, wraps: settings.wrapLines, guides: settings.showIndentGuides)
                 }
             }
             .formStyle(.grouped)
             .frame(height: 560)
-            .animation(DS.Motion.snappy, value: settings.editorFontSize)
+            .animation(DS.Motion.snappy, value: settings.fontSize)
             .animation(DS.Motion.smooth, value: settings.showIndentGuides)
             .tabItem { Label("Editor", systemImage: "text.alignleft") }
             .tag(SettingsTab.editor)

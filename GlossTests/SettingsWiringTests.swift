@@ -9,12 +9,13 @@ import Viewers
 struct SettingsWiringTests {
     @Test func editorSettingsReachNewEditors() throws {
         let settings = SettingsStore(noteStore: NoteStore(database: try AppDatabase.inMemory()))
+        let size = Theme.fontSize
         defer {
-            Theme.editorFontSize = 12.5
+            Theme.fontSize = size
             Theme.wrapsLines = true
             Theme.showsIndentGuides = true
         }
-        settings.editorFontSize = 15
+        settings.fontSize = 15
         settings.wrapLines = false
         settings.showIndentGuides = false
         #expect(Theme.editorFont.pointSize == 15)

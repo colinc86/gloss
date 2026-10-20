@@ -27,7 +27,9 @@ final class LineNumberGutterView: NSView {
     func updateWidth() {
         let digits = max(3, String(controller?.lineIndex.lineCount ?? 1).count)
         // Room for three note lanes before the numbers, and a column for earlier notes' marks while there are any.
-        let width = CGFloat(digits) * 7 + 26 + (controller?.earlierMarks.isEmpty == false ? Self.earlierColumn : 0)
+        // Digits are measured: they grow with the font size.
+        let digit = max(7, ("8" as NSString).size(withAttributes: [.font: Theme.gutterFont]).width.rounded(.up))
+        let width = CGFloat(digits) * digit + 26 + (controller?.earlierMarks.isEmpty == false ? Self.earlierColumn : 0)
         if abs(gutterWidth - width) > 0.5 {
             gutterWidth = width
             superview?.needsLayout = true

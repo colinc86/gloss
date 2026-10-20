@@ -60,7 +60,7 @@ struct ThemeEditor: View {
                 }.frame(minWidth: 300,idealWidth: 340,maxWidth: 460)
                 VStack(alignment: .leading,spacing: DS.Space.s) {
                     Picker("Preview",selection: $previewMode) { ForEach(ThemePreviewMode.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
-                    ThemePreview(theme: draft.theme,slot: slot,mode: previewMode,defaultSize: model.settings.editorFontSize)
+                    ThemePreview(theme: draft.theme,slot: slot,mode: previewMode,defaultSize: model.settings.fontSize)
                     if !draft.theme.selectionClashes().isEmpty {
                         Text("Selection resembles a note fill. The editor uses a distinct tint.").font(.caption).foregroundStyle(.secondary)
                     }
@@ -150,10 +150,10 @@ struct ThemeEditor: View {
                 if let family = draft.theme.font.family, !NSFontManager.shared.availableFontFamilies.contains(family) { Text(family).tag(family) }
                 ForEach(NSFontManager.shared.availableFontFamilies.sorted(),id: \.self) { Text($0).tag($0) }
             }
-            ThemeNumberControl(label: "Size",value: $draft.theme.font.size,range: SettingsStore.editorFontSizeRange,defaultValue: model.settings.editorFontSize,suffix: "pt",validation: { valid in validate("size",valid: valid) })
+            ThemeNumberControl(label: "Size",value: $draft.theme.font.size,range: SettingsStore.fontSizeRange,defaultValue: model.settings.fontSize,suffix: "pt",validation: { valid in validate("size",valid: valid) })
             ThemeNumberControl(label: "Line Spacing",value: $draft.theme.font.lineSpacing,range: 1...2,defaultValue: 1,suffix: "×",validation: { valid in validate("spacing",valid: valid) })
             if !draft.theme.font.isAvailable { Text("Font not installed. Using System Monospaced.").font(.caption).foregroundStyle(.secondary) }
-            Text("Themes without a size use Default code font size in Editor settings.").font(.caption).foregroundStyle(.secondary)
+            Text("Themes without a size use the font size in Editor settings.").font(.caption).foregroundStyle(.secondary)
             Spacer()
         }
     }

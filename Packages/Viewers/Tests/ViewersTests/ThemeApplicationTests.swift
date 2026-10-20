@@ -27,17 +27,21 @@ struct ThemeApplicationTests {
         return nil
     }
     @Test func glossThemePreservesLegacyColorsAndFont() {
-        let prior = ActiveCodeTheme.snapshot(), size = Theme.editorFontSize
-        defer { ActiveCodeTheme.set(light: prior.light,dark: prior.dark); Theme.editorFontSize = size }
-        ActiveCodeTheme.set(light: .gloss,dark: .gloss); Theme.editorFontSize = 12.5
+        let prior = ActiveCodeTheme.snapshot(), size = Theme.fontSize
+        defer { ActiveCodeTheme.set(light: prior.light,dark: prior.dark); Theme.fontSize = size }
+        ActiveCodeTheme.set(light: .gloss,dark: .gloss); Theme.fontSize = 12.5
         let editor = SourceTextView.make()
         #expect(editor.font?.pointSize == 12.5)
         #expect(components(editor.selectedTextAttributes[.foregroundColor] as? NSColor) == components(.selectedTextColor))
         #expect(components(editor.backgroundColor) == components(.textBackgroundColor))
-        let output = MarkdownRenderer.render("Body\n\n```swift\nfunc example() {}\n```\n")
+        // Code in a page is 0.9× its text, which is the base font size unless given.
+        let output = MarkdownRenderer.render("Body\n\n```swift\nfunc example() {}\n```\n", readingSize: 14)
         let source = output.text.string as NSString
         let index = source.range(of: "func").location
         #expect((output.text.attribute(.font,at: index,effectiveRange: nil) as? NSFont)?.pointSize == 13)
+        let base = MarkdownRenderer.render("Body\n\n```swift\nfunc example() {}\n```\n")
+        #expect(abs(((base.text.attribute(.font,at: index,effectiveRange: nil) as? NSFont)?.pointSize ?? 0) - 11) < 0.01)
+        #expect((base.text.attribute(.font,at: 0,effectiveRange: nil) as? NSFont)?.pointSize == 12.5, "the page's text is the base size")
         let decoration = output.text.attribute(MarkdownRenderer.blockKey,at: index,effectiveRange: nil) as? MarkdownBlockDecoration
         #expect(decoration?.codeForeground == nil)
         for row in CodeTheme.editableTokens {
@@ -184,7 +188,7 @@ struct ThemeApplicationTests {
         let version = controller.contentVersion
         ActiveCodeTheme.set(light: colorsOnly,dark: colorsOnly)
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        #expect(controller.contentVersion == version && editor.appliedEditorFont == theme.font.resolved(defaultSize: Theme.editorFontSize))
+        #expect(controller.contentVersion == version && editor.appliedEditorFont == theme.font.resolved(defaultSize: Theme.fontSize))
         #expect(editor.textStorage?.attribute(.font,at: second,effectiveRange: nil) as? NSFont == secondFont)
         editor.insertText("let third = 3\n",replacementRange: NSRange(location: editor.string.utf16.count,length: 0))
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))

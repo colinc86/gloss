@@ -21,7 +21,7 @@ struct ThemesSettings: View {
                             ForEach(model.offered(slot)) { theme in Text(theme.name).tag(theme.id) }
                             if model.store.theme(id: model.selectedID(slot)) == nil { Text("Unavailable theme").tag(model.selectedID(slot)) }
                         }
-                        ThemePreview(theme: model.preview(slot),slot: slot,defaultSize: model.settings.editorFontSize)
+                        ThemePreview(theme: model.preview(slot),slot: slot,defaultSize: model.settings.fontSize)
                             .frame(height: 164)
                         HStack {
                             Button("Edit…") { model.edit(slot) }.disabled(model.selected(slot).isBuiltIn)

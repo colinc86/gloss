@@ -274,6 +274,19 @@ public struct TextEditorView: NSViewRepresentable {
             let window = NSRange(location: first.location, length: max(range.location + range.length, last.location + last.length) - first.location)
             textView.scrollRangeToVisible(window)
             textView.scrollRangeToVisible(range)
+            // The window is counted in unwrapped lines; wrapped ones leave the target a few lines off centre. It and
+            // the lines around it are laid out now, so its position is real: centre the target's first row, keeping
+            // as much of it on screen as fits (all of it, or its start when it is taller than the view).
+            let length = (textView.string as NSString).length
+            let target = NSRange(location: min(range.location, max(0, length - 1)), length: max(1, min(range.length, length - range.location)))
+            if length > 0, let rect = textRect(for: target, in: textView), let scrollView = textView.enclosingScrollView {
+                let clip = scrollView.contentView
+                let row = min(rect.height, lineHeight * 1.5)
+                var top = (rect.minY + row / 2 - clip.bounds.height / 2).rounded()
+                top = min(max(top, rect.maxY - clip.bounds.height), rect.minY)
+                clip.scroll(to: NSPoint(x: clip.bounds.minX, y: min(max(0, top), max(0, textView.frame.height - clip.bounds.height))))
+                scrollView.reflectScrolledClipView(clip)
+            }
             gutter?.needsDisplay = true
             backdrop?.needsDisplay = true
         }
