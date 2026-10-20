@@ -20,26 +20,20 @@ public struct MarkdownRenderer {
         public var unresolvedDiagrams: [String] = []
         /// Each drawn diagram's source, by its occurrence, so a region note's crop reads the right PNG.
         public var diagramSources: [Int: String] = [:]
-        /// Tables are laid out for the page's width, so a page that changes width renders again; nothing else needs to.
+        /// Tables are laid out for the column's width, so a page that changes width renders again; nothing else
+        /// needs to.
         public var hasTables = false
-        /// The page width tables were laid out for.
-        public var pageWidth: CGFloat = 0
+        /// The text column's width the page was laid out for.
+        public var columnWidth: CGFloat = 0
+        /// How far the text column is set in from the container's left edge (and its right edge from the
+        /// container's): room for tables wider than the column to scroll into. Zero unless one is.
+        public var inset: CGFloat = 0
     }
 
     /// The longest a line of text gets: about 90 characters of body text, a comfortable line to read. Text keeps
-    /// to it however wide the page is; only tables use the page's full width.
+    /// to it however wide the window is; a table wider than it scrolls sideways.
     public static func proseWidth(readingSize: CGFloat = Theme.readingFontSize) -> CGFloat {
         (readingSize * 42).rounded()
-    }
-
-    /// Whether `document` has a table (Markdown or HTML), checked before rendering so text can be set in from the
-    /// start to make room for tables wider than it. An HTML `<table>` is looked for in the source; a false match
-    /// only lays the page out for its width.
-    static func hasTables(_ document: Markdown.Document, source: String) -> Bool {
-        func contains(_ markup: any Markup) -> Bool {
-            markup is Markdown.Table || markup.children.contains { contains($0) }
-        }
-        return contains(document) || source.range(of: "<table", options: .caseInsensitive) != nil
     }
 
     public static let sourceSpanKey = NSAttributedString.Key("gloss.sourceSpan")
@@ -52,34 +46,41 @@ public struct MarkdownRenderer {
     /// Anything else shows as a placeholder. Under `reduceMotion` animated pictures hold still, and a `<picture>`
     /// draws a source meant for reduced motion. `diagrams` are Mermaid blocks already drawn (or refused), by their
     /// source; any other Mermaid block shows as code until it is.
-    /// Tables fit `pageWidth` (the reading column's width; the page width setting when it is not known yet), and
-    /// text is `readingSize` points (`Theme.readingFontSize` by default).
+    /// Text and tables fit `columnWidth` (the reading column's width; `proseWidth` when it is not known yet), and
+    /// text is `readingSize` points (`Theme.readingFontSize` by default). A table that can't fit without breaking
+    /// its words keeps its width and scrolls sideways within the column (`MarkdownTableScroll`).
     public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], diagrams: [String: MermaidRenderer.Result] = [:],
                               reduceMotion: Bool = false, codeTheme: CodeTheme? = nil, codeAppearance: NSAppearance.Name? = nil,
-                              pageWidth: CGFloat? = nil, readingSize: CGFloat? = nil) -> Output {
+                              columnWidth: CGFloat? = nil, readingSize: CGFloat? = nil) -> Output {
         readingFontSize = readingSize ?? Theme.readingFontSize
         let document = Document(parsing: source, options: [.disableSmartOpts])
-        var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
-        walker.pageWidth = pageWidth ?? Theme.renderedPageWidth ?? 900
-        let tables = hasTables(document, source: source)
-        if tables {
-            // Text keeps its line length in the middle of the page; tables wider than it spread either side.
-            walker.setInset(max(0, ((walker.pageWidth - proseWidth(readingSize: readingFontSize)) / 2).rounded(.down)))
+        let column = max(1, columnWidth ?? proseWidth(readingSize: readingFontSize))
+        func walk(inset: CGFloat) -> Walker {
+            var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
+            walker.columnWidth = column
+            walker.setInset(inset)
+            walker.images = images
+            walker.diagrams = diagrams
+            walker.reduceMotion = reduceMotion
+            let appearance = codeAppearance.flatMap(NSAppearance.init(named:)) ?? Theme.effectiveAppearance
+            walker.theme = codeTheme ?? ActiveCodeTheme.theme(for: appearance)
+            walker.dynamicTheme = codeTheme == nil
+            walker.visit(document)
+            walker.finish()
+            return walker
         }
-        walker.images = images
-        walker.diagrams = diagrams
-        walker.reduceMotion = reduceMotion
-        let appearance = codeAppearance.flatMap(NSAppearance.init(named:)) ?? Theme.effectiveAppearance
-        walker.theme = codeTheme ?? ActiveCodeTheme.theme(for: appearance)
-        walker.dynamicTheme = codeTheme == nil
-        walker.visit(document)
-        walker.finish()
+        var walker = walk(inset: 0)
+        // A table wider than the column lays its rows out whole, past the column's right edge, and scrolls by moving
+        // them left, so the container has room either side of the column for the widest one. How much is known
+        // only once the tables are measured: lay the page out again with it.
+        if walker.overflow > 0 { walker = walk(inset: walker.overflow.rounded(.up)) }
         var output = Output(text: walker.output, map: RenderedSourceMap(spans: walker.spans, blocks: walker.blocks))
         output.unresolvedImages = walker.unresolvedImages
         output.unresolvedDiagrams = walker.unresolvedDiagrams
         output.diagramSources = walker.diagramSources
-        output.hasTables = tables || walker.tableCount > 0
-        output.pageWidth = walker.pageWidth
+        output.hasTables = walker.tableCount > 0
+        output.columnWidth = column
+        output.inset = walker.inset
         return output
     }
 
@@ -225,11 +226,13 @@ public struct MarkdownRenderer {
         var unresolvedImages: [String] = []
         var unresolvedDiagrams: [String] = []
         var diagramSources: [Int: String] = [:]
-        /// The reading column's width, which tables fit.
-        var pageWidth: CGFloat = 900
-        /// How far text is set in from either side of the page, so it keeps its line length while tables use the
-        /// page's width; zero unless the page has tables.
+        /// The reading column's width, which text and tables fit.
+        var columnWidth: CGFloat = 588
+        /// How far the column is set in from either side of the container, so tables wider than it have room to
+        /// scroll; zero unless the page has one.
         private(set) var inset: CGFloat = 0
+        /// How far the widest table runs past the column's right edge.
+        private(set) var overflow: CGFloat = 0
         /// Tables laid out so far; cells are numbered across the document (`SourceSpan.cell`).
         var tableCount = 0
         private var cellCount = 0
@@ -1257,41 +1260,39 @@ public struct MarkdownRenderer {
             let tableID = tableCount
             tableCount += 1
             let padding = MarkdownRenderer.tableCellPadding
-            // A table of its own may use the whole page; one in a list or quote keeps to the text beside it.
-            let topLevel = inset > 0 && indent == inset
-            let available = max(CGFloat(24 * columns), (topLevel ? pageWidth : pageWidth - indent - inset) - CGFloat(columns) * padding * 2 - 2)
+            // The table starts where the text beside it does and fits the column if it can.
+            let left = indent
+            // A column narrower than the indent (a deeply nested table in a narrow pane) still leaves the table room.
+            let textRight = max(inset + columnWidth, left + 24)
+            let available = max(CGFloat(24 * columns), textRight - left - CGFloat(columns) * padding * 2 - 2)
+            // No cell is wider than the column: a long one wraps there.
+            let cap = max(24, textRight - left - padding * 2 - 2)
 
             // Natural widths; the narrowest each column can be only when they don't all fit.
-            var maximum = [CGFloat](repeating: 24, count: columns)
+            var natural = [CGFloat](repeating: 24, count: columns)
             for cells in cellRanges {
                 for (column, range) in cells.enumerated() where range.length > 0 {
-                    maximum[column] = max(maximum[column], Self.measure(output.attributedSubstring(from: range)).width)
+                    natural[column] = max(natural[column], Self.measure(output.attributedSubstring(from: range)).width)
                 }
             }
+            let maximum = natural.map { min($0, cap) }
             var widths = maximum
             if maximum.reduce(0, +) > available {
-                var minimum = [CGFloat](repeating: 24, count: columns)
+                // A column narrows to its longest word, and no narrower than a few words of text unless its text is
+                // shorter. A very long word (a URL, say) breaks between characters rather than widening its column
+                // past a third or so of the column.
+                let comfortable = (MarkdownRenderer.readingFontSize * 7).rounded()
+                let longestKept = (MarkdownRenderer.readingFontSize * 16).rounded()
+                var minimum = maximum.map { min($0, comfortable) }
                 for cells in cellRanges {
                     for (column, range) in cells.enumerated() where range.length > 0 {
-                        minimum[column] = max(minimum[column], Self.longestWord(in: output.attributedSubstring(from: range)))
+                        let word = min(longestKept, Self.longestWord(in: output.attributedSubstring(from: range)))
+                        minimum[column] = min(maximum[column], max(minimum[column], word))
                     }
                 }
-                var least = minimum.reduce(0, +)
-                if least > available {
-                    // Even the words don't fit: the longest give way (a URL, say, breaks between characters) while
-                    // columns of short words keep theirs whole, rather than every column breaking its words.
-                    let sorted = minimum.sorted()
-                    var cap = available / CGFloat(columns)
-                    var used: CGFloat = 0
-                    for (index, width) in sorted.enumerated() {
-                        let share = (available - used) / CGFloat(columns - index)
-                        if width > share { cap = share; break }
-                        used += width
-                    }
-                    minimum = minimum.map { min($0, cap.rounded(.down)) }
-                    least = minimum.reduce(0, +)
-                }
+                let least = minimum.reduce(0, +)
                 if least >= available {
+                    // Too wide even then: the table keeps those widths and scrolls sideways.
                     widths = minimum
                 } else {
                     let wanted = zip(maximum, minimum).map { max(0, $0 - $1) }.reduce(0, +)
@@ -1301,10 +1302,9 @@ public struct MarkdownRenderer {
                     }
                 }
             }
-            // Lined up with the text when it is no wider, otherwise centred on the page.
             let tableWidth = widths.reduce(0, +) + CGFloat(columns) * padding * 2
-            let left = topLevel && tableWidth > MarkdownRenderer.proseWidth(readingSize: MarkdownRenderer.readingFontSize)
-                ? max(0, ((pageWidth - tableWidth) / 2).rounded(.down)) : indent
+            let tableOverflow = max(0, (left + tableWidth - textRight).rounded(.up))
+            overflow = max(overflow, tableOverflow)
             var starts: [CGFloat] = []
             var x = left + padding
             for width in widths {
@@ -1332,7 +1332,7 @@ public struct MarkdownRenderer {
                     text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, _, _ in
                         (value as? FittedImageAttachment)?.maximumWidth = widths[column]
                     }
-                    let lines = maximum[column] <= widths[column] ? Self.forcedLines(in: text) : Self.wrappedLines(of: text, width: widths[column])
+                    let lines = natural[column] <= widths[column] ? Self.forcedLines(in: text) : Self.wrappedLines(of: text, width: widths[column])
                     row.append(Self.trimmedPieces(lines, in: text).map { Piece(old: NSRange(location: range.location + $0.range.location, length: $0.range.length), cell: id, joined: $0.joined) })
                 }
                 rowPieces.append(row)
@@ -1428,7 +1428,8 @@ public struct MarkdownRenderer {
                 paragraph.paragraphSpacing = MarkdownRenderer.tableRowPadding
                 let header = headers.map { row < $0.count && $0[row] } ?? (row == 0)
                 let chrome = MarkdownBlockDecoration.TableChrome(dividers: Array(dividers), striped: !header && body % 2 == 1,
-                                                                  first: row == 0, last: row == newRows.count - 1)
+                                                                  first: row == 0, last: row == newRows.count - 1,
+                                                                  id: tableID, visible: left...textRight, overflow: tableOverflow)
                 if !header { body += 1 }
                 let rowDecoration = MarkdownBlockDecoration(kind: .tableRow(header: header, width: tableWidth), leading: left, quoteBars: row == 0 ? bars : continued, table: chrome)
                 // Include the newline that ends the row so the paragraph's attributes are uniform.
@@ -1832,6 +1833,15 @@ public nonisolated final class MarkdownBlockDecoration: NSObject, Sendable {
         public var striped: Bool
         public var first: Bool
         public var last: Bool
+        /// The table, numbered in the document.
+        public var id: Int = 0
+        /// The part of the container the table shows in (its left edge to the column's right), in container
+        /// coordinates; it is drawn clipped to it.
+        public var visible: ClosedRange<CGFloat> = 0...CGFloat.greatestFiniteMagnitude
+        /// How far it runs past the column, which it can scroll by; zero when it fits.
+        public var overflow: CGFloat = 0
+        /// How far it is scrolled now.
+        public var offset: CGFloat = 0
     }
 
     public init(kind: Kind, leading: CGFloat, quoteBars: [QuoteBar], label: String? = nil, codeBackground: NSColor? = nil, codeForeground: NSColor? = nil,

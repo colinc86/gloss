@@ -15,7 +15,14 @@ public struct RenderedMarkdownView: NSViewRepresentable {
     }
 
     public func makeNSView(context: Context) -> RenderedMarkdownContainerView {
-        let textView = RenderedTextView(usingTextLayoutManager: true)
+        // TextKit 2, with the layout manager that keeps selection to what shows of a wide table.
+        let layoutManager = MarkdownTextLayoutManager()
+        let textContainer = NSTextContainer(size: NSSize(width: MarkdownRenderer.proseWidth(), height: CGFloat.greatestFiniteMagnitude))
+        layoutManager.textContainer = textContainer
+        let contentStorage = NSTextContentStorage()
+        contentStorage.addTextLayoutManager(layoutManager)
+        contentStorage.primaryTextLayoutManager = layoutManager
+        let textView = RenderedTextView(frame: .zero, textContainer: textContainer)
         textView.controller = controller
         textView.onAttachedToWindow = { [weak coordinator = context.coordinator] in coordinator?.sync() }
         textView.isEditable = false
@@ -36,7 +43,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         // The column is sized and centred by the view itself (`RenderedTextView.updateColumn`), not by tracking it.
         textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(width: Theme.renderedPageWidth ?? 900, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.containerSize = NSSize(width: MarkdownRenderer.proseWidth(), height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = context.coordinator
         let scroll = NSScrollView()
         scroll.documentView = textView
@@ -115,6 +122,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                         controller?.noteGeometry.changed()
                         self?.animatedPictures?.layOut()
                         self?.minimap?.needsDisplay = true
+                        (self?.textView as? RenderedTextView)?.layOutTableScrollers()
                     }
                 }
             }
@@ -140,8 +148,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                     self?.minimap?.needsDisplay = true
                 }
             }
-            // Settings › Editor › Show minimap, while this view is open.
-            // and the page width.
+            // Settings › Editor › Show minimap and the text size, while this view is open.
             settingsObserver = NotificationCenter.default.addObserver(forName: Theme.editorSettingsDidChange, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     (self?.textView as? RenderedTextView)?.updateColumn(force: true)
@@ -150,6 +157,8 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 }
             }
             (textView as? RenderedTextView)?.onLayout = { [weak self] in
+                // A table scrolled sideways moves its notes' highlights without the page scrolling.
+                self?.backdrop?.needsDisplay = true
                 self?.imageOverlay?.needsDisplay = true
                 self?.minimap?.needsDisplay = true
                 self?.controller.noteGeometry.changed()
@@ -228,7 +237,8 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 let top = textView.topVisibleCharacterIndex
                 let sameText = textView.string == controller.rendered.string
                 textView.textStorage?.setAttributedString(controller.rendered)
-                // A page that gained or lost its tables changes how wide its column is.
+                (textView as? RenderedTextView)?.textWasSet(controller.rendered)
+                // A page that gained or lost its tables changes how wide its container is.
                 (textView as? RenderedTextView)?.updateColumn(force: true)
                 let length = textView.string.utf16.count
                 let location = min(selection.location,length)
@@ -240,6 +250,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             if appliedScrollVersion != controller.pendingRenderedScrollVersion, let range = controller.pendingRenderedScroll,
                textView.window != nil, !textView.visibleRect.isEmpty {
                 appliedScrollVersion = controller.pendingRenderedScrollVersion
+                (textView as? RenderedTextView)?.revealInTable(range)
                 if controller.pendingRenderedScrollAtTop { textView.scrollToTop(range.location) } else { textView.scrollRangeToVisible(range) }
                 if controller.pendingRenderedScrollSelects {
                     textView.setSelectedRange(range)
@@ -322,6 +333,7 @@ final class RenderedTextView: NSTextView {
     override func textViewportLayoutControllerDidLayout(_ controller: NSTextViewportLayoutController) {
         super.textViewportLayoutControllerDidLayout(controller)
         onLayout?()
+        layOutTableScrollers()
     }
 
     /// Add Note on a selection of the page, as the source editor's menu has it.
@@ -340,7 +352,13 @@ final class RenderedTextView: NSTextView {
     /// Under a card floated over the page (Review), the card has the pointer, not the page's I-beam.
     override func mouseMoved(with event: NSEvent) {
         if isCovered(at: event) { return }
+        hoveredTable = wideTable(at: convert(event.locationInWindow, from: nil), below: TableScrollerView.height + 4)
         super.mouseMoved(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveredTable = nil
+        super.mouseExited(with: event)
     }
 
     /// The notes list held its place while the window was resized; it follows the page again now, and a column held
@@ -351,23 +369,22 @@ final class RenderedTextView: NSTextView {
         onLayout?()
     }
 
-    /// The reading column: as wide as a comfortable line of text (`MarkdownRenderer.proseWidth`), or, on a page with
-    /// tables, the page: at most `maximumColumnWidth` wide (the page width setting, or the whole view when the page
-    /// fills the window), with the text set in so its lines stay as long. Centred, with at least `minimumMargin`
-    /// either side. Centred by moving the
-    /// container's origin, never by changing `textContainerInset` or letting the container track the view's width:
-    /// either makes TextKit lay the whole document out again on every step of a window resize (#20), blanking and
-    /// re-wrapping the text. So while the window is dragged wider the column only moves, and takes its new width
-    /// once, when the drag ends; dragged narrower it narrows at once, or it would be clipped.
+    /// The reading column: as wide as a comfortable line of text (`MarkdownRenderer.proseWidth`), narrower only when
+    /// the view is, centred with at least `minimumMargin` either side. A page with a table wider than the column has
+    /// a container wider than it by `laidOutColumn.inset` either side, room the table scrolls into, kept out of
+    /// sight. Centred by moving the container's origin, never by changing `textContainerInset` or letting the
+    /// container track the view's width: either makes TextKit lay the whole document out again on every step of a
+    /// window resize (#20), blanking and re-wrapping the text. So while the window is dragged wider the column only
+    /// moves; dragged narrower it narrows at once, or it would be clipped.
     static let minimumMargin: CGFloat = 24
-    static var maximumColumnWidth: CGFloat { Theme.renderedPageWidth ?? .greatestFiniteMagnitude }
 
     override var textContainerOrigin: NSPoint {
-        let column = textContainer?.size.width ?? 0
+        let laid = controller?.laidOutColumn
+        let column = laid?.width ?? textContainer?.size.width ?? 0
         let centred = ((bounds.width - column) / 2).rounded(.down)
-        // A page with tables wider than the view while it waits to be laid out again stays centred, its edges cut off,
-        // so its text column stays whole.
-        return NSPoint(x: controller?.laidOutPageWidth != nil ? centred : max(Self.minimumMargin, centred), y: textContainerInset.height)
+        // A page with tables in a view narrower than its column while it waits to be laid out again stays centred,
+        // its edges cut off, so its column stays whole.
+        return NSPoint(x: (laid != nil ? centred : max(Self.minimumMargin, centred)) - (laid?.inset ?? 0), y: textContainerInset.height)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -375,23 +392,31 @@ final class RenderedTextView: NSTextView {
         updateColumn()
     }
 
-    /// Sizes the column for the view and re-centres it; `force` after the page width setting changes or a resize ends.
+    /// Sizes the column for the view and re-centres it; `force` after the text size changes, the page is rendered
+    /// again, or a resize ends.
     private var centredFor: CGFloat = -1
     func updateColumn(force: Bool = false) {
         // Not before the view has a width: a page laid out for a zero-width view would be thrown away at once.
         guard let container = textContainer, bounds.width > Self.minimumMargin * 2, force || bounds.width != centredFor else { return }
         centredFor = bounds.width
-        let page = max(1, min(Self.maximumColumnWidth, bounds.width - Self.minimumMargin * 2))
-        // Text keeps its line length. A page with tables spans the width it was laid out for, its text set in by
-        // that width, until it is laid out again for the new one; narrowing it sooner would squeeze its text.
-        var column = controller?.laidOutPageWidth ?? min(page, MarkdownRenderer.proseWidth())
-        if inLiveResize, column > container.size.width { column = container.size.width }
-        if container.size.width != column {
-            container.size = NSSize(width: column, height: CGFloat.greatestFiniteMagnitude)
+        let fitted = max(1, min(bounds.width - Self.minimumMargin * 2, MarkdownRenderer.proseWidth()))
+        // A page with tables keeps the column it was laid out for until it is laid out again for the new one; any
+        // other page just wraps to its new column.
+        var width: CGFloat
+        if let laid = controller?.laidOutColumn {
+            width = laid.width + laid.inset * 2
+        } else {
+            width = fitted
+            if inLiveResize, width > container.size.width { width = container.size.width }
         }
+        if container.size.width != width {
+            container.size = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        }
+        (textLayoutManager as? MarkdownTextLayoutManager)?.column = controller?.laidOutColumn.map { $0.inset...($0.inset + $0.width) }
         // Tables are laid out again for the new width once, when a resize ends, not whenever a drag pauses.
-        if !inLiveResize { controller?.pageWidth = page }
+        if !inLiveResize { controller?.columnWidth = fitted }
         invalidateTextContainerOrigin()
+        layOutTableScrollers()
     }
     weak var controller: MarkdownViewerController?
 
@@ -456,7 +481,7 @@ final class RenderedTextView: NSTextView {
         let start = convert(event.locationInWindow, from: nil)
         guard let controller, let hit = picture(at: start), let source = hit.attachment.source else {
             controller?.imageSelection = nil
-            return super.mouseDown(with: event)
+            return super.mouseDown(with: keptToShownCells(event))
         }
         window?.makeFirstResponder(self)
         setSelectedRange(NSRange(location: hit.index, length: 0))
@@ -549,13 +574,289 @@ final class RenderedTextView: NSTextView {
         controller?.setDarkAppearance(effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
     }
 
+    // MARK: Wide tables
+
+    /// The page's tables wider than the column, by id, and the text they were found in (the rendered page as it
+    /// came from the renderer, unscrolled).
+    private var wideTables: [Int: MarkdownTableScroll.Table] = [:]
+    private var tableBase: NSAttributedString?
+    /// Each wide table's header row, so an offset kept through an edit goes back to the same table even when one
+    /// above it was added or taken out.
+    private var tableHeaders: [Int: String] = [:]
+    /// How far each wide table is scrolled; kept while the page renders again (as it does while it is edited).
+    private(set) var tableOffsets: [Int: CGFloat] = [:]
+    private var tableScrollers: [Int: TableScrollerView] = [:]
+    /// The table under the pointer, whose scroller shows.
+    private var hoveredTable: Int? {
+        didSet { if hoveredTable != oldValue { layOutTableScrollers() } }
+    }
+    /// Tables scrolled a moment ago, whose scrollers show for a little while after.
+    private var recentlyScrolled: [Int: Date] = [:]
+    private var scrollerHideTimer: Timer?
+
+    /// The text was set to `base` (`controller.rendered`): find its wide tables and scroll them back to where they were.
+    func textWasSet(_ base: NSAttributedString) {
+        tableBase = base
+        wideTables = MarkdownTableScroll.wideTables(in: base)
+        let keptHeaders = tableHeaders
+        tableHeaders = wideTables.compactMapValues { table in table.rows.first.map { (base.string as NSString).substring(with: $0) } }
+        var byHeader: [String: CGFloat] = [:]
+        for (id, offset) in tableOffsets { if let header = keptHeaders[id] { byHeader[header] = offset } }
+        tableOffsets = [:]
+        for (id, header) in tableHeaders { if let offset = byHeader[header] { scrollTable(id, to: offset) } }
+        layOutTableScrollers()
+    }
+
+    /// Scrolls table `id` sideways, `offset` points from its start.
+    func scrollTable(_ id: Int, to offset: CGFloat) {
+        guard let table = wideTables[id], let storage = textStorage, let base = tableBase, base.length == storage.length else { return }
+        let scale = window?.backingScaleFactor ?? 2
+        let clamped = (min(max(0, offset), table.overflow) * scale).rounded() / scale
+        guard clamped != tableOffsets[id] ?? 0 else { return }
+        tableOffsets[id] = clamped
+        MarkdownTableScroll.scroll(table, to: clamped, in: storage, base: base)
+        onLayout?()
+        layOutTableScrollers()
+    }
+
+    /// The wide table whose row is at `point` (view coordinates), within the column, or up to `below` points under
+    /// its last row (where its scroller is).
+    func wideTable(at point: NSPoint, below: CGFloat = 0) -> Int? {
+        guard !wideTables.isEmpty, let layoutManager = textLayoutManager else { return nil }
+        let origin = textContainerOrigin
+        for dy in below > 0 ? [0, -below] : [0] {
+            let inContainer = CGPoint(x: point.x - origin.x, y: point.y - origin.y + dy)
+            guard inContainer.y >= 0, let fragment = layoutManager.textLayoutFragment(for: inContainer) as? MarkdownLayoutFragment,
+                  let chrome = fragment.decoration.table, chrome.overflow > 0, wideTables[chrome.id] != nil,
+                  chrome.visible.contains(point.x - origin.x) else { continue }
+            if dy == 0 || chrome.last { return chrome.id }
+        }
+        return nil
+    }
+
+    /// Sideways scrolling over a wide table scrolls the table; any other scrolling, the page. A trackpad gesture
+    /// keeps to the direction it started in, its momentum included, as a scroll view's does.
+    private var wheelTable: Int?
+    private var wheelSideways: Bool?
+    override func scrollWheel(with event: NSEvent) {
+        let gesture = !event.phase.isEmpty || !event.momentumPhase.isEmpty
+        if !gesture || event.phase.contains(.began) || event.phase.contains(.mayBegin) {
+            wheelTable = wideTable(at: convert(event.locationInWindow, from: nil))
+            wheelSideways = nil
+        }
+        if wheelSideways == nil, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+            wheelSideways = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+        }
+        guard wheelSideways == true, let id = wheelTable else { return super.scrollWheel(with: event) }
+        // A mouse's wheel (with Shift) counts lines, a trackpad points.
+        let delta = event.scrollingDeltaX * (event.hasPreciseScrollingDeltas ? 1 : 12)
+        scrollTable(id, to: (tableOffsets[id] ?? 0) - delta)
+        recentlyScrolled[id] = Date()
+        layOutTableScrollers()
+    }
+
+    /// Selecting or finding text in a wide table's hidden part scrolls the table to it first.
+    override func scrollRangeToVisible(_ range: NSRange) {
+        revealInTable(range)
+        super.scrollRangeToVisible(range)
+    }
+
+    /// Scrolls the wide table `range` starts in so its start shows.
+    func revealInTable(_ range: NSRange) {
+        guard !wideTables.isEmpty, let storage = textStorage, range.location < storage.length,
+              let chrome = (storage.attribute(MarkdownRenderer.blockKey, at: range.location, effectiveRange: nil) as? MarkdownBlockDecoration)?.table,
+              chrome.overflow > 0, wideTables[chrome.id] != nil,
+              let rect = containerRect(of: NSRange(location: range.location, length: max(1, min(range.length, storage.length - range.location)))) else { return }
+        let margin: CGFloat = 24
+        let shown = chrome.visible
+        var offset = tableOffsets[chrome.id] ?? 0
+        if rect.minX < shown.lowerBound + margin {
+            offset -= shown.lowerBound + margin - rect.minX
+        } else if min(rect.maxX, rect.minX + shown.upperBound - shown.lowerBound - margin * 2) > shown.upperBound - margin {
+            offset += min(rect.maxX, rect.minX + shown.upperBound - shown.lowerBound - margin * 2) - (shown.upperBound - margin)
+        }
+        scrollTable(chrome.id, to: offset)
+    }
+
+    /// The first line's segments of `range`, in container coordinates.
+    private func containerRect(of range: NSRange) -> CGRect? {
+        guard let layoutManager = textLayoutManager, let contentManager = layoutManager.textContentManager else { return nil }
+        let start = contentManager.documentRange.location
+        guard let from = contentManager.location(start, offsetBy: range.location), let to = contentManager.location(start, offsetBy: NSMaxRange(range)),
+              let textRange = NSTextRange(location: from, end: to) else { return nil }
+        var union: CGRect?
+        layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: [.rangeNotRequired]) { _, frame, _, _ in
+            if let first = union, frame.minY >= first.maxY - 1 { return false }
+            union = union.map { $0.union(frame) } ?? frame
+            return true
+        }
+        return union
+    }
+
+    /// A click beside a scrolled table, level with it, lands on the cell at the column's edge, not on one scrolled
+    /// out of sight there.
+    private func keptToShownCells(_ event: NSEvent) -> NSEvent {
+        guard !wideTables.isEmpty, let layoutManager = textLayoutManager else { return event }
+        let point = convert(event.locationInWindow, from: nil)
+        let origin = textContainerOrigin
+        guard let fragment = layoutManager.textLayoutFragment(for: CGPoint(x: 0, y: point.y - origin.y)) as? MarkdownLayoutFragment,
+              let chrome = fragment.decoration.table, chrome.overflow > 0 else { return event }
+        let x = point.x - origin.x
+        guard !chrome.visible.contains(x) else { return event }
+        let kept = NSPoint(x: min(max(x, chrome.visible.lowerBound + 1), chrome.visible.upperBound - 1) + origin.x, y: point.y)
+        return NSEvent.mouseEvent(with: event.type, location: convert(kept, to: nil), modifierFlags: event.modifierFlags, timestamp: event.timestamp,
+                                  windowNumber: event.windowNumber, context: nil, eventNumber: event.eventNumber, clickCount: event.clickCount,
+                                  pressure: event.pressure) ?? event
+    }
+
+    /// Places a scroller under each wide table on screen, showing while the pointer is over the table or it was just
+    /// scrolled, or always when the system shows scroll bars always.
+    func layOutTableScrollers() {
+        guard let layoutManager = textLayoutManager, !wideTables.isEmpty || !tableScrollers.isEmpty else { return }
+        let origin = textContainerOrigin
+        let now = Date()
+        recentlyScrolled = recentlyScrolled.filter { now.timeIntervalSince($0.value) < 1.2 }
+        let always = NSScroller.preferredScrollerStyle == .legacy
+        var placed: Set<Int> = []
+        if let viewport = layoutManager.textViewportLayoutController.viewportRange {
+            layoutManager.enumerateTextLayoutFragments(from: viewport.location, options: []) { fragment in
+                guard fragment.rangeInElement.location.compare(viewport.endLocation) == .orderedAscending else { return false }
+                guard let fragment = fragment as? MarkdownLayoutFragment, let chrome = fragment.decoration.table, chrome.last,
+                      let table = wideTables[chrome.id], let row = fragment.tableRowFrame else { return true }
+                let scroller = tableScrollers[chrome.id] ?? {
+                    let view = TableScrollerView()
+                    view.onScroll = { [weak self] id, offset in
+                        self?.scrollTable(id, to: offset)
+                        self?.recentlyScrolled[id] = Date()
+                    }
+                    addSubview(view, positioned: .above, relativeTo: nil)
+                    tableScrollers[chrome.id] = view
+                    return view
+                }()
+                scroller.table = chrome.id
+                scroller.frame = NSRect(x: table.visible.lowerBound + origin.x, y: row.maxY + origin.y + 2,
+                                        width: table.visible.upperBound - table.visible.lowerBound, height: TableScrollerView.height)
+                scroller.update(offset: tableOffsets[chrome.id] ?? 0, overflow: table.overflow,
+                                shown: always || hoveredTable == chrome.id || recentlyScrolled[chrome.id] != nil, legacy: always)
+                placed.insert(chrome.id)
+                return true
+            }
+        }
+        for (id, scroller) in tableScrollers where !placed.contains(id) {
+            scroller.removeFromSuperview()
+            tableScrollers[id] = nil
+        }
+        scrollerHideTimer?.invalidate()
+        if !recentlyScrolled.isEmpty {
+            scrollerHideTimer = Timer.scheduledTimer(withTimeInterval: 1.25, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.layOutTableScrollers() }
+            }
+        }
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
+        guard window != nil else {
+            scrollerHideTimer?.invalidate()
+            return
+        }
         controller?.setDarkAppearance(effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
         RunLoop.main.perform(inModes: [.common]) { [weak self] in
             MainActor.assumeIsolated { self?.onAttachedToWindow?() }
         }
+    }
+}
+
+/// A wide table's scroller, under it: a thin knob in the system's overlay style, which can be dragged, or clicked
+/// beside to jump there.
+final class TableScrollerView: NSView {
+    static let height: CGFloat = 11
+    var table = 0
+    var onScroll: ((Int, CGFloat) -> Void)?
+    private var offset: CGFloat = 0
+    private var overflow: CGFloat = 1
+    private var legacy = false
+    private var hovered = false
+    private var dragStart: (x: CGFloat, offset: CGFloat)?
+    private var shown = false
+
+    override var isFlipped: Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        alphaValue = 0
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func update(offset: CGFloat, overflow: CGFloat, shown: Bool, legacy: Bool) {
+        self.offset = offset
+        self.overflow = max(1, overflow)
+        self.legacy = legacy
+        let show = shown || dragStart != nil
+        if show != self.shown {
+            self.shown = show
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = show ? 0.12 : 0.3
+                animator().alphaValue = show ? 1 : 0
+            }
+        }
+        needsDisplay = true
+    }
+
+    private var knob: CGRect {
+        let track = bounds.insetBy(dx: 2, dy: 0)
+        let width = max(28, track.width * track.width / (track.width + overflow))
+        let x = track.minX + (track.width - width) * offset / overflow
+        let thickness: CGFloat = hovered || dragStart != nil ? 8 : 6
+        return CGRect(x: x, y: (bounds.height - thickness) / 2, width: width, height: thickness)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if legacy || hovered || dragStart != nil {
+            NSColor.quaternaryLabelColor.withAlphaComponent(0.35).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: (bounds.height - 2) / 2, yRadius: (bounds.height - 2) / 2).fill()
+        }
+        let knob = knob
+        NSColor.labelColor.withAlphaComponent(hovered || dragStart != nil ? 0.5 : 0.35).setFill()
+        NSBezierPath(roundedRect: knob, xRadius: knob.height / 2, yRadius: knob.height / 2).fill()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        shown ? super.hitTest(point) : nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+
+    override func mouseDown(with event: NSEvent) {
+        let x = convert(event.locationInWindow, from: nil).x
+        let knob = knob
+        let track = bounds.insetBy(dx: 2, dy: 0)
+        let travel = max(1, track.width - knob.width)
+        // Beside the knob: it jumps there, centred under the pointer, and is dragged on from there.
+        var start = (x: x, offset: offset)
+        if !knob.contains(CGPoint(x: x, y: knob.midY)) {
+            start.offset = min(max(0, (x - track.minX - knob.width / 2) / travel * overflow), overflow)
+            onScroll?(table, start.offset)
+        }
+        dragStart = start
+        needsDisplay = true
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp { break }
+            let moved = convert(next.locationInWindow, from: nil).x - start.x
+            onScroll?(table, start.offset + moved / travel * overflow)
+        }
+        dragStart = nil
+        needsDisplay = true
     }
 }
 

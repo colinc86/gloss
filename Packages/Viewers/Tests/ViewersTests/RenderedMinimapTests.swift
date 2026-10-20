@@ -80,14 +80,21 @@ struct RenderedMinimapTests {
         #expect(minimap.frame.width == MinimapView.width && !minimap.isHidden)
         // The first page is built on the next turn, out of drawing: a suspension lets that task run (a run loop
         // nested in this main-actor test never did, and the check below passed on the separator alone).
-        minimap.display()
-        try await Task.sleep(for: .milliseconds(200))
-        let rep = try #require(minimap.bitmapImageRepForCachingDisplay(in: minimap.bounds))
-        minimap.cacheDisplay(in: minimap.bounds, to: rep)
-        let background = rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh - 2)
-        // Right of the separator hairline at the left edge.
-        let firstColumn = Int(2 * CGFloat(rep.pixelsWide) / minimap.bounds.width)
-        let differs = (0..<rep.pixelsHigh / 2).contains { y in (firstColumn..<rep.pixelsWide).contains { rep.colorAt(x: $0, y: y) != background } }
+        // Waits for it, up to a few seconds: under a full test run the turn can come late.
+        func drawn() throws -> Bool {
+            minimap.display()
+            let rep = try #require(minimap.bitmapImageRepForCachingDisplay(in: minimap.bounds))
+            minimap.cacheDisplay(in: minimap.bounds, to: rep)
+            let background = rep.colorAt(x: rep.pixelsWide / 2, y: rep.pixelsHigh - 2)
+            // Right of the separator hairline at the left edge.
+            let firstColumn = Int(2 * CGFloat(rep.pixelsWide) / minimap.bounds.width)
+            return (0..<rep.pixelsHigh / 2).contains { y in (firstColumn..<rep.pixelsWide).contains { rep.colorAt(x: $0, y: y) != background } }
+        }
+        var differs = false
+        for _ in 0..<30 where !differs {
+            try await Task.sleep(for: .milliseconds(100))
+            differs = try drawn()
+        }
         #expect(differs, "the page is drawn in it")
     }
 }

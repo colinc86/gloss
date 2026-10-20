@@ -96,7 +96,9 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
             if level <= 2 { shapes.lines.append(CGRect(x: left, y: text.maxY + 5, width: right - left, height: 1)) }
         case .tableRow(_, let width):
             let pad = MarkdownRenderer.tableRowPadding
-            shapes.tableRow = CGRect(x: left, y: text.minY - pad, width: min(width, right - left), height: text.height + pad * 2)
+            // A table wider than the column runs on past it, clipped (`tableClip`).
+            let fits = (decoration.table?.overflow ?? 0) == 0
+            shapes.tableRow = CGRect(x: left, y: text.minY - pad, width: fits ? min(width, right - left) : width, height: text.height + pad * 2)
         }
         if !decoration.quoteBars.isEmpty {
             // Bars span the paragraph's own spacing so consecutive paragraphs of one quote join up.
@@ -107,6 +109,42 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
             }
         }
         return shapes
+    }
+
+    /// Where a row of a table wider than the column shows (fragment coordinates): its text and chrome are clipped
+    /// to it, as the table scrolls.
+    private var tableClip: CGRect? {
+        guard let chrome = decoration.table, chrome.overflow > 0 else { return nil }
+        let originX = layoutFragmentFrame.minX
+        return CGRect(x: chrome.visible.lowerBound - originX, y: -10_000, width: chrome.visible.upperBound - chrome.visible.lowerBound, height: 20_000)
+    }
+
+    /// Fades a scrolled table's text out at whichever edge has more of it beyond, so it reads as cut off rather
+    /// than ending there.
+    private func drawEdgeFades(_ clip: CGRect, row: CGRect, context: CGContext) {
+        guard let chrome = decoration.table, case .tableRow(let header, _) = decoration.kind else { return }
+        // The row's own tint goes back over the fade, so a header or striped row fades into its tint.
+        let tint = header ? Self.headerFill : chrome.striped ? Self.stripe : nil
+        let width: CGFloat = 28
+        let background = NSColor.textBackgroundColor
+        guard let gradient = CGGradient(colorsSpace: nil, colors: [background.withAlphaComponent(0).cgColor, background.cgColor] as CFArray,
+                                        locations: [0, 1]) else { return }
+        if chrome.offset > 0.5 {
+            let band = CGRect(x: clip.minX, y: row.minY, width: width, height: row.height)
+            context.saveGState()
+            context.clip(to: band)
+            context.drawLinearGradient(gradient, start: CGPoint(x: band.maxX, y: 0), end: CGPoint(x: band.minX, y: 0), options: [])
+            if let tint { context.setFillColor(tint.cgColor); context.fill(band) }
+            context.restoreGState()
+        }
+        if chrome.offset < chrome.overflow - 0.5 {
+            let band = CGRect(x: clip.maxX - width, y: row.minY, width: width, height: row.height)
+            context.saveGState()
+            context.clip(to: band)
+            context.drawLinearGradient(gradient, start: CGPoint(x: band.minX, y: 0), end: CGPoint(x: band.maxX, y: 0), options: [])
+            if let tint { context.setFillColor(tint.cgColor); context.fill(band) }
+            context.restoreGState()
+        }
     }
 
     override var renderingSurfaceBounds: CGRect {
@@ -206,10 +244,17 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
     }
 
     override func draw(at point: CGPoint, in context: CGContext) {
-        if let shapes = shapes() {
+        let clip = tableClip
+        let shapes = shapes()
+        if let shapes {
             context.saveGState()
             context.translateBy(x: point.x, y: point.y)
-            if let row = shapes.tableRow { drawTableRow(row, context: context) }
+            if let row = shapes.tableRow {
+                context.saveGState()
+                if let clip { context.clip(to: clip) }
+                drawTableRow(row, context: context)
+                context.restoreGState()
+            }
             if let fill = shapes.fill {
                 let path = shapes.fillRounded ? CGPath(roundedRect: fill, cornerWidth: 6, cornerHeight: 6, transform: nil) : CGPath(rect: fill, transform: nil)
                 context.addPath(path)
@@ -236,7 +281,21 @@ nonisolated final class MarkdownLayoutFragment: NSTextLayoutFragment {
             }
             context.restoreGState()
         }
+        guard let clip else { return super.draw(at: point, in: context) }
+        context.saveGState()
+        context.clip(to: clip.offsetBy(dx: point.x, dy: point.y))
         super.draw(at: point, in: context)
+        if let row = shapes?.tableRow {
+            context.translateBy(x: point.x, y: point.y)
+            drawEdgeFades(clip, row: row, context: context)
+        }
+        context.restoreGState()
+    }
+
+    /// A table row's outline, in container coordinates.
+    var tableRowFrame: CGRect? {
+        guard let row = shapes()?.tableRow else { return nil }
+        return row.offsetBy(dx: layoutFragmentFrame.minX, dy: layoutFragmentFrame.minY)
     }
 }
 

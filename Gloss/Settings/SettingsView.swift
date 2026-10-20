@@ -87,26 +87,10 @@ struct SettingsView: View {
                                 .contentTransition(.numericText(value: settings.markdownTextSize))
                         }
                     }
-                    Toggle(isOn: $settings.markdownFillsWindow) {
-                        Text("Fill the window")
-                        Text("Tables grow with the window instead of stopping at the page width.")
-                    }
-                    LabeledContent("Page width") {
-                        HStack(spacing: DS.Space.m) {
-                            Slider(value: $settings.markdownPageWidth, in: SettingsStore.markdownPageWidthRange, step: 20)
-                                .frame(width: 200)
-                            Text("\(settings.markdownPageWidth, specifier: "%.0f") pt")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .frame(width: 48, alignment: .trailing)
-                                .contentTransition(.numericText(value: settings.markdownPageWidth))
-                        }
-                    }
-                    .disabled(settings.markdownFillsWindow)
                 } header: {
                     Text("Rendered Markdown")
                 } footer: {
-                    Text("Text keeps a comfortable line length that grows with its size. Wider tables use the page.")
+                    Text("Text keeps a comfortable line length that grows with its size. A table wider than the text scrolls sideways.")
                 }
             }
             .formStyle(.grouped)

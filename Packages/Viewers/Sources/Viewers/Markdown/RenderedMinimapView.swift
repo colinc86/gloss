@@ -14,6 +14,9 @@ final class RenderedPage {
     struct Key: Equatable {
         var version: Int
         var width: CGFloat
+        /// How far the text column is set in from the container's edges (room for wide tables to scroll): the
+        /// thumbnail shows the column, not the room.
+        var inset: CGFloat = 0
         var appearance: NSAppearance.Name?
         var backingScale: CGFloat
     }
@@ -45,7 +48,7 @@ final class RenderedPage {
     }
 
     /// Points on the thumbnail per point of page.
-    func scale(forThumbnailWidth width: CGFloat) -> CGFloat { width / max(1, key.width) }
+    func scale(forThumbnailWidth width: CGFloat) -> CGFloat { width / max(1, key.width - key.inset * 2) }
 
     private func draw(width: CGFloat, appearance: NSAppearance, backingScale: CGFloat) -> NSBitmapImageRep? {
         let scale = scale(forThumbnailWidth: width)
@@ -62,6 +65,7 @@ final class RenderedPage {
         // Page points, top-left origin, as TextKit lays them out.
         context.translateBy(x: 0, y: CGFloat(pixelsHigh))
         context.scaleBy(x: scale * pixelsPerPoint, y: -scale * pixelsPerPoint)
+        context.translateBy(x: -key.inset, y: 0)
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
         appearance.performAsCurrentDrawingAppearance {
@@ -184,7 +188,7 @@ final class RenderedMinimapView: NSView {
     private var currentKey: RenderedPage.Key? {
         guard let controller, let width = textView?.textContainer?.size.width, width > 50,
               controller.rendered.length <= RenderedPage.maximumLength else { return nil }
-        return RenderedPage.Key(version: controller.renderedVersion, width: width.rounded(), appearance: effectiveAppearance.name,
+        return RenderedPage.Key(version: controller.renderedVersion, width: width.rounded(), inset: controller.laidOutColumn?.inset ?? 0, appearance: effectiveAppearance.name,
                                 backingScale: window?.backingScaleFactor ?? 2)
     }
 
@@ -278,7 +282,7 @@ final class RenderedMinimapView: NSView {
         let scale = page.scale(forThumbnailWidth: thumbnailWidth)
         // Page points to the minimap's.
         func place(_ rect: CGRect) -> NSRect {
-            NSRect(x: Self.inset + rect.minX * scale, y: rect.minY * scale - layout.offset, width: rect.width * scale, height: rect.height * scale)
+            NSRect(x: Self.inset + (rect.minX - page.key.inset) * scale, y: rect.minY * scale - layout.offset, width: rect.width * scale, height: rect.height * scale)
         }
 
         if let picture = page.picture {

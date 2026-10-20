@@ -276,14 +276,14 @@ struct MarkdownRendererTests {
     }
 
     @Test func aRightAlignedFirstColumnStillTabsToItsStop() {
-        let output = MarkdownRenderer.render("| n | name |\n| --: | :-- |\n| 12 | alpha |\n", pageWidth: 500)
+        let output = MarkdownRenderer.render("| n | name |\n| --: | :-- |\n| 12 | alpha |\n", columnWidth: 500)
         #expect(output.text.string.contains("\t12\talpha"))
         #expect(paragraph(output, at: "alpha")?.firstLineHeadIndent == 0)
     }
 
     @Test func tableCellsAreExactAndAlignedByTabStops() {
         let source = "| name | n |\n| :-- | --: |\n| alpha | 1 |\n| b | 200 |\n"
-        let output = MarkdownRenderer.render(source, pageWidth: 500)
+        let output = MarkdownRenderer.render(source, columnWidth: 500)
         // A left-aligned first column starts at the row's first-line indent: a leading tab drew a sliver in TextKit.
         #expect(output.text.string.contains("\nalpha\t1"))
         #expect(paragraph(output, at: "alpha")?.firstLineHeadIndent == MarkdownRenderer.tableCellPadding)
@@ -647,7 +647,7 @@ struct MarkdownRendererTests {
     @Test func wideTablesWrapCellsWithinTheirColumns() throws {
         let long = Array(repeating: "word", count: 60).joined(separator: " ")
         let source = "| a | b |\n| - | - |\n| \(long) | x |\n"
-        let output = MarkdownRenderer.render(source, pageWidth: 600)
+        let output = MarkdownRenderer.render(source, columnWidth: 600)
         let row = try #require(paragraph(output, at: "word"))
         #expect(row.tabStops.count == 2, "columns keep their stops")
         let text = output.text.string as NSString
@@ -669,37 +669,75 @@ struct MarkdownRendererTests {
         }
         // "x" is on the row's first line, beside the cell's first piece.
         #expect(text.contains("word\tx\u{2028}"))
-        let narrow = MarkdownRenderer.render("| a | b |\n| - | - |\n| 1 | 2 |\n", pageWidth: 600)
+        let narrow = MarkdownRenderer.render("| a | b |\n| - | - |\n| 1 | 2 |\n", columnWidth: 600)
         #expect(paragraph(narrow, at: "1")?.tabStops.count == 2)
         #expect(!(narrow.text.string.contains("\u{2028}")))
         #expect(output.hasTables && !MarkdownRenderer.render("no table").hasTables)
     }
 
-    @Test func textIsSetInBesideTablesWiderThanIt() throws {
-        let prose = MarkdownRenderer.proseWidth(readingSize: 14)
+    @Test func tablesLineUpWithTheTextAndScrollOnlyWhenTheyCantFit() throws {
+        let column: CGFloat = 600
+        let word = "Supercalifragilistic"
+        let header = (1...8).map { "h\($0)" }.joined(separator: " | ")
+        let cells = Array(repeating: word, count: 8).joined(separator: " | ")
         let long = Array(repeating: "spread", count: 80).joined(separator: " ")
-        let source = "Some text.\n\n| a | b |\n| - | - |\n| \(long) | wide |\n\n| n | m |\n| - | - |\n| 1 | 2 |\n\n```\ncode\n```\n"
-        let output = MarkdownRenderer.render(source, pageWidth: 1200, readingSize: 14)
-        let inset = ((1200 - prose) / 2).rounded(.down)
-        let text = try #require(paragraph(output, at: "Some"))
-        #expect(text.headIndent == inset && text.tailIndent == -inset, "the text keeps its line length, centred")
-        #expect(paragraph(output, at: "code")?.tailIndent == -inset - MarkdownRenderer.codePadding)
-        let wide = try #require(decoration(output, at: "spread"))
+        let source = "Some text.\n\n| \(header) |\n|\(String(repeating: " - |", count: 8))\n| \(cells) |\n\n| a | b |\n| - | - |\n| \(long) | wraps |\n\n| n | m |\n| - | - |\n| q7 | 2 |\n\n```\ncode\n```\n"
+        let output = MarkdownRenderer.render(source, columnWidth: column, readingSize: 14)
+        let wide = try #require(decoration(output, at: word))
+        let chrome = try #require(wide.table)
         guard case .tableRow(_, let width) = wide.kind else { Issue.record("no row"); return }
-        #expect(width > prose && width <= 1200, "a wide table uses the page")
-        #expect(abs(wide.leading - (1200 - width) / 2) <= 1, "centred on it")
-        #expect(decoration(output, at: "1")?.leading == inset, "a narrow table lines up with the text")
-        let nested = MarkdownRenderer.render("- item\n\n  | a | b |\n  | - | - |\n  | \(long) | x |\n", pageWidth: 1200, readingSize: 14)
+        #expect(chrome.overflow > 0 && output.inset == chrome.overflow.rounded(.up), "the column is set in by as much as the widest table runs past it")
+        let inset = output.inset
+        #expect(wide.leading == inset, "it starts where the text does")
+        #expect(abs(wide.leading + width - (inset + column) - chrome.overflow) <= 1, "and runs on past the column, its words whole")
+        #expect(chrome.visible == inset...(inset + column), "it shows in the column")
+        let text = try #require(paragraph(output, at: "Some"))
+        #expect(text.headIndent == inset && text.tailIndent == -inset, "the text keeps to the column")
+        #expect(paragraph(output, at: "code")?.tailIndent == -inset - MarkdownRenderer.codePadding)
+        // A table whose cells can wrap to fit does, and does not scroll.
+        let wrapped = try #require(decoration(output, at: "spread"))
+        guard case .tableRow(_, let wrappedWidth) = wrapped.kind else { Issue.record("no row"); return }
+        #expect(wrapped.table?.overflow == 0 && wrapped.leading == inset && wrappedWidth <= column + 1)
+        #expect(decoration(output, at: "q7")?.leading == inset && decoration(output, at: "q7")?.table?.overflow == 0, "a narrow table lines up with the text")
+        // In a list, a table starts at the item's text and fits what is left of the column.
+        let nested = MarkdownRenderer.render("- item\n\n  | a | b |\n  | - | - |\n  | \(long) | x |\n", columnWidth: column, readingSize: 14)
         let row = try #require(decoration(nested, at: "spread"))
         guard case .tableRow(_, let nestedWidth) = row.kind else { Issue.record("no row"); return }
-        #expect(row.leading + nestedWidth <= inset + prose + 2, "a table in a list keeps to the text beside it")
-        let plain = MarkdownRenderer.render("Some text.\n", pageWidth: 1200, readingSize: 14)
-        #expect(paragraph(plain, at: "Some")?.headIndent == 0 && paragraph(plain, at: "Some")?.tailIndent == 0, "a page of text is the text's width")
+        #expect(row.leading > 0 && row.leading + nestedWidth <= column + 2 && nested.inset == 0)
+        // A column narrower than a nested table's indent (a narrow pane) still lays it out.
+        let cramped = MarkdownRenderer.render("> - item\n>\n>   | a | b |\n>   | - | - |\n>   | 1 | 2 |\n", columnWidth: 10, readingSize: 14)
+        #expect(cramped.hasTables)
+        let plain = MarkdownRenderer.render("Some text.\n", columnWidth: column, readingSize: 14)
+        #expect(plain.inset == 0 && paragraph(plain, at: "Some")?.headIndent == 0 && paragraph(plain, at: "Some")?.tailIndent == 0)
+    }
+
+    @Test func scrollingATableMovesItsRowsAndChromeButNotItsQuoteBars() throws {
+        let cells = Array(repeating: "Supercalifragilistic", count: 8).joined(separator: " | ")
+        let source = "> | \((1...8).map { "h\($0)" }.joined(separator: " | ")) |\n> |\(String(repeating: " - |", count: 8))\n> | \(cells) |\n"
+        let output = MarkdownRenderer.render(source, columnWidth: 500, readingSize: 14)
+        let tables = MarkdownTableScroll.wideTables(in: output.text)
+        let table = try #require(tables.values.first)
+        #expect(tables.count == 1 && table.rows.count == 2)
+        let storage = NSTextStorage(attributedString: output.text)
+        MarkdownTableScroll.scroll(table, to: 40, in: storage, base: output.text)
+        let location = table.rows[1].location
+        let before = try #require(output.text.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle)
+        let after = try #require(storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle)
+        #expect(after.headIndent == before.headIndent - 40 && after.firstLineHeadIndent == before.firstLineHeadIndent - 40)
+        #expect(zip(after.tabStops, before.tabStops).allSatisfy { $0.location == $1.location - 40 })
+        let base = try #require(output.text.attribute(MarkdownRenderer.blockKey, at: location, effectiveRange: nil) as? MarkdownBlockDecoration)
+        let moved = try #require(storage.attribute(MarkdownRenderer.blockKey, at: location, effectiveRange: nil) as? MarkdownBlockDecoration)
+        #expect(moved.leading == base.leading - 40 && moved.table?.offset == 40)
+        #expect(moved.table?.dividers == base.table?.dividers.map { $0 - 40 })
+        #expect(moved.table?.visible == base.table?.visible && moved.quoteBars == base.quoteBars && !moved.quoteBars.isEmpty)
+        // Scrolling back starts from the unscrolled text, not from where it was.
+        MarkdownTableScroll.scroll(table, to: 0, in: storage, base: output.text)
+        #expect((storage.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle)?.headIndent == before.headIndent)
     }
 
     @Test func columnsShareSpaceByContent() throws {
         let long = Array(repeating: "longer", count: 40).joined(separator: " ")
-        let output = MarkdownRenderer.render("| id | text |\n| - | - |\n| 7 | \(long) |\n", pageWidth: 500)
+        let output = MarkdownRenderer.render("| id | text |\n| - | - |\n| 7 | \(long) |\n", columnWidth: 500)
         let stops = try #require(paragraph(output, at: "7")?.tabStops.map(\.location))
         let idColumn = stops[1] - stops[0] - MarkdownRenderer.tableCellPadding * 2
         #expect(idColumn < 40, "a short column keeps its natural width: \(idColumn)")
@@ -713,7 +751,7 @@ struct MarkdownRendererTests {
     @Test func unbreakableWordsBreakByCharacter() {
         let url = "https://example.com/" + String(repeating: "abcdefghij", count: 30)
         let source = "| link | n |\n| - | - |\n| \(url) | 1 |\n"
-        let output = MarkdownRenderer.render(source, pageWidth: 400)
+        let output = MarkdownRenderer.render(source, columnWidth: 400)
         let text = output.text.string as NSString
         let pieces = output.map.spans.filter { NSIntersectionRange($0.source, (source as NSString).range(of: url)).length > 0 }
         #expect(pieces.count > 1)
@@ -723,7 +761,7 @@ struct MarkdownRendererTests {
     @Test func aSelectionInsideOneWrappedCellMapsToThatCellOnly() throws {
         let long = (1...40).map { "w\($0)" }.joined(separator: " ")
         let source = "| a | b |\n| - | - |\n| \(long) | \(long.uppercased()) |\n"
-        let output = MarkdownRenderer.render(source, pageWidth: 400)
+        let output = MarkdownRenderer.render(source, columnWidth: 400)
         let text = output.text.string as NSString
         // From w3 on the first line to w30 on a later one: the other cell's pieces lie between them.
         let from = text.range(of: "w3 ").location
@@ -747,7 +785,7 @@ struct MarkdownRendererTests {
 
     @Test func copyingTableRowsKeepsCellsInOrder() {
         let long = (1...30).map { "w\($0)" }.joined(separator: " ")
-        let output = MarkdownRenderer.render("| a | b |\n| - | - |\n| \(long) | x y |\n| 2 | 3 |\n\nafter\n", pageWidth: 360)
+        let output = MarkdownRenderer.render("| a | b |\n| - | - |\n| \(long) | x y |\n| 2 | 3 |\n\nafter\n", columnWidth: 360)
         let copied = RenderedTextView.copiedText(output.text)
         #expect(copied.hasPrefix("a\tb\n\(long)\tx y\n2\t3"), "\(copied.debugDescription)")
         #expect(copied.hasSuffix("\nafter"))

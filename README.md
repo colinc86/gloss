@@ -20,7 +20,7 @@
 Gloss adds context to content. Highlight anything, write a note, and send it to your coding agent.
 
 - **Notes on anything.** Code, Markdown, images, PDFs, spreadsheets and web pages, down to a page's elements, or a whole file at once.
-- **Readable Markdown.** Text at a comfortable line length, and tables that grow with the window, their columns wrapping to fit.
+- **Readable Markdown.** Text at a comfortable line length, and tables lined up with it that wrap their columns to fit, or scroll sideways when they can't.
 - **Local or remote.** Files on your Mac or on any host you reach over ssh.
 - **Integrations.** GitHub pull requests, Jira issues and Confluence pages.
 - **Talk it through.** Each note is a thread: the agent replies, or asks you a question, sometimes with choices.

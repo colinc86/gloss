@@ -248,13 +248,14 @@ public final class MarkdownViewerController {
         }
     }
 
-    /// The page's width, set by the rendered view as it sizes the column (never during a live resize). A page with
-    /// tables is laid out for it, its text set in, so it renders again when it changes, on the next turn of the run
-    /// loop rather than after an edit's pause; the view keeps it at its old width until then. Any other page just
-    /// wraps anew.
-    @ObservationIgnored public var pageWidth: CGFloat? {
+    /// The text column's width, set by the rendered view as it sizes the column (never during a live resize). A
+    /// page with tables is laid out for it, so it renders again when it changes, on the next turn of the run loop
+    /// rather than after an edit's pause; the view keeps it at its old width until then. Any other page just wraps
+    /// anew.
+    @ObservationIgnored public var columnWidth: CGFloat? {
         didSet {
-            guard pageWidth != oldValue, hasTables else { return }
+            // The first width heard is usually the one the page was already laid out for (`proseWidth`).
+            guard columnWidth != oldValue, hasTables, columnWidth != renderedColumn.width else { return }
             guard mode == .rendered else { renderOwed = true; return }
             guard !widthRebuildPending else { return }
             widthRebuildPending = true
@@ -269,10 +270,10 @@ public final class MarkdownViewerController {
     }
     @ObservationIgnored private var hasTables = false
     @ObservationIgnored private var widthRebuildPending = false
-    /// The width the shown page was laid out for when it spans the page (its tables do, with its text set in);
-    /// nil when it is only as wide as its text.
-    var laidOutPageWidth: CGFloat? { hasTables ? renderedPageWidth : nil }
-    @ObservationIgnored private var renderedPageWidth: CGFloat = 0
+    /// The column the shown page was laid out for when it has tables, and how far the column is set in from the
+    /// container's edges to leave wide ones room to scroll; nil when the page just wraps to its column.
+    var laidOutColumn: (width: CGFloat, inset: CGFloat)? { hasTables ? renderedColumn : nil }
+    @ObservationIgnored private var renderedColumn: (width: CGFloat, inset: CGFloat) = (0, 0)
     @ObservationIgnored private var codeThemeObservers: [any NSObjectProtocol] = []
     @ObservationIgnored private var lastCodeTheme: CodeTheme?
     @ObservationIgnored private var lastCodeFontSize: CGFloat = 0
@@ -305,9 +306,9 @@ public final class MarkdownViewerController {
         lastCodeFontSize = Theme.editorFontSize
         lastReadingSize = Theme.readingFontSize
         let output = MarkdownRenderer.render(source.text, baseURL: usesCapturedImages ? nil : baseURL, images: fetchedImages, diagrams: diagrams, reduceMotion: reduceMotion,
-                                             codeAppearance: codeAppearance, pageWidth: pageWidth)
+                                             codeAppearance: codeAppearance, columnWidth: columnWidth)
         hasTables = output.hasTables
-        renderedPageWidth = output.pageWidth
+        renderedColumn = (output.columnWidth, output.inset)
         rendered = output.text
         map = output.map
         renderedVersion += 1
