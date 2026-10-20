@@ -254,7 +254,7 @@ public final class MarkdownViewerController {
     /// anew.
     @ObservationIgnored public var columnWidth: CGFloat? {
         didSet {
-            // The first width heard is usually the one the page was already laid out for (`proseWidth`).
+            // The first width heard is often the one the page was already laid out for (`defaultPageWidth`).
             guard columnWidth != oldValue, hasTables, columnWidth != renderedColumn.width else { return }
             guard mode == .rendered else { renderOwed = true; return }
             guard !widthRebuildPending else { return }

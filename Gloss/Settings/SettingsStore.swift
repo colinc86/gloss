@@ -97,6 +97,19 @@ final class SettingsStore {
             persist("editor.minimap", showMinimap ? "1" : "0")
         }
     }
+    /// The rendered Markdown page: as wide as the window allows up to `markdownPageWidth`, or the whole window.
+    var markdownFillsWindow = false {
+        didSet {
+            Theme.renderedPageWidth = markdownFillsWindow ? nil : markdownPageWidth
+            persist("markdown.fillWindow", markdownFillsWindow ? "1" : "0")
+        }
+    }
+    var markdownPageWidth: Double = 900 {
+        didSet {
+            if !markdownFillsWindow { Theme.renderedPageWidth = markdownPageWidth }
+            persist("markdown.pageWidth", String(markdownPageWidth))
+        }
+    }
     var markdownTextSize: Double = 14 {
         didSet {
             Theme.readingFontSize = markdownTextSize
@@ -156,6 +169,7 @@ final class SettingsStore {
     }
     /// The font size slider's range, and the attachment expiry stepper's.
     static let editorFontSizeRange: ClosedRange<Double> = 9...20
+    static let markdownPageWidthRange: ClosedRange<Double> = 600...1600
     static let markdownTextSizeRange: ClosedRange<Double> = 12...20
     static let stagedExpiryRange = 1...90
     /// Ports an unprivileged server may take; 0 would ask for any port, which agents registered on this one can't find.
@@ -184,6 +198,8 @@ final class SettingsStore {
         if let value = await read("editor.wrap") { wrapLines = value == "1" }
         if let value = await read("editor.guides") { showIndentGuides = value == "1" }
         if let value = await read("editor.minimap") { showMinimap = value == "1" }
+        if let value = await read("markdown.pageWidth"), let width = Double(value), width.isFinite { markdownPageWidth = min(max(width, Self.markdownPageWidthRange.lowerBound), Self.markdownPageWidthRange.upperBound) }
+        if let value = await read("markdown.fillWindow") { markdownFillsWindow = value == "1" }
         if let value = await read("markdown.textSize"), let size = Double(value), size.isFinite { markdownTextSize = min(max(size, Self.markdownTextSizeRange.lowerBound), Self.markdownTextSizeRange.upperBound) }
         if let value = await read("attachments.expiryDays"), let days = Int(value) { stagedFileExpiryDays = min(max(days, Self.stagedExpiryRange.lowerBound), Self.stagedExpiryRange.upperBound) }
         if let value = await read("notes.trashDays"), let days = Int(value), Self.trashRetentionChoices.contains(days) { trashRetentionDays = days }

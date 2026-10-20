@@ -5,7 +5,7 @@ import Testing
 @testable import Viewers
 
 /// Issue #20: resizing the window laid the rendered document out again on every step, blanking and re-wrapping it.
-/// Serialized: they lay out real windows and wait on them.
+/// Serialized: they change the page width setting.
 @MainActor @Suite(.serialized)
 struct RenderedColumnTests {
     @Test func theColumnIsCentredAndAWiderWindowNeedsNoNewLayout() async throws {
@@ -34,7 +34,7 @@ struct RenderedColumnTests {
         let textView = try #require(find(RenderedTextView.self, in: hosting))
         let layoutManager = try #require(textView.textLayoutManager)
         let laid = try #require(controller.laidOutColumn)
-        #expect(laid.width == MarkdownRenderer.proseWidth() && laid.inset > 0)
+        #expect(laid.width == Theme.renderedPageWidth && laid.inset > 0, "the page is as wide as the setting")
         #expect(textView.textContainer?.size.width == laid.width + laid.inset * 2, "room either side of the column")
         // Where AppKit itself puts the first character (its screen rect, brought back into the view), not a frame
         // worked out from the overridden origin.
@@ -44,7 +44,7 @@ struct RenderedColumnTests {
             return textView.convert(window.convertFromScreen(screen), from: nil).minX
         }
         // The column is centred, its room out of sight.
-        #expect(abs(firstCharacterX() - (textView.bounds.width - MarkdownRenderer.proseWidth()) / 2) < 2, "centred")
+        #expect(abs(firstCharacterX() - (textView.bounds.width - laid.width) / 2) < 2, "centred")
         /// Waits, up to a few seconds, for the page to be rendered again for its new width.
         func settle(_ done: () -> Bool) async throws {
             for _ in 0..<30 where !done() {
@@ -61,7 +61,7 @@ struct RenderedColumnTests {
         hosting.frame = NSRect(x: 0, y: 0, width: 1500, height: 500)
         hosting.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
-        #expect(abs(firstCharacterX() - (textView.bounds.width - MarkdownRenderer.proseWidth()) / 2) < 2, "still centred")
+        #expect(abs(firstCharacterX() - (textView.bounds.width - laid.width) / 2) < 2, "still centred")
         #expect(controller.renderedVersion == version, "not rendered again")
         #expect(layoutManager.textLayoutFragment(for: layoutManager.documentRange.location) === fragment, "not laid out again")
 
@@ -75,10 +75,27 @@ struct RenderedColumnTests {
         let narrowed = try #require(controller.laidOutColumn)
         #expect(narrowed.width < 600 && controller.columnWidth == narrowed.width, "the renderer hears the column's width, for tables")
         #expect(abs(firstCharacterX() - RenderedTextView.minimumMargin) < 2, "rendered again for the narrower column")
+
+        // A page that fills the window grows with it.
+        let saved = Theme.renderedPageWidth
+        defer { Theme.renderedPageWidth = saved }
+        Theme.renderedPageWidth = nil
+        window.setContentSize(NSSize(width: 1500, height: 500))
+        hosting.frame = NSRect(x: 0, y: 0, width: 1500, height: 500)
+        hosting.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        try await settle { controller.laidOutColumn?.width == textView.bounds.width - RenderedTextView.minimumMargin * 2 }
+        #expect(controller.laidOutColumn?.width == textView.bounds.width - RenderedTextView.minimumMargin * 2)
+
+        // A narrower page width takes effect without waiting for a pause.
+        Theme.renderedPageWidth = 640
+        try await settle { controller.laidOutColumn?.width == 640 }
+        #expect(controller.laidOutColumn?.width == 640)
+        #expect(abs(firstCharacterX() - (textView.bounds.width - 640) / 2) < 2)
     }
 
-    /// A page of text keeps a comfortable line length however wide the page may be.
-    @Test func textAloneKeepsItsLineLength() async throws {
+    /// A page of text fills the page: the page width setting's, or the window's.
+    @Test func textFillsThePage() async throws {
         let markdown = "# Title\n\nA paragraph long enough to wrap over more than one line of the reading column, which it would not do on a wide page.\n"
         let controller = MarkdownViewerController(source: TextEditorController(text: markdown, languageName: "markdown"))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1500, height: 500), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
@@ -94,12 +111,17 @@ struct RenderedColumnTests {
             return nil
         }
         let textView = try #require(find(RenderedTextView.self, in: hosting))
-        #expect(textView.textContainer?.size.width == MarkdownRenderer.proseWidth())
+        #expect(textView.textContainer?.size.width == Theme.renderedPageWidth)
         #expect(controller.laidOutColumn == nil, "no room set aside without a wide table")
+        let saved = Theme.renderedPageWidth
+        defer { Theme.renderedPageWidth = saved }
+        Theme.renderedPageWidth = nil
+        #expect(textView.textContainer?.size.width == textView.bounds.width - RenderedTextView.minimumMargin * 2, "filling the window")
+        Theme.renderedPageWidth = saved
         window.setContentSize(NSSize(width: 400, height: 500))
         hosting.frame = NSRect(x: 0, y: 0, width: 400, height: 500)
         hosting.layoutSubtreeIfNeeded()
-        #expect(textView.textContainer?.size.width == textView.bounds.width - RenderedTextView.minimumMargin * 2, "a view narrower than the line length narrows it")
+        #expect(textView.textContainer?.size.width == textView.bounds.width - RenderedTextView.minimumMargin * 2, "a view narrower than the page narrows it")
     }
 
     /// A table wider than the column scrolls sideways within it: what shows is what can be clicked and noted.

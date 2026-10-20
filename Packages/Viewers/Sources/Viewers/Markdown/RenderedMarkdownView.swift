@@ -17,7 +17,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
     public func makeNSView(context: Context) -> RenderedMarkdownContainerView {
         // TextKit 2, with the layout manager that keeps selection to what shows of a wide table.
         let layoutManager = MarkdownTextLayoutManager()
-        let textContainer = NSTextContainer(size: NSSize(width: MarkdownRenderer.proseWidth(), height: CGFloat.greatestFiniteMagnitude))
+        let textContainer = NSTextContainer(size: NSSize(width: MarkdownRenderer.defaultPageWidth, height: CGFloat.greatestFiniteMagnitude))
         layoutManager.textContainer = textContainer
         let contentStorage = NSTextContentStorage()
         contentStorage.addTextLayoutManager(layoutManager)
@@ -43,7 +43,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         // The column is sized and centred by the view itself (`RenderedTextView.updateColumn`), not by tracking it.
         textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(width: MarkdownRenderer.proseWidth(), height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.containerSize = NSSize(width: MarkdownRenderer.defaultPageWidth, height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = context.coordinator
         let scroll = NSScrollView()
         scroll.documentView = textView
@@ -369,8 +369,8 @@ final class RenderedTextView: NSTextView {
         onLayout?()
     }
 
-    /// The reading column: as wide as a comfortable line of text (`MarkdownRenderer.proseWidth`), narrower only when
-    /// the view is, centred with at least `minimumMargin` either side. A page with a table wider than the column has
+    /// The page (the column text and tables fill): as wide as the view allows up to the page width setting, or the
+    /// whole view when it fills the window, centred with at least `minimumMargin` either side. A page with a table wider than the column has
     /// a container wider than it by `laidOutColumn.inset` either side, room the table scrolls into, kept out of
     /// sight. Centred by moving the container's origin, never by changing `textContainerInset` or letting the
     /// container track the view's width: either makes TextKit lay the whole document out again on every step of a
@@ -399,7 +399,7 @@ final class RenderedTextView: NSTextView {
         // Not before the view has a width: a page laid out for a zero-width view would be thrown away at once.
         guard let container = textContainer, bounds.width > Self.minimumMargin * 2, force || bounds.width != centredFor else { return }
         centredFor = bounds.width
-        let fitted = max(1, min(bounds.width - Self.minimumMargin * 2, MarkdownRenderer.proseWidth()))
+        let fitted = max(1, min(bounds.width - Self.minimumMargin * 2, Theme.renderedPageWidth ?? .greatestFiniteMagnitude))
         // A page with tables keeps the column it was laid out for until it is laid out again for the new one; any
         // other page just wraps to its new column.
         var width: CGFloat

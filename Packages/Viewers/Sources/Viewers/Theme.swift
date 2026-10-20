@@ -94,6 +94,10 @@ public enum Theme {
     public static var showsMinimap = true {
         didSet { if oldValue != showsMinimap { announceEditorSettings() } }
     }
+    /// The widest the rendered Markdown page (its text and tables) grows; nil fills the window.
+    public static var renderedPageWidth: CGFloat? = 900 {
+        didSet { if oldValue != renderedPageWidth { announceEditorSettings() } }
+    }
     /// Rendered Markdown's body size; headings and inline code scale with it.
     public static var readingFontSize: CGFloat = 14 {
         didSet { if oldValue != readingFontSize { announceEditorSettings() } }

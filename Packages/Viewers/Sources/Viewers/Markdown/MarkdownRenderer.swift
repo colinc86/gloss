@@ -30,11 +30,8 @@ public struct MarkdownRenderer {
         public var inset: CGFloat = 0
     }
 
-    /// The longest a line of text gets: about 90 characters of body text, a comfortable line to read. Text keeps
-    /// to it however wide the window is; a table wider than it scrolls sideways.
-    public static func proseWidth(readingSize: CGFloat = Theme.readingFontSize) -> CGFloat {
-        (readingSize * 42).rounded()
-    }
+    /// The page's width before the view has one: the page width setting, or a guess when the page fills the window.
+    public static var defaultPageWidth: CGFloat { Theme.renderedPageWidth ?? 900 }
 
     public static let sourceSpanKey = NSAttributedString.Key("gloss.sourceSpan")
     nonisolated public static let blockKey = NSAttributedString.Key("gloss.markdownBlock")
@@ -46,7 +43,7 @@ public struct MarkdownRenderer {
     /// Anything else shows as a placeholder. Under `reduceMotion` animated pictures hold still, and a `<picture>`
     /// draws a source meant for reduced motion. `diagrams` are Mermaid blocks already drawn (or refused), by their
     /// source; any other Mermaid block shows as code until it is.
-    /// Text and tables fit `columnWidth` (the reading column's width; `proseWidth` when it is not known yet), and
+    /// Text and tables fit `columnWidth` (the page's width; `defaultPageWidth` when it is not known yet), and
     /// text is `readingSize` points (`Theme.readingFontSize` by default). A table that can't fit without breaking
     /// its words keeps its width and scrolls sideways within the column (`MarkdownTableScroll`).
     public static func render(_ source: String, baseURL: URL? = nil, images: [String: NSImage] = [:], diagrams: [String: MermaidRenderer.Result] = [:],
@@ -54,7 +51,7 @@ public struct MarkdownRenderer {
                               columnWidth: CGFloat? = nil, readingSize: CGFloat? = nil) -> Output {
         readingFontSize = readingSize ?? Theme.readingFontSize
         let document = Document(parsing: source, options: [.disableSmartOpts])
-        let column = max(1, columnWidth ?? proseWidth(readingSize: readingFontSize))
+        let column = max(1, columnWidth ?? defaultPageWidth)
         func walk(inset: CGFloat) -> Walker {
             var walker = Walker(source: source, table: SourceLineTable(source), baseURL: baseURL)
             walker.columnWidth = column
