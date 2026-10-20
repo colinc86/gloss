@@ -39,6 +39,9 @@ final class ImageCanvasView: NSView {
     /// Quiet checker squares behind transparent pixels, 8 screen points whatever the zoom.
     private func drawCheckerboard(in rect: CGRect, unit: CGFloat, context: CGContext) {
         let side = 8 * unit
+        // A dirty rect outside the picture intersects to the null rect, whose infinite edges cannot become
+        // column numbers; a zero magnification makes the square infinite. Draw nothing then.
+        guard !rect.isEmpty, side.isFinite, side > 0 else { return }
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         // Whole squares are laid down; the clip keeps the last row and column from spilling past the picture.
         context.saveGState()
