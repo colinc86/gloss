@@ -83,8 +83,11 @@ nonisolated final class MarkdownTextLayoutManager: NSTextLayoutManager {
         }
     }
 
-    /// `frame` (container coordinates) cut to what shows of a wide table's row; nil when none of it does.
+    /// `frame` (container coordinates) cut to what shows of a wide table's row; nil when none of it does. An empty
+    /// range's segment (no width) is kept as it is: AppKit sizes the view from the one at the end of the text, and
+    /// without it a page with a table stayed one screen tall and could not be scrolled.
     func shown(_ frame: CGRect) -> CGRect? {
+        guard frame.width > 0 else { return frame }
         var frame = frame
         if let column {
             frame = frame.intersection(CGRect(x: column.lowerBound, y: frame.minY, width: column.upperBound - column.lowerBound, height: frame.height))

@@ -175,4 +175,36 @@ struct RenderedColumnTests {
         hosting.layoutSubtreeIfNeeded()
         #expect(textView.tableOffsets[table] == 50)
     }
+
+    /// A long page with a table, wide or not, was as tall as the window and could not be scrolled past it: the
+    /// layout manager clipped away the empty segment at the end of the text that AppKit sizes the view from.
+    @Test func aLongPageWithTablesIsAsTallAsItsText() async throws {
+        var markdown = "# Title\n\n"
+        for index in 1...40 { markdown += "Paragraph \(index), long enough to wrap over more than one line of the reading column.\n\n" }
+        markdown += "| a | b |\n|---|---|\n| 1 | 2 |\n\n"
+        let wide = markdown + "| \((1...8).map { "h\($0)" }.joined(separator: " | ")) |\n|\(String(repeating: " - |", count: 8))\n"
+            + "| \(Array(repeating: "Supercalifragilistic", count: 8).joined(separator: " | ")) |\n"
+        for page in [markdown, wide] {
+            let controller = MarkdownViewerController(source: TextEditorController(text: page, languageName: "markdown"))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 500), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let hosting = NSHostingView(rootView: MarkdownViewerView(controller: controller))
+            hosting.frame = NSRect(x: 0, y: 0, width: 1200, height: 500)
+            window.contentView = hosting
+            hosting.layoutSubtreeIfNeeded()
+            window.layoutIfNeeded()
+            window.displayIfNeeded()
+            try await Task.sleep(for: .milliseconds(300))
+            func find<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+                if let match = view as? T { return match }
+                for subview in view.subviews { if let found = find(type, in: subview) { return found } }
+                return nil
+            }
+            let textView = try #require(find(RenderedTextView.self, in: hosting))
+            #expect(controller.laidOutColumn != nil)
+            let height = try #require(textView.textLayoutManager).usageBoundsForTextContainer.maxY
+            #expect(textView.frame.height >= height, "the view holds all of the text")
+            textView.sizeToFit()
+            #expect(textView.frame.height >= height, "and stays that tall when AppKit sizes it")
+        }
+    }
 }
