@@ -6,6 +6,27 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.7</title>
+      <pubDate>Tue, 20 Oct 2026 16:16:34 GMT</pubDate>
+      <sparkle:version>439</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">A fix for the sixth beta.</p>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>A long Markdown page with a table in it scrolls to its end again. Since 0.6.0-beta.6 it stopped after the first screen.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/colinc86/gloss/releases/download/v0.6.0-beta.7/Gloss-0.6.0-beta.7.zip" type="application/octet-stream" sparkle:edSignature="KWNk4ArNrTprWTFsa6Wn6ifGsTmPGgmQ894D+cj1q6efG3lZOm09EsuTNPTe9niGc2aYu1bt+jOFo9fHDRBLAQ==" length="29939155"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.6</title>
       <pubDate>Tue, 20 Oct 2026 15:36:22 GMT</pubDate>
       <sparkle:version>436</sparkle:version>
