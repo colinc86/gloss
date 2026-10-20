@@ -6,6 +6,38 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.6</title>
+      <pubDate>Tue, 20 Oct 2026 15:36:22 GMT</pubDate>
+      <sparkle:version>436</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<p dir="auto">The sixth beta: one font size for everything, tables that scroll, and a quick way to note a whole file.</p>
+<h3 dir="auto">New</h3>
+<ul dir="auto">
+<li><strong>Notes on the whole file.</strong> A composer at the bottom of the notes panel takes a note about the file in front of you, not a passage in it. It's a draft like any other, sent and reviewed the same way, and the agent reads the file itself. Notes › New Note on Whole File opens it too.</li>
+<li><strong>Wide tables scroll sideways.</strong> Tables line up with the text on the left. One too wide for the page scrolls within it, with a scroller that shows while you scroll and soft fades at the edges. Selecting, Find and notes work in the hidden cells as well.</li>
+</ul>
+<h3 dir="auto">Changed</h3>
+<ul dir="auto">
+<li><strong>One font size.</strong> Settings › Editor has a single Font size (9–24 pt, 13 by default) that sets code, plain text, Markdown source and rendered pages, and spreadsheets. Headings, code blocks, line numbers and spreadsheet headers scale with it. Web pages, PDFs and themes that set their own size keep it. A code size you changed before carries over.</li>
+<li><strong>Page width in one place.</strong> Page width and Fill the window sit with the font size in Settings › Editor, and text fills the page. Jira issues, Confluence pages and pull request descriptions follow them too.</li>
+</ul>
+<h3 dir="auto">Fixed</h3>
+<ul dir="auto">
+<li>Gloss no longer crashes when you switch from a Markdown file to another file after adding a note.</li>
+<li>Line numbers widen with the font size, and jumping to a line centers it.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/colinc86/gloss/releases/download/v0.6.0-beta.6/Gloss-0.6.0-beta.6.zip" type="application/octet-stream" sparkle:edSignature="safjn0s9a85BaNDyRZLnaClyMNsya1BXlclNC32saqYyL4nu0q5NyuhjJZUaSBjBk/k/yZcEPjDCKXhRpOt+Cg==" length="29939038"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.5</title>
       <pubDate>Mon, 19 Oct 2026 18:43:17 GMT</pubDate>
       <sparkle:version>429</sparkle:version>
