@@ -6,6 +6,33 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.8</title>
+      <pubDate>Fri, 23 Oct 2026 19:56:06 GMT</pubDate>
+      <sparkle:version>442</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.8</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<h2 dir="auto">Review shows what changed</h2>
+<p dir="auto">The review card is bigger and shows, top to bottom:</p>
+<ul dir="auto">
+<li><strong>As sent</strong> — the note's lines as the agent received them, with a few lines of context either side.</li>
+<li><strong>Now</strong> — the same lines as they are today. When nothing changed it says so in one line; when the text was removed the sent lines are struck.</li>
+<li>The agent's reply.</li>
+<li>A follow-up field that is always there. Return adds the follow-up; what you type is kept per note while you step through.</li>
+<li>The buttons: previous and next, Accept All…, Later, Follow Up and Accept.</li>
+</ul>
+<p dir="auto">Pictures, PDFs and whole-file notes show no excerpts; the document behind the card is what to look at.</p>
+<p dir="auto">To make "As sent" possible, every delivered send now remembers the note's lines at that moment. Notes sent before this release show only "Now" until they are sent again.</p>]]></description>
+      <enclosure url="https://github.com/colinc86/gloss/releases/download/v0.6.0-beta.8/Gloss-0.6.0-beta.8.zip" type="application/octet-stream" sparkle:edSignature="GcCSRsqQ76kxDUbdG8J08j6lJkXiymoFRlbfJcAqjTHWbzVjzj22lz/xZrX8P/2Vhxiq7H86zCEwcYiPBiLABA==" length="29989369"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.7</title>
       <pubDate>Tue, 20 Oct 2026 16:16:34 GMT</pubDate>
       <sparkle:version>439</sparkle:version>
