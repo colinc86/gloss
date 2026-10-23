@@ -3,19 +3,28 @@ import SwiftUI
 import Viewers
 
 /// Review mode's card, floating over the bottom of the document as the peek and the send toast do: the note on
-/// screen as its card shows it (color rail, place, state pill), what the user asked and what the agent said it did,
-/// then the steps between notes and Accept, Follow Up and Later. The document above stays editable, so Accept has no
-/// key of its own.
+/// screen as its card shows it (color rail, place, state pill), the lines as they were sent and as they are now,
+/// what the agent said it did, a follow-up field, then the steps between notes and Accept, Follow Up and Later.
+/// The document above stays editable, so Accept has no key of its own.
 struct ReviewBar: View {
     @Environment(AppModel.self) private var model
+    /// The most of the viewer the card may take; the excerpts scroll inside it.
+    var maxHeight: CGFloat? = nil
     var onCardFrameChange: (CGRect) -> Void = { _ in }
-    @State private var composing = false
-    @State private var followUpText = ""
+    /// What the user has typed for each note, kept across Later and the steps: the field is always there, so
+    /// moving on must not throw its text away.
+    @State private var drafts: [NoteID: String] = [:]
     @State private var followUpFailed = false
     @State private var confirmingAcceptAll = false
 
     private var review: ReviewModel { model.review }
     private static let shape = RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous)
+
+    private var followUpText: String {
+        get { review.current.map { drafts[$0.note.id] ?? "" } ?? "" }
+        nonmutating set { if let id = review.current?.note.id { drafts[id] = newValue } }
+    }
+    private var followUpBinding: Binding<String> { Binding { followUpText } set: { followUpText = $0 } }
 
     var body: some View {
         Group {
@@ -27,7 +36,9 @@ struct ReviewBar: View {
         }
         .padding(DS.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // As tall as what it holds: the rail and the bubble would otherwise take the whole document's height.
+        // As tall as what it holds, up to the cap: the cap sits inside the fixed size so it clamps the ideal height
+        // (outside it, the frame would take the whole proposal and the glass would stand empty above the content).
+        .frame(maxHeight: maxHeight, alignment: .bottom)
         .fixedSize(horizontal: false, vertical: true)
         .overlay(alignment: .top) { progress }
         .readableGlass(in: Self.shape)
@@ -35,14 +46,13 @@ struct ReviewBar: View {
         // The card floats above the document in its own host; without this the text's I-beam shows through.
         .pointerStyle(.default)
         .shadow(color: .black.opacity(0.2), radius: 12, y: 5)
-        .frame(maxWidth: 560)
+        .frame(maxWidth: 820)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(ReviewOverlay.space)) } action: { onCardFrameChange($0) }
         .padding(DS.Space.l)
         .animation(DS.Motion.smooth, value: review.current?.note.id)
         .animation(DS.Motion.smooth, value: review.isFinished)
-        .animation(DS.Motion.smooth, value: composing)
-        .onExitCommand { composing ? cancelFollowUp() : review.end() }
-        .onChange(of: review.current?.note.id) { _, _ in cancelFollowUp() }
+        .onExitCommand { followUpText.isEmpty ? review.end() : clearFollowUp() }
+        .onChange(of: review.current?.note.id) { _, _ in followUpFailed = false }
         .onChange(of: review.remaining) { _, _ in review.skipMissing() }
         .disabled(review.isBusy)
         .confirmationDialog("Accept \(review.remaining.count) results?", isPresented: $confirmingAcceptAll) {
@@ -64,10 +74,11 @@ struct ReviewBar: View {
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 header(note, document)
-                content(note)
+                content(note, document)
                     .id(note.id)
                     .transition(.opacity.calmed)
-                if composing { composer } else { controls }
+                if !review.isCurrentReviewed { composer }
+                controls
             }
         }
     }
@@ -95,16 +106,20 @@ struct ReviewBar: View {
         }
     }
 
-    private func content(_ note: Note) -> some View {
-        let thread = NoteThread(comment: note.body, messages: model.notesPanel.messages(for: note.id))
+    private func content(_ note: Note, _ document: Core.Document) -> some View {
+        let messages = model.notesPanel.messages(for: note.id)
+        let thread = NoteThread(comment: note.body, messages: messages)
         // This round's word only: an earlier round's reply, or a status update before resolving, isn't what it did.
         let reply = note.resolveMessage?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
         let asked = thread.turns.last { $0.speaker == .user && !$0.unsent }?.text ?? thread.comment
+        let removed = note.state == .orphaned || messages.last { $0.kind == .moved }?.move?.removed == true
         return VStack(alignment: .leading, spacing: DS.Space.s) {
             Text(NoteCard.styledBody(asked))
-                .font(.callout)
-                .lineLimit(4)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
                 .textSelection(.enabled)
+            excerpts(note, document, removed: removed)
             if note.state != .resolved, let followUp = thread.turns.last(where: { $0.speaker == .user }) {
                 // Followed up in this review: the user's turn, as the card's thread shows it.
                 VStack(alignment: .leading, spacing: DS.Space.xxs) {
@@ -120,11 +135,36 @@ struct ReviewBar: View {
                 .accessibilityElement(children: .combine)
             } else if let reply {
                 AgentMessageBubble(message: reply, asks: false, agent: note.resolveAgent)
-                    .frame(maxHeight: 140)
+                    .frame(maxHeight: 200)
             } else {
                 Text("Resolved without a message")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// The lines as sent, then as they are now. A note sent before sends remembered their anchor has only the
+    /// latter; a picture, PDF or whole-file note has neither, the document behind the card is what to look at.
+    @ViewBuilder
+    private func excerpts(_ note: Note, _ document: Core.Document, removed: Bool) -> some View {
+        let language = GrammarCatalog.languageName(forPath: document.path)
+        let tint = Color(nsColor: Theme.color(for: note.color))
+        let sent = note.sentAnchor.flatMap(ReviewExcerpt.make(from:))
+        let now = ReviewExcerpt.make(from: note.anchor)
+        if let sent {
+            ReviewExcerptBlock(title: "As sent", excerpt: sent, language: language, tint: tint)
+        }
+        if removed, let sent {
+            ReviewExcerptBlock(title: "Now · removed", excerpt: sent, language: language, tint: tint, struck: true)
+        } else if let now {
+            if sent == now {
+                Text("Now · the same lines as sent")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, DS.Space.s)
+            } else {
+                ReviewExcerptBlock(title: "Now", excerpt: now, language: language, tint: tint)
             }
         }
     }
@@ -177,6 +217,8 @@ struct ReviewBar: View {
         }
     }
 
+    private var hasFollowUpText: Bool { !followUpText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
     /// The note's actions while it waits; once reviewed its pill says what happened, and only the steps remain.
     @ViewBuilder
     private var actions: some View {
@@ -186,8 +228,9 @@ struct ReviewBar: View {
                     Button("Later") { review.later() }
                         .help("Come back to this note at the end")
                 }
-                Button("Follow Up…") { composing = true }
-                    .help("Reply to the agent; the note reopens and goes with your next Send")
+                Button("Follow Up", action: commitFollowUp)
+                    .disabled(!hasFollowUpText)
+                    .help("Reply to the agent with what you wrote; the note reopens and goes with your next Send")
                 Button("Accept") { Task { await review.accept() } }
                     .buttonStyle(.glassProminent)
                     .help("The result is what you asked for")
@@ -196,10 +239,12 @@ struct ReviewBar: View {
         }
     }
 
-    /// The card's follow-up composer: Return adds it, Shift-Return a new line, Escape cancels.
+    /// The card's follow-up field, always there: Return adds the follow-up, Shift-Return a new line, Escape clears
+    /// it. It waits to be clicked rather than taking the keyboard from the document.
     private var composer: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s) {
-            NoteBodyEditor(text: $followUpText, onSubmit: commitFollowUp, onCancel: cancelFollowUp, owner: review.current?.note.id)
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            NoteBodyEditor(text: followUpBinding, onSubmit: commitFollowUp, onCancel: clearFollowUp, focusesOnAppear: false,
+                           owner: review.current?.note.id, label: "Follow up")
                 .frame(minHeight: 28, maxHeight: 120)
                 .padding(DS.Space.xs)
                 .overlay(alignment: .topLeading) {
@@ -215,20 +260,11 @@ struct ReviewBar: View {
                 }
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
-                .accessibilityLabel("Follow up")
             if followUpFailed {
                 Label("The follow-up couldn't be added. It's still here.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            HStack(spacing: DS.Space.s) {
-                Spacer(minLength: 0)
-                Button("Cancel", action: cancelFollowUp)
-                Button("Add Follow-Up", action: commitFollowUp)
-                    .buttonStyle(.glassProminent)
-                    .disabled(followUpText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            .controlSize(.small)
         }
         .transition(.opacity.calmed)
     }
@@ -288,21 +324,19 @@ struct ReviewBar: View {
     }
 
     private func commitFollowUp() {
+        guard let id = review.current?.note.id, hasFollowUpText else { return }
         let text = followUpText
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         Task {
             if await review.followUp(text) {
-                followUpText = ""
+                drafts[id] = nil
                 followUpFailed = false
-                composing = false
             } else {
                 followUpFailed = true
             }
         }
     }
 
-    private func cancelFollowUp() {
-        composing = false
+    private func clearFollowUp() {
         followUpText = ""
         followUpFailed = false
     }

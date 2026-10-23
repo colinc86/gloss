@@ -45,6 +45,33 @@ struct ReviewStoreTests {
         #expect(try await store.note(a.id)?.awaitsReview == true)
     }
 
+    /// Review shows the lines as sent: the anchor at the last delivered send is kept while the live one follows edits.
+    @Test func aDeliveredSendRemembersTheAnchorAsSent() async throws {
+        let (store, a, b) = try await setUp()
+        func line(_ n: Int) -> Anchor {
+            .text(TextAnchor(start: .init(line: n, col: 1), end: .init(line: n, col: 2), text: "x\(n)", before: "", after: ""))
+        }
+        try await store.updateAnchor(a.id, anchor: line(1))
+        #expect(try await store.note(a.id)?.sentAnchor == nil, "nothing sent yet")
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [a.id], outcome: .delivered, review: true)
+        #expect(try await store.note(a.id)?.sentAnchor == line(1))
+
+        _ = try await store.applyReanchor(a.id, to: line(5))
+        let moved = try #require(try await store.note(a.id))
+        #expect(moved.anchor == line(5) && moved.sentAnchor == line(1), "following an edit leaves the sent copy alone")
+
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [a.id], outcome: .delivered)
+        #expect(try await store.note(a.id)?.sentAnchor == line(5), "a later send overwrites it")
+
+        _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [b.id], outcome: .failed("no pane"))
+        #expect(try await store.note(b.id)?.sentAnchor == nil, "a failed send didn't reach an agent")
+
+        let json = try JSONEncoder().encode(moved)
+        let withoutField = try #require(String(data: json, encoding: .utf8)).replacingOccurrences(of: "\"sentAnchor\"", with: "\"sentAnchorOld\"")
+        let decoded = try JSONDecoder().decode(Note.self, from: Data(withoutField.utf8))
+        #expect(decoded.sentAnchor == nil, "a note snapshot written before the field decodes")
+    }
+
     @Test func aFailedSendOrAHandResolveLeavesNothingToReview() async throws {
         let (store, a, b) = try await setUp()
         _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [a.id], outcome: .failed("no pane"), review: true)

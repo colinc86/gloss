@@ -1561,8 +1561,14 @@ public struct NoteStore: Sendable {
                         record.reviewRequested = record.reviewRequested || review
                         record.acceptedAt = nil
                     }
+                    // The lines as the agent saw them: review shows them next to the lines as they are now. Every
+                    // delivered send overwrites it, so a follow-up's review compares against the latest send.
+                    let sentAnchorBefore = (record.sentAnchorJson, record.sentAnchorType)
+                    record.sentAnchorJson = record.anchorJson
+                    record.sentAnchorType = record.anchorType
                     if record.state != current.rawValue || record.waitingOnUser != waiting || stampedAny
-                        || (record.reviewRequested, record.acceptedAt) != reviewBefore || carriedNotes?.contains(where: { $0.id == noteID }) == true {
+                        || (record.reviewRequested, record.acceptedAt) != reviewBefore || carriedNotes?.contains(where: { $0.id == noteID }) == true
+                        || (record.sentAnchorJson, record.sentAnchorType) != sentAnchorBefore {
                         record.waitingOnUser = waiting
                         record.localStateAt = date
                         record.updatedAt = date
@@ -1863,6 +1869,10 @@ extension Note {
         if let json = record.originalAnchorJson, let rawType = record.originalAnchorType, let originalType = AnchorType(rawValue: rawType) {
             original = try? Anchor(type: originalType, json: json)
         }
+        var sent: Anchor?
+        if let json = record.sentAnchorJson, let rawType = record.sentAnchorType, let sentType = AnchorType(rawValue: rawType) {
+            sent = try? Anchor(type: sentType, json: json)
+        }
         self.init(
             id: NoteID(rawValue: record.id), documentID: DocumentID(rawValue: record.documentId),
             anchor: try Anchor(type: type, json: record.anchorJson), body: record.body,
@@ -1873,6 +1883,7 @@ extension Note {
             hasUnsentFollowUps: unsent.contains(record.id), originalAnchor: original, iteration: record.iteration,
             reviewRequested: record.reviewRequested, acceptedAt: record.acceptedAt
         )
+        sentAnchor = sent
         resolvedAt = record.resolvedAt
         contributorID = record.contributorId
         contributorName = record.contributorName

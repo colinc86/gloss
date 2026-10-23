@@ -255,7 +255,13 @@ final class AppModel {
         self.launchOptions = launchOptions
         let database: AppDatabase
         do {
-            database = launchOptions.resetDatabase ? try AppDatabase.temporary() : try AppDatabase.open(at: AppDatabase.defaultURL)
+            if launchOptions.resetDatabase {
+                database = try AppDatabase.temporary()
+            } else if let path = launchOptions.databasePath {
+                database = try AppDatabase.open(at: URL(fileURLWithPath: path))
+            } else {
+                database = try AppDatabase.open(at: AppDatabase.defaultURL)
+            }
         } catch {
             Log.database.fault("Could not open the database: \(error, privacy: .public). Using a temporary one.")
             // Said out loud, not only logged: notes made this session would otherwise vanish at quit unnoticed.

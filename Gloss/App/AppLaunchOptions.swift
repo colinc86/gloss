@@ -10,6 +10,9 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
     var open: String?
     /// `--reset-db`: use a throwaway database under `$TMPDIR` instead of the real one.
     var resetDatabase = false
+    /// `--db <path>`: open (or create) the database at this path instead of the real one, so a scripted run can
+    /// seed notes before launch. Ignored when `--reset-db` is given.
+    var databasePath: String?
     /// `--follow`: start with Herdr follow mode on, so scripted runs can watch it.
     var follow = false
     /// `--appearance dark|light`: force one appearance for this run, to check both without changing System Settings.
@@ -57,6 +60,7 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
         case "--root": root = value
         case "--host": host = value
         case "--open": open = value
+        case "--db": databasePath = value
         case "--appearance": appearance = ["dark", "light"].contains(value.lowercased()) ? value.lowercased() : nil
         case "--integrations-env": integrationsEnv = value
         case "--atlassian-site": atlassianSite = value
@@ -69,6 +73,7 @@ nonisolated struct AppLaunchOptions: Equatable, Sendable, CustomStringConvertibl
         if let root { parts.append("root=\(root)") }
         if let open { parts.append("open=\(open)") }
         if resetDatabase { parts.append("reset-db") }
+        if let databasePath { parts.append("db=\(databasePath)") }
         if follow { parts.append("follow") }
         if let appearance { parts.append("appearance=\(appearance)") }
         if let integrationsEnv { parts.append("integrations-env=\(integrationsEnv)") }

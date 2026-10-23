@@ -106,13 +106,16 @@ struct ReviewOverlay: NSViewRepresentable {
         }
 
         var body: some View {
-            ZStack(alignment: .bottom) {
-                if isPresented {
-                    ReviewBar(onCardFrameChange: onCardFrameChange)
-                        .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
+            GeometryReader { proxy in
+                ZStack(alignment: .bottom) {
+                    if isPresented {
+                        // The excerpts scroll inside the card rather than the card covering the document.
+                        ReviewBar(maxHeight: max(240, proxy.size.height * 0.7), onCardFrameChange: onCardFrameChange)
+                            .transition((AnyTransition.move(edge: .bottom).combined(with: .opacity)).calmed)
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .coordinateSpace(name: ReviewOverlay.space)
             .environment(model)
             .animation(DS.Motion.smooth, value: isPresented)

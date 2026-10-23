@@ -216,6 +216,9 @@ public struct Note: Identifiable, Hashable, Codable, Sendable {
     public var hasUnsentFollowUps: Bool
     /// Where the note was before it first moved, for Restore Original; nil for a note that never moved.
     public var originalAnchor: Anchor?
+    /// The anchor as it was when the note last went to an agent (its text and three lines either side), so review
+    /// can show the lines as sent next to the lines as they are now; nil until a send is delivered.
+    public var sentAnchor: Anchor? = nil
     /// The document's iteration the note was taken in (issue #18).
     public var iteration: Int
     /// A send that carried the note asked the user to review the result.

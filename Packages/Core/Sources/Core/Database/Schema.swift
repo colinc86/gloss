@@ -419,6 +419,14 @@ public enum Schema {
                 );
                 """)
         }
+        migrator.registerMigration("v18-sent-anchor") { db in
+            // Review shows the note's lines as they were sent next to the lines as they are now (2026-10-21). The
+            // anchor is rewritten whenever the note follows an edit, so the one at the last delivered send is kept.
+            try db.execute(sql: """
+                ALTER TABLE note ADD COLUMN sent_anchor_json TEXT;
+                ALTER TABLE note ADD COLUMN sent_anchor_type TEXT;
+                """)
+        }
         return migrator
     }
 
