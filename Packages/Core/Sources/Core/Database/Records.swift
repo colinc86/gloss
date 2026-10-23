@@ -158,6 +158,16 @@ public struct AttachmentRecord: SnakeCaseRecord, Identifiable {
     public var height: Int
 }
 
+/// The document rendered around the note when it was last sent (`v19-sent-render`); one per note.
+public struct SentRenderRecord: SnakeCaseRecord {
+    public static let databaseTableName = "sent_render"
+    public var noteId: String
+    public var png: Data
+    public var width: Int
+    public var height: Int
+    public var takenAt: Date
+}
+
 public struct SendRecord: SnakeCaseRecord, Identifiable {
     public static let databaseTableName = "send"
     public var id: String

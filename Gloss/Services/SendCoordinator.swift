@@ -13,6 +13,9 @@ final class SendCoordinator {
     private var stagers: [HostID: any AttachmentStager]
     /// Resolves a host to its file system, for reading excerpts of files that are not open.
     @ObservationIgnored var fileSystemProvider: (HostID) -> (any FileSystemProvider)? = { _ in nil }
+    /// Draws the document rendered around a note, as the review card shows it: taken before delivery and kept with
+    /// the note once the send is delivered, so the card can show the note's surroundings as the agent received them.
+    @ObservationIgnored var sentRender: ((Note, Document) async -> (png: Data, width: Int, height: Int)?)?
     /// Text of open documents, so excerpts reflect unsaved edits.
     @ObservationIgnored var openTextProvider: (HostID, String) -> String? = { _, _ in nil }
     /// Where Copy as Packet puts the text: the general pasteboard (tests swap it so they never touch the user's).
@@ -395,6 +398,9 @@ final class SendCoordinator {
             suppressEndedRefinements(&packetNotes)
             let packet = PacketBuilder.build(packetNotes, review: review)
             let receipt: DeliveryReceipt
+            // Pictured before the agent can touch anything, kept only once the notes reached it. Only a send that
+            // asks for review needs them: drawing a page is work the user would wait on for nothing otherwise.
+            let renders = review ? await renderBeforeSending(notes) : []
             do {
                 willDeliver(packet.noteIDs)
                 receipt = try await transport.deliver(packet, attachments: staging.attachments, to: target)
@@ -417,6 +423,11 @@ final class SendCoordinator {
                 // A transport receipt remains a delivery even if local persistence fails. Retrying would send twice.
                 Log.transport.error("Delivered notes could not be recorded: \(error, privacy: .public)")
                 lastError = "The notes reached the agent, but their local send record couldn't be saved: \(error.userMessage)"
+            }
+            for (noteID, rendered) in renders {
+                // A picture that can't be kept costs the card its "As sent", not the send its record.
+                do { try await noteStore.setSentRender(noteID: noteID, png: rendered.png, width: rendered.width, height: rendered.height, at: deliveredAt) }
+                catch { Log.transport.error("The picture of a sent note couldn't be kept: \(error, privacy: .public)") }
             }
             didDeliver(notes.map(\.note), packetNotes, deliveryMessages, sentAttachments, deliveredAt, review)
             lastOutcome = "Sent \(packet.noteIDs.count) note\(packet.noteIDs.count == 1 ? "" : "s") to \(target.label)" + (receipt.detail.map { " (\($0))" } ?? "")
@@ -647,6 +658,17 @@ final class SendCoordinator {
         for index in notes.indices {
             if let id = notes[index].documentID, let state = notes[index].refinement, !refinementAllowed(id, state.generation) { notes[index].refinement = nil }
         }
+    }
+
+    /// The documents rendered around the notes the card shows as pictures (Markdown, pictures, PDFs, web pages),
+    /// as they are at this moment; lines of text need no picture, the note's anchor keeps them.
+    private func renderBeforeSending(_ notes: [(note: Note, document: Document)]) async -> [(NoteID, (png: Data, width: Int, height: Int))] {
+        guard let sentRender else { return [] }
+        var renders: [(NoteID, (png: Data, width: Int, height: Int))] = []
+        for (note, document) in notes where ExcerptProducer.isPictured(note.anchor, kind: document.kind) {
+            if let rendered = await sentRender(note, document) { renders.append((note.id, rendered)) }
+        }
+        return renders
     }
 
     private func readText(hostID: HostID, path: String) async throws -> (text: String, hash: String)? {

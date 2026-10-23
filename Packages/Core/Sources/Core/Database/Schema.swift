@@ -427,6 +427,19 @@ public enum Schema {
                 ALTER TABLE note ADD COLUMN sent_anchor_type TEXT;
                 """)
         }
+        migrator.registerMigration("v19-sent-render") { db in
+            // The review card shows the document as rendered around the note, as sent and now (2026-10-23). The
+            // picture taken at the last delivered send is kept with the note; one per note, gone with it.
+            try db.execute(sql: """
+                CREATE TABLE sent_render (
+                    note_id TEXT PRIMARY KEY NOT NULL REFERENCES note(id) ON DELETE CASCADE,
+                    png BLOB NOT NULL,
+                    width INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    taken_at DATETIME NOT NULL
+                );
+                """)
+        }
         return migrator
     }
 

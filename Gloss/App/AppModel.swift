@@ -292,6 +292,11 @@ final class AppModel {
         herdrTransport = HerdrTransport(registry: connectionRegistry)
         fileSystems[.local] = LocalFileSystem()
         fileSystems[.gloss] = collaboration.fileSystem
+        send.sentRender = { [weak self] note, document in
+            guard let self, let image = await ExcerptProducer(model: self).render(note.anchor, document: document, tint: Theme.color(for: note.color), appearance: NSApp.effectiveAppearance),
+                  let png = ImageDecoder.pngData(image) else { return nil }
+            return (png, image.width, image.height)
+        }
         collaboration.showReview = { [weak self] context in self?.showReview(context) }
         collaboration.sourceSession = { [weak self] id in self?.sessions.values.first { $0.document?.id == id && $0.hostID != .gloss } }
         collaboration.captureSource = { [weak self] id in

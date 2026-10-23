@@ -168,6 +168,8 @@ public final class HTMLViewerController: RenderedDocumentController {
     /// A PNG of a page rect (CSS pixels from the page's top-left), scrolled into view first; nil while no page is
     /// shown. Set by the browser while this page is current.
     @ObservationIgnored public var snapshotProvider: (@MainActor (ElementRect) async throws -> (png: Data, width: Int, height: Int)?)?
+    /// The same picture with the page rectangle it really covers, for a drawing placed on it (`ExcerptRenderer.web`).
+    @ObservationIgnored public var windowSnapshotProvider: (@MainActor (ElementRect) async throws -> (png: Data, captured: ElementRect)?)?
     /// Where each element note's element is now, by selector and by text. Set by the browser while current.
     @ObservationIgnored public var resolveElements: (@MainActor ([(id: NoteID, anchor: ElementAnchor)]) async -> [NoteID: ElementResolution])?
     /// Scrolls the page to an element note's element. Set by the browser while current.

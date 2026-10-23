@@ -1485,6 +1485,23 @@ public struct NoteStore: Sendable {
         }
     }
 
+    /// Keeps the picture of the document rendered around the note at this send, replacing the last send's.
+    public func setSentRender(noteID: NoteID, png: Data, width: Int, height: Int, at date: Date = Date()) async throws {
+        let date = Self.rounded(date)
+        try await queue.write { db in
+            guard try NoteRecord.exists(db, key: noteID.rawValue) else { throw NoteStoreError.noteNotFound(noteID) }
+            try SentRenderRecord(noteId: noteID.rawValue, png: png, width: width, height: height, takenAt: date).save(db)
+        }
+    }
+
+    public func sentRender(for noteID: NoteID) async throws -> SentRender? {
+        try await queue.read { db in
+            try SentRenderRecord.fetchOne(db, key: noteID.rawValue).map {
+                SentRender(noteID: NoteID(rawValue: $0.noteId), png: $0.png, width: $0.width, height: $0.height, takenAt: $0.takenAt)
+            }
+        }
+    }
+
     // MARK: Sends
 
     /// Records one delivery and, when it succeeded, flips every draft note in it to `sent`, stamps the follow-ups it

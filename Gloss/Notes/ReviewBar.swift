@@ -1,4 +1,5 @@
 import Core
+import ImageIO
 import SwiftUI
 import Viewers
 
@@ -8,6 +9,7 @@ import Viewers
 /// The document above stays editable, so Accept has no key of its own.
 struct ReviewBar: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
     /// The most of the viewer the card may take; the excerpts scroll inside it.
     var maxHeight: CGFloat? = nil
     var onCardFrameChange: (CGRect) -> Void = { _ in }
@@ -152,7 +154,9 @@ struct ReviewBar: View {
         let tint = Color(nsColor: Theme.color(for: note.color))
         let sent = note.sentAnchor.flatMap(ReviewExcerpt.make(from:))
         let now = ReviewExcerpt.make(from: note.anchor)
-        if let sent {
+        if ExcerptProducer.isPictured(note.anchor, kind: document.kind) {
+            pictures(note, document)
+        } else if let sent {
             ReviewExcerptBlock(title: "As sent", excerpt: sent, language: language, tint: tint)
         }
         if removed, let sent {
@@ -166,6 +170,26 @@ struct ReviewBar: View {
             } else {
                 ReviewExcerptBlock(title: "Now", excerpt: now, language: language, tint: tint)
             }
+        }
+    }
+
+    /// Rendered documents (Markdown, pictures, PDFs, web pages): the window kept at the send, then one drawn now
+    /// from the open document or the file.
+    private struct PictureKey: Hashable { let note: NoteID; let anchor: Core.Anchor; let dark: Bool }
+
+    @ViewBuilder
+    private func pictures(_ note: Note, _ document: Core.Document) -> some View {
+        let dark = colorScheme == .dark
+        let review = review
+        let model = model
+        ReviewPictureBlock(title: "As sent", key: PictureKey(note: note.id, anchor: note.sentAnchor ?? note.anchor, dark: dark)) {
+            guard let render = await review.sentRender(for: note.id),
+                  let source = CGImageSourceCreateWithData(render.png as CFData, nil) else { return nil }
+            return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        }
+        ReviewPictureBlock(title: "Now", key: PictureKey(note: note.id, anchor: note.anchor, dark: dark)) {
+            await ExcerptProducer(model: model).render(note.anchor, document: document, tint: Theme.color(for: note.color),
+                                                       appearance: NSAppearance(named: dark ? .darkAqua : .aqua) ?? NSApp.effectiveAppearance)
         }
     }
 

@@ -413,6 +413,24 @@ public enum AttachmentKind: String, Codable, Sendable {
     case pageRender = "page_render"
 }
 
+/// A picture of the document rendered around a note, taken when it was last sent: the review card shows it beside
+/// the same window drawn now. `width` and `height` are pixels.
+public struct SentRender: Hashable, Sendable {
+    public var noteID: NoteID
+    public var png: Data
+    public var width: Int
+    public var height: Int
+    public var takenAt: Date
+
+    public init(noteID: NoteID, png: Data, width: Int, height: Int, takenAt: Date) {
+        self.noteID = noteID
+        self.png = png
+        self.width = width
+        self.height = height
+        self.takenAt = takenAt
+    }
+}
+
 public struct Attachment: Identifiable, Hashable, Codable, Sendable {
     public var id: AttachmentID
     public var noteID: NoteID

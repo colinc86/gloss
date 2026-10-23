@@ -72,6 +72,20 @@ struct ReviewStoreTests {
         #expect(decoded.sentAnchor == nil, "a note snapshot written before the field decodes")
     }
 
+    /// The picture of the document around the note at its last send: one per note, replaced by the next send.
+    @Test func aSentRenderIsKeptPerNoteAndReplaced() async throws {
+        let (store, a, _) = try await setUp()
+        #expect(try await store.sentRender(for: a.id) == nil)
+        try await store.setSentRender(noteID: a.id, png: Data([1, 2, 3]), width: 10, height: 4)
+        let first = try #require(try await store.sentRender(for: a.id))
+        #expect(first.png == Data([1, 2, 3]) && first.width == 10 && first.height == 4)
+        try await store.setSentRender(noteID: a.id, png: Data([9]), width: 2, height: 2)
+        #expect(try await store.sentRender(for: a.id)?.png == Data([9]), "a later send replaces it")
+        await #expect(throws: NoteStoreError.self) {
+            try await store.setSentRender(noteID: NoteID.new(), png: Data(), width: 1, height: 1)
+        }
+    }
+
     @Test func aFailedSendOrAHandResolveLeavesNothingToReview() async throws {
         let (store, a, b) = try await setUp()
         _ = try await store.recordSend(transport: "clipboard", targetJSON: "{}", packetText: "p", noteIDs: [a.id], outcome: .failed("no pane"), review: true)

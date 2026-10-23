@@ -176,6 +176,7 @@ public final class WebBrowserController {
         bindGeometry(controller)
         if case .file = controller.page { hostKeys[Self.hostKey(controller.hostID)] = controller.hostID }
         controller.snapshotProvider = { [weak self] rect in try await self?.snapshot(pageRect: rect) }
+        controller.windowSnapshotProvider = { [weak self] rect in try await self?.snapshotWindow(pageRect: rect) }
         controller.resolveElements = { [weak self] items in await self?.resolve(items) ?? [:] }
         controller.scrollToElement = { [weak self] selector in self?.scrollToElement(selector: selector) }
         highlightToken = controller.source.addHighlightObserver { [weak self] in self?.applyHighlights() }
@@ -260,6 +261,7 @@ public final class WebBrowserController {
         current.isNoteMode = false
         current.selectedPicture = nil
         current.snapshotProvider = nil
+        current.windowSnapshotProvider = nil
         current.resolveElements = nil
         current.scrollToElement = nil
         // The next page starts without a selection; a stale one would show an Add Note button for nothing.
@@ -728,6 +730,16 @@ public final class WebBrowserController {
     /// A 2x PNG of a page rect (CSS pixels from the page's top-left). WebKit snapshots only what is on screen,
     /// so the element is scrolled into view first; a part taller than the view is cut at the view's edge.
     public func snapshot(pageRect: ElementRect) async throws -> (png: Data, width: Int, height: Int)? {
+        try await take(pageRect: pageRect).map { ($0.png, $0.width, $0.height) }
+    }
+
+    /// A snapshot that also says which page rectangle it covers: the capture is padded a little and cut to the
+    /// view, so a drawing placed on it (the review card's outline) needs the rectangle it really got.
+    public func snapshotWindow(pageRect: ElementRect) async throws -> (png: Data, captured: ElementRect)? {
+        try await take(pageRect: pageRect).map { ($0.png, $0.captured) }
+    }
+
+    private func take(pageRect: ElementRect) async throws -> (png: Data, width: Int, height: Int, captured: ElementRect)? {
         guard isLoaded else { return nil }
         // A chosen picture's dimming and handles are put away and the notes' boxes hidden, so none of them are in
         // the picture; the boxes come back once it is taken.
@@ -744,26 +756,27 @@ public final class WebBrowserController {
         func scroll() async throws -> [Double] {
             try await webView.callAsyncJavaScript("return [window.scrollX, window.scrollY]", arguments: [:], in: nil, contentWorld: .defaultClient) as? [Double] ?? [0, 0]
         }
-        func viewport() async throws -> CGRect {
+        func viewport() async throws -> (rect: CGRect, offsets: [Double]) {
             let offsets = try await scroll()
-            return CGRect(x: (pageRect.x - offsets[0]) * zoom, y: (pageRect.y - offsets[1]) * zoom, width: pageRect.w * zoom, height: pageRect.h * zoom)
+            return (CGRect(x: (pageRect.x - offsets[0]) * zoom, y: (pageRect.y - offsets[1]) * zoom, width: pageRect.w * zoom, height: pageRect.h * zoom), offsets)
         }
-        var rect = try await viewport()
+        var (rect, offsets) = try await viewport()
         if rect.minX < 0 || rect.minY < 0 || rect.maxX > bounds.width || rect.maxY > bounds.height {
-            let original = try await scroll()
+            let original = offsets
             _ = try? await webView.callAsyncJavaScript("window.scrollTo(Math.max(0, x - 16), Math.max(0, y - 16))", arguments: ["x": pageRect.x, "y": pageRect.y], in: nil, contentWorld: .defaultClient)
             try? await Task.sleep(for: .milliseconds(150))
-            rect = try await viewport()
+            (rect, offsets) = try await viewport()
             // The reader is put back where they were once the crop is taken.
             defer {
                 webView.callAsyncJavaScript("window.scrollTo(x, y)", arguments: ["x": original[0], "y": original[1]], in: nil, in: .defaultClient)
             }
-            return try await capture(rect, bounds: bounds)
+            return try await capture(rect, bounds: bounds, offsets: offsets, zoom: zoom)
         }
-        return try await capture(rect, bounds: bounds)
+        return try await capture(rect, bounds: bounds, offsets: offsets, zoom: zoom)
     }
 
-    private func capture(_ rect: CGRect, bounds: CGRect) async throws -> (png: Data, width: Int, height: Int)? {
+    /// `offsets` and `zoom` turn the view rectangle really captured back into page coordinates.
+    private func capture(_ rect: CGRect, bounds: CGRect, offsets: [Double], zoom: CGFloat) async throws -> (png: Data, width: Int, height: Int, captured: ElementRect)? {
         let capture = rect.insetBy(dx: -4, dy: -4).intersection(bounds)
         guard !capture.isNull, capture.width >= 2, capture.height >= 2 else { return nil }
         let configuration = WKSnapshotConfiguration()
@@ -772,7 +785,8 @@ public final class WebBrowserController {
         let image = try await webView.takeSnapshot(configuration: configuration)
         guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
               let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
-        return (png, bitmap.pixelsWide, bitmap.pixelsHigh)
+        let captured = ElementRect(x: capture.minX / zoom + offsets[0], y: capture.minY / zoom + offsets[1], w: capture.width / zoom, h: capture.height / zoom)
+        return (png, bitmap.pixelsWide, bitmap.pixelsHigh, captured)
     }
 
     /// Scrolls the page to an element note's element and pulses its outline.

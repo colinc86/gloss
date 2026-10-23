@@ -143,6 +143,11 @@ final class ReviewModel {
         next()
     }
 
+    /// The document pictured around the note when it was last sent, for the card's "As sent".
+    func sentRender(for id: NoteID) async -> SentRender? {
+        try? await noteStore.sentRender(for: id)
+    }
+
     func accept() async {
         guard !isBusy, let id = current?.note.id else { return }
         isBusy = true
