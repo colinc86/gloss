@@ -186,6 +186,7 @@ final class AppModel {
                 rememberDocumentLeft(oldValue)
             }
             explorer.setActiveDocument(hostID: activeSession?.hostID, path: activeSession?.path)
+            followActiveDocumentInExplorer()
             notesPanel.setFrontDocument(hostID: activeSession?.hostID, path: activeSession?.path)
             // The document in front just changed: a location change this causes brings back only that location's
             // panel, never another document over the one just opened.
@@ -506,6 +507,7 @@ final class AppModel {
             if let tab = explorer.selectedTab { pickedHost = tab.hostID }
             syncNotesLocation()
         }
+        explorer.onTreeAttached = { [weak self] in self?.followActiveDocumentInExplorer() }
         explorer.onSelectFile = { [weak self] hostID, path in
             guard let self else { return }
             openDocument(hostID: hostID, path: path)
@@ -1666,18 +1668,38 @@ final class AppModel {
     /// Shows the open document in the explorer, opening its folder as a root when no root contains it.
     func revealActiveDocumentInExplorer() {
         guard let session = activeSession else { return }
+        revealInExplorer(hostID: session.hostID, path: session.path)
+    }
+
+    /// Shows a file or folder in the explorer (the breadcrumb under the viewer, Go › Reveal in Explorer), switching
+    /// to the folder that holds it and opening its folder as a root when none does.
+    func revealInExplorer(hostID: HostID, path: String) {
         // A page has no folder: it is found in the explorer's Web section.
-        guard session.kind != .web, !DocumentKindDetector.isWebURL(session.path) else {
+        guard !DocumentKindDetector.isWebURL(path) else {
             pickedHost = .web
             return
         }
-        Task {
-            if await !explorer.reveal(hostID: session.hostID, path: session.path) {
-                await openRootIfNeeded(hostID: session.hostID, containing: session.path)
-                await explorer.reveal(hostID: session.hostID, path: session.path)
-            }
-            pickedHost = session.hostID
+        // A shared review's capture is not in any folder either; its section is the explorer's Reviews.
+        guard hostID != .gloss else {
+            pickedHost = .gloss
+            return
         }
+        Task {
+            if await !explorer.reveal(hostID: hostID, path: path) {
+                await openRootIfNeeded(hostID: hostID, containing: path)
+                await explorer.reveal(hostID: hostID, path: path)
+            }
+            pickedHost = hostID
+        }
+    }
+
+    /// The tree keeps up with the document in front on its own (Settings › General, on by default): a file an
+    /// agent opened, a link, Back or Open Quickly lands selected in the folder in front, so its row and its context
+    /// menu are at hand without digging. Quietly: another folder, the filter and hidden files are left alone;
+    /// Reveal in Explorer does the rest on request.
+    private func followActiveDocumentInExplorer() {
+        guard settings.revealsOpenDocument, let session = activeSession, session.kind != .web else { return }
+        Task { await explorer.reveal(hostID: session.hostID, path: session.path, quietly: true) }
     }
 
     /// Makes sure a root containing `path` is open, opening the parent directory when none is (a pull request's

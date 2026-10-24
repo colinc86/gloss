@@ -61,6 +61,8 @@ final class SettingsStore {
     @ObservationIgnored private var hasDarkIcon = false
     @ObservationIgnored private lazy var appearance = AppIconAppearance { [weak self] in self?.applyAppIcon() }
     var showDotfilesByDefault = false { didSet { persist("general.showDotfiles", showDotfilesByDefault ? "1" : "0") } }
+    /// The file tree selects the document in front as it changes, whatever opened it.
+    var revealsOpenDocument = true { didSet { persist("general.revealOpenFile", revealsOpenDocument ? "1" : "0") } }
     var showsQuestionsOnDock = true {
         didSet {
             persist("general.dockQuestions", showsQuestionsOnDock ? "1" : "0")
@@ -188,6 +190,7 @@ final class SettingsStore {
         if let value = await read("general.appIconDark"), let style = AppIconStyle(rawValue: value) { appIconDark = style }
         if let value = await read("general.appIcon.matchAppearance") { appIconMatchesAppearance = value == "1" }
         if let value = await read("general.showDotfiles") { showDotfilesByDefault = value == "1" }
+        if let value = await read("general.revealOpenFile") { revealsOpenDocument = value == "1" }
         if let value = await read("general.dockQuestions") { showsQuestionsOnDock = value == "1" }
         // Kept to what the controls offer: a value from elsewhere (an older build, a hand edit) is brought in range.
         if let value = await read("editor.fontSize"), let size = Double(value), size.isFinite { fontSize = min(max(size, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound) }

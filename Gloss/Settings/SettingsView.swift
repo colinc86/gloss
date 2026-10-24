@@ -35,6 +35,10 @@ struct SettingsView: View {
                         Text("Show hidden files")
                         Text("Dotfiles appear in the file tree from the start; the eye under the tree switches them until you quit.")
                     }
+                    Toggle(isOn: $settings.revealsOpenDocument) {
+                        Text("Select the open file in the file tree")
+                        Text("Whatever opens a document, an agent, a link or Back, the tree in the folder in front expands to it and selects it. Reveal in Explorer (⇧⌘J) always finds it, in any folder.")
+                    }
                 }
                 LayoutSection(settings: settings)
                 AppIconSection(settings: settings)
@@ -43,7 +47,7 @@ struct SettingsView: View {
                 }
             }
             .formStyle(.grouped)
-            .frame(height: (model.updates.isAvailable ? 684 : 540) + (settings.appIconMatchesAppearance ? 76 : 40) + (settings.layoutMode == .automatic ? 190 : 150))
+            .frame(height: (model.updates.isAvailable ? 744 : 600) + (settings.appIconMatchesAppearance ? 76 : 40) + (settings.layoutMode == .automatic ? 190 : 150))
             .tabItem { Label("General", systemImage: "gear") }
             .tag(SettingsTab.general)
 

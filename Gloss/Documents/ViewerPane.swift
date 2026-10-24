@@ -381,7 +381,8 @@ private struct StatusBar: View {
                 }
                 let isFile = index == crumbs.count - 1
                 BreadcrumbSegment(title: segment.name, isCurrent: isFile) {
-                    Task { _ = await model.explorer.reveal(hostID: session.hostID, path: segment.path) }
+                    // The same as Go › Reveal in Explorer: finds it in any open folder, or opens its folder.
+                    model.withExplorerShown { model.revealInExplorer(hostID: session.hostID, path: segment.path) }
                 }
                 .help(isFile ? "Reveal \(segment.name) in the explorer" : "Reveal \(segment.path) in the explorer")
                 .contextMenu { segmentMenu(path: segment.path, isFile: isFile) }
@@ -395,13 +396,14 @@ private struct StatusBar: View {
     /// this app.
     @ViewBuilder
     private func segmentMenu(path: String, isFile: Bool) -> some View {
+        Button("Reveal in Explorer") { model.withExplorerShown { model.revealInExplorer(hostID: session.hostID, path: path) } }
         if session.hostID == .local {
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
             if isFile {
                 Button("Open With Default App") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
             }
-            Divider()
         }
+        Divider()
         Button("Copy Path") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(path, forType: .string)

@@ -118,6 +118,46 @@ struct ExplorerRevealTests {
         #expect(!missing && delegate.revealed.last == ["proj", "src"], "a missing file reveals as far as it exists")
         explorer.stopWatching()
     }
+
+    @Test func followingTheOpenDocumentStaysInTheShownFolderAndRearrangesNothing() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("gloss-follow-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        try FileManager.default.createDirectory(atPath: "\(base)/proj/src/.config", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(base)/other", withIntermediateDirectories: true)
+        try "x".write(toFile: "\(base)/proj/src/main.swift", atomically: true, encoding: .utf8)
+        try "y".write(toFile: "\(base)/proj/src/.config/hidden.txt", atomically: true, encoding: .utf8)
+        try "z".write(toFile: "\(base)/other/notes.md", atomically: true, encoding: .utf8)
+        let explorer = ExplorerModel(noteStore: NoteStore(database: try AppDatabase.inMemory()))
+        let local = LocalFileSystem(deleteBehavior: .permanent)
+        explorer.fileSystemProvider = { _ in local }
+        let delegate = RecordingTreeDelegate()
+        explorer.treeDelegate = delegate
+        await explorer.openRoot(hostID: .local, path: "\(base)/other")
+        await explorer.openRoot(hostID: .local, path: "\(base)/proj")
+        let proj = explorer.selectedTabID
+
+        explorer.setActiveDocument(hostID: .local, path: "\(base)/proj/src/main.swift")
+        #expect(await explorer.reveal(hostID: .local, path: "\(base)/proj/src/main.swift", quietly: true))
+        #expect(delegate.revealed.last == ["proj", "src", "main.swift"])
+
+        #expect(await explorer.reveal(hostID: .local, path: "\(base)/other/notes.md", quietly: true) == false, "another folder holds it")
+        #expect(explorer.selectedTabID == proj, "the folder in front stays")
+        #expect(delegate.revealed.count == 1)
+
+        #expect(await explorer.reveal(hostID: .local, path: "\(base)/proj/src/.config/hidden.txt", quietly: true) == false)
+        #expect(!explorer.showDotfiles, "hidden files stay hidden; the way to it is not opened")
+        explorer.filter = "readme"
+        #expect(await explorer.reveal(hostID: .local, path: "\(base)/proj/src/main.swift", quietly: true) == false)
+        #expect(explorer.filter == "readme", "the filter stays")
+        explorer.filter = ""
+        #expect(await explorer.reveal(hostID: .local, path: "\(base)/proj/src/gone.swift", quietly: true) == false)
+        #expect(delegate.revealed.count == 1, "a missing file selects nothing, not its folder")
+
+        explorer.setActiveDocument(hostID: .local, path: "\(base)/proj/src/main.swift")
+        #expect(await explorer.reveal(hostID: .local, path: "\(base)/other/notes.md") , "asked for, it switches folders")
+        #expect(explorer.selectedTabID != proj)
+        explorer.stopWatching()
+    }
 }
 
 @MainActor

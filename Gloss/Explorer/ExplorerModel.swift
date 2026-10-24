@@ -61,7 +61,15 @@ final class ExplorerModel {
     @ObservationIgnored var lastFileNoteColor: NoteColor = .yellow
     /// Says what was just copied (the app shows it briefly).
     @ObservationIgnored var onCopied: (String) -> Void = { _ in }
-    @ObservationIgnored weak var treeDelegate: (any ExplorerTreeDelegate)?
+    @ObservationIgnored weak var treeDelegate: (any ExplorerTreeDelegate)? {
+        // The tree is built anew when the compact layout slides the explorer in: what was revealed while there was
+        // no tree is revealed again (the app follows the open document when Settings say so).
+        didSet { if treeDelegate != nil { onTreeAttached() } }
+    }
+    @ObservationIgnored var onTreeAttached: () -> Void = {}
+    /// Counts reveals, so a quiet one that outlives a later reveal (the user clicked a crumb while a slow host
+    /// listed folders) gives way to it.
+    @ObservationIgnored private var revealGeneration = 0
 
     private(set) var tabs: [RootTab] = [] {
         didSet { onTabsChange() }
@@ -397,17 +405,32 @@ final class ExplorerModel {
     /// Shows `path` in the tree: picks the open root containing it (the deepest when roots nest), lists every
     /// directory on the way, and has the tree expand, select, and scroll to it. Dotfiles on the way are shown so
     /// the target is reachable. Returns false when no open root on that host contains the path.
+    ///
+    /// `quietly` is the reveal that follows the open document on its own (Settings › General): it stays in the
+    /// folder in front rather than switching folders, and leaves the filter and the dotfile toggle as they are,
+    /// doing nothing when they hide the way, so the tree never rearranges itself under the user. It also stops
+    /// when another document has come to the front while a folder on the way was being listed.
     @discardableResult
-    func reveal(hostID: HostID, path: String) async -> Bool {
+    func reveal(hostID: HostID, path: String, quietly: Bool = false) async -> Bool {
         // Compare spellings the same way the tabs store them: a root opened as `/private/tmp/x` is the tab `/tmp/x`.
         let normalize: (String) -> String = { hostID == .local ? Self.aliasFree($0) : ($0 as NSString).standardizingPath }
         let target = normalize(path)
-        let candidates = tabs.filter { tab in
+        let contains: (RootTab) -> Bool = { tab in
             let root = normalize(tab.path)
             return tab.hostID == hostID && (target == root || target.hasPrefix(root == "/" ? "/" : root + "/"))
         }
-        guard let tab = candidates.max(by: { $0.path.count < $1.path.count }) else { return false }
-        if selectedTabID != tab.id { selectedTabID = tab.id }
+        let tab: RootTab
+        if quietly {
+            guard let shown = selectedTab, contains(shown) else { return false }
+            tab = shown
+        } else {
+            guard let deepest = tabs.filter(contains).max(by: { $0.path.count < $1.path.count }) else { return false }
+            tab = deepest
+            if selectedTabID != tab.id { selectedTabID = tab.id }
+        }
+        revealGeneration += 1
+        let mine = revealGeneration
+        let activeKey = activeDocumentKey
         var chain = [tab.node]
         var node = tab.node
         let relative = target.dropFirst(normalize(tab.path).count).split(separator: "/")
@@ -418,17 +441,28 @@ final class ExplorerModel {
             let deadline = ContinuousClock.now + .seconds(120)
             while node.isLoading, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(25)) }
             if !node.isLoaded { await loadChildren(of: node) }
+            if quietly, revealGeneration != mine || activeDocumentKey != activeKey || selectedTabID != tab.id { return false }
             // By the path's own component, not the shown name: a Confluence page's folder is named by its title
             // and addressed by its id.
             guard let child = node.children?.first(where: { ($0.path as NSString).lastPathComponent == component }) else { break }
-            if child.entry.isHidden, !showDotfiles { showDotfiles = true }
+            if child.entry.isHidden, !showDotfiles {
+                if quietly { return false }
+                showDotfiles = true
+            }
             // The tree shows only names matching the filter; a filter hiding the target would make the reveal a no-op.
-            if !child.isDirectory, !child.matches(filter: filter) { filter = "" }
+            if !child.isDirectory, !child.matches(filter: filter) {
+                if quietly { return false }
+                filter = ""
+            }
             chain.append(child)
             node = child
         }
+        let found = chain.last.map { normalize($0.path) } == target
+        // Following the open document means landing on it, not on the nearest folder that exists, and never over
+        // a reveal asked for since.
+        if quietly, !found || revealGeneration != mine || activeDocumentKey != activeKey || selectedTabID != tab.id { return false }
         treeDelegate?.treeReveal(chain)
-        return chain.last.map { normalize($0.path) } == target
+        return found
     }
 
     func select(_ node: FileNode?) {

@@ -117,6 +117,9 @@ struct FileOutlineView: NSViewRepresentable {
         var model: ExplorerModel
         weak var outline: NSOutlineView?
         var frameObserver: (any NSObjectProtocol)?
+        /// A reveal is selecting a row: not the user picking a file, so nothing opens and, compact, the slid-over
+        /// explorer stays out (Back with it open would otherwise put it away).
+        private var isRevealing = false
 
         isolated deinit {
             if let frameObserver { NotificationCenter.default.removeObserver(frameObserver) }
@@ -197,7 +200,7 @@ struct FileOutlineView: NSViewRepresentable {
         }
 
         func outlineViewSelectionDidChange(_ notification: Notification) {
-            guard let outline else { return }
+            guard let outline, !isRevealing else { return }
             model.select(outline.item(atRow: outline.selectedRow) as? FileNode)
         }
 
@@ -357,7 +360,11 @@ struct FileOutlineView: NSViewRepresentable {
             }
             let row = outline.row(forItem: target)
             guard row >= 0 else { return }
-            if outline.selectedRow != row { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+            if outline.selectedRow != row {
+                isRevealing = true
+                outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                isRevealing = false
+            }
             outline.scrollRowToVisible(row)
         }
     }
