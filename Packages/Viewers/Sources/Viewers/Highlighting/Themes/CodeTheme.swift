@@ -62,6 +62,8 @@ public nonisolated struct CodeTheme: Hashable, Identifiable, Sendable {
         "float": "number.float", "field": "property", "method": "function.method", "parameter": "variable.parameter",
         "constructor": "type.constructor", "character": "string.character", "delimiter": "punctuation.delimiter",
         "label": "attribute.label",
+        // SQL's `TEMPORARY`, `PRIMARY KEY` and the like: a keyword, as TextMate's `storage.modifier` is.
+        "storageclass": "keyword.modifier",
     ]
 
     public func color(forCapture name: String) -> NSColor? {
@@ -246,6 +248,7 @@ nonisolated extension CodeTheme {
     static let glossTokens: [String: String] = [
         "keyword": "systemPurple", "keyword.function": "systemPurple", "keyword.return": "systemPurple",
         "keyword.operator": "systemPurple", "include": "systemPurple", "conditional": "systemPurple", "repeat": "systemPurple",
+        "storageclass": "systemPurple",
         "diff.plus": "systemGreen", "diff.minus": "systemRed", "diff.hunk": "systemPurple", "diff.header": "secondaryLabelColor",
         "string": "systemRed", "string.special": "systemRed", "character": "systemRed", "escape": "systemOrange",
         "comment": "systemGray",

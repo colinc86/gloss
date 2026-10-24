@@ -1,3 +1,4 @@
+import AppKit
 import Core
 import Foundation
 import Testing
@@ -31,6 +32,37 @@ struct HighlighterTests {
             let at = text.range(of: name, range: NSRange(location: 10, length: 15)).location   // in the parameter list
             #expect(captures.contains { $0.range.location == at && $0.name == "variable.parameter" }, "\(name)")
         }
+    }
+
+    /// SQL is coloured: keywords, strings, numbers, comments, functions, types and the fields of a query, from a .sql
+    /// file or a ```sql fence.
+    @Test func sqlIsColoured() async throws {
+        #expect(GrammarCatalog.languageName(forPath: "/p/schema.sql") == "sql")
+        #expect(GrammarCatalog.languageName(forPath: "/p/init.psql") == "sql")
+        #expect(GrammarCatalog.grammarName(forFence: "sql") == "sql")
+        let sql = """
+        -- users
+        CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score REAL DEFAULT 1.5);
+        SELECT u.name, count(*) AS n FROM users u WHERE u.score > 2 AND u.name <> 'x' GROUP BY u.name;
+        """
+        let names = Set(try #require(Highlighter(languageName: "sql", text: sql)).captures.map(\.name))
+        #expect(names.isSuperset(of: ["keyword", "string", "number", "float", "comment", "function.call", "type.builtin", "operator"]), "\(names.sorted())")
+        for name in names where name != "spell" {
+            #expect(SyntaxTheme.color(forCapture: name) != nil || CodeTheme.captureAliases[name] != nil, "\(name) has no colour")
+        }
+        // A literal is a string in the grammar's queries as well as a number: the number must win on the page. The
+        // palette adapts its colours to the background, so they are compared with each other, not with the theme's.
+        let coloured = try #require(await MainActor.run { SyntaxTheme.highlighted(sql, language: "sql") })
+        let attributed = NSAttributedString(coloured)
+        let text = sql as NSString
+        func colour(at literal: String) -> NSColor? {
+            attributed.attribute(.foregroundColor, at: text.range(of: literal).location, effectiveRange: nil) as? NSColor
+        }
+        let string = colour(at: "'x'"), number = colour(at: "2 AND"), float = colour(at: "1.5"), keyword = colour(at: "SELECT")
+        #expect(string != nil && number != nil && float != nil && keyword != nil)
+        #expect(number != string, "a number is not coloured as a string")
+        #expect(float != string, "nor is a float")
+        #expect(number != keyword && string != keyword)
     }
 
     /// HTML and CSS are coloured: tags, attributes and comments, the JavaScript in a <script> and the CSS in a
@@ -75,7 +107,7 @@ struct HighlighterTests {
     }
 
     @Test func grammarsLoadUnderSwiftTest() {
-        #expect(GrammarCatalog.supportedLanguageNames().count == 16)
+        #expect(GrammarCatalog.supportedLanguageNames().count == 17)
         for name in GrammarCatalog.supportedLanguageNames() {
             #expect(GrammarCatalog.configuration(forLanguage: name) != nil, "\(name) queries should be found")
         }

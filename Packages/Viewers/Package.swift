@@ -28,6 +28,8 @@ let package = Package(
         .package(url: "https://github.com/tree-sitter/tree-sitter-go", from: "0.25.0"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-html", exact: "0.23.2"),
         .package(url: "https://github.com/tree-sitter/tree-sitter-css", exact: "0.23.2"),
+        // Only its gh-pages branch carries the generated parser; the branch keeps its history, so a revision stays.
+        .package(url: "https://github.com/DerekStride/tree-sitter-sql", revision: "e038788e5d4daba82dea35676bf49a216629e141"),
     ],
     targets: [
         .target(
@@ -51,6 +53,7 @@ let package = Package(
                 .product(name: "TreeSitterGo", package: "tree-sitter-go"),
                 .product(name: "TreeSitterHTML", package: "tree-sitter-html"),
                 .product(name: "TreeSitterCSS", package: "tree-sitter-css"),
+                .product(name: "TreeSitterSql", package: "tree-sitter-sql"),
             ],
             // Mermaid (MIT, pinned; see MermaidRenderer.version) draws diagrams offline. Presets are the built-in syntax themes.
             resources: [.copy("Resources/Mermaid"), .copy("Highlighting/Themes/Presets")],

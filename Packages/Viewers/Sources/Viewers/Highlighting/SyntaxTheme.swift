@@ -14,6 +14,7 @@ public nonisolated enum SyntaxTheme {
         "include": .systemPurple,
         "conditional": .systemPurple,
         "repeat": .systemPurple,
+        "storageclass": .systemPurple,
         "string": .systemRed,
         "string.special": .systemRed,
         "character": .systemRed,

@@ -12,6 +12,7 @@ import TreeSitterMarkdown
 import TreeSitterMarkdownInline
 import TreeSitterPython
 import TreeSitterRust
+import TreeSitterSql
 import TreeSitterSwift
 import TreeSitterTOML
 import TreeSitterTSX
@@ -47,6 +48,7 @@ public nonisolated enum GrammarCatalog {
         "go": Grammar(name: "Go", bundleName: "TreeSitterGo_TreeSitterGo", language: { tree_sitter_go() }),
         "html": Grammar(name: "HTML", bundleName: "TreeSitterHTML_TreeSitterHTML", language: { tree_sitter_html() }),
         "css": Grammar(name: "CSS", bundleName: "TreeSitterCSS_TreeSitterCSS", language: { tree_sitter_css() }),
+        "sql": Grammar(name: "SQL", bundleName: "TreeSitterSql_TreeSitterSql", language: { tree_sitter_sql() }),
     ]
 
     nonisolated private static let extensions: [String: String] = [
@@ -64,6 +66,7 @@ public nonisolated enum GrammarCatalog {
         "rs": "rust",
         "go": "go",
         "html": "html", "htm": "html", "css": "css",
+        "sql": "sql", "psql": "sql", "pgsql": "sql", "mysql": "sql", "ddl": "sql", "dml": "sql",
         // No grammar: `Highlighter` colours a diff by its lines' first characters.
         "diff": "diff", "patch": "diff",
     ]
@@ -141,14 +144,34 @@ public nonisolated enum GrammarCatalog {
         "javascript": [("javascript", "highlights-jsx.scm"), ("javascript", "highlights-params.scm")],
     ]
 
-    /// `configuration` with its highlights followed by the joined files', as one query; unchanged when there are none
-    /// or the joined query does not load.
+    /// Spellings in a grammar's highlights written for one editor's predicate engine, put in the form this one
+    /// reads, applied in order. SQL's `#match?` patterns are Lua patterns (`%d`), which a regular expression never
+    /// matches, so every number was coloured as the string the literal also is; its `\.` loses the backslash in
+    /// the query parser, so a dot meant literally is written `\\.`; and its every literal is a `@string` too, which
+    /// won over the number on the same range, so a string is a literal that is not a number.
+    nonisolated private static let highlightFixups: [String: [(from: String, to: String)]] = [
+        "sql": [
+            ("%d", "[0-9]"),
+            ("\\.", "\\\\."),
+            ("(literal) @string\n", "((literal) @string (#not-match? @string \"^[-+]?[0-9]*\\\\.?[0-9]*$\"))\n"),
+        ],
+    ]
+
+    /// `configuration` with its highlights followed by the joined files', as one query, with the fixups applied;
+    /// unchanged when there are none or the query does not load.
     nonisolated private static func withInheritedHighlights(_ configuration: LanguageConfiguration, name: String, grammar: Grammar, queries: URL) -> LanguageConfiguration {
-        guard let joins = joinedHighlights[name], var data = try? Data(contentsOf: queries.appendingPathComponent("highlights.scm")) else { return configuration }
+        let joins = joinedHighlights[name] ?? []
+        let fixups = highlightFixups[name] ?? []
+        guard !joins.isEmpty || !fixups.isEmpty, var data = try? Data(contentsOf: queries.appendingPathComponent("highlights.scm")) else { return configuration }
         for join in joins {
             guard let other = grammars[join.grammar], let folder = queriesURL(bundleName: other.bundleName),
                   let more = try? Data(contentsOf: folder.appendingPathComponent(join.file)) else { return configuration }
             data += Data("\n".utf8) + more
+        }
+        if !fixups.isEmpty {
+            guard var text = String(data: data, encoding: .utf8) else { return configuration }
+            for fixup in fixups { text = text.replacingOccurrences(of: fixup.from, with: fixup.to) }
+            data = Data(text.utf8)
         }
         let language = Language(grammar.language())
         do {
