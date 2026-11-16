@@ -6,6 +6,45 @@
     <description>Gloss releases</description>
     <language>en</language>
     <item>
+      <title>Gloss 0.6.0-beta.9</title>
+      <pubDate>Mon, 16 Nov 2026 21:45:32 GMT</pubDate>
+      <sparkle:version>449</sparkle:version>
+      <sparkle:shortVersionString>0.6.0-beta.9</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<style>
+:root { color-scheme: light dark; }
+body { font: 13px -apple-system, system-ui, sans-serif; line-height: 1.45; margin: 0 4px; }
+h1, h2, h3 { font-size: 1.05em; margin: 1em 0 .4em; }
+ul, ol { padding-left: 1.4em; }
+code { font: 12px ui-monospace, SF Mono, Menlo, monospace; }
+a { color: -apple-system-control-accent; }
+</style>
+<h2 dir="auto">Send through herdr-core</h2>
+<p dir="auto">Gloss now finds and types into agents running in herdr-core, on this Mac and on every machine herdr-core reaches over its own ssh. It doesn't need a connection of its own to list or prompt them, and each machine is matched to your Gloss host with the same ssh alias, so the agent working in the open folder is still picked for you.</p>
+<ul dir="auto">
+<li>The agent menu's status dots update live as agents work.</li>
+<li>Notes arrive exactly as written.</li>
+<li>A packet with pictures for a remote machine connects to it first, so the pictures can be copied there.</li>
+<li>An empty agent menu now says which tools Gloss sends through, and names any machine it can't list and why (needs <code class="notranslate">hc machine login</code>, unreachable, or not one of your hosts).</li>
+<li>Settings › Agents has a new Delivery section: each way Gloss reaches agents, whether it's running, and what it found.</li>
+<li>Follow mode follows the agent Herdr.app has in focus, opening its folder and making it the agent your notes go to.</li>
+</ul>
+<p dir="auto">Herdr 0.9 keeps working as before.</p>
+<h2 dir="auto">Select cells in Markdown tables</h2>
+<p dir="auto">In a rendered Markdown table you can now select cells, rows and columns the way you do in a spreadsheet, and put a note on them.</p>
+<h2 dir="auto">The review card shows the document</h2>
+<p dir="auto">A note on a Markdown page, a picture, a PDF or a web page now shows the document as the viewer draws it, before and after, with the note outlined. Plain text, code and spreadsheet notes still show lines.</p>
+<h2 dir="auto">Also</h2>
+<ul dir="auto">
+<li>The file tree follows the document in front, whatever opened it (a toggle in Settings › General, on by default). The breadcrumb's menu gains Reveal in Explorer.</li>
+<li>SQL files and <code class="notranslate">sql</code> code blocks are colored.</li>
+<li>An agent opening a file in another open folder brings that folder to the front.</li>
+<li>An agent's question no longer ends a review in progress.</li>
+<li>The MCP server reconnects cleanly after the app restarts.</li>
+</ul>]]></description>
+      <enclosure url="https://github.com/colinc86/gloss/releases/download/v0.6.0-beta.9/Gloss-0.6.0-beta.9.zip" type="application/octet-stream" sparkle:edSignature="zAEDFFnoXm41ToG2MeJUtPUJJBLjss6YPVu3bS9y1Wgepbz73ShHc8Lt/zyMKZaIzSEbvasrDqXFLGIf9cFRCA==" length="32199642"/>
+    </item>
+    <item>
       <title>Gloss 0.6.0-beta.8</title>
       <pubDate>Fri, 23 Oct 2026 19:56:06 GMT</pubDate>
       <sparkle:version>442</sparkle:version>
