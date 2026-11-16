@@ -243,7 +243,7 @@ struct AppCommands: Commands {
         Divider()
         // The sidebar's crosshair, reachable with the sidebar closed. Only where Herdr exists, unless following.
         Toggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 })) { Label("Follow Herdr", systemImage: "scope") }
-            .disabled(model.herdrHosts.isEmpty && !model.followHerdr)
+            .disabled(!model.canFollowHerdr && !model.followHerdr)
         Toggle(isOn: Binding(get: { model.noteLink.isLinked }, set: { model.setNotesLinked($0) })) { Label("Follow Page in Notes Panel", systemImage: "link") }
     }
 

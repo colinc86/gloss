@@ -127,6 +127,9 @@ struct HerdrTests {
                 while true {
                     let client = accept(listener, nil, nil)
                     if client < 0 { break }
+                    // The client may hang up mid-reply (the oversized test does); that must not kill the process.
+                    var on: Int32 = 1
+                    setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
                     if let reply { _ = reply.withUnsafeBytes { send(client, $0.baseAddress, $0.count, 0) } }
                     held.append(client)
                 }

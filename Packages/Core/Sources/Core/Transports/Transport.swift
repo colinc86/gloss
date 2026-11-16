@@ -2,6 +2,9 @@ import Foundation
 import Synchronization
 
 public enum TransportKind: String, Codable, Sendable, CaseIterable {
+    /// herdr-core terminals, here and on the machines the core reaches. First: it is the delivery route agents run
+    /// in today, and it reaches every machine without a connection of Gloss's own.
+    case herdrCore = "herdr-core"
     case herdr
     case mcp
     case claudeHook = "claude-hook"
@@ -15,6 +18,7 @@ public enum TransportKind: String, Codable, Sendable, CaseIterable {
 
     public var displayName: String {
         switch self {
+        case .herdrCore: "herdr-core"
         case .herdr: "Herdr"
         case .mcp: "MCP"
         case .claudeHook: "Claude Code hook"
@@ -57,6 +61,8 @@ public struct AgentTarget: Identifiable, Hashable, Codable, Sendable {
         func value(_ key: String) -> String { fields[key].map { "\($0)" } ?? "" }
         let key: String? = switch transport {
         case .herdr: fields["pane_id"] == nil ? nil : "\(value("pane_id")) \(value("agent"))"
+        // A terminal by its address and the agent in it: its name and title change while it runs.
+        case .herdrCore: fields["address"] == nil ? nil : "\(value("address")) \(value("app"))"
         // A pane by tmux's id when it was listed with one: its `session:window.pane` can pass to another pane.
         case .tmux: fields["pane_id"] != nil ? value("pane_id") : fields["target"] == nil ? nil : value("target")
         case .opencode: fields["session_id"] == nil ? nil : "\(value("base_url")) \(value("session_id"))"

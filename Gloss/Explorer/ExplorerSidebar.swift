@@ -217,7 +217,7 @@ struct ExplorerSidebar: View {
             .help(explorer.showDotfiles ? "Hide hidden files (⌘⇧.)" : "Show hidden files (⌘⇧.)")
             .accessibilityLabel("Show hidden files")
             // Only where Herdr exists: following needs its focus events. Kept while following, so it can be stopped.
-            if !model.herdrHosts.isEmpty || model.followHerdr {
+            if model.canFollowHerdr || model.followHerdr {
                 FollowToggle(isOn: Binding(get: { model.followHerdr }, set: { model.followHerdr = $0 }))
             }
         }

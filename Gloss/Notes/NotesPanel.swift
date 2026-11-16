@@ -486,6 +486,7 @@ private struct ColorFilterStrip: View {
 
 struct TargetPicker: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Menu {
@@ -512,6 +513,15 @@ struct TargetPicker: View {
             }
             if agents.isEmpty {
                 Text(model.send.isDiscovering ? "Looking for Agents…" : "No Agents Found")
+                if !model.send.isDiscovering {
+                    // Say where Gloss looked: it types into agents through what runs their terminals, so an agent
+                    // started in a plain terminal tab can't be listed.
+                    Text("Gloss sends to agents running in herdr-core, Herdr, tmux, or OpenCode.")
+                }
+            }
+            // A machine herdr-core can't reach right now, or one Gloss has no host for, is never silently missing.
+            ForEach(Self.machineProblems(model.herdrCore), id: \.self) { problem in
+                Text(problem)
             }
             Divider()
             Button {
@@ -521,6 +531,10 @@ struct TargetPicker: View {
             }
             .help("Paste it into any terminal yourself")
             Button("Refresh Agents") { Task { await model.send.refreshTargets() } }
+            Button("Agent Settings…") {
+                model.settingsTab = .agents
+                openSettings()
+            }
         } label: {
             AgentChip(
                 target: model.send.lastTarget,
@@ -542,6 +556,20 @@ struct TargetPicker: View {
         }
     }
 
+    /// One line per herdr-core machine whose agents aren't listed, and why.
+    static func machineProblems(_ state: AppModel.HerdrCoreState) -> [String] {
+        state.machines.compactMap { entry in
+            let name = entry.machine.name
+            guard entry.host != nil else { return "\(name): add it in Settings › Hosts to list its agents" }
+            switch entry.machine.state {
+            case "connected", nil: return nil
+            case "needs_login": return "\(name): needs login (hc machine login \(name))"
+            case "connecting": return "\(name): connecting…"
+            default: return "\(name): unreachable"
+            }
+        }
+    }
+
     /// Menus drop a `Label`'s icon, so the folder mark is an inline image in the text.
     private func targetTitle(_ target: AgentTarget, inFolder: Bool) -> Text {
         var title = inFolder ? Text("\(Image(systemName: "folder.fill")) \(target.label)") : Text(target.label)
@@ -552,7 +580,7 @@ struct TargetPicker: View {
     private func icon(for kind: TransportKind?) -> String {
         switch kind {
         case .clipboard: "doc.on.clipboard"
-        case .herdr: "terminal"
+        case .herdr, .herdrCore: "terminal"
         case .tmux: "rectangle.split.3x1"
         case .opencode: "network"
         case .mcp, .claudeHook, .codexHook, .promptHook: "point.3.connected.trianglepath.dotted"

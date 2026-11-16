@@ -64,6 +64,31 @@ final class AppModel {
     /// The same connections, readable by the transports without touching the main actor.
     let connectionRegistry = ConnectionRegistry()
     let herdrTransport: HerdrTransport
+    /// herdr-core: agents in its terminals here and on every machine it reaches, through its own ssh lines.
+    let herdrCoreTransport: HerdrCoreTransport
+    @ObservationIgnored private var herdrCoreWatcher: HerdrCoreWatcher?
+    @ObservationIgnored private var coreFollowTask: Task<Void, Never>?
+    @ObservationIgnored private var coreFollowStep: Task<Void, Never>?
+    @ObservationIgnored private var coreFollowGeneration = 0
+    /// What herdr-core said at the last discovery: whether it answered, and its machines with the Gloss host each
+    /// one is (nil for a machine Gloss has no host for, whose agents can't be listed).
+    struct HerdrCoreState: Equatable {
+        var running = false
+        var machines: [(machine: HCMachine, host: HostID?)] = []
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.running == rhs.running && lhs.machines.map(\.machine) == rhs.machines.map(\.machine) && lhs.machines.map(\.host) == rhs.machines.map(\.host)
+        }
+    }
+    private(set) var herdrCore = HerdrCoreState()
+
+    /// Reads what herdr-core's last listing said about its machines, for the agent menu and Settings.
+    func readHerdrCoreState() async {
+        let running = herdrCoreTransport.isInstalled
+        let machines = await herdrCoreTransport.machines
+        let state = HerdrCoreState(running: running, machines: machines.map { ($0, Self.host(for: $0, in: hosts.entries)) })
+        if state != herdrCore { herdrCore = state }
+    }
     private(set) var mcpServer: MCPServer?
     private(set) var mcpStatus: String?
     /// The port the MCP server actually bound; the setting can differ until the next launch.
@@ -291,6 +316,10 @@ final class AppModel {
         refinement.prepareDocument = { [weak iterations] id in await iterations?.prepareForNote(id) }
         refinement.startObserving()
         herdrTransport = HerdrTransport(registry: connectionRegistry)
+        let hostsForCore = hosts
+        herdrCoreTransport = HerdrCoreTransport { machine in
+            await MainActor.run { AppModel.host(for: machine, in: hostsForCore.entries) }
+        }
         fileSystems[.local] = LocalFileSystem()
         fileSystems[.gloss] = collaboration.fileSystem
         send.sentRender = { [weak self] note, document in
@@ -359,11 +388,30 @@ final class AppModel {
             default: nil
             }
         }
+        send.register(herdrCoreTransport)
+        send.connectHost = { [weak self] hostID in
+            guard let self else { return "Gloss is closing" }
+            _ = await self.hosts.connect(hostID)
+            if case .failed(let reason) = self.hosts.status(for: hostID) { return reason }
+            return nil
+        }
         send.register(herdrTransport)
         send.register(TmuxTransport(registry: connectionRegistry))
         send.register(OpenCodeTransport(servers: { await OpenCodeServer.discoverLocal() }))
         hooks.installerProvider = { [weak self] hostID in self?.makeHookInstaller(for: hostID) }
         notesPanel.start()
+        send.didDiscover = { [weak self] in await self?.readHerdrCoreState() }
+        if !launchOptions.isTestHost {
+            let watcher = HerdrCoreWatcher(client: HerdrCoreClient(socketPath: herdrCoreTransport.socketPath), send: send)
+            herdrCoreWatcher = watcher
+            watcher.onStatus = { [weak self] address, status in self?.followedStatusChanged(address, to: status) }
+            watcher.canList = { [weak self] address in
+                guard let slash = address.firstIndex(of: "/") else { return true }
+                let machine = String(address[..<slash])
+                return self?.herdrCore.machines.contains { $0.machine.name == machine && $0.host != nil } ?? false
+            }
+            watcher.start()
+        }
         review.notes = { [weak self] in
             guard let self, let location = self.notesPanel.location else { return [] }
             return self.notesPanel.allGroups.filter { location.contains($0.document) }
@@ -581,13 +629,14 @@ final class AppModel {
     }
 
     private func startFollowing() {
+        startFollowingHerdrCore()
         startWatchingHerdrMachine()
         var hostIDs: [HostID] = [.local]
         hostIDs += connections.keys.sorted { $0.rawValue < $1.rawValue }
         for hostID in hostIDs where followTasks[hostID] == nil {
             followTasks[hostID] = Task { [weak self] in
                 guard let self, let socket = await self.herdrTransport.socketPath(for: hostID) else {
-                    if hostID == .local { self?.followStatus = "Herdr is not running" }
+                    if hostID == .local, self?.coreFollowTask == nil { self?.followStatus = "Herdr is not running" }
                     return
                 }
                 let service = HerdrFollowService(hostID: hostID, socketPath: socket)
@@ -647,7 +696,82 @@ final class AppModel {
         }
     }
 
+    /// Herdr.app on herdr-core: follow the agent its window has in focus. The address carries the machine, so no
+    /// state files are needed to know which one it shows.
+    private func startFollowingHerdrCore() {
+        guard coreFollowTask == nil, herdrCoreTransport.isInstalled, let app = HerdrAppFocusWatcher.locateApp() else { return }
+        coreFollowTask = Task { [weak self] in
+            let watcher = HerdrAppFocusWatcher(executable: app)
+            await watcher.start()
+            defer { Task { await watcher.stop() } }
+            self?.followStatus = "Following Herdr…"
+            for await address in watcher.focus {
+                if Task.isCancelled { return }
+                // The newest focus wins: one still connecting its machine is dropped, not finished late.
+                guard let self else { return }
+                self.coreFollowStep?.cancel()
+                self.coreFollowGeneration += 1
+                self.coreFollowStep = Task { [weak self] in await self?.followCore(address) }
+            }
+        }
+    }
+
+    /// Opens the focused herdr-core agent's folder (connecting its machine first) and makes it the target.
+    private func followCore(_ address: String) async {
+        let generation = coreFollowGeneration
+        guard let terminal = try? await HerdrCoreClient(socketPath: herdrCoreTransport.socketPath).get(address),
+              generation == coreFollowGeneration, followHerdr else { return }
+        var hostID = HostID.local
+        var hostName: String?
+        if let machine = terminal.machine {
+            let known = await herdrCoreTransport.machines.first { $0.name == machine } ?? HCMachine(name: machine, target: machine)
+            guard let host = Self.host(for: known, in: hosts.entries) else {
+                followStatus = "Herdr is on \(machine), which is not one of this app's hosts"
+                followedPane = nil
+                return
+            }
+            hostID = host
+            hostName = hosts.entry(for: host)?.name ?? machine
+        }
+        let agent = terminal.agent ?? terminal.foreground?.name ?? "terminal"
+        followedPane = FollowedPane(host: hostName, agent: agent, status: terminal.status?.state, paneID: address, path: terminal.currentDirectory)
+        followStatus = "\(hostName.map { "\($0): " } ?? "")\(agent) \(terminal.status?.state ?? "") · \(address)"
+        guard let path = terminal.currentDirectory, !path.isEmpty else {
+            // No folder to open, but the agent can still take the notes.
+            if let target = HerdrCoreTransport.target(for: terminal, hostID: hostID) { adopt(target: target) }
+            return
+        }
+        if hostID != .local, fileSystems[hostID] == nil {
+            followStatus = "Connecting to \(hostName ?? "the machine") for Herdr…"
+            guard await hosts.connect(hostID) != nil else {
+                if generation == coreFollowGeneration { followStatus = "Couldn't connect to \(hostName ?? "the machine") for Herdr" }
+                return
+            }
+        }
+        guard generation == coreFollowGeneration, followHerdr else { return }
+        pickedHost = hostID
+        await explorer.openRoot(hostID: hostID, path: path)
+        guard generation == coreFollowGeneration, followHerdr else { return }
+        if let target = HerdrCoreTransport.target(for: terminal, hostID: hostID) { adopt(target: target) }
+    }
+
+    /// Follow mode is offered when classic Herdr is installed, or Herdr.app runs on herdr-core.
+    var canFollowHerdr: Bool {
+        !herdrHosts.isEmpty || (herdrCoreTransport.isInstalled && HerdrAppFocusWatcher.locateApp() != nil)
+    }
+
+    /// A herdr-core status change for the followed agent keeps the sidebar's follow card current.
+    fileprivate func followedStatusChanged(_ address: String, to status: String?) {
+        guard followedPane?.paneID == address else { return }
+        followedPane?.status = status
+    }
+
     private func stopFollowing() {
+        coreFollowTask?.cancel()
+        coreFollowTask = nil
+        coreFollowStep?.cancel()
+        coreFollowStep = nil
+        coreFollowGeneration += 1
         for task in followTasks.values { task.cancel() }
         followTasks = [:]
         machineWatcherTask?.cancel()

@@ -105,6 +105,20 @@ final class SendCoordinator {
         stagers[hostID] = stager
     }
 
+    /// Brings a host up so its stager exists, before a packet with images goes to an agent there that was found
+    /// without a connection of Gloss's own (a herdr-core machine). Returns why it couldn't.
+    /// Runs after each discovery, so what the transports learned (herdr-core's machines) can be shown.
+    @ObservationIgnored var didDiscover: () async -> Void = {}
+    @ObservationIgnored var connectHost: (HostID) async -> String? = { _ in "not connected" }
+
+    /// Changes a listed agent's status in place, from a live event, without a discovery. The chosen agent follows.
+    func updateStatus(of transport: TransportKind, where matches: (AgentTarget) -> Bool, to status: String?) {
+        for index in targets.indices where targets[index].transport == transport && matches(targets[index]) && targets[index].status != status {
+            targets[index].status = status
+            if lastTarget?.id == targets[index].id { lastTarget = targets[index] }
+        }
+    }
+
     // MARK: Targets
 
     /// The folder in front whose agent sends should go to, or nil when nothing should pick one (no folder, follow
@@ -167,6 +181,7 @@ final class SendCoordinator {
         if let current = lastTarget, let live = targets.first(where: { $0.id == current.id }), live != current {
             lastTarget = live
         }
+        await didDiscover()
         // The folder in front beats the target used last, which may belong to another folder.
         await selectFolderTarget()
     }
@@ -364,6 +379,14 @@ final class SendCoordinator {
                         return LocalAttachment(noteID: capture.attachment.noteID,localPath: url.path)
                     }
                 }.value
+            }
+            // An agent reached without Gloss's own connection (herdr-core's machines): connect so the images can go.
+            if !deliveryFiles.isEmpty, stagers[target.hostID] == nil, target.hostID != .local {
+                let problem = await connectHost(target.hostID)
+                // The stager decides: a host status from an earlier failed attempt may not have caught up yet.
+                guard stagers[target.hostID] != nil else {
+                    throw DeliveryError.targetUnavailable("Gloss must connect to this machine to send images" + (problem.map { ": \($0)" } ?? ""))
+                }
             }
             let staging = try await stagers[target.hostID]?.stage(deliveryFiles, for: target, sendID: sendID) ?? .empty
             var packetNotes = try await packetNotes(for: notes, target: target, staged: staging.attachments)
@@ -694,7 +717,7 @@ extension AgentTarget {
     /// not count; an agent started in `~` would otherwise match every project. Only transports that report a
     /// directory match.
     nonisolated func runs(inHost hostID: HostID, path: String) -> Bool {
-        guard self.hostID == hostID, transport == .herdr || transport == .tmux || transport == .opencode,
+        guard self.hostID == hostID, transport == .herdrCore || transport == .herdr || transport == .tmux || transport == .opencode,
               let directory = detail, directory.hasPrefix("/") else { return false }
         func contains(_ outer: String, _ inner: String) -> Bool {
             let outer = outer.count > 1 && outer.hasSuffix("/") ? String(outer.dropLast()) : outer

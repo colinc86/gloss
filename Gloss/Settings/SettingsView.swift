@@ -295,6 +295,7 @@ private struct AgentsSettings: View {
         let token = model.mcpServer?.token
         let status = Self.status(error: model.mcpStatus, listening: model.mcpListeningPort, configured: settings.mcpPort)
         Form {
+            DeliverySection()
             Section {
                 LabeledContent("Status") {
                     HStack(spacing: DS.Space.s) {
@@ -312,7 +313,7 @@ private struct AgentsSettings: View {
             } header: {
                 Text("MCP server")
             } footer: {
-                Text("Agents read and resolve notes through this server. The port is between 1024 and 65535; a change applies after relaunch.")
+                Text("Delivery types your notes into an agent; this server is how the agent answers: it resolves notes, asks you questions, and opens files in Gloss. Install it below for each agent on each machine where agents run. The port is between 1024 and 65535; a change applies after relaunch.")
             }
             ForEach(hostIDs, id: \.self) { hostID in
                 hostSection(hostID, port: port, token: token, isLast: hostID == hostIDs.last)
@@ -403,6 +404,77 @@ extension AgentsSettings {
         guard let listening else { return (.orange, "Starting…") }
         if listening != configured { return (.orange, "Listening on \(String(listening)); relaunch to use \(String(configured))") }
         return (.green, "Listening on 127.0.0.1:\(String(listening))")
+    }
+}
+
+/// How packets reach agents: what runs their terminals, as Gloss found it at the last look. An agent appears in the
+/// agent menu only through one of these; the MCP installs below are a separate, per-agent step.
+private struct DeliverySection: View {
+    @Environment(AppModel.self) private var model
+    @State private var coreVersion: String?
+
+    var body: some View {
+        let core = model.herdrCore
+        Section {
+            row("herdr-core", on: core.running, detail: core.running
+                ? "Running\(coreVersion.map { " (\($0))" } ?? "") · \(localAgents) agent\(localAgents == 1 ? "" : "s") on this Mac, \(core.machines.count) machine\(core.machines.count == 1 ? "" : "s")"
+                : "Not running")
+            ForEach(core.machines, id: \.machine.name) { entry in
+                HStack(spacing: DS.Space.s) {
+                    Text(entry.machine.name).padding(.leading, DS.Space.l)
+                    Spacer()
+                    Text(machineDetail(entry)).foregroundStyle(.secondary).font(.callout)
+                }
+            }
+            row("Herdr (0.9)", on: count(.herdr) > 0, detail: model.herdrHosts.isEmpty ? "Not installed" : agentsText(.herdr))
+            row("tmux", on: count(.tmux) > 0, detail: agentsText(.tmux))
+            row("OpenCode", on: count(.opencode) > 0, detail: agentsText(.opencode))
+            row("Clipboard", on: true, detail: "Always: paste the packet anywhere yourself")
+        } header: {
+            Text("Delivery")
+        } footer: {
+            Text("Gloss types your notes into agents through what runs their terminals. An agent started in a plain terminal tab can't be reached; start it in herdr-core, Herdr, or tmux. herdr-core reaches its machines over its own ssh lines; Gloss lists their agents for the hosts it knows.")
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .task { await model.send.refreshTargets() }
+        .task(id: core.running) {
+            coreVersion = core.running ? try? await HerdrCoreClient(socketPath: model.herdrCoreTransport.socketPath).version() : nil
+        }
+    }
+
+    private func count(_ kind: TransportKind) -> Int {
+        model.send.targets.filter { $0.transport == kind }.count
+    }
+
+    private var localAgents: Int {
+        model.send.targets.filter { $0.transport == .herdrCore && $0.hostID == .local }.count
+    }
+
+    private func agentsText(_ kind: TransportKind) -> String {
+        let count = count(kind)
+        return count == 0 ? "No agents found" : "\(count) agent\(count == 1 ? "" : "s")"
+    }
+
+    private func machineDetail(_ entry: (machine: HCMachine, host: HostID?)) -> String {
+        guard entry.host != nil else { return "Not a Gloss host: add \(entry.machine.target ?? entry.machine.name) in Hosts" }
+        let agents = model.send.targets.filter { $0.transport == .herdrCore && $0.hostID == entry.host }.count
+        switch entry.machine.state {
+        case "connected", nil: return "\(agents) agent\(agents == 1 ? "" : "s")"
+        case "needs_login": return "Needs login: hc machine login \(entry.machine.name)"
+        case "connecting": return "Connecting…"
+        default: return "Unreachable"
+        }
+    }
+
+    private func row(_ name: String, on: Bool, detail: String) -> some View {
+        LabeledContent(name) {
+            HStack(spacing: DS.Space.s) {
+                Circle()
+                    .fill(on ? Color.green : Color.secondary.opacity(0.4))
+                    .frame(width: 7, height: 7)
+                Text(detail).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
