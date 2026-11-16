@@ -44,6 +44,16 @@ import Testing
         #expect(colorCount(image) > 8, "text, the tint and the page's background")
     }
 
+    @Test func aLineDeepInALongCodeBlockIsInTheWindow() throws {
+        var lines = ["# Title", "", "```text"]
+        for n in 1...80 { lines.append("code line \(n)") }
+        lines.append("```")
+        let line = lines.firstIndex(of: "code line 60")! + 1
+        let anchor = TextAnchor(start: .init(line: line, col: 1), end: .init(line: line, col: 13), text: "code line 60", before: "", after: "")
+        let image = try #require(ExcerptRenderer.markdown(lines.joined(separator: "\n"), anchor: anchor, baseURL: nil, window: window, tint: tint, appearance: light))
+        keep(image, "markdown-code")
+    }
+
     @Test func aMarkdownWindowAtTheTopKeepsItsMargin() throws {
         let anchor = TextAnchor(start: .init(line: 1, col: 1), end: .init(line: 1, col: 8), text: "# Title", before: "", after: "")
         let image = try #require(ExcerptRenderer.markdown("# Title\n\nBody.", anchor: anchor, baseURL: nil, window: window, tint: tint, appearance: light))

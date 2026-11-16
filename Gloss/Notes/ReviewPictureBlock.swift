@@ -21,10 +21,26 @@ struct ReviewPictureBlock<Key: Hashable>: View {
                 .foregroundStyle(.secondary)
             Group {
                 if let image {
-                    Image(decorative: image, scale: ExcerptProducer.window.scale)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: ExcerptProducer.window.height, alignment: .top)
+                    // A window is drawn with the anchor in its middle. Short of room it is cut evenly from both
+                    // ends, so the anchor stays in the middle at a readable size; a web page's capture has its own
+                    // shape and is shown whole.
+                    let window = ExcerptProducer.window
+                    if abs(CGFloat(image.width) / CGFloat(image.height) - window.width / window.height) < 0.01 {
+                        Color.clear
+                            .aspectRatio(window.width / window.height, contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: window.height)
+                            .overlay {
+                                Image(decorative: image, scale: window.scale)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            }
+                            .clipped()
+                    } else {
+                        Image(decorative: image, scale: window.scale)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: window.height)
+                    }
                 } else if loaded {
                     Text("Nothing to show")
                         .font(.callout)

@@ -168,7 +168,7 @@ struct SendCoordinatorTests {
         }
         let cells = Anchor.text(TextAnchor(start: .init(line: 2, col: 1), end: .init(line: 2, col: 4), text: "a,b", before: "", after: "", hash: nil,
                                            cells: CellSelection(cells: [.init(lineOffset: 0, column: 1)])))
-        #expect(throws: DeliveryError.failed("This note is on spreadsheet cells; it can't be moved.")) {
+        #expect(throws: DeliveryError.failed("This note is on table cells; it can't be moved.")) {
             try AppModel.relocation(of: cells, to: .text(line: 2, endLine: 2, text: "a,b"), data: Data("x\na,b\n".utf8))
         }
     }

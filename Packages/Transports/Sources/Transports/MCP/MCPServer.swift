@@ -91,17 +91,28 @@ public actor MCPServer {
     private var listener: HTTPListener?
     private var sessions: [String: Session] = [:]
     private var sweeper: Task<Void, Never>?
-    /// Sessions idle this long are closed; agents rarely send DELETE, so this is what bounds the table.
+    /// Sessions idle this long are closed; agents rarely send DELETE, so this is what bounds the table. A session
+    /// whose event stream is open is in use however long it has been quiet.
     public static let sessionIdleLimit: TimeInterval = 3600
+    /// How often an open event stream gets an SSE comment. With nothing on it, the agent's HTTP client drops it as
+    /// stalled after a few minutes, and enough drops in a row and the agent gives up on the server.
+    private let keepAliveInterval: Duration
 
     private struct Session {
         var server: Server
         var transport: StatefulHTTPServerTransport
         var lastUsed: Date
+        /// The last event id sent on the session's event stream (its GET), to resume from when the agent opens it
+        /// again: the SDK keeps a dropped stream as the session's one stream and answers a fresh GET with 409.
+        var lastEventID: String?
+        /// Forwards the open event stream; cancelled when the agent opens another or the session ends.
+        var eventStream: (id: UUID, task: Task<Void, Never>)?
     }
 
-    public init(dependencies: MCPDependencies, port: Int = MCPServer.defaultPort, portFileURL: URL? = MCPServer.defaultPortFileURL, token: String? = nil) {
+    public init(dependencies: MCPDependencies, port: Int = MCPServer.defaultPort, portFileURL: URL? = MCPServer.defaultPortFileURL, token: String? = nil,
+                keepAliveInterval: Duration = .seconds(25)) {
         self.dependencies = dependencies
+        self.keepAliveInterval = keepAliveInterval
         self.requestedPort = port
         self.portFileURL = portFileURL
         self.token = token
@@ -207,7 +218,7 @@ public actor MCPServer {
 
     private func sweepIdleSessions() async {
         let cutoff = Date().addingTimeInterval(-Self.sessionIdleLimit)
-        for (id, session) in sessions where session.lastUsed < cutoff {
+        for (id, session) in sessions where session.lastUsed < cutoff && session.eventStream == nil {
             sessions[id] = nil
             await session.server.stop()
             await session.transport.disconnect()
@@ -218,6 +229,7 @@ public actor MCPServer {
         sweeper?.cancel()
         sweeper = nil
         for session in sessions.values {
+            session.eventStream?.task.cancel()
             await session.server.stop()
             await session.transport.disconnect()
         }
@@ -293,8 +305,10 @@ public actor MCPServer {
     private func handleMCP(_ request: HTTPRequest, host: String) async -> HTTPResponse {
         if let id = request.header("Mcp-Session-Id"), let session = sessions[id] {
             sessions[id]?.lastUsed = Date()
+            if request.method.uppercased() == "GET" { return await openEventStream(request, session: id) }
             let response = await session.transport.handleRequest(request)
             if request.method.uppercased() == "DELETE", response.statusCode == 200 {
+                sessions[id]?.eventStream?.task.cancel()
                 sessions[id] = nil
                 await session.server.stop()
             }
@@ -321,6 +335,72 @@ public actor MCPServer {
             await server.stop()
         }
         return response
+    }
+
+    /// The agent's GET: the stream the server's own messages go out on. One per session, so a new one replaces the
+    /// last, resumed after the last event that went out (the SDK replays what was missed); the stream gets keep-alive
+    /// comments so a quiet one isn't dropped as stalled.
+    private func openEventStream(_ request: HTTPRequest, session id: String) async -> HTTPResponse {
+        guard let session = sessions[id] else { return .error(statusCode: 404, MCPError.invalidRequest("session not found")) }
+        var request = request
+        if request.header("Last-Event-ID") == nil, let last = session.lastEventID {
+            var headers = request.headers
+            headers["Last-Event-ID"] = last
+            request = HTTPRequest(method: request.method, headers: headers, body: request.body, path: request.path)
+        }
+        session.eventStream?.task.cancel()
+        sessions[id]?.eventStream = nil
+        let response = await session.transport.handleRequest(request)
+        guard case .stream(let events, let headers) = response, sessions[id] != nil else { return response }
+        let (stream, continuation) = AsyncThrowingStream<Data, any Error>.makeStream()
+        let streamID = UUID()
+        let interval = keepAliveInterval
+        let forward = Task { [weak self] in
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    do {
+                        for try await chunk in events {
+                            if let event = Self.lastEventID(in: chunk) { await self?.sent(event, session: id) }
+                            continuation.yield(chunk)
+                        }
+                    } catch {}
+                }
+                group.addTask {
+                    while (try? await Task.sleep(for: interval)) != nil {
+                        continuation.yield(Data(": keep-alive\n\n".utf8))
+                        await self?.touch(id)
+                    }
+                }
+                // Either ending (the SDK closed it, or the connection went and this was cancelled) ends both.
+                await group.next()
+                group.cancelAll()
+            }
+            continuation.finish()
+            await self?.closed(streamID, session: id)
+        }
+        continuation.onTermination = { _ in forward.cancel() }
+        sessions[id]?.eventStream = (streamID, forward)
+        return .stream(stream, headers: headers)
+    }
+
+    private func sent(_ event: String, session id: String) {
+        sessions[id]?.lastEventID = event
+        sessions[id]?.lastUsed = Date()
+    }
+
+    private func touch(_ id: String) {
+        sessions[id]?.lastUsed = Date()
+    }
+
+    /// The stream's forwarding ended: unless a newer stream has taken its place, the session has none open.
+    private func closed(_ stream: UUID, session id: String) {
+        if sessions[id]?.eventStream?.id == stream { sessions[id]?.eventStream = nil }
+    }
+
+    /// The `id:` of the last event in an SSE chunk, if it has one.
+    nonisolated static func lastEventID(in chunk: Data) -> String? {
+        String(decoding: chunk, as: UTF8.self).split(whereSeparator: \.isNewline).last { $0.hasPrefix("id:") }
+            .map { $0.dropFirst(3).trimmingCharacters(in: .whitespaces) }
     }
 
     nonisolated static func isInitialize(_ body: Data) -> Bool {

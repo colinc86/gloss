@@ -271,6 +271,17 @@ final class ExplorerModel {
         }
     }
 
+    /// Brings the folder holding `path` to the front: the one in front if it does, else the deepest open one.
+    /// False when no open folder holds it.
+    @discardableResult
+    func selectTab(containing path: String, hostID: HostID) -> Bool {
+        let holding = tabs.filter { $0.hostID == hostID && Self.inRootSpelling(path, root: $0.path, hostID: hostID) != nil }
+        if let selectedTabID, holding.contains(where: { $0.id == selectedTabID }) { return true }
+        guard let deepest = holding.max(by: { $0.path.count < $1.path.count }) else { return false }
+        selectedTabID = deepest.id
+        return true
+    }
+
     func closeTab(_ id: RootID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs[index].watcher?.cancel()

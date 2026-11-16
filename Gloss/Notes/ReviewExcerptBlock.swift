@@ -13,6 +13,7 @@ struct ReviewExcerptBlock: View {
     var struck = false
     @Environment(\.colorScheme) private var appearance
     @State private var styled: [AttributedString] = []
+    @State private var viewport: CGFloat = 0
 
     private static let shape = RoundedRectangle(cornerRadius: DS.Radius.s + 2, style: .continuous)
     /// About ten rows; more scroll.
@@ -30,11 +31,19 @@ struct ReviewExcerptBlock: View {
             Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(struck ? Color.secondary : tint)
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(excerpt.lines.enumerated()), id: \.offset) { index, line in
-                        row(line, at: index)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(excerpt.lines.enumerated()), id: \.offset) { index, line in
+                            row(line, at: index).id(index)
+                        }
                     }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewport = $0 }
+                // The block is often shorter than its lines: what the note is about stays in view, not the context.
+                .onChange(of: FocusKey(excerpt: excerpt, viewport: viewport)) { _, _ in
+                    guard viewport > 0, let focus = Self.focus(of: excerpt, visibleRows: viewport / Self.rowHeight) else { return }
+                    proxy.scrollTo(focus.row, anchor: focus.anchor)
                 }
             }
             // Capped at ten rows; compressible too, so a card at its own cap shrinks the blocks rather than
@@ -51,6 +60,17 @@ struct ReviewExcerptBlock: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(title)
         .accessibilityValue(excerpt.lines.filter(\.selected).map(\.text).joined(separator: "\n"))
+    }
+
+    private struct FocusKey: Equatable { let excerpt: ReviewExcerpt; let viewport: CGFloat }
+
+    /// The row to scroll to and where it goes: the selection's middle row centered, or its first at the top when the
+    /// selection is taller than the block.
+    nonisolated static func focus(of excerpt: ReviewExcerpt, visibleRows: CGFloat) -> (row: Int, anchor: UnitPoint)? {
+        guard let first = excerpt.lines.firstIndex(where: \.selected),
+              let last = excerpt.lines.lastIndex(where: \.selected) else { return nil }
+        if CGFloat(last - first + 1) > visibleRows { return (first, .top) }
+        return ((first + last) / 2, .center)
     }
 
     private func row(_ line: ReviewExcerpt.Line, at index: Int) -> some View {

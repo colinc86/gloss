@@ -282,6 +282,40 @@ struct PressableStyle: ButtonStyle {
     }
 }
 
+/// The primary action on a floating card: an accent capsule with a white label that stays accent whenever the
+/// button can be pressed. `.glassProminent` showed neutral grey in the review card (the look it gives an inactive
+/// window), which read as disabled beside a disabled Follow Up; this style only goes grey when the button is.
+struct ProminentCapsuleStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ProminentCapsuleLabel(configuration: configuration)
+    }
+
+    private struct ProminentCapsuleLabel: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.controlSize) private var controlSize
+        @State private var hovering = false
+
+        private var isSmall: Bool { controlSize == .small || controlSize == .mini }
+
+        var body: some View {
+            configuration.label
+                .font(isSmall ? .subheadline.weight(.medium) : .body.weight(.medium))
+                .foregroundStyle(isEnabled ? Color.white : Color.secondary)
+                .padding(.horizontal, isSmall ? DS.Space.m : DS.Space.l)
+                .padding(.vertical, isSmall ? DS.Space.xs : DS.Space.s)
+                .background(isEnabled ? Color.accentColor : Color.primary.opacity(0.08), in: Capsule())
+                .overlay(Capsule().fill(Color.black.opacity(configuration.isPressed ? 0.14 : 0)))
+                .overlay(Capsule().fill(Color.white.opacity(hovering && isEnabled && !configuration.isPressed ? 0.1 : 0)))
+                .contentShape(Capsule())
+                .contentShape(.focusEffect, Capsule())
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .animation(DS.Motion.snappy, value: configuration.isPressed)
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
 /// A first-run or nothing-here screen that teaches instead of just reporting: a symbol that breathes twice, a title, one
 /// sentence, up to three numbered steps that arrive one after another, and an optional action.
 struct EmptyState<Actions: View>: View {

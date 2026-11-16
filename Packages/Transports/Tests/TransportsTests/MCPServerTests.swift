@@ -68,6 +68,81 @@ struct MCPServerTests {
         return (reply, http?.value(forHTTPHeaderField: "Mcp-Session-Id"), http?.statusCode ?? 0)
     }
 
+    /// An agent's event stream (its GET) drops when the connection does: idle, the agent restarting it, the Mac
+    /// waking. The session must take a new one, or the agent counts refusals until it gives up on the server.
+    @Test func aDroppedEventStreamCanBeOpenedAgain() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-sse-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"))
+        try await server.start()
+        let port = try #require(await server.port)
+        defer { Task { await server.stop() } }
+        let base = URL(string: "http://127.0.0.1:\(port)")!
+        let initialize = try await Self.rpc(base, session: nil, body: ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-06-18", "capabilities": [:], "clientInfo": ["name": "test", "version": "1"]]])
+        let session = try #require(initialize.session)
+        _ = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "method": "notifications/initialized"])
+        func openStream() async throws -> (status: Int, task: Task<Void, Never>?) {
+            var request = URLRequest(url: base.appendingPathComponent("mcp"))
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.setValue("2025-06-18", forHTTPHeaderField: "MCP-Protocol-Version")
+            request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id")
+            // Its own session each time, so dropping one is a closed connection, not a reused one.
+            let urlSession = URLSession(configuration: .ephemeral)
+            let (bytes, response) = try await urlSession.bytes(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200 else { urlSession.invalidateAndCancel(); return (status, nil) }
+            let reader = Task { for try await _ in bytes {} }
+            return (status, Task { reader.cancel(); urlSession.invalidateAndCancel() })
+        }
+        let first = try await openStream()
+        #expect(first.status == 200)
+        first.task?.cancel()
+        await first.task?.value
+        try await Task.sleep(for: .milliseconds(300))
+        let again = try await openStream()
+        #expect(again.status == 200, "a dropped stream is not still the session's (\(again.status))")
+        again.task?.cancel()
+        let tool = try await Self.rpc(base, session: session, body: ["jsonrpc": "2.0", "id": 2, "method": "tools/list"])
+        #expect(tool.status == 200)
+    }
+
+    /// A quiet event stream still carries something, so the agent's client doesn't drop it as stalled.
+    @Test func aQuietEventStreamGetsKeepAlives() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("gloss-mcp-ping-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let (store, _) = try await Self.makeStore(count: 1, attachmentDirectory: directory)
+        let server = MCPServer(dependencies: Self.dependencies(store: store), port: 0, portFileURL: URL(fileURLWithPath: "\(directory)/mcp-port"),
+                               keepAliveInterval: .milliseconds(100))
+        try await server.start()
+        let port = try #require(await server.port)
+        defer { Task { await server.stop() } }
+        let base = URL(string: "http://127.0.0.1:\(port)")!
+        let initialize = try await Self.rpc(base, session: nil, body: ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": ["protocolVersion": "2025-06-18", "capabilities": [:], "clientInfo": ["name": "test", "version": "1"]]])
+        let session = try #require(initialize.session)
+        var request = URLRequest(url: base.appendingPathComponent("mcp"))
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("2025-06-18", forHTTPHeaderField: "MCP-Protocol-Version")
+        request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id")
+        let urlSession = URLSession(configuration: .ephemeral)
+        defer { urlSession.invalidateAndCancel() }
+        let (bytes, _) = try await urlSession.bytes(for: request)
+        var sawKeepAlive = false
+        for try await line in bytes.lines where line.hasPrefix(": keep-alive") {
+            sawKeepAlive = true
+            break
+        }
+        #expect(sawKeepAlive)
+    }
+
+    @Test func anEventsIDIsReadFromItsChunk() {
+        #expect(MCPServer.lastEventID(in: Data("id: _GET_stream_3\nretry: 1000\ndata: \n\n".utf8)) == "_GET_stream_3")
+        #expect(MCPServer.lastEventID(in: Data(": keep-alive\n\n".utf8)) == nil)
+        #expect(MCPServer.lastEventID(in: Data("id: a\r\ndata: {}\r\n\r\nid: b\r\ndata: {}\r\n\r\n".utf8)) == "b")
+    }
+
     /// Every tool's `path` takes a `file://` link as agents print one, and nothing but an absolute path or such a link.
     @Test func pathsAcceptFileLinks() {
         #expect(MCPServer.absolutePath("/p/./a/../b.md") == "/p/b.md")

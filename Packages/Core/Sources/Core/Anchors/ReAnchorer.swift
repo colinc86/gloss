@@ -73,7 +73,8 @@ public enum ReAnchorer {
 
     // MARK: Text
 
-    /// `fileName` picks a spreadsheet's delimiter as the grid does (tab for `.tsv`), for whole-column notes.
+    /// `fileName` picks a spreadsheet's delimiter as the grid does (tab for `.tsv`), for whole-column notes, and
+    /// tells a Markdown table's columns from a spreadsheet's.
     public static func text(_ anchor: TextAnchor, in newContent: String, newHash: String, fileName: String = "") -> ReAnchorResult {
         guard let cells = anchor.cells else { return lineText(anchor, in: newContent, newHash: newHash) }
         if let hash = anchor.hash, hash == newHash { return .unchanged }
@@ -158,24 +159,57 @@ public enum ReAnchorer {
 
     /// Whole-column notes follow the header record and find each column by its name.
     static func columns(_ anchor: TextAnchor, cells: CellSelection, in newContent: String, newHash: String, fileName: String) -> ReAnchorResult {
+        if MarkdownTableSource.isMarkdown(fileName) { return markdownColumns(anchor, cells: cells, in: newContent, newHash: newHash) }
         let normalized = normalizeNewlines(newContent)
         let index = LineIndex(normalized)
         // The header is the first record; a prefix is enough to parse it.
         let prefix = String(normalized.prefix(65_536))
-        guard let header = CSVParser.parse(prefix, delimiter: CSVParser.delimiter(for: prefix, fileName: fileName), hasHeader: false).rows.first else { return .orphaned }
+        guard let header = CSVParser.parse(prefix, delimiter: CSVParser.delimiter(for: prefix, fileName: fileName), hasHeader: false).rows.first,
+              let matched = match(cells, in: header.fields) else { return .orphaned }
+        let start = index.contentRange(ofLine: header.firstLine).location   // after an Excel `sep=` line
+        let endRange = index.contentRange(ofLine: header.lastLine)
+        var rebuilt = make(from: NSRange(location: start, length: endRange.location + endRange.length - start), in: normalized, index: index, hash: newHash)
+        rebuilt.cells = CellSelection(columns: matched.columns, headers: matched.names)
+        return matched.review ? .movedNeedsReview(.text(rebuilt)) : .moved(.text(rebuilt))
+    }
+
+    /// A Markdown table has no fixed place in its file: the header row is followed as text, then its columns are
+    /// found by name in it.
+    static func markdownColumns(_ anchor: TextAnchor, cells: CellSelection, in newContent: String, newHash: String) -> ReAnchorResult {
+        var review = false
+        let line: TextAnchor
+        switch lineText(anchor, in: newContent, newHash: newHash) {
+        case .moved(.text(let moved)): line = moved
+        case .movedNeedsReview(.text(let moved)): (line, review) = (moved, true)
+        default: return .orphaned
+        }
+        let normalized = normalizeNewlines(newContent)
+        let index = LineIndex(normalized)
+        let lines = MarkdownTableSource.lines(of: normalized)
+        guard let table = MarkdownTableSource.table(containing: line.start.line, in: lines),
+              let matched = match(cells, in: MarkdownTableSource.cells(lines[table.header - 1])) else { return .orphaned }
+        // The text may have been found on a body row that reads like the old header: that is a look, not a move.
+        if table.header != line.start.line { review = true }
+        var rebuilt = make(from: index.contentRange(ofLine: table.header), in: normalized, index: index, hash: newHash)
+        rebuilt.cells = CellSelection(columns: matched.columns, headers: matched.names)
+        return review || matched.review ? .movedNeedsReview(.text(rebuilt)) : .moved(.text(rebuilt))
+    }
+
+    /// Each column of `cells` in a header row, by its stored name where it has one; nil when none is left.
+    static func match(_ cells: CellSelection, in header: [String]) -> (columns: [Int], names: [String], review: Bool)? {
         let names = cells.headers ?? []
         var columns: [Int] = []
         var keptNames: [String] = []
         var review = false
         for (position, column) in cells.columns.enumerated() {
             let name = position < names.count ? names[position] : nil
-            if let name, column < header.fields.count, header.fields[column] == name {
+            if let name, column < header.count, header[column] == name {
                 columns.append(column)
-            } else if let name, let found = header.fields.indices.first(where: { header.fields[$0] == name && !columns.contains($0) }) {
+            } else if let name, let found = header.indices.first(where: { header[$0] == name && !columns.contains($0) }) {
                 columns.append(found)
                 // A duplicate name could be either column.
-                if header.fields.filter({ $0 == name }).count > 1 { review = true }
-            } else if column < header.fields.count {
+                if header.filter({ $0 == name }).count > 1 { review = true }
+            } else if column < header.count {
                 // Renamed (or no stored name): keep the position, but have the user confirm it.
                 columns.append(column)
                 review = true
@@ -183,14 +217,9 @@ public enum ReAnchorer {
                 review = true
                 continue
             }
-            keptNames.append(header.fields[columns.last!])
+            keptNames.append(header[columns.last!])
         }
-        guard !columns.isEmpty else { return .orphaned }
-        let start = index.contentRange(ofLine: header.firstLine).location   // after an Excel `sep=` line
-        let endRange = index.contentRange(ofLine: header.lastLine)
-        var rebuilt = make(from: NSRange(location: start, length: endRange.location + endRange.length - start), in: normalized, index: index, hash: newHash)
-        rebuilt.cells = CellSelection(columns: columns, headers: keptNames)
-        return review ? .movedNeedsReview(.text(rebuilt)) : .moved(.text(rebuilt))
+        return columns.isEmpty ? nil : (columns, keptNames, review)
     }
 
     static func lineText(_ anchor: TextAnchor, in newContent: String, newHash: String) -> ReAnchorResult {

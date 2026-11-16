@@ -492,11 +492,13 @@ public enum ExcerptExtractor {
     }
 }
 
-/// The packet text for a spreadsheet cell or column note, read from the file's current contents.
+/// The packet text for a note on spreadsheet or Markdown table cells or columns, read from the file's current
+/// contents.
 public enum CellExcerpt {
     /// `description` is the anchor line for columns (`Column E "notes"`) or the `Cells:` value for cells
     /// (`B2, E4`). `lines` holds one `line: value` per record for columns, or one `B2 (header): value` per cell.
     public static func make(anchor: TextAnchor, cells: CellSelection, content: String, fileName: String) -> (description: String, lines: [String]) {
+        if MarkdownTableSource.isMarkdown(fileName) { return markdown(anchor: anchor, cells: cells, content: content) }
         let table = CSVParser.parse(content, delimiter: CSVParser.delimiter(for: content, fileName: fileName))
         func header(_ column: Int) -> String { column < table.header.count ? table.header[column] : "" }
         // A quoted CSV field may hold any line break; it stays on its own line in the packet.
@@ -521,6 +523,36 @@ public enum CellExcerpt {
             return "\(label): " + (byLine[line].map { value($0, cell.column) } ?? "")
         }
         return (cells.references(startLine: anchor.start.line), lines)
+    }
+
+    /// A Markdown table's cells or columns, read from its rows as written (the agent edits the source, so a value
+    /// keeps its markup). Rows are numbered by their source line, as a spreadsheet's are.
+    static func markdown(anchor: TextAnchor, cells: CellSelection, content: String) -> (description: String, lines: [String]) {
+        let lines = MarkdownTableSource.lines(of: content)
+        let table = MarkdownTableSource.table(containing: anchor.start.line, in: lines)
+        let headers = table.map { MarkdownTableSource.cells(lines[$0.header - 1]) } ?? []
+        func header(_ column: Int) -> String { column < headers.count ? headers[column] : "" }
+        func value(_ line: Int, _ column: Int) -> String {
+            guard line >= 1, line <= lines.count else { return "" }
+            let row = MarkdownTableSource.cells(lines[line - 1])
+            return column < row.count ? row[column] : ""
+        }
+        if cells.isColumns {
+            let names = cells.columns.map { column in
+                let name = header(column)
+                return name.isEmpty ? CellSelection.columnName(column) : "\(CellSelection.columnName(column)) \"\(PacketBuilder.escape(name))\""
+            }
+            let description = (cells.columns.count == 1 ? "Column " : "Columns ") + names.joined(separator: ", ")
+            let rows = table?.body.map { line in "\(line): " + cells.columns.map { value(line, $0) }.joined(separator: " | ") } ?? []
+            return (description, rows)
+        }
+        let rows = cells.cells.map { cell -> String in
+            let line = anchor.start.line + cell.lineOffset
+            let reference = "\(CellSelection.columnName(cell.column))\(line)"
+            let name = header(cell.column)
+            return "\(name.isEmpty ? reference : "\(reference) (\(name))"): " + value(line, cell.column)
+        }
+        return (cells.references(startLine: anchor.start.line), rows)
     }
 }
 

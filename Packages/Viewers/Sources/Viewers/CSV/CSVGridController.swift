@@ -35,14 +35,12 @@ public final class CSVGridController {
     public private(set) var selection: GridSelection = .none {
         didSet { onSelectionChange() }
     }
+    /// Where clicks, drags and arrows select from; `selection` is published from it.
+    @ObservationIgnored private var selector = GridSelector()
     /// The cell a shift-click, drag, or shift-arrow extends from.
-    @ObservationIgnored private(set) var selectionOrigin: GridCell?
-    /// The record a row drag or shift-click in the line column extends from.
-    @ObservationIgnored private var rowOrigin: Int?
-    /// The cell the arrow keys move from (the far corner of a shift-extended block).
-    @ObservationIgnored private var cursor: GridCell?
+    var selectionOrigin: GridCell? { selector.origin }
     /// Where the arrow keys are, for keeping it on screen.
-    public var cursorCell: GridCell? { cursor }
+    public var cursorCell: GridCell? { selector.cursor }
     /// Lines (1-based) covered by text notes, with their colors, for row tinting.
     public var highlights: [TextHighlight] = [] {
         didSet { rebuildHighlightMaps() }
@@ -169,7 +167,7 @@ public final class CSVGridController {
             findMissed = false
             return
         }
-        let start = (foundCell ?? cursor).map { $0.row * columns + $0.column }
+        let start = (foundCell ?? selector.cursor).map { $0.row * columns + $0.column }
         let found = await Self.search(needle, in: rows, columns: columns, after: start, backwards: backwards)
         // Typed over, or the file reloaded, while it searched: that answer is for another question.
         guard needle == findText, rows == table.rows else { return }
@@ -204,103 +202,50 @@ public final class CSVGridController {
     // MARK: Selecting
 
     public func deselectAll() {
-        selection = .none
-        selectionOrigin = nil
-        rowOrigin = nil
-        cursor = nil
+        update { $0.clear() }
     }
 
     /// A click on a data cell: plain selects it, ⌘ toggles it, ⇧ selects the block from the last clicked cell.
     public func click(_ cell: GridCell, extend: Bool, toggle: Bool) {
-        if extend, let origin = selectionOrigin {
-            selection = .cells(Self.block(from: origin, to: cell))
-            cursor = cell
-            return
-        }
-        if toggle, case .cells(var cells) = selection {
-            if cells.contains(cell) { cells.remove(cell) } else { cells.insert(cell) }
-            selection = cells.isEmpty ? .none : .cells(cells)
-        } else {
-            selection = .cells([cell])
-        }
-        selectionOrigin = cell
-        cursor = cell
+        update { $0.click(cell, extend: extend, toggle: toggle) }
     }
 
     /// A drag from the cell where the mouse went down. With ⌘ the block is added to the cells already selected.
     public func drag(to cell: GridCell, adding base: Set<GridCell>) {
-        guard let origin = selectionOrigin else { return }
-        selection = .cells(base.union(Self.block(from: origin, to: cell)))
-        cursor = cell
+        update { $0.drag(to: cell, adding: base) }
     }
 
     /// Arrow keys: move the selection to the neighbouring cell, or with ⇧ grow the block from the origin.
     public func moveSelection(rowBy rowDelta: Int, columnBy columnDelta: Int, extend: Bool) {
-        let rows = table.rows.count
-        let columns = max(1, table.columnCount)
-        guard rows > 0 else { return }
-        let from = cursor ?? selectionOrigin ?? GridCell(row: 0, column: 0)
-        let next = GridCell(row: min(max(0, from.row + rowDelta), rows - 1), column: min(max(0, from.column + columnDelta), columns - 1))
-        if selection == .none {
-            click(GridCell(row: 0, column: 0), extend: false, toggle: false)
-            return
-        }
-        click(next, extend: extend, toggle: false)
+        update { $0.move(rowBy: rowDelta, columnBy: columnDelta, extend: extend, rows: table.rows.count, columns: max(1, table.columnCount)) }
     }
 
     /// A click on a column header: plain selects the column, ⌘ toggles it, ⇧ selects the columns in between.
     public func clickColumn(_ column: Int, extend: Bool, toggle: Bool) {
-        var columns: IndexSet = if case .columns(let current) = selection { current } else { [] }
-        if extend, let last = columns.last ?? columns.first {
-            columns.insert(integersIn: min(last, column)...max(last, column))
-        } else if toggle {
-            if columns.contains(column) { columns.remove(column) } else { columns.insert(column) }
-        } else {
-            columns = [column]
-        }
-        selection = columns.isEmpty ? .none : .columns(columns)
-        selectionOrigin = nil
-        cursor = nil
+        update { $0.clickColumn(column, extend: extend, toggle: toggle) }
     }
 
     /// A click in the line-number column: selects the record, ⇧ extends the run of records.
     public func clickRow(_ row: Int, extend: Bool) {
-        if extend, case .rows = selection, let origin = rowOrigin {
-            selection = .rows(min(origin, row)...max(origin, row))
-        } else {
-            selection = .rows(row...row)
-            rowOrigin = row
-        }
-        selectionOrigin = nil
-        cursor = nil
+        update { $0.clickRow(row, extend: extend) }
     }
 
     /// Edit › Select All (⌘A): every record, as a drag down the line numbers would select them.
     public func selectAll() {
-        guard !table.rows.isEmpty else { return }
-        selection = .rows(0...(table.rows.count - 1))
-        rowOrigin = 0
-        selectionOrigin = nil
-        cursor = nil
+        update { $0.selectAllRows(table.rows.count) }
+    }
+
+    private func update(_ change: (inout GridSelector) -> Void) {
+        change(&selector)
+        selection = selector.selection
     }
 
     static func block(from origin: GridCell, to cell: GridCell) -> Set<GridCell> {
-        var result: Set<GridCell> = []
-        for row in min(origin.row, cell.row)...max(origin.row, cell.row) {
-            for column in min(origin.column, cell.column)...max(origin.column, cell.column) {
-                result.insert(GridCell(row: row, column: column))
-            }
-        }
-        return result
+        GridSelector.block(from: origin, to: cell)
     }
 
     public func isSelected(row: Int, column: Int) -> Bool {
-        switch selection {
-        case .none: false
-        case .rows(let rows): rows.contains(row)
-        case .columns(let columns): columns.contains(column)
-        case .cells(let cells): cells.contains(GridCell(row: row, column: column))
-        }
+        selection.contains(row: row, column: column)
     }
 
     // MARK: Notes

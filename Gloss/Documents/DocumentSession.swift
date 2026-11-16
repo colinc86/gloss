@@ -1325,6 +1325,11 @@ final class DocumentSession: Identifiable {
         }
         liveRanges = stillLive
         if let markdown, markdown.imageHighlights != pictures { markdown.imageHighlights = pictures }
+        // Notes on a table's cells or columns are drawn on those cells in the rendered page.
+        markdown?.cellSelections = Dictionary(notes.compactMap { note -> (NoteID, CellSelection)? in
+            guard case .text(let anchor) = note.anchor, let cells = anchor.cells else { return nil }
+            return (note.id, cells)
+        }, uniquingKeysWith: { first, _ in first })
         controller.highlights = highlights
     }
 
@@ -1511,6 +1516,9 @@ final class DocumentSession: Identifiable {
         if let markdown, markdown.mode == .rendered, let selection = markdown.imageSelection {
             return markdown.rect(for: selection.image, region: selection.region, pixelSize: selection.pixelSize)
         }
+        if let markdown, markdown.mode == .rendered, let table = markdown.tableSelection {
+            return markdown.tableSelectionRectProvider(table)
+        }
         if let html, html.mode == .rendered, let picked = html.selectedPicture {
             return picked.picture?.windowRect ?? picked.windowRect
         }
@@ -1564,6 +1572,13 @@ final class DocumentSession: Identifiable {
             noteEditor = NoteEditorState(anchor: .embeddedImage(anchor), body: "", color: lastUsedColor, anchorRect: rect)
             return
         }
+        // Cells, rows or columns of a table in rendered Markdown.
+        if let markdown, markdown.mode == .rendered, let table = markdown.tableSelection {
+            guard let anchor = markdown.tableSelectionAnchor() else { return }
+            let rect = markdown.tableSelectionRectProvider(table) ?? CGRect(x: 40, y: 40, width: 1, height: 1)
+            noteEditor = NoteEditorState(anchor: .text(anchor), body: "", color: lastUsedColor, anchorRect: rect)
+            return
+        }
         // A picture chosen on a web page, or a region of one.
         if let html, html.mode == .rendered, let picked = html.selectedPicture {
             beginNote(element: picked)
@@ -1607,7 +1622,9 @@ final class DocumentSession: Identifiable {
     /// Uses the current selection as the orphan's new anchor and makes it a draft again.
     private func placeOrphan(_ id: NoteID) {
         var newAnchor: Anchor?
-        if let controller = textController {
+        if let markdown, markdown.mode == .rendered, markdown.tableSelection != nil {
+            newAnchor = markdown.tableSelectionAnchor().map { .text($0) }
+        } else if let controller = textController {
             var range = controller.selection
             if let rendered, rendered.isShowingRendered, let mapping = rendered.renderedSelectionMapping { range = mapping.source }
             if range.length > 0 {
@@ -1762,6 +1779,7 @@ final class DocumentSession: Identifiable {
     private func clearSelection() {
         imageController?.selection = nil
         markdown?.imageSelection = nil
+        markdown?.clearTableSelection()
         html?.selectedPicture = nil
         pdfController?.clearSelection()
         csvController?.deselectAll()

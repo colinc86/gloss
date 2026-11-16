@@ -15,7 +15,10 @@ public final class MarkdownViewerController {
     public let source: TextEditorController
     public var mode: Mode = .rendered {
         // Renders skipped while the source showed are caught up as the page comes back.
-        didSet { if mode == .rendered, renderOwed || renderedContentVersion != source.contentVersion { rebuildNow() } }
+        didSet {
+            if mode == .source { clearTableSelection() }
+            if mode == .rendered, renderOwed || renderedContentVersion != source.contentVersion { rebuildNow() }
+        }
     }
     public private(set) var rendered: NSAttributedString = NSAttributedString()
     public private(set) var map = RenderedSourceMap(spans: [], blocks: [])
@@ -309,6 +312,7 @@ public final class MarkdownViewerController {
         renderedColumn = (output.columnWidth, output.inset)
         rendered = output.text
         map = output.map
+        tablesChanged(output.tables)
         renderedVersion += 1
         // Diagrams edited away are forgotten (the renderer keeps its own cache).
         shownDiagrams = Set(output.diagramSources.values).union(output.unresolvedDiagrams)
@@ -440,16 +444,224 @@ public final class MarkdownViewerController {
     }
 
     /// Source-coordinate highlights projected onto the rendered text. A note on a picture is drawn on the picture
-    /// instead, so its embed isn't also tinted.
+    /// instead, so its embed isn't also tinted, and one on a table's cells on those cells.
     public func renderedHighlights() -> [TextHighlight] {
         let onPictures = imageNoteIDs
         return source.drawnHighlights.filter { !onPictures.contains($0.id) }.flatMap { highlight -> [TextHighlight] in
-            map.renderedRanges(forSource: highlight.range).map { range in
+            let ranges = cellSelections[highlight.id].flatMap { renderedRanges(of: $0, startingAt: highlight.range) } ?? map.renderedRanges(forSource: highlight.range)
+            return ranges.map { range in
                 var copy = highlight
                 copy.range = range
                 return copy
             }
         }
+    }
+
+    /// The page's tables by id, whose cells, rows and columns can be selected.
+    @ObservationIgnored public private(set) var tables: [Int: MarkdownTableLayout] = [:]
+    /// Cell and column notes by id, drawn on their cells in the page rather than along their rows' lines.
+    @ObservationIgnored public var cellSelections: [NoteID: CellSelection] = [:]
+
+    /// A table's selected cells, rows or columns.
+    public struct TableSelection: Equatable, Sendable {
+        public let table: Int
+        public let selection: GridSelection
+    }
+
+    /// What is selected in one of the page's tables, as in the CSV grid; nil when nothing is. It and a text
+    /// selection exclude each other.
+    public private(set) var tableSelection: TableSelection?
+    @ObservationIgnored private var tableSelector = GridSelector()
+    @ObservationIgnored private var selectedTable: Int?
+    /// The selected table's header row as written, so a render that numbers another table the same lets go.
+    @ObservationIgnored private var selectedHeader: String?
+    /// The cell the arrow keys move from in the table selection.
+    var tableCursor: GridCell? { tableSelector.cursor }
+    /// Set by the rendered view: where a table selection is on screen, in top-left window coordinates.
+    @ObservationIgnored public var tableSelectionRectProvider: (TableSelection) -> CGRect? = { _ in nil }
+    /// Each table cell's text and its pieces in `rendered` (more than one when it wraps), by table, row and column.
+    @ObservationIgnored private var cellIndex: [Int: [[CellText]]]?
+
+    struct CellText {
+        var text = ""
+        var ranges: [NSRange] = []
+    }
+
+    /// A click on a table's cell: plain selects it, ⌘ toggles it, ⇧ selects the block from the last one clicked.
+    /// A cell in another table starts again there.
+    public func selectTableCell(table: Int, row: Int, column: Int, extend: Bool, toggle: Bool) {
+        updateTable(table) { $0.click(GridCell(row: row, column: column), extend: extend, toggle: toggle) }
+    }
+
+    /// A drag across a table's cells from the one clicked; with ⌘ the block is added to `base`.
+    public func dragTableCell(table: Int, row: Int, column: Int, adding base: Set<GridCell> = []) {
+        guard table == selectedTable else { return }
+        updateTable(table) { $0.drag(to: GridCell(row: row, column: column), adding: base) }
+    }
+
+    /// A column's handle: plain selects the column, ⌘ toggles it, ⇧ selects the columns in between.
+    public func selectTableColumn(table: Int, column: Int, extend: Bool, toggle: Bool) {
+        updateTable(table) { $0.clickColumn(column, extend: extend, toggle: toggle) }
+    }
+
+    /// A row's handle: plain selects the row, ⇧ the rows in between, ⌘ adds the row (or takes it away).
+    public func selectTableRow(table: Int, row: Int, extend: Bool, toggle: Bool) {
+        let columns = tables[table]?.columns ?? 0
+        updateTable(table) { selector in
+            if toggle { selector.toggleRow(row, columns: columns) } else { selector.clickRow(row, extend: extend) }
+        }
+    }
+
+    /// Arrow keys over a table selection: the next cell, or with ⇧ a bigger block.
+    public func moveTableSelection(rowBy rowDelta: Int, columnBy columnDelta: Int, extend: Bool) {
+        guard let table = selectedTable, let layout = tables[table] else { return }
+        updateTable(table) { $0.move(rowBy: rowDelta, columnBy: columnDelta, extend: extend, rows: layout.rowLines.count, columns: layout.columns) }
+    }
+
+    public func clearTableSelection() {
+        guard tableSelection != nil || selectedTable != nil else { return }
+        tableSelector.clear()
+        selectedTable = nil
+        selectedHeader = nil
+        tableSelection = nil
+    }
+
+    private func updateTable(_ table: Int, _ change: (inout GridSelector) -> Void) {
+        guard tables[table] != nil else { return }
+        if table != selectedTable {
+            tableSelector.clear()
+            selectedTable = table
+            selectedHeader = headerText(of: tables[table])
+        }
+        change(&tableSelector)
+        let next = tableSelector.selection == .none ? nil : TableSelection(table: table, selection: tableSelector.selection)
+        if next != tableSelection { tableSelection = next }
+    }
+
+    /// The page rendered again: a selection stays on its table while the table keeps its shape.
+    private func tablesChanged(_ new: [Int: MarkdownTableLayout]) {
+        if let table = selectedTable, let old = tables[table],
+           new[table]?.rowLines.count != old.rowLines.count || new[table]?.columns != old.columns || headerText(of: new[table]) != selectedHeader {
+            clearTableSelection()
+        }
+        tables = new
+        cellIndex = nil
+    }
+
+    private func headerText(of table: MarkdownTableLayout?) -> String? {
+        table.flatMap { $0.rowLines.first }.flatMap { source.text.line($0, index: source.lineIndex) }
+    }
+
+    /// The table selection as a note anchor, in source coordinates: whole rows are their lines; cells add their
+    /// places to the rows' lines; columns sit on the header row with their names. Nil while the page shows an
+    /// older render of the source.
+    public func tableSelectionAnchor() -> TextAnchor? {
+        guard let selected = tableSelection, let layout = tables[selected.table], renderedContentVersion == source.contentVersion else { return nil }
+        let text = source.text
+        let index = source.lineIndex
+        let hash = Data(text.utf8).sha256Hex
+        func lines(_ first: Int, _ last: Int) -> NSRange? {
+            guard first >= 0, last < layout.rowLines.count, first <= last else { return nil }
+            let start = index.contentRange(ofLine: layout.rowLines[first]).location
+            let end = index.contentRange(ofLine: layout.rowLines[last])
+            return NSRange(location: start, length: NSMaxRange(end) - start)
+        }
+        switch selected.selection {
+        case .none:
+            return nil
+        case .rows(let rows):
+            guard let range = lines(rows.lowerBound, rows.upperBound) else { return nil }
+            return ReAnchorer.make(from: range, in: text, index: index, hash: hash)
+        case .columns(let columns):
+            guard !columns.isEmpty, let range = lines(0, 0) else { return nil }
+            let names = MarkdownTableSource.cells(text.line(layout.rowLines[0], index: index) ?? "")
+            var anchor = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
+            anchor.cells = CellSelection(columns: Array(columns), headers: columns.map { $0 < names.count ? names[$0] : "" })
+            return anchor
+        case .cells(let cells):
+            guard let first = cells.map(\.row).min(), let last = cells.map(\.row).max(), let range = lines(first, last) else { return nil }
+            var anchor = ReAnchorer.make(from: range, in: text, index: index, hash: hash)
+            let startLine = layout.rowLines[first]
+            anchor.cells = CellSelection(cells: cells.map { CellRef(lineOffset: layout.rowLines[$0.row] - startLine, column: $0.column) })
+            return anchor
+        }
+    }
+
+    /// The table selection as tab-separated text, as the CSV grid copies: whole rows, the columns from the header
+    /// down, or for scattered cells the block that holds them with the gaps left empty.
+    public func tableSelectionCopyText() -> String? {
+        guard let selected = tableSelection, let layout = tables[selected.table], let cells = cellTexts(selected.table) else { return nil }
+        func value(_ row: Int, _ column: Int) -> String {
+            guard row < cells.count, column < cells[row].count else { return "" }
+            return Self.flat(cells[row][column].text)
+        }
+        let allColumns = 0..<layout.columns
+        switch selected.selection {
+        case .none:
+            return nil
+        case .rows(let rows):
+            return rows.map { row in allColumns.map { value(row, $0) }.joined(separator: "\t") }.joined(separator: "\n")
+        case .columns(let columns):
+            return cells.indices.map { row in columns.map { value(row, $0) }.joined(separator: "\t") }.joined(separator: "\n")
+        case .cells(let chosen):
+            guard let top = chosen.map(\.row).min(), let bottom = chosen.map(\.row).max(),
+                  let left = chosen.map(\.column).min(), let right = chosen.map(\.column).max() else { return nil }
+            return (top...bottom).map { row in
+                (left...right).map { column in chosen.contains(GridCell(row: row, column: column)) ? value(row, column) : "" }.joined(separator: "\t")
+            }.joined(separator: "\n")
+        }
+    }
+
+    /// A cell's text on one line with no tabs, so it stays one cell where it is pasted; pictures drop out.
+    nonisolated static func flat(_ text: String) -> String {
+        let kept = text.replacingOccurrences(of: "\u{FFFC}\u{00A0}", with: "").replacingOccurrences(of: "\u{FFFC}", with: "")
+        return String(kept.map { $0.isNewline || $0 == "\t" || $0 == "\u{2028}" ? " " : $0 })
+    }
+
+    /// Each cell's text in `table`, rows then columns.
+    func cellTexts(_ table: Int) -> [[CellText]]? {
+        if cellIndex == nil { cellIndex = Self.indexCells(rendered) }
+        return cellIndex?[table]
+    }
+
+    /// The cells' rendered pieces, read from their `TableCellMark`s; a piece after a wrap carries what joined it.
+    nonisolated static func indexCells(_ text: NSAttributedString) -> [Int: [[CellText]]] {
+        var result: [Int: [[CellText]]] = [:]
+        let string = text.string as NSString
+        text.enumerateAttribute(MarkdownRenderer.tableCellKey, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let mark = value as? TableCellMark, mark.row >= 0 else { return }
+            var rows = result[mark.table] ?? []
+            while rows.count <= mark.row { rows.append([]) }
+            if mark.column >= 0 {
+                while rows[mark.row].count <= mark.column { rows[mark.row].append(CellText()) }
+                var cell = rows[mark.row][mark.column]
+                cell.text += (cell.ranges.isEmpty ? "" : mark.joined) + string.substring(with: range)
+                cell.ranges.append(range)
+                rows[mark.row][mark.column] = cell
+            }
+            result[mark.table] = rows
+        }
+        return result
+    }
+
+    /// Where a cell or column note is in the page: its cells' text. Nil when its table isn't on the page as the
+    /// note has it, which then shows along its lines.
+    func renderedRanges(of cells: CellSelection, startingAt range: NSRange) -> [NSRange]? {
+        let startLine = source.lineIndex.position(forUTF16Offset: min(range.location, source.lineIndex.length)).line
+        var result: [NSRange] = []
+        if cells.isColumns {
+            guard let layout = tables.values.first(where: { $0.rowLines.first == startLine }), let texts = cellTexts(layout.id) else { return nil }
+            for row in texts {
+                for column in cells.columns where column < row.count { result += row[column].ranges }
+            }
+        } else {
+            guard let layout = tables.values.first(where: { $0.rowLines.contains(startLine) }), let texts = cellTexts(layout.id) else { return nil }
+            for cell in cells.cells {
+                guard let row = layout.rowLines.firstIndex(of: startLine + cell.lineOffset), row < texts.count, cell.column < texts[row].count else { continue }
+                result += texts[row][cell.column].ranges
+            }
+        }
+        return result.isEmpty ? nil : result
     }
 
     /// Scrolls whichever view is showing to a source range.
@@ -462,6 +674,8 @@ public final class MarkdownViewerController {
         case .source:
             source.scroll(to: range, select: select, atTop: atTop)
         case .rendered:
+            // Text selected from here (a note revealed, a re-anchor) is what is selected now, not cells.
+            if select { clearTableSelection() }
             if let first = map.renderedRanges(forSource: range).first {
                 pendingRenderedScroll = first
                 pendingRenderedScrollSelects = select

@@ -122,6 +122,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                         controller?.noteGeometry.changed()
                         self?.animatedPictures?.layOut()
                         self?.minimap?.needsDisplay = true
+                        (self?.textView as? RenderedTextView)?.refreshTableOverlay()
                         (self?.textView as? RenderedTextView)?.layOutTableScrollers()
                     }
                 }
@@ -143,6 +144,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 MainActor.assumeIsolated {
                     backdrop?.needsDisplay = true
                     self?.imageOverlay?.needsDisplay = true
+                    (self?.textView as? RenderedTextView)?.refreshTableOverlay()
                     self?.controller.noteGeometry.changed()
                     self?.animatedPictures?.layOut()
                     self?.minimap?.needsDisplay = true
@@ -160,6 +162,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
                 // A table scrolled sideways moves its notes' highlights without the page scrolling.
                 self?.backdrop?.needsDisplay = true
                 self?.imageOverlay?.needsDisplay = true
+                (self?.textView as? RenderedTextView)?.refreshTableOverlay()
                 self?.minimap?.needsDisplay = true
                 self?.controller.noteGeometry.changed()
                 self?.animatedPictures?.layOut()
@@ -178,6 +181,7 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             animatedPictures = pictures
             textView.addSubview(overlay, positioned: .above, relativeTo: pictures)
             imageOverlay = overlay
+            controller.tableSelectionRectProvider = { [weak textView] selected in (textView as? RenderedTextView)?.tableSelectionWindowRect(selected) }
             controller.imageFrameProvider = { [weak textView] image in
                 guard let textView = textView as? RenderedTextView, let frame = textView.frame(of: image) else { return nil }
                 return textView.topLeftWindowRect(frame)
@@ -228,7 +232,9 @@ public struct RenderedMarkdownView: NSViewRepresentable {
             _ = controller.source.highlightsVersion
             _ = controller.imageHighlights
             _ = controller.imageSelection
+            _ = controller.tableSelection
             imageOverlay?.needsDisplay = true
+            (textView as? RenderedTextView)?.refreshTableOverlay()
             isSyncing = true
             defer { isSyncing = false }
             if appliedVersion != controller.renderedVersion {
@@ -284,6 +290,8 @@ public struct RenderedMarkdownView: NSViewRepresentable {
         public func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView, !isSyncing else { return }
             controller.renderedSelection = textView.selectedRange()
+            // Text selected after cells: the text is what is selected now.
+            if textView.selectedRange().length > 0 { controller.clearTableSelection() }
         }
     }
 }
@@ -341,7 +349,8 @@ final class RenderedTextView: NSTextView {
         let menu = super.menu(for: event)
         if let menu {
             // Selected text, or a region chosen on a picture (which selects no text).
-            let offered = controller?.source.onAddNote != nil && (selectedRange().length > 0 || controller?.imageSelection != nil)
+            let offered = controller?.source.onAddNote != nil
+                && (selectedRange().length > 0 || controller?.imageSelection != nil || controller?.tableSelection != nil)
             AddNoteMenuItem.insert(into: menu, when: offered, target: self, action: #selector(addNoteFromMenu(_:)))
         }
         return menu
@@ -352,13 +361,104 @@ final class RenderedTextView: NSTextView {
     /// Under a card floated over the page (Review), the card has the pointer, not the page's I-beam.
     override func mouseMoved(with event: NSEvent) {
         if isCovered(at: event) { return }
-        hoveredTable = wideTable(at: convert(event.locationInWindow, from: nil), below: TableScrollerView.height + 4)
+        let point = convert(event.locationInWindow, from: nil)
+        hoveredTable = wideTable(at: point, below: TableScrollerView.height + 4)
+        updateTableHover(at: point)
         super.mouseMoved(with: event)
+        // A handle is a button, not text.
+        if hoveredHandle != nil { NSCursor.arrow.set() }
     }
 
     override func mouseExited(with event: NSEvent) {
         hoveredTable = nil
+        hoveredCell = nil
+        hoveredHandle = nil
         super.mouseExited(with: event)
+    }
+
+    // MARK: Table selection state
+
+    /// Each table's rows (their paragraphs), by table id, as of the last text set.
+    var tableRowRanges: [Int: [NSRange]] = [:]
+    /// The cell a plain press began in: a drag from it into another cell of its table selects cells, not text.
+    var cellDrag: (origin: TableCellPlace, active: Bool)?
+    /// The cell under the pointer, whose row and column handles show.
+    var hoveredCell: TableCellPlace? {
+        didSet { if hoveredCell != oldValue { refreshTableOverlay() } }
+    }
+    var hoveredHandle: TableHandle? {
+        didSet { if hoveredHandle != oldValue { refreshTableOverlay() } }
+    }
+    /// Made the first time a table's cells are hovered or selected, so a page nobody selects cells on draws nothing
+    /// more.
+    weak var tableOverlay: TableSelectionOverlayView?
+
+    /// A drag that began in a table cell is text until it crosses into another cell; from then on, for the rest of
+    /// the drag, it selects the block of cells from the first to the one under the pointer, and the text keeps a
+    /// caret only.
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        if cellDrag != nil, let window {
+            // The drag event being tracked, else where the pointer is now.
+            let event = NSApp.currentEvent.flatMap { $0.type == .leftMouseDragged || $0.type == .leftMouseUp ? $0 : nil }
+            let point = convert(event?.locationInWindow ?? window.mouseLocationOutsideOfEventStream, from: nil)
+            if let caret = cellDragRanges(ranges, at: point) {
+                return super.setSelectedRanges(caret, affinity: affinity, stillSelecting: stillSelecting)
+            }
+        }
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+    }
+
+    /// The drag under way is at `point` (view coordinates): nil while it is still the text's, else the caret the
+    /// text keeps once it has selected the cells.
+    func cellDragRanges(_ ranges: [NSValue], at point: NSPoint) -> [NSValue]? {
+        guard let drag = cellDrag, let controller else { return nil }
+        if !drag.active, let over = tableCell(at: point), over.table == drag.origin.table, over != drag.origin {
+            cellDrag?.active = true
+            controller.selectTableCell(table: drag.origin.table, row: drag.origin.row, column: drag.origin.column, extend: false, toggle: false)
+        }
+        guard cellDrag?.active == true else { return nil }
+        if let over = nearestCell(in: drag.origin.table, to: point) {
+            controller.dragTableCell(table: over.table, row: over.row, column: over.column)
+        }
+        refreshTableOverlay()
+        let caret = (ranges.first?.rangeValue).map { NSRange(location: $0.location, length: 0) } ?? NSRange(location: 0, length: 0)
+        return [NSValue(range: caret)]
+    }
+
+    /// Arrow keys move a table selection (⇧ grows it); otherwise the keys are the text's.
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control])
+        if let controller, controller.tableSelection != nil, modifiers.isEmpty {
+            let extend = event.modifierFlags.contains(.shift)
+            let step: (rows: Int, columns: Int)? = switch event.specialKey {
+            case .leftArrow?: (0, -1)
+            case .rightArrow?: (0, 1)
+            case .upArrow?: (-1, 0)
+            case .downArrow?: (1, 0)
+            default: nil
+            }
+            if let step {
+                controller.moveTableSelection(rowBy: step.rows, columnBy: step.columns, extend: extend)
+                revealTableCursor()
+                return
+            }
+        }
+        super.keyDown(with: event)
+    }
+
+    /// Copy works on a table selection, which leaves no text selected.
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)), controller?.tableSelection != nil { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    /// Escape lets go of a table selection.
+    override func cancelOperation(_ sender: Any?) {
+        if let controller, controller.tableSelection != nil {
+            controller.clearTableSelection()
+            return
+        }
+        super.cancelOperation(sender)
     }
 
     /// The notes list held its place while the window was resized; it follows the page again now, and a column held
@@ -479,11 +579,21 @@ final class RenderedTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         let start = convert(event.locationInWindow, from: nil)
+        if let handle = tableHandle(at: start) { return pressHandle(handle, with: event) }
         guard let controller, let hit = picture(at: start), let source = hit.attachment.source else {
             controller?.imageSelection = nil
-            return super.mouseDown(with: keptToShownCells(event))
+            if pressCell(with: event, at: start) { return }
+            // A Control-click opens the menu, which offers Add Note for the cells still selected.
+            if !event.modifierFlags.contains(.control) { controller?.clearTableSelection() }
+            // A plain press in a cell selects text, until a drag takes it into the next cell.
+            let kept = keptToShownCells(event)
+            cellDrag = event.clickCount == 1 && kept.modifierFlags.intersection([.command, .shift, .option]).isEmpty
+                ? tableCell(at: convert(kept.locationInWindow, from: nil)).map { ($0, false) } : nil
+            defer { cellDrag = nil }
+            return super.mouseDown(with: kept)
         }
         window?.makeFirstResponder(self)
+        controller.clearTableSelection()
         setSelectedRange(NSRange(location: hit.index, length: 0))
         let ref = MarkdownViewerController.EmbeddedImageRef(source: source, occurrence: hit.attachment.occurrence)
         let embed = controller.map.sourceRange(forRendered: NSRange(location: hit.index, length: 1))?.source ?? NSRange(location: 0, length: 0)
@@ -522,6 +632,11 @@ final class RenderedTextView: NSTextView {
     /// of which pastes well into a terminal or an editor.
     /// A table's cells are copied in order, a tab between cells and a line between rows, however they wrapped.
     override func copy(_ sender: Any?) {
+        if let cells = controller?.tableSelectionCopyText() {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(cells, forType: .string)
+            return
+        }
         guard let storage = textStorage else { return super.copy(sender) }
         let text = selectedRanges.map { Self.copiedText(storage.attributedSubstring(from: $0.rangeValue)) }.joined(separator: "\n")
         let plain = Self.plainText(text)
@@ -597,6 +712,9 @@ final class RenderedTextView: NSTextView {
     /// The text was set to `base` (`controller.rendered`): find its wide tables and scroll them back to where they were.
     func textWasSet(_ base: NSAttributedString) {
         tableBase = base
+        tableRowRanges = Self.tableRows(in: base)
+        hoveredCell = nil
+        hoveredHandle = nil
         wideTables = MarkdownTableScroll.wideTables(in: base)
         let keptHeaders = tableHeaders
         tableHeaders = wideTables.compactMapValues { table in table.rows.first.map { (base.string as NSString).substring(with: $0) } }

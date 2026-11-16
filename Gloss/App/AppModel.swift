@@ -1708,7 +1708,11 @@ final class AppModel {
         // A web page has no folder to open.
         guard !DocumentKindDetector.isWebURL(path) else { return }
         guard await ensureConnected(hostID) else { return }
-        if explorer.tabs.contains(where: { $0.hostID == hostID && ExplorerModel.inRootSpelling(path, root: $0.path, hostID: hostID) != nil }) { return }
+        // Already open: it comes to the front, so the tree, the notes panel and Send are about this file.
+        if explorer.selectTab(containing: path, hostID: hostID) {
+            pickedHost = hostID
+            return
+        }
         if hostID == .github, let pull = PullRequestPath(path) {
             await explorer.openRoot(hostID: hostID, path: pull.root)
             return
@@ -1805,7 +1809,8 @@ final class AppModel {
         await iterations.prepareForNote(document.id)
         let note = try await noteStore.askUser(documentID: document.id, anchor: anchor, question: question.question, author: question.agent, choices: question.choices)
         await iterations.recordStartingCommit(document.id)
-        if activeSession?.noteEditor == nil, !(mainWindow?.firstResponder is NSTextView) {
+        // Not while reviewing: another folder would end the review. The question waits under Attention.
+        if !review.isActive, activeSession?.noteEditor == nil, !(mainWindow?.firstResponder is NSTextView) {
             await openRootIfNeeded(hostID: hostID, containing: question.path)
             showNotesPanel = true
             // Shown, not selected: a selection would offer Add Note over the agent's question.
@@ -1856,7 +1861,7 @@ final class AppModel {
     /// note already in place.
     nonisolated static func relocation(of anchor: Anchor, to target: RelocationTarget, data: Data) throws -> NoteRelocation {
         if case .text(let text) = anchor, text.cells != nil {
-            throw DeliveryError.failed("This note is on spreadsheet cells; it can't be moved.")
+            throw DeliveryError.failed("This note is on table cells; it can't be moved.")
         }
         let text = TextEncoding.decode(data).text
         return try AnchorRelocator.relocate(anchor, to: target, content: text, hash: Data(text.utf8).sha256Hex)

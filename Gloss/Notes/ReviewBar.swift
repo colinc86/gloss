@@ -256,7 +256,7 @@ struct ReviewBar: View {
                     .disabled(!hasFollowUpText)
                     .help("Reply to the agent with what you wrote; the note reopens and goes with your next Send")
                 Button("Accept") { Task { await review.accept() } }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(ProminentCapsuleStyle())
                     .help("The result is what you asked for")
             }
             .transition(.opacity.calmed)
@@ -334,12 +334,12 @@ struct ReviewBar: View {
                 if followUps > 0 {
                     Button("Done") { review.end() }
                     Button(followUps == 1 ? "Send Follow-Up" : "Send \(followUps) Follow-Ups") { Task { await review.sendFollowUps() } }
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(ProminentCapsuleStyle())
                         .disabled(!model.send.isTargetAvailable || model.send.isSending || review.isSending)
                         .help(model.send.lastTarget.map { "Send the follow-ups you wrote to \($0.label)" } ?? "Choose an agent to send to")
                 } else {
                     Button("Done") { review.end() }
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(ProminentCapsuleStyle())
                 }
             }
             .controlSize(.small)

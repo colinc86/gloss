@@ -28,6 +28,8 @@ public struct MarkdownRenderer {
         /// How far the text column is set in from the container's left edge (and its right edge from the
         /// container's): room for tables wider than the column to scroll into. Zero unless one is.
         public var inset: CGFloat = 0
+        /// The page's pipe tables by id, whose cells, rows and columns can be selected.
+        public var tables: [Int: MarkdownTableLayout] = [:]
     }
 
     /// The page's width before the view has one: the page width setting, or a guess when the page fills the window.
@@ -78,6 +80,7 @@ public struct MarkdownRenderer {
         output.hasTables = walker.tableCount > 0
         output.columnWidth = column
         output.inset = walker.inset
+        output.tables = walker.tableLayouts
         return output
     }
 
@@ -233,6 +236,7 @@ public struct MarkdownRenderer {
         private(set) var overflow: CGFloat = 0
         /// Tables laid out so far; cells are numbered across the document (`SourceSpan.cell`).
         var tableCount = 0
+        var tableLayouts: [Int: MarkdownTableLayout] = [:]
         private var cellCount = 0
         /// Where each picture is embedded, by `EmbedScanner` (read on the first picture), so a repeated one is told
         /// apart exactly as the re-anchorer tells it apart.
@@ -1240,7 +1244,14 @@ public struct MarkdownRenderer {
                 rowRanges.append(NSRange(location: rowStart, length: output.length - rowStart))
                 cellRanges.append(ranges)
             }
-            layOutTable(rowRanges: rowRanges, cellRanges: cellRanges, alignments: table.columnAlignments, leadingTab: leadingTab)
+            // Each row is one line of source, which a note on its cells is anchored on. cmark starts the header where
+            // the paragraph it grew out of starts ("Results:" on the line above), so the header is the line before
+            // the delimiter row: two above the first body row, or the table's last line's one above.
+            let body = Array(table.body.rows).compactMap { $0.range?.lowerBound.line }
+            let header = body.first.map { $0 - 2 } ?? table.range.map { $0.upperBound.line - 1 }
+            let lines = header.map { [$0] + body } ?? []
+            layOutTable(rowRanges: rowRanges, cellRanges: cellRanges, alignments: table.columnAlignments, leadingTab: leadingTab,
+                        rowLines: lines.count == rows.count && header.map { $0 >= 1 } == true ? lines : nil)
             style = saved
             endBlock(table)
         }
@@ -1252,11 +1263,12 @@ public struct MarkdownRenderer {
         /// line separators between. Pieces stay exact runs of their cell's source, so notes, Find and highlights
         /// work in tables as in any text.
         private mutating func layOutTable(rowRanges: [NSRange], cellRanges: [[NSRange]], alignments: [Table.ColumnAlignment?], leadingTab: Bool,
-                                          headers: [Bool]? = nil) {
+                                          headers: [Bool]? = nil, rowLines: [Int]? = nil) {
             let columns = cellRanges.map(\.count).max() ?? 0
             guard columns > 0, let firstRow = rowRanges.first, let lastRow = rowRanges.last else { return }
             let tableID = tableCount
             tableCount += 1
+            if let rowLines { tableLayouts[tableID] = MarkdownTableLayout(id: tableID, rowLines: rowLines, columns: columns) }
             let padding = MarkdownRenderer.tableCellPadding
             // The table starts where the text beside it does and fits the column if it can.
             let left = indent
@@ -1776,6 +1788,14 @@ public struct MarkdownRenderer {
             append(MarkdownRenderer.lineSeparator, source: range, exact: false)
         }
     }
+}
+
+/// A pipe table on the rendered page: the source line of each of its rows, the header's first, and how many columns
+/// it is laid out with. Tables written in HTML have none: their rows aren't lines.
+public nonisolated struct MarkdownTableLayout: Equatable, Sendable {
+    public let id: Int
+    public let rowLines: [Int]
+    public let columns: Int
 }
 
 /// Where a character of a laid-out table belongs: its table, row and column (-1 for the tabs and separators
